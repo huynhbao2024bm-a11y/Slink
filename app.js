@@ -2197,6 +2197,7 @@
         if (video.readyState >= 2) {
           try {
             const codes = await scanCameraDetector.detect(video);
+            if (!scanCameraRunning || requestGeneration !== scanCameraGeneration || modal.hidden) return;
             const detected = codes.find(function (code) { return typeof code.rawValue === 'string' && code.rawValue.trim(); });
             const rawValue = detected ? detected.rawValue.trim() : '';
             if (rawValue) {
