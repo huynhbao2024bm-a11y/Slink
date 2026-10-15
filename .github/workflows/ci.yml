@@ -31,7 +31,9 @@ jobs:
           cache: true
 
       - name: Check operations tooling syntax
-        run: node --check scripts/postgres-backup.js
+        run: |
+          node --check scripts/postgres-backup.js
+          node --check scripts/postgres-role-check.js
 
       - name: Run acceptance suite
         run: pnpm test

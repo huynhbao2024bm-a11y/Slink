@@ -193,6 +193,7 @@ async function applyMigrations(db, migrationsDirectory) {
   await db.exec(`
     GRANT USAGE ON SCHEMA public TO slink_app;
     GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO slink_app;
+    REVOKE UPDATE, DELETE ON public.user_security_events FROM slink_app;
     REVOKE ALL ON public.schema_migrations FROM slink_app;
     GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO slink_app;
   `);

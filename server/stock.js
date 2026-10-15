@@ -39,7 +39,7 @@ function registerStockRoutes(app, { pool, env }) {
                 COUNT(*) FILTER (WHERE b.on_hand = 0)::int AS out_count,
                 CASE WHEN $2::boolean THEN COALESCE(SUM(p.cost_vnd * b.on_hand), 0)::text ELSE NULL END AS stock_value_vnd
          FROM products p JOIN inventory_balances b ON b.store_id = p.store_id AND b.product_id = p.id
-         WHERE p.store_id = $1 AND p.status = 'active'`,
+         WHERE p.store_id = $1 AND p.status = 'active' AND p.inventory_tracked = true`,
         [storeId, canViewCost]
       );
       const rows = await client.query(
@@ -58,7 +58,7 @@ function registerStockRoutes(app, { pool, env }) {
            SELECT movement_type, quantity_delta, reason, occurred_at FROM inventory_movements m
            WHERE m.store_id = p.store_id AND m.product_id = p.id ORDER BY occurred_at DESC, id DESC LIMIT 1
          ) latest ON true
-         WHERE p.store_id = $1 AND p.status = 'active'
+         WHERE p.store_id = $1 AND p.status = 'active' AND p.inventory_tracked = true
            AND ($2 = '' OR p.name ILIKE '%' || $2 || '%' OR p.sku ILIKE '%' || $2 || '%' OR p.category ILIKE '%' || $2 || '%')
          ORDER BY p.name, p.id LIMIT $3 OFFSET $4`,
         [storeId, search, limit + 1, offset, canViewCost]
