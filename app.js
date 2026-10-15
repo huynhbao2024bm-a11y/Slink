@@ -125,6 +125,12 @@
   let productBulkUpdateReading = false;
   let productBulkUpdateRows = [];
   let productBulkUpdateErrors = [];
+  let scanCameraGeneration = 0;
+  let scanCameraStream = null;
+  let scanCameraDetector = null;
+  let scanCameraTimer = 0;
+  let scanCameraRunning = false;
+  let scanCameraStarting = false;
   let pendingCompatibilityStoreId = '';
   let pendingCompatibilitySaveBlocked = false;
   let categoryFilter = 'Tất cả';
@@ -1279,6 +1285,7 @@
   }
 
   function showModal(title, subtitle, body, footer, wide) {
+    stopScanCamera();
     if (modal.hidden) {
       const active = document.activeElement;
       modalReturnFocus = active && active !== document.body && !modal.contains(active) ? active : null;
@@ -1292,6 +1299,7 @@
 
   function closeModal() {
     const wasOpen = !modal.hidden;
+    stopScanCamera();
     modal.hidden = true;
     backdrop.hidden = true;
     document.body.style.overflow = '';
@@ -2094,8 +2102,134 @@
   }
 
   function showScan() {
-    const body = `<form id='entity-form' data-form='scan'><div class='form-field'><label class='input-label'>Mã sản phẩm hoặc mã vạch</label><input id='scan-code' class='input' name='code' autofocus placeholder='Nhập hoặc dán mã sản phẩm…' autocomplete='off'/></div><div class='modal-note'>Bạn có thể nhập SKU để thêm nhanh vào giỏ hàng. Máy ảnh chưa được kết nối trong bản này.</div></form>`;
-    showModal('Tìm sản phẩm nhanh', 'Nhập mã SKU hoặc mã vạch trên sản phẩm.', body, `<button class='btn btn-secondary' data-action='close-modal'>Hủy</button><button class='btn btn-primary' type='submit' form='entity-form'>Tìm sản phẩm</button>`);
+    const body = `<form id='entity-form' data-form='scan'><div class='scan-camera-panel'><video id='scan-camera-video' class='scan-camera-video' playsinline muted hidden aria-label='Xem hình ảnh camera khi quét mã'></video><button class='btn btn-secondary' type='button' data-action='start-camera-scan'>Mở camera để quét</button><p id='scan-camera-status' class='scan-camera-status' role='status'>Trên trình duyệt hỗ trợ, bạn có thể quét mã vạch hoặc QR. Nếu camera không dùng được, hãy nhập mã bên dưới.</p></div><div class='form-field'><label class='input-label' for='scan-code'>Mã SKU, mã vạch hoặc QR</label><input id='scan-code' class='input' name='code' autofocus placeholder='Nhập hoặc dán mã sản phẩm…' autocomplete='off' inputmode='text'/></div></form>`;
+    showModal('Tìm sản phẩm nhanh', 'Quét bằng camera hoặc nhập mã SKU, mã vạch trên sản phẩm.', body, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Hủy</button><button class='btn btn-primary' type='submit' form='entity-form'>Tìm sản phẩm</button>`);
+  }
+
+  function setScanCameraStatus(message, isError) {
+    const status = modal.querySelector('#scan-camera-status');
+    if (!status) return;
+    status.textContent = message;
+    status.classList.toggle('error', Boolean(isError));
+  }
+
+  function stopScanCamera() {
+    scanCameraGeneration += 1;
+    scanCameraRunning = false;
+    scanCameraStarting = false;
+    scanCameraDetector = null;
+    if (scanCameraTimer) window.clearTimeout(scanCameraTimer);
+    scanCameraTimer = 0;
+    if (scanCameraStream) scanCameraStream.getTracks().forEach(function (track) { track.stop(); });
+    scanCameraStream = null;
+    const video = modal.querySelector('#scan-camera-video');
+    if (video) {
+      video.pause();
+      video.srcObject = null;
+      video.hidden = true;
+    }
+    const button = modal.querySelector('[data-action="start-camera-scan"]');
+    if (button && button.dataset.unsupported !== 'true') {
+      button.disabled = false;
+      button.textContent = 'Mở camera để quét';
+    }
+  }
+
+  async function startScanCamera(button) {
+    if (scanCameraRunning || scanCameraStarting) return;
+    const requestGeneration = ++scanCameraGeneration;
+    const video = modal.querySelector('#scan-camera-video');
+    const codeInput = modal.querySelector('#scan-code');
+    const form = modal.querySelector('form[data-form="scan"]');
+    if (!video || !codeInput || !form) return;
+    if (!window.isSecureContext || !navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+      setScanCameraStatus('Camera cần kết nối HTTPS và trình duyệt cho phép sử dụng camera. Bạn vẫn có thể nhập mã thủ công.', true);
+      return;
+    }
+    const Detector = window.BarcodeDetector;
+    if (typeof Detector !== 'function') {
+      if (button) { button.disabled = true; button.dataset.unsupported = 'true'; }
+      setScanCameraStatus('Trình duyệt này chưa hỗ trợ nhận dạng mã bằng camera. Hãy nhập hoặc dán mã sản phẩm bên dưới.', true);
+      return;
+    }
+    scanCameraStarting = true;
+    const requestedFormats = ['qr_code', 'ean_13', 'ean_8', 'code_128', 'code_39', 'upc_a', 'upc_e', 'itf'];
+    try {
+      let supportedFormats = [];
+      if (typeof Detector.getSupportedFormats === 'function') supportedFormats = await Detector.getSupportedFormats();
+      if (requestGeneration !== scanCameraGeneration || modal.hidden) return;
+      const formats = supportedFormats.length ? requestedFormats.filter(function (format) { return supportedFormats.includes(format); }) : requestedFormats;
+      if (!formats.length) throw new Error('Trình duyệt không hỗ trợ định dạng mã này.');
+      scanCameraDetector = new Detector({ formats });
+    } catch (error) {
+      if (requestGeneration !== scanCameraGeneration) return;
+      scanCameraStarting = false;
+      if (button) { button.disabled = true; button.dataset.unsupported = 'true'; }
+      setScanCameraStatus('Không thể khởi tạo bộ đọc mã trên trình duyệt này. Hãy nhập hoặc dán mã sản phẩm.', true);
+      return;
+    }
+    if (requestGeneration !== scanCameraGeneration || modal.hidden) return;
+    if (button) { button.disabled = true; button.textContent = 'Đang mở camera…'; }
+    setScanCameraStatus('Đang mở camera. Chỉ cần cho phép camera để quét mã; bạn cũng có thể hủy và nhập mã thủ công.');
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+      if (requestGeneration !== scanCameraGeneration || modal.hidden) {
+        stream.getTracks().forEach(function (track) { track.stop(); });
+        return;
+      }
+      scanCameraStream = stream;
+      video.srcObject = stream;
+      video.hidden = false;
+      await video.play();
+      if (requestGeneration !== scanCameraGeneration || modal.hidden) {
+        stream.getTracks().forEach(function (track) { track.stop(); });
+        if (scanCameraStream === stream) scanCameraStream = null;
+        video.srcObject = null;
+        video.hidden = true;
+        return;
+      }
+      scanCameraRunning = true;
+      scanCameraStarting = false;
+      if (button) button.textContent = 'Đang quét…';
+      setScanCameraStatus('Đưa mã vào khung camera. Khi nhận dạng thành công, Slink sẽ tìm sản phẩm và thêm một sản phẩm vào giỏ.');
+      const detectFrame = async function () {
+        if (!scanCameraRunning || requestGeneration !== scanCameraGeneration || modal.hidden) return;
+        if (video.readyState >= 2) {
+          try {
+            const codes = await scanCameraDetector.detect(video);
+            const detected = codes.find(function (code) { return typeof code.rawValue === 'string' && code.rawValue.trim(); });
+            const rawValue = detected ? detected.rawValue.trim() : '';
+            if (rawValue) {
+              stopScanCamera();
+              setScanCameraStatus('Đã đọc mã. Đang tìm sản phẩm trong cửa hàng…');
+              codeInput.value = rawValue;
+              await addByCode(form);
+              if (!modal.hidden) codeInput.focus();
+              return;
+            }
+          } catch (error) {
+            if (requestGeneration !== scanCameraGeneration) return;
+            stopScanCamera();
+            setScanCameraStatus('Camera đang mở nhưng chưa đọc được mã. Hãy thử ánh sáng tốt hơn hoặc nhập mã bên dưới.', true);
+            return;
+          }
+        }
+        if (scanCameraRunning && requestGeneration === scanCameraGeneration) scanCameraTimer = window.setTimeout(detectFrame, 160);
+      };
+      detectFrame();
+    } catch (error) {
+      if (requestGeneration !== scanCameraGeneration) return;
+      stopScanCamera();
+      const message = error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError'
+        ? 'Quyền camera chưa được cấp. Cho phép camera trong cài đặt trình duyệt hoặc tiếp tục nhập mã thủ công.'
+        : error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError'
+          ? 'Không tìm thấy camera trên thiết bị này. Bạn vẫn có thể nhập mã thủ công.'
+          : 'Chưa mở được camera. Hãy kiểm tra quyền camera hoặc nhập mã thủ công.';
+      setScanCameraStatus(message, true);
+      if (codeInput) codeInput.focus();
+    } finally {
+      scanCameraStarting = false;
+    }
   }
 
   function showDiscount() {
@@ -2108,13 +2242,21 @@
     showModal('Trợ giúp Slink', 'Thông tin về các chức năng đang hoạt động.', `<div class='notice-list'><div class='notice-item'><span>📦</span><span><strong>Sản phẩm và kho</strong><small>Quản lý danh mục, kiểm kê tồn, nhập hàng và xem biến động kho. Mỗi phiếu nhập cập nhật giá vốn và công nợ nhà cung cấp.</small></span></div><div class='notice-item'><span>🧾</span><span><strong>Bán hàng và đơn hàng</strong><small>Đơn bán cập nhật kho, khoản thu và công nợ trong cùng một giao dịch. Từ chi tiết đơn, có thể ghi nhận thu nợ hoặc trả một phần hàng.</small></span></div><div class='notice-item'><span>💳</span><span><strong>Phương thức thanh toán</strong><small>Tiền mặt, chuyển khoản, QR và thẻ hiện được nhân viên xác nhận thủ công. Slink chưa kết nối trực tiếp với ngân hàng hoặc cổng thanh toán.</small></span></div><div class='notice-item'><span>🔐</span><span><strong>Bảo vệ dữ liệu</strong><small>Dữ liệu được lưu theo cửa hàng trên máy chủ. Chỉ thành viên được cấp quyền mới xem hoặc thay đổi được thông tin tương ứng.</small></span></div></div>`, `<button class='btn btn-primary' data-action='close-modal'>Đã hiểu</button>`, true);
   }
 
-  function addToCart(id) {
-    if (checkoutPendingPayload) return toast('Đang chờ xác nhận đơn', 'Hãy kiểm tra hoặc gửi lại đơn trước khi tạo đơn mới.', 'error');
-    const p = productById(id); if (!p || p.stock < 1) return toast('Sản phẩm đã hết hàng', 'Hãy nhập kho trước khi bán.', 'error');
-    const current = cart.find(function (x) { return x.id === id; });
-    if (current && current.qty >= p.stock) return toast('Không đủ số lượng tồn', 'Bạn không thể thêm quá số hàng đang có.', 'error');
-    if (current) current.qty += 1; else cart.push({ id: id, qty: 1 });
+  function addProductToCart(product) {
+    if (checkoutPendingPayload) { toast('Đang chờ xác nhận đơn', 'Hãy kiểm tra hoặc gửi lại đơn trước khi tạo đơn mới.', 'error'); return false; }
+    if (!product || !(product.stock > 0)) { toast('Sản phẩm đã hết hàng', 'Hãy nhập kho trước khi bán.', 'error'); return false; }
+    const current = cart.find(function (item) { return item.id === product.id; });
+    const remaining = product.stock - (current ? current.qty : 0);
+    if (!(remaining > 0)) { toast('Không đủ số lượng tồn', 'Giỏ hàng đã đạt số lượng đang có trong kho.', 'error'); return false; }
+    const increment = Math.min(1, remaining);
+    if (current) current.qty += increment;
+    else cart.push({ id: product.id, qty: increment });
     render();
+    return true;
+  }
+
+  function addToCart(id) {
+    addProductToCart(productById(id));
   }
 
   function setCartQty(id, delta) {
@@ -2700,19 +2842,19 @@
   async function addByCode(form) {
     const code = String(new FormData(form).get('code') || '').trim();
     if (!code) return toast('Nhập mã sản phẩm', 'Quét hoặc nhập SKU, mã vạch hoặc tên chính xác.', 'error');
+    if (checkoutPendingPayload) return toast('Đang chờ xác nhận đơn', 'Hãy kiểm tra hoặc gửi lại đơn trước khi thay đổi giỏ hàng.', 'error');
     try {
       const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/products?limit=100&q=${encodeURIComponent(code)}`);
       const products = result.products.map(mapProduct);
       const normalized = code.toLocaleLowerCase('vi');
       const product = products.find(function (item) { return item.sku.toLocaleLowerCase('vi') === normalized || item.barcode === code || item.name.toLocaleLowerCase('vi') === normalized; });
       if (!product) return toast('Không tìm thấy sản phẩm', 'Kiểm tra lại mã SKU, mã vạch hoặc tên chính xác.', 'error');
-      if (product.stock < 1) return toast('Sản phẩm đã hết hàng', 'Hãy nhập kho trước khi bán.', 'error');
+      if (!(product.stock > 0)) return toast('Sản phẩm đã hết hàng', 'Hãy nhập kho trước khi bán.', 'error');
+      const current = cart.find(function (item) { return item.id === product.id; });
+      if (current && current.qty >= product.stock) return toast('Không đủ số lượng tồn', 'Giỏ hàng đã đạt số lượng đang có trong kho.', 'error');
       closeModal();
       page = 'pos';
-      if (!cart.find(function (item) { return item.id === product.id; })) cart.push({ id: product.id, qty: 0 });
-      const target = cart.find(function (item) { return item.id === product.id; });
-      target.qty = Math.min(product.stock, target.qty + 1);
-      render();
+      if (!addProductToCart(product)) return;
       toast('Đã thêm vào giỏ', product.name);
     } catch (error) {
       if (error.status === 401) showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
@@ -3102,6 +3244,7 @@
     else if (action === 'inventory-low') { searchTerms.inventory = ''; render(); const first = lowStockProducts()[0]; if (first) openStockAdjust(first.id); }
     else if (action === 'discount') showDiscount();
     else if (action === 'scan') showScan();
+    else if (action === 'start-camera-scan') startScanCamera(button);
     else if (action === 'open-export') openExportDialog();
     else if (action === 'export-dataset') {
       const dataset = modal.querySelector('#export-dataset')?.value || '';
@@ -3388,5 +3531,7 @@
   });
   document.addEventListener('click', function (event) { const drawer = document.getElementById('drawer-cart'); if (drawer && event.target === drawer) drawer.classList.remove('open'); });
   window.addEventListener('online', renderShell); window.addEventListener('offline', renderShell);
+  document.addEventListener('visibilitychange', function () { if (document.hidden) stopScanCamera(); });
+  window.addEventListener('pagehide', stopScanCamera);
   boot();
 })();
