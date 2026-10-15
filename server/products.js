@@ -377,6 +377,42 @@ function registerProductRoutes(app, { pool, env }) {
     }
   });
 
+  app.post('/api/stores/:storeId/products/bulk-update/preview', async (request) => {
+    const auth = await authenticate(pool, request);
+    requireCsrf(request, env);
+    const { storeId } = request.params;
+    if (!UUID_PATTERN.test(storeId)) throw new ApiError(400, 'validation_error', 'Cửa hàng không hợp lệ.');
+    const items = validateBulkUpdateRows(request.body?.items);
+    const productIds = items.map((item) => item.productId);
+    return withStore(pool, auth.userId, storeId, async (client, membership) => {
+      requireEditor(membership.role);
+      const selected = await client.query(
+        `SELECT id, sku, sku_normalized, barcode, status, version
+         FROM products WHERE store_id = $1 AND id = ANY($2::uuid[]) ORDER BY id`,
+        [storeId, productIds]
+      );
+      const selectedById = new Map(selected.rows.map((row) => [row.id, row]));
+      for (const item of items) {
+        const current = selectedById.get(item.productId);
+        if (!current || current.status !== 'active') {
+          return { valid: false, count: items.length, conflict: `Dòng ${item.sourceLine}: không tìm thấy sản phẩm đang hoạt động. Tệp chưa được cập nhật.` };
+        }
+        if (current.version !== item.version) {
+          return { valid: false, count: items.length, conflict: `Dòng ${item.sourceLine}: sản phẩm đã thay đổi sau khi tải CSV. Hãy xuất lại danh sách rồi áp dụng thay đổi.` };
+        }
+      }
+      const requestedSkus = items.filter((item) => item.sku).map((item) => item.sku.toLocaleLowerCase('vi'));
+      const requestedBarcodes = items.filter((item) => item.barcode).map((item) => item.barcode);
+      const external = await client.query(
+        `SELECT id, sku, sku_normalized, barcode FROM products
+         WHERE store_id = $1 AND NOT (id = ANY($2::uuid[]))
+           AND (sku_normalized = ANY($3::text[]) OR barcode = ANY($4::text[]))`,
+        [storeId, productIds, requestedSkus, requestedBarcodes]
+      );
+      const conflictMessage = describeBulkUpdateConflict(items, [...selected.rows, ...external.rows]);
+      return { valid: !conflictMessage, count: items.length, conflict: conflictMessage };
+    });
+  });
   app.post('/api/stores/:storeId/products/bulk-update', async (request, reply) => {
     const auth = await authenticate(pool, request);
     requireCsrf(request, env);

@@ -1560,7 +1560,7 @@
     const submit = modal.querySelector('button[type="submit"][form="entity-form"]');
     if (!preview) return;
     if (productBulkUpdateReading) {
-      preview.innerHTML = `<div class='notice-item' role='status'><span>…</span><span><strong>Đang đọc tệp CSV</strong><small>Đợi Slink kiểm tra dữ liệu trước khi gửi.</small></span></div>`;
+      preview.innerHTML = `<div class='notice-item' role='status'><span>…</span><span><strong>Đang đối chiếu tệp CSV</strong><small>Slink đang kiểm tra phiên bản và mã trùng trên máy chủ; bước này chưa lưu thay đổi.</small></span></div>`;
     } else if (productBulkUpdateErrors.length) {
       preview.innerHTML = `<div class='auth-message error'><strong>Chưa thể cập nhật tệp.</strong><br/>${productBulkUpdateErrors.slice(0, 8).map(esc).join('<br/>')}${productBulkUpdateErrors.length > 8 ? `<br/>Còn ${productBulkUpdateErrors.length - 8} lỗi khác.` : ''}</div>`;
     } else if (productBulkUpdateRows.length) {
@@ -3243,14 +3243,34 @@
       renderProductBulkUpdatePreview();
       const reader = new FileReader();
       const readGeneration = modalGeneration;
-      reader.onload = function () {
+      reader.onload = async function () {
         if (readGeneration !== modalGeneration || readNumber !== productBulkUpdateReadNumber || modal.hidden) return;
         const selectedFile = modal.querySelector('#product-bulk-update-file');
         if (selectedFile) selectedFile.value = '';
-        productBulkUpdateReading = false;
         const parsed = parseProductBulkUpdateCsv(String(reader.result || ''));
-        productBulkUpdateRows = parsed.items;
         productBulkUpdateErrors = parsed.errors;
+        productBulkUpdateRows = [];
+        if (parsed.errors.length) {
+          productBulkUpdateReading = false;
+          renderProductBulkUpdatePreview();
+          return;
+        }
+        try {
+          const previewResult = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/products/bulk-update/preview`, {
+            method: 'POST',
+            body: { items: parsed.items.map(function (item) { const { before, ...requestItem } = item; return requestItem; }) },
+          });
+          if (readGeneration !== modalGeneration || readNumber !== productBulkUpdateReadNumber || modal.hidden) return;
+          productBulkUpdateReading = false;
+          if (!previewResult.valid) productBulkUpdateErrors = [previewResult.conflict || 'Sản phẩm đã thay đổi hoặc bị trùng trong danh mục.'];
+          else productBulkUpdateRows = parsed.items;
+        } catch (error) {
+          if (readGeneration !== modalGeneration || readNumber !== productBulkUpdateReadNumber || modal.hidden) return;
+          productBulkUpdateReading = false;
+          productBulkUpdateErrors = [error.status === 401
+            ? 'Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại rồi chọn tệp để kiểm tra.'
+            : `Chưa đối chiếu được thay đổi với cửa hàng: ${error.message} Hãy chọn lại CSV để thử lại. Chưa có thay đổi nào được lưu.`];
+        }
         renderProductBulkUpdatePreview();
       };
       reader.onerror = function () {
