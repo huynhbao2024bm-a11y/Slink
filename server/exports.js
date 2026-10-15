@@ -20,17 +20,25 @@ const EXPORTS = {
   products: {
     filename: 'slink-san-pham.csv',
     columns: [
-      ['Mã sản phẩm', 'id', 'text'], ['SKU', 'sku', 'text'], ['Mã vạch', 'barcode', 'text'],
+      ['Mã sản phẩm', 'id', 'text'], ['Phiên bản dữ liệu', 'version', 'number'], ['SKU', 'sku', 'text'], ['Mã vạch', 'barcode', 'text'],
       ['Tên sản phẩm', 'name', 'text'], ['Danh mục', 'category', 'text'], ['Đơn vị', 'unit', 'text'],
       ['Giá bán (VND)', 'sale_price_vnd', 'number'], ['Giá vốn (VND)', 'cost_vnd', 'number'],
       ['Ngưỡng tồn thấp', 'low_stock_threshold', 'number'], ['Theo dõi tồn kho', 'inventory_tracked', 'text'],
+      ['Cập nhật SKU', 'update_sku', 'text'], ['Cập nhật mã vạch', 'update_barcode', 'text'],
+      ['Xóa mã vạch', 'clear_barcode', 'text'],
+      ['Cập nhật tên sản phẩm', 'update_name', 'text'], ['Cập nhật danh mục', 'update_category', 'text'],
+      ['Cập nhật đơn vị', 'update_unit', 'text'], ['Giá bán mới (VND)', 'update_sale_price_vnd', 'number'],
+      ['Giá vốn mới (VND)', 'update_cost_vnd', 'number'], ['Ngưỡng tồn mới', 'update_low_stock_threshold', 'number'],
       ['Tồn thực tế', 'on_hand', 'number'], ['Đang giữ', 'reserved', 'number'], ['Trạng thái', 'status', 'text'],
       ['Ngày tạo', 'created_at', 'date'], ['Cập nhật gần nhất', 'updated_at', 'date'],
     ],
     dateColumn: 'p.created_at', orderBy: 'p.created_at, p.id',
     sql: `SELECT p.id, p.sku, p.barcode, p.name, p.category, p.unit,
-                 p.sale_price_vnd::text AS sale_price_vnd, p.cost_vnd::text AS cost_vnd,
+                 p.version, p.sale_price_vnd::text AS sale_price_vnd, p.cost_vnd::text AS cost_vnd,
                  p.low_stock_threshold::text AS low_stock_threshold, p.inventory_tracked::text AS inventory_tracked,
+                 ''::text AS update_sku, ''::text AS update_barcode, ''::text AS clear_barcode, ''::text AS update_name,
+                 ''::text AS update_category, ''::text AS update_unit, ''::text AS update_sale_price_vnd,
+                 ''::text AS update_cost_vnd, ''::text AS update_low_stock_threshold,
                  COALESCE(b.on_hand, 0)::text AS on_hand, COALESCE(b.reserved, 0)::text AS reserved,
                  p.status, p.created_at, p.updated_at
           FROM products p LEFT JOIN inventory_balances b ON b.store_id = p.store_id AND b.product_id = p.id

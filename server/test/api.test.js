@@ -21,6 +21,7 @@ async function testApp(t) {
     CREATE ROLE slink_app NOLOGIN;
     GRANT USAGE ON SCHEMA public TO slink_app;
     GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO slink_app;
+    REVOKE UPDATE, DELETE ON public.user_security_events FROM slink_app;
   `);
   const pool = createPGlitePool(db);
   const app = await buildServer({ pool, logger: false, env: { NODE_ENV: 'test', PUBLIC_ORIGIN: origin } });
@@ -323,6 +324,154 @@ test('product import validates all rows, writes opening stock atomically, and re
   assert.equal(retry.json().products[0].on_hand, '4.1');
   const finalCatalog = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/products`, headers });
   assert.equal(finalCatalog.json().total, 3);
+});
+
+test('product bulk updates validate final unique keys, stage swaps atomically, and replay safely', async (t) => {
+  const app = await testApp(t);
+  const owner = await registerAndLogin(app, {
+    email: 'product-bulk-update@example.com', displayName: 'Chủ cửa hàng', storeName: 'Cửa hàng cập nhật hàng loạt',
+  });
+  const storeId = owner.store.id;
+  const headers = { cookie: cookieHeader(owner.cookies), origin, 'x-csrf-token': owner.cookies.slink_csrf };
+  const imported = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/products/import`,
+    headers: { ...headers, 'idempotency-key': 'bulk-update-seed-000001' },
+    payload: { items: [
+      { sku: 'BULK-A', barcode: '8930000000001', name: 'Mặt hàng A', salePriceVnd: 10000, costVnd: 5000, openingQuantity: '2' },
+      { sku: 'BULK-B', barcode: '8930000000002', name: 'Mặt hàng B', salePriceVnd: 12000, costVnd: 6000, openingQuantity: '3' },
+    ] },
+  });
+  assert.equal(imported.statusCode, 201, imported.body);
+  const catalog = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/products`, headers });
+  const productA = catalog.json().products.find((product) => product.sku === 'BULK-A');
+  const productB = catalog.json().products.find((product) => product.sku === 'BULK-B');
+  assert.ok(productA && productB);
+
+  const items = [
+    { productId: productA.id, version: productA.version, sourceLine: 2, sku: 'BULK-B', clearBarcode: true, costVnd: 5500 },
+    { productId: productB.id, version: productB.version, sourceLine: 3, sku: 'BULK-A', barcode: '8930000000001' },
+  ];
+  const updateHeaders = { ...headers, 'idempotency-key': 'bulk-update-swap-000001' };
+  const updated = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/products/bulk-update`, headers: updateHeaders, payload: { items },
+  });
+  assert.equal(updated.statusCode, 200, updated.body);
+  assert.equal(updated.json().count, 2);
+  assert.equal(updated.json().changedCount, 2);
+  assert.equal(updated.json().unchangedCount, 0);
+
+  const afterUpdate = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/products`, headers });
+  const updatedA = afterUpdate.json().products.find((product) => product.id === productA.id);
+  const updatedB = afterUpdate.json().products.find((product) => product.id === productB.id);
+  assert.equal(updatedA.sku, 'BULK-B');
+  assert.equal(updatedA.barcode, null);
+  assert.equal(updatedA.cost_vnd, '5500');
+  assert.equal(updatedA.version, 2);
+  assert.equal(updatedB.sku, 'BULK-A');
+  assert.equal(updatedB.barcode, '8930000000001');
+  assert.equal(updatedB.version, 2);
+
+  const replay = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/products/bulk-update`, headers: updateHeaders, payload: { items },
+  });
+  assert.equal(replay.statusCode, 200, replay.body);
+  assert.equal(replay.headers['idempotent-replayed'], 'true');
+  assert.deepEqual(replay.json(), updated.json());
+
+  const changedReplay = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/products/bulk-update`, headers: updateHeaders,
+    payload: { items: [{ ...items[0], costVnd: 5700 }] },
+  });
+  assert.equal(changedReplay.statusCode, 409, changedReplay.body);
+  assert.equal(changedReplay.json().error.code, 'idempotency_conflict');
+
+  const stale = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/products/bulk-update`,
+    headers: { ...headers, 'idempotency-key': 'bulk-update-stale-0001' },
+    payload: { items: [{ productId: productA.id, version: 1, sku: 'STALE-SKU' }] },
+  });
+  assert.equal(stale.statusCode, 409, stale.body);
+  assert.equal(stale.json().error.code, 'version_conflict');
+
+  const unchanged = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/products/bulk-update`,
+    headers: { ...headers, 'idempotency-key': 'bulk-update-noop-000001' },
+    payload: { items: [{ productId: productA.id, version: 2, clearBarcode: true }] },
+  });
+  assert.equal(unchanged.statusCode, 200, unchanged.body);
+  assert.equal(unchanged.json().changedCount, 0);
+  assert.equal(unchanged.json().unchangedCount, 1);
+
+  const conflicting = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/products/bulk-update`,
+    headers: { ...headers, 'idempotency-key': 'bulk-update-conflict-01' },
+    payload: { items: [{ productId: productA.id, version: 2, sku: 'BULK-A' }] },
+  });
+  assert.equal(conflicting.statusCode, 409, conflicting.body);
+  assert.equal(conflicting.json().error.code, 'product_conflict');
+
+  const invalidClear = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/products/bulk-update`,
+    headers: { ...headers, 'idempotency-key': 'bulk-update-bad-clear-01' },
+    payload: { items: [{ productId: productA.id, version: 2, barcode: '8930000000003', clearBarcode: true }] },
+  });
+  assert.equal(invalidClear.statusCode, 400, invalidClear.body);
+
+  const outsider = await registerAndLogin(app, {
+    email: 'product-bulk-outsider@example.com', displayName: 'Chủ khác', storeName: 'Cửa hàng khác',
+  });
+  const crossTenant = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/products/bulk-update`,
+    headers: { cookie: cookieHeader(outsider.cookies), origin, 'x-csrf-token': outsider.cookies.slink_csrf, 'idempotency-key': 'bulk-update-cross-store-01' },
+    payload: { items: [{ productId: productA.id, version: 2, costVnd: 5600 }] },
+  });
+  assert.equal(crossTenant.statusCode, 403, crossTenant.body);
+
+  const cashier = await inviteAndLogin(app, {
+    storeId, ownerHeaders: headers, email: 'product-bulk-cashier@example.com', role: 'cashier',
+  });
+  const roleDenied = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/products/bulk-update`,
+    headers: { ...cashier.headers, 'idempotency-key': 'bulk-update-cashier-deny' },
+    payload: { items: [{ productId: productA.id, version: 2, costVnd: 5600 }] },
+  });
+  assert.equal(roleDenied.statusCode, 403, roleDenied.body);
+
+  await app.testDb.exec(`
+    CREATE FUNCTION fail_product_bulk_update_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.action = 'product.bulk_updated' THEN RAISE EXCEPTION 'injected product.bulk_updated audit failure'; END IF;
+      RETURN NEW;
+    END;
+    $$;
+    CREATE TRIGGER fail_product_bulk_update_audit BEFORE INSERT ON audit_events
+      FOR EACH ROW EXECUTE FUNCTION fail_product_bulk_update_audit();
+  `);
+  const rollbackItems = [{ productId: productB.id, version: 2, sourceLine: 2, sku: 'ROLLBACK-SKU', barcode: '8930000000002' }];
+  const rollbackHeaders = { ...headers, 'idempotency-key': 'bulk-update-rollback-01' };
+  const failed = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/products/bulk-update`, headers: rollbackHeaders, payload: { items: rollbackItems },
+  });
+  assert.equal(failed.statusCode, 500, failed.body);
+  const afterRollback = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/products`, headers });
+  const rolledBackProduct = afterRollback.json().products.find((product) => product.id === productB.id);
+  assert.equal(rolledBackProduct.sku, 'BULK-A');
+  assert.equal(rolledBackProduct.barcode, '8930000000001');
+  assert.equal(rolledBackProduct.version, 2);
+  await app.testDb.exec('DROP TRIGGER fail_product_bulk_update_audit ON audit_events; DROP FUNCTION fail_product_bulk_update_audit();');
+
+  const retry = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/products/bulk-update`, headers: rollbackHeaders, payload: { items: rollbackItems },
+  });
+  assert.equal(retry.statusCode, 200, retry.body);
+  assert.equal(retry.json().changedCount, 1);
+  const history = await app.testDb.query(
+    `SELECT
+       (SELECT count(*)::int FROM product_cost_history WHERE store_id = $1 AND product_id = $2) AS costs,
+       (SELECT count(*)::int FROM audit_events WHERE store_id = $1 AND action = 'product.bulk_updated') AS audits`,
+    [storeId, productA.id]
+  );
+  assert.deepEqual(history.rows[0], { costs: 2, audits: 3 });
 });
 
 test('cash outflow cannot exceed the drawer balance and a rejected request can be retried safely', async (t) => {
@@ -744,4 +893,147 @@ test('manager, accountant, and stockkeeper receive different finance and record 
   assert.equal(stockkeeperAnalytics.statusCode, 403, stockkeeperAnalytics.body);
   const stockkeeperRegister = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/cash-register`, headers: stockkeeper.headers });
   assert.equal(stockkeeperRegister.statusCode, 403, stockkeeperRegister.body);
+});
+
+test('business audit timeline is filterable and limited to authorized store managers', async (t) => {
+  const app = await testApp(t);
+  const owner = await registerAndLogin(app, { email: 'audit-owner@example.com', displayName: 'Chủ nhật ký', storeName: 'Cửa hàng nhật ký' });
+  const storeId = owner.store.id;
+  const ownerHeaders = { cookie: cookieHeader(owner.cookies) };
+  const csrfHeaders = { ...ownerHeaders, origin, 'x-csrf-token': owner.cookies.slink_csrf };
+
+  const created = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/products`, headers: csrfHeaders,
+    payload: { sku: 'AUDIT-1', name: 'Sản phẩm nhật ký', salePriceVnd: 15000 },
+  });
+  assert.equal(created.statusCode, 200, created.body);
+
+  const all = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/audit-events?limit=10`, headers: ownerHeaders });
+  assert.equal(all.statusCode, 200, all.body);
+  assert.equal(all.headers['cache-control'], 'no-store');
+  assert.ok(all.json().total >= 1);
+  const productEvent = all.json().events.find((event) => event.action === 'product.created');
+  assert.ok(productEvent);
+  assert.deepEqual(productEvent.actor, { id: owner.user.id, name: 'Chủ nhật ký' });
+  assert.equal(productEvent.entityType, 'product');
+  assert.equal(productEvent.entityId, created.json().product.id);
+  assert.equal(Object.hasOwn(productEvent, 'metadata'), false, 'the timeline does not disclose internal metadata');
+  await assert.rejects(
+    app.testDb.query('UPDATE audit_events SET reason = $2 WHERE id = $1', [productEvent.id, 'sửa lịch sử']),
+    /append-only/i,
+  );
+  await assert.rejects(
+    app.testDb.query('DELETE FROM audit_events WHERE id = $1', [productEvent.id]),
+    /append-only/i,
+  );
+
+  const filtered = await app.inject({
+    method: 'GET', url: `/api/stores/${storeId}/audit-events?action=product.created&q=Chủ%20nhật%20ký&limit=1`, headers: ownerHeaders,
+  });
+  assert.equal(filtered.statusCode, 200, filtered.body);
+  assert.equal(filtered.json().total, 1);
+  assert.equal(filtered.json().events[0].action, 'product.created');
+  assert.equal(filtered.json().nextOffset, null);
+
+  const localDate = new Date(Date.now() + 7 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const byDate = await app.inject({
+    method: 'GET', url: `/api/stores/${storeId}/audit-events?from=${localDate}&to=${localDate}`, headers: ownerHeaders,
+  });
+  assert.equal(byDate.statusCode, 200, byDate.body);
+  assert.ok(byDate.json().events.some((event) => event.id === productEvent.id));
+
+  const invalidDate = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/audit-events?from=2026-02-30`, headers: ownerHeaders });
+  assert.equal(invalidDate.statusCode, 400);
+  const reversed = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/audit-events?from=2026-10-02&to=2026-10-01`, headers: ownerHeaders });
+  assert.equal(reversed.statusCode, 400);
+
+  const manager = await inviteAndLogin(app, {
+    storeId, ownerHeaders: csrfHeaders, email: 'audit-manager@example.com', role: 'manager',
+  });
+  const managerRead = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/audit-events`, headers: manager.headers });
+  assert.equal(managerRead.statusCode, 200, managerRead.body);
+
+  const cashier = await inviteAndLogin(app, {
+    storeId, ownerHeaders: csrfHeaders, email: 'audit-cashier@example.com', role: 'cashier',
+  });
+  const cashierRead = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/audit-events`, headers: cashier.headers });
+  assert.equal(cashierRead.statusCode, 403, cashierRead.body);
+
+  const otherStore = await registerAndLogin(app, { email: 'audit-other@example.com', displayName: 'Cửa hàng khác', storeName: 'Cửa hàng khác' });
+  const crossStoreRead = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/audit-events`, headers: { cookie: cookieHeader(otherStore.cookies) } });
+  assert.equal(crossStoreRead.statusCode, 403, crossStoreRead.body);
+});
+
+test('account security history is private and users can revoke only their own other sessions', async (t) => {
+  const app = await testApp(t);
+  const owner = await registerAndLogin(app, {
+    email: 'security-owner@example.com', displayName: 'Chủ tài khoản', storeName: 'Cửa hàng bảo mật',
+  });
+  const firstHeaders = { cookie: cookieHeader(owner.cookies) };
+  const firstSecurity = await app.inject({ method: 'GET', url: '/api/auth/security', headers: firstHeaders });
+  assert.equal(firstSecurity.statusCode, 200, firstSecurity.body);
+  assert.equal(firstSecurity.headers['cache-control'], 'no-store');
+  assert.equal(firstSecurity.json().sessions.length, 1);
+  assert.equal(firstSecurity.json().sessions[0].current, true);
+  assert.equal(firstSecurity.json().events[0].type, 'login_succeeded');
+  assert.ok(firstSecurity.json().events.some((event) => event.type === 'email_verified'));
+
+  const rejected = await app.inject({
+    method: 'POST', url: '/api/auth/login', headers: { origin },
+    payload: { email: 'security-owner@example.com', password: 'wrong password 123' },
+  });
+  assert.equal(rejected.statusCode, 401);
+
+  const secondLogin = await app.inject({
+    method: 'POST', url: '/api/auth/login', headers: { origin },
+    payload: { email: 'security-owner@example.com', password: 'correct horse battery staple 47' },
+  });
+  assert.equal(secondLogin.statusCode, 200, secondLogin.body);
+  const secondCookies = cookiesFrom(secondLogin);
+  const secondHeaders = { cookie: cookieHeader(secondCookies), origin, 'x-csrf-token': secondCookies.slink_csrf };
+  const twoSessions = await app.inject({ method: 'GET', url: '/api/auth/security', headers: secondHeaders });
+  assert.equal(twoSessions.statusCode, 200, twoSessions.body);
+  assert.equal(twoSessions.json().sessions.length, 2);
+  const oldSession = twoSessions.json().sessions.find((session) => !session.current);
+  assert.ok(oldSession);
+
+  const csrfDenied = await app.inject({
+    method: 'POST', url: `/api/auth/sessions/${oldSession.id}/revoke`,
+    headers: { ...secondHeaders, 'x-csrf-token': 'invalid' }, payload: {},
+  });
+  assert.equal(csrfDenied.statusCode, 403);
+
+  const revoked = await app.inject({
+    method: 'POST', url: `/api/auth/sessions/${oldSession.id}/revoke`, headers: secondHeaders, payload: {},
+  });
+  assert.equal(revoked.statusCode, 200, revoked.body);
+  assert.equal(revoked.json().status, 'revoked');
+  const oldSessionDenied = await app.inject({ method: 'GET', url: '/api/auth/me', headers: firstHeaders });
+  assert.equal(oldSessionDenied.statusCode, 401);
+
+  const currentSession = twoSessions.json().sessions.find((session) => session.current);
+  const currentDenied = await app.inject({
+    method: 'POST', url: `/api/auth/sessions/${currentSession.id}/revoke`, headers: secondHeaders, payload: {},
+  });
+  assert.equal(currentDenied.statusCode, 409);
+
+  const afterRevoke = await app.inject({ method: 'GET', url: '/api/auth/security', headers: secondHeaders });
+  assert.equal(afterRevoke.statusCode, 200, afterRevoke.body);
+  assert.equal(afterRevoke.json().sessions.length, 1);
+  assert.ok(afterRevoke.json().events.some((event) => event.type === 'login_failed'));
+  assert.ok(afterRevoke.json().events.some((event) => event.type === 'session_revoked' && event.sessionId === oldSession.id));
+  assert.ok(afterRevoke.json().events.every((event) => !Object.hasOwn(event, 'ip') && !Object.hasOwn(event, 'userAgent')));
+
+  const other = await registerAndLogin(app, {
+    email: 'security-other@example.com', displayName: 'Tài khoản khác', storeName: 'Cửa hàng khác',
+  });
+  const otherHeaders = { cookie: cookieHeader(other.cookies) };
+  const privateHistory = await app.inject({ method: 'GET', url: '/api/auth/security', headers: otherHeaders });
+  assert.equal(privateHistory.statusCode, 200, privateHistory.body);
+  assert.ok(privateHistory.json().events.every((event) => event.sessionId !== oldSession.id));
+  const crossAccountSession = await app.inject({
+    method: 'POST', url: `/api/auth/sessions/${currentSession.id}/revoke`,
+    headers: { cookie: cookieHeader(other.cookies), origin, 'x-csrf-token': other.cookies.slink_csrf }, payload: {},
+  });
+  assert.equal(crossAccountSession.statusCode, 404);
 });

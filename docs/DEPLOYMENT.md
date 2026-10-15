@@ -60,11 +60,13 @@ Tạo ảnh từ root của repo:
 docker build --pull --tag slink:<release> .
 ```
 
-Đẩy ảnh lên registry riêng của môi trường đã được chọn. Trước khi khởi động phiên bản ứng dụng mới, chạy một release job một lần bằng đúng ảnh đó và chỉ cấp cho job các biến `NODE_ENV=production`, `PG_SSL=true`, `MIGRATION_DATABASE_URL`:
+Đẩy ảnh lên registry riêng của môi trường đã được chọn. Cụm PostgreSQL phải được chuẩn bị trước với hai role riêng (`slink_migrator` và `slink_app`); role ứng dụng không được là superuser, có `BYPASSRLS`, sở hữu bảng, hoặc có quyền tạo schema. Trước khi khởi động phiên bản ứng dụng mới, chạy một release job một lần bằng đúng ảnh đó và chỉ cấp cho job các biến `NODE_ENV=production`, `PG_SSL=true`, `MIGRATION_DATABASE_URL`:
 
 ```text
 node server/migrate.js
 ```
+
+Sau khi áp dụng migration, runner cấp quyền bảng và sequence cho `slink_app`, giữ `schema_migrations` riêng tư và giới hạn bảng sự kiện bảo mật ở SELECT/INSERT. Chạy thêm `node scripts/postgres-role-check.js` với `MIGRATION_DATABASE_URL` và `PG_SSL=true`; chỉ tiếp tục khi mọi kiểm tra đều PASS.
 
 Sau khi migration thành công, khởi chạy container ứng dụng với `NODE_ENV=production`, `HOST=0.0.0.0`, `PORT`, `PG_SSL=true`, `APP_DATABASE_URL`, `PUBLIC_ORIGIN`, `EMAIL_DELIVERY_URL`, `EMAIL_DELIVERY_TOKEN`, và các cấu hình pool/proxy đã xác minh. Không cấp `MIGRATION_DATABASE_URL` cho tiến trình web nếu nền tảng hỗ trợ tách secrets theo job.
 

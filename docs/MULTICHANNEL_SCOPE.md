@@ -1,0 +1,44 @@
+# Phân tích phạm vi tính năng Slink — 2026-10-15
+
+Tài liệu này đối chiếu danh sách tính năng người dùng cung cấp trong [`USER_FEATURE_INVENTORY.md`](USER_FEATURE_INVENTORY.md) với khả năng hiện có của Slink và xác định thứ tự mở rộng. Danh sách gốc được giữ nguyên để không mất yêu cầu. Trạng thái mã nguồn và bằng chứng chạy thật vẫn theo [`DELIVERY_ROADMAP.md`](DELIVERY_ROADMAP.md).
+
+## Kết luận phạm vi
+
+Danh sách mô tả một nền tảng vận hành thương mại đa kênh (POS + PIM + OMS + WMS + giao vận + tài chính + CRM + tự động hóa), rộng hơn sản phẩm POS cho cửa hàng đơn lẻ hiện tại. Nó là hướng mở rộng hợp lý của Slink, nhưng không phải một gói có thể coi là đã có chỉ vì màn hình hoặc kết nối được khai báo. Các phần phụ thuộc sàn, hãng vận chuyển, hóa đơn điện tử, thanh toán, email hoặc quảng cáo cần ứng dụng đối tác, quyền API, thông tin xác thực và nghiệm thu đầu-cuối.
+
+## So sánh với Slink hiện tại
+
+| Nhóm trong danh sách | Slink hiện có | Khoảng trống chính | Ưu tiên |
+| --- | --- | --- | --- |
+| I. Tài khoản và kết nối sàn | Đăng nhập/phiên, mời nhân viên và 5 vai trò nội bộ; phân tách dữ liệu cửa hàng ở API/DB | Chưa có chi nhánh, phân quyền theo kho/hành động, kết nối Shopee/Lazada/TikTok Shop/Tiki/Sendo/GrabMart/website, OAuth/token vault, bộ lập lịch đồng bộ, nhật ký và cảnh báo lỗi sàn | Nền tảng nội bộ trước; tích hợp sau khi có tài khoản developer/merchant |
+| II. PIM / sản phẩm | SKU, barcode, tên, danh mục, đơn vị, giá bán/giá vốn, ngưỡng tồn, import CSV tạo mới, export CSV, cập nhật một sản phẩm; luồng cập nhật CSV hàng loạt vừa được thêm vào source với version guard/audit/idempotency | Chưa có runtime acceptance cho cập nhật hàng loạt; chưa có biến thể/nhóm cha, bundle, mô tả/ảnh, ánh xạ SKU từng kênh, ánh xạ thuộc tính sàn, giá theo kênh/nhóm khách, quy tắc giá và trạng thái xuất bản theo kênh | Cao; nghiệm thu bulk edit, sau đó thiết kế biến thể |
+| III. OMS / đơn hàng | POS, tối đa 5 phương thức thu, công nợ, hủy đơn chưa thanh toán, lịch sử đơn, trả một phần/toàn phần, xuất CSV | Chưa nhận đơn sàn, trạng thái xử lý/đóng gói/giao, AWB/packing slip/tem, xử lý hàng loạt, gộp/tách, lọc theo kênh/mã vận đơn, ghi chú/tag, đơn COD và hoàn từ sàn | Cao sau khi có một connector thật |
+| IV. WMS / kho | Một tồn kho cấp cửa hàng; nhập, kiểm kê, điều chỉnh, lịch sử biến động, ngưỡng cảnh báo, khóa tồn khi bán | Chưa có nhiều kho/chi nhánh/vị trí, chuyển kho có trạng thái đang vận chuyển, quyền theo kho, giữ hàng theo kênh, buffer tồn, lô/hạn dùng/FEFO, hàng tồn lâu và báo cáo chênh lệch đa kho | Cao; cần mô hình kho trước khi đồng bộ tồn lên nhiều kênh |
+| V. Vận chuyển | Chưa có kết nối hãng vận chuyển hoặc vận đơn | Tạo đơn, nhãn, bảng giá, theo dõi trạng thái/thất bại, COD đang chờ/về, đối soát phí và COD | Tích hợp ngoài; chọn một hãng và thử sandbox/tài khoản thật trước |
+| VI. Tài chính/kế toán | Sổ quỹ, ca tiền mặt, thanh toán, công nợ khách/NCC, phiếu nhập, một số báo cáo doanh thu/lãi gộp | Chưa có đối soát sàn/hoa hồng/phí thanh toán/affiliate, dòng tiền tiền sàn giữ và COD đang đi, chi phí vận chuyển/marketing theo đơn, lãi ròng theo kênh, đối tác vận chuyển phải trả, hóa đơn điện tử và báo cáo thuế được xác nhận | Cao cho phần đối soát nội bộ; nhà cung cấp/pháp lý cho phần bên ngoài |
+| VII. CRM | Hồ sơ khách, lịch sử mua, số dư công nợ | Chưa có hội thoại đa kênh, giao việc CSKH, chat bot, đánh giá, voucher/flash sale, chiến dịch email/SMS, abandoned cart, phân hạng và hợp nhất khách trùng từ sàn | Trung bình; cần consent, dữ liệu kênh và chính sách riêng tư |
+| VIII. Báo cáo/phân tích | Dashboard, báo cáo doanh thu/sản phẩm/lãi gộp, CSV nhiều loại dữ liệu | Chưa có chiều sàn/kho/khu vực/marketing, COD, giao nhận, khách mới/quay lại, AOV/LTV, forecast, PDF và gửi lịch qua email | Cao cho báo cáo theo sổ đã có; chỉ thêm chỉ số có dữ liệu nguồn tin cậy |
+| IX. Tự động hóa | Một số quy tắc nghiệp vụ nằm trong giao dịch API; chưa có rule engine người dùng cấu hình | Chưa có quy tắc tự động, thông báo nhiều kênh, phân công đơn, workflow duyệt giá/chiết khấu/nhập-xuất | Sau khi nghiệp vụ và quyền đã ổn định |
+| X. Tích hợp/mở rộng | API nội bộ của Slink; chưa có API/webhook công khai hay connector ngoài | Kế toán, website, marketing ads, cổng thanh toán, hãng vận chuyển, hóa đơn, API key cho bên thứ ba, webhooks và app di động native | Lập hợp đồng sự kiện/API trước; phụ thuộc chọn đối tác và credentials |
+| XI. Bảo mật/quản trị | Mật khẩu băm, phiên, CSRF, giới hạn yêu cầu, RLS, vai trò, audit events append-only, công cụ backup/restore (chưa diễn tập); vừa thêm trang nhật ký nghiệp vụ cho chủ/quản lý | Trang nhật ký nghiệp vụ lọc được theo ngày/người/thao tác và tìm kiếm, nhưng API migration mới chưa áp dụng lên máy chủ trình duyệt đang chạy; chưa có nhật ký đăng nhập/sự kiện bảo mật, 2FA, ma trận quyền chi tiết theo module/hành động/kho/bản ghi, quản lý gói/dung lượng/API quota, giám sát và restore drill đã chạy | Rất cao; các yêu cầu dữ liệu/quyền trước mọi tích hợp đa kênh |
+| XII. Nhân sự/tiện ích | Mời nhân viên và vai trò; ghi người thao tác trên một số nghiệp vụ | Chưa có chấm công, KPI, hoa hồng/lương, quản lý tài liệu/hợp đồng, nhiệm vụ/nhắc việc, đa ngôn ngữ/tiền tệ | Thấp cho mục tiêu cửa hàng Việt Nam ban đầu; mở rộng theo khách hàng trả phí |
+
+## Những gì sản phẩm tham khảo cho thấy
+
+- Tài liệu KiotViet mô tả tồn riêng theo nhiều kho, chọn kho bán/nhập/kiểm, chuyển kho và quyền nhân viên theo kho; đây là phần WMS thật sự chứ không chỉ thêm một bộ lọc kho vào giao diện. [Hướng dẫn quản lý kho KiotViet](https://www.kiotviet.vn/huong-dan-su-dung-kiotviet/retail-thiet-lap/quan-ly-kho-hang/) và [giới thiệu đa kho](https://www.kiotviet.vn/kiotviet-ra-mat-tinh-nang-moi-quan-ly-da-kho/)
+- KiotViet và Sapo công khai chức năng đồng bộ sản phẩm/đơn/tồn từ sàn, nhưng hướng dẫn kết nối yêu cầu người bán cấp quyền cho ứng dụng. [Tính năng KiotViet](https://www.kiotviet.vn/phi-dich-vu) và [kết nối gian hàng qua Sapo](https://help.sapo.vn/ket-noi-kenh-va-gian-hang-tren-san-shopee-tiktok-shop-lazada-tiki-voi-sapo)
+- Haravan phân biệt app công khai dùng OAuth với app riêng dùng credential của cửa hàng; quyền API theo scope và webhook yêu cầu cấu hình callback HTTPS. [Haravan authentication](https://docs.haravan.com/docs/tutorials/authentication/authentication-and-authorization/), [scopes](https://docs.haravan.com/docs/omni-apis/access-scopes/) và [webhooks](https://docs.haravan.com/docs/tutorials/webhooks/connect-webhook/)
+- TikTok Shop yêu cầu app/partner và quyền scope phù hợp; connector OMS có thể cần review riêng. API có phiên bản và quy trình token; vì vậy không thể coi danh sách sàn là các adapter thay thế lẫn nhau hoặc cam kết tần suất “real-time” trước khi biết giới hạn từng API. [Partner API docs](https://partner.tiktokshop.com/docv2/api-document), [API versioning](https://partner.tiktokshop.com/docv2/page/api-versioning), [app review](https://partner.tiktokshop.com/docv2/page/app-review-process)
+
+## Thứ tự xây dựng đề xuất
+
+1. **Khóa đúng và an toàn cho sản phẩm lõi:** hoàn tất import cửa hàng, kiểm chứng nghiệp vụ trên PostgreSQL, tenant/role/concurrency, backup/restore và nghiệm thu iOS/Android theo roadmap hiện tại.
+2. **Hoàn thiện PIM nội bộ:** nghiệm thu luồng giá/thông tin hàng loạt từ CSV vừa thêm (xem trước, phiên bản dữ liệu, chống gửi trùng, audit); sau đó bổ sung nhóm/biến thể, bundle và bảng giá có quy tắc rõ.
+3. **Nền tảng WMS:** kho/chi nhánh, số dư theo kho, chuyển kho đang đi/đã nhận, phân quyền theo kho, kiểm kê và tổng hợp tồn. Không bật sync tồn đa kênh trước khi các sổ theo kho đúng và xử lý xung đột đã chứng minh.
+4. **Một lát cắt omnichannel hoàn chỉnh:** chốt một sàn trước; triển khai OAuth/callback, lưu token mã hóa và refresh, đồng bộ idempotent, inbox webhook, ánh xạ sản phẩm/đơn, lỗi/retry/đối soát và hủy kết nối. Cần tài khoản app/merchant, quyền API và môi trường thử nghiệm của đối tác.
+5. **Một hãng vận chuyển và COD:** tạo vận đơn, tracking, cập nhật trạng thái, phí/COD và đối soát hoàn chỉnh trước khi thêm hãng khác.
+6. **Mở rộng theo nhu cầu đã xác nhận:** đối soát sàn, hóa đơn điện tử/kế toán, CRM/chat, marketing, rule engine, báo cáo nâng cao, API/webhook công khai, gói dịch vụ và tiện ích nhân sự.
+
+## Cách đo tiến độ
+
+Danh sách này là phạm vi mục tiêu, không phải checklist để tuyên bố toàn bộ đã làm. Mỗi tính năng cần có mục tiêu, người dùng/role, dữ liệu nguồn, giao dịch/ledger, quyền, lỗi/retry, phụ thuộc và bằng chứng nghiệm thu. UI chỉ được bật khi thao tác phía sau có hiệu lực; tích hợp thiếu credential phải ghi rõ là chưa kết nối và không mô phỏng thành công.

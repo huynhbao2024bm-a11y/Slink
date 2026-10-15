@@ -9,6 +9,7 @@ const {
 } = require('node:crypto');
 const { promisify } = require('node:util');
 const { listStores, withUser } = require('./db');
+const { recordSecurityEvent } = require('./security-events');
 
 const scrypt = promisify(scryptCallback);
 const SESSION_COOKIE = 'slink_session';
@@ -248,7 +249,12 @@ function registerAuthRoutes(app, { pool, env }) {
       if (!found.rowCount) throw new ApiError(400, 'invalid_token', 'Liên kết xác nhận không hợp lệ hoặc đã hết hạn.');
       await client.query("SELECT set_config('app.user_id', $1, true)", [found.rows[0].user_id]);
       await client.query('UPDATE email_verification_tokens SET consumed_at = now() WHERE id = $1', [found.rows[0].id]);
-      await client.query("UPDATE users SET email_verified_at = now(), status = 'active', updated_at = now() WHERE id = $1 AND status = 'pending'", [found.rows[0].user_id]);
+      const activated = await client.query(
+        "UPDATE users SET email_verified_at = now(), status = 'active', updated_at = now() WHERE id = $1 AND status = 'pending' RETURNING id",
+        [found.rows[0].user_id]
+      );
+      if (!activated.rowCount) throw new ApiError(409, 'account_not_pending', 'Tài khoản không còn chờ xác nhận email. Hãy đăng nhập hoặc liên hệ hỗ trợ.');
+      await recordSecurityEvent(client, found.rows[0].user_id, 'email_verified');
       const claimed = await client.query(
         `SELECT id, store_id, role, invited_by FROM store_invitations
          WHERE claimed_user_id = $1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()
@@ -385,6 +391,7 @@ function registerAuthRoutes(app, { pool, env }) {
       );
       if (!updated.rowCount) throw new ApiError(400, 'invalid_token', 'Tài khoản không còn hoạt động. Hãy liên hệ quản lý.');
       await client.query('UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [userId]);
+      await recordSecurityEvent(client, userId, 'password_changed');
       await client.query('COMMIT');
       return { status: 'password_changed', message: 'Mật khẩu đã được cập nhật. Đăng nhập lại bằng mật khẩu mới.' };
     } catch (error) {
@@ -410,16 +417,22 @@ function registerAuthRoutes(app, { pool, env }) {
     const encoded = found.rowCount ? found.rows[0].password_hash : DUMMY_PASSWORD_HASH;
     const passwordMatches = await verifyPassword(password, encoded);
     if (!found.rowCount || !passwordMatches) {
+      if (found.rowCount) {
+        await withUser(pool, found.rows[0].id, (client) => recordSecurityEvent(client, found.rows[0].id, 'login_failed'));
+      }
       throw new ApiError(401, 'invalid_credentials', 'Email hoặc mật khẩu không đúng.');
     }
     const user = found.rows[0];
     const sessionToken = newToken();
     const csrfToken = newToken();
     const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
-    await withUser(pool, user.id, (client) => client.query(
-      'INSERT INTO sessions (user_id, token_digest, csrf_digest, expires_at) VALUES ($1, $2, $3, $4)',
-      [user.id, digest(sessionToken), digest(csrfToken), expiresAt]
-    ));
+    await withUser(pool, user.id, async (client) => {
+      const session = await client.query(
+        'INSERT INTO sessions (user_id, token_digest, csrf_digest, expires_at) VALUES ($1, $2, $3, $4) RETURNING id',
+        [user.id, digest(sessionToken), digest(csrfToken), expiresAt]
+      );
+      await recordSecurityEvent(client, user.id, 'login_succeeded', session.rows[0].id);
+    });
     const stores = await listStores(pool, user.id);
     setSessionCookies(reply, env, sessionToken, csrfToken);
     return { user: { id: user.id, email: user.email, displayName: user.display_name }, stores };
@@ -434,10 +447,13 @@ function registerAuthRoutes(app, { pool, env }) {
   app.post('/api/auth/logout', async (request, reply) => {
     const auth = await authenticate(pool, request);
     requireCsrf(request, env);
-    await withUser(pool, auth.userId, (client) => client.query(
-      'UPDATE sessions SET revoked_at = now() WHERE token_digest = $1 AND user_id = $2 AND revoked_at IS NULL',
-      [auth.tokenDigest, auth.userId]
-    ));
+    await withUser(pool, auth.userId, async (client) => {
+      const session = await client.query(
+        'UPDATE sessions SET revoked_at = now() WHERE token_digest = $1 AND user_id = $2 AND revoked_at IS NULL RETURNING id',
+        [auth.tokenDigest, auth.userId]
+      );
+      if (session.rowCount) await recordSecurityEvent(client, auth.userId, 'logout', session.rows[0].id);
+    });
     clearSessionCookies(reply, env);
     return { status: 'signed_out' };
   });

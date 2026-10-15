@@ -7,6 +7,14 @@ const { UUID_PATTERN, withStore } = require('./db');
 const EDIT_ROLES = new Set(['owner', 'manager', 'stockkeeper']);
 const MAX_VND = Number.MAX_SAFE_INTEGER;
 
+function canonicalQuantityText(value) {
+  const match = /^(\d{1,11})(?:\.(\d{1,3}))?$/.exec(String(value));
+  if (!match) return String(value);
+  const whole = BigInt(match[1]).toString();
+  const fraction = (match[2] || '').replace(/0+$/, '');
+  return whole + (fraction ? `.${fraction}` : '');
+}
+
 function requireEditor(role) {
   if (!EDIT_ROLES.has(role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền quản lý sản phẩm.');
 }
@@ -110,6 +118,93 @@ function describeImportConflict(products, existingRows) {
     ? `SKU ${skuConflicts.get(normalizedSku)}`
     : `mã vạch ${conflictProduct.barcode}`;
   return `Dòng ${conflictProduct.sourceLine}: ${conflictingValue} đã có trong cửa hàng. Không có dòng nào được nhập.`;
+}
+
+function validateBulkUpdateRows(input) {
+  if (!Array.isArray(input) || input.length < 1 || input.length > 200) {
+    throw new ApiError(400, 'validation_error', 'Mỗi lần cập nhật cần có từ 1 đến 200 dòng sản phẩm.');
+  }
+  const seenIds = new Map();
+  return input.map((row, index) => {
+    const line = Number.isSafeInteger(row?.sourceLine) && row.sourceLine >= 2 && row.sourceLine <= 1_000_000
+      ? row.sourceLine
+      : index + 2;
+    if (!row || typeof row !== 'object' || Array.isArray(row) || !UUID_PATTERN.test(String(row.productId || ''))) {
+      throw new ApiError(400, 'validation_error', `Dòng ${line}: mã sản phẩm không hợp lệ.`);
+    }
+    const allowedFields = new Set(['productId', 'version', 'sourceLine', 'sku', 'barcode', 'clearBarcode', 'name', 'category', 'unit', 'salePriceVnd', 'costVnd', 'lowStockThreshold']);
+    const unsupportedField = Object.keys(row).find((key) => !allowedFields.has(key));
+    if (unsupportedField) throw new ApiError(400, 'validation_error', `Dòng ${line}: trường ${unsupportedField} chưa được hỗ trợ trong cập nhật CSV.`);
+    const productId = String(row.productId).toLowerCase();
+    if (seenIds.has(productId)) throw new ApiError(400, 'duplicate_product_update', `Dòng ${line}: sản phẩm đã xuất hiện ở dòng ${seenIds.get(productId)}.`);
+    seenIds.set(productId, line);
+    if (!Number.isSafeInteger(row.version) || row.version < 1) {
+      throw new ApiError(400, 'validation_error', `Dòng ${line}: thiếu phiên bản dữ liệu hợp lệ. Hãy tải lại CSV sản phẩm trước khi sửa.`);
+    }
+
+    const update = { productId, version: row.version, sourceLine: line };
+    for (const [key, min, max] of [['sku', 1, 80], ['name', 1, 240], ['category', 1, 120], ['unit', 1, 40]]) {
+      if (row[key] === undefined || row[key] === null || row[key] === '') continue;
+      if (typeof row[key] !== 'string') throw new ApiError(400, 'validation_error', `Dòng ${line}: ${key} không hợp lệ.`);
+      const value = row[key].trim();
+      if (value.length < min || value.length > max) throw new ApiError(400, 'validation_error', `Dòng ${line}: ${key} có độ dài không hợp lệ.`);
+      update[key] = value;
+    }
+    if (row.barcode !== undefined && row.barcode !== null && row.barcode !== '') {
+      if (typeof row.barcode !== 'string') throw new ApiError(400, 'validation_error', `Dòng ${line}: mã vạch không hợp lệ.`);
+      const barcode = row.barcode.trim();
+      if (barcode.length < 3 || barcode.length > 80) throw new ApiError(400, 'validation_error', `Dòng ${line}: mã vạch phải có từ 3 đến 80 ký tự.`);
+      update.barcode = barcode;
+    }
+    if (row.clearBarcode !== undefined) {
+      if (row.clearBarcode !== true || update.barcode !== undefined) {
+        throw new ApiError(400, 'validation_error', `Dòng ${line}: chỉ được cập nhật hoặc xóa mã vạch, không thể dùng cả hai.`);
+      }
+      update.clearBarcode = true;
+    }
+    for (const key of ['salePriceVnd', 'costVnd']) {
+      if (row[key] === undefined || row[key] === null || row[key] === '') continue;
+      if (!Number.isSafeInteger(row[key]) || row[key] < 0 || row[key] > MAX_VND) {
+        throw new ApiError(400, 'validation_error', `Dòng ${line}: giá phải là số VND nguyên không âm.`);
+      }
+      update[key] = row[key];
+    }
+    if (row.lowStockThreshold !== undefined && row.lowStockThreshold !== null && row.lowStockThreshold !== '') {
+      const thresholdText = String(row.lowStockThreshold).trim();
+      if (!/^\d{1,11}(?:\.\d{1,3})?$/.test(thresholdText)) {
+        throw new ApiError(400, 'validation_error', `Dòng ${line}: ngưỡng tồn phải không âm và có tối đa 3 chữ số thập phân.`);
+      }
+      update.lowStockThreshold = canonicalQuantityText(thresholdText);
+    }
+    if (!['sku', 'name', 'category', 'unit', 'barcode', 'clearBarcode', 'salePriceVnd', 'costVnd', 'lowStockThreshold'].some((key) => Object.hasOwn(update, key))) {
+      throw new ApiError(400, 'validation_error', `Dòng ${line}: cần có ít nhất một giá trị muốn cập nhật.`);
+    }
+    return update;
+  });
+}
+
+function describeBulkUpdateConflict(items, existingRows) {
+  const byId = new Map(items.map((item) => [item.productId, item]));
+  const nextSkus = new Map();
+  const nextBarcodes = new Map();
+  for (const row of existingRows) {
+    const item = byId.get(row.id);
+    const sku = item?.sku ? item.sku.toLocaleLowerCase('vi') : row.sku_normalized;
+    const barcode = item?.clearBarcode ? null : (item?.barcode !== undefined ? item.barcode : row.barcode);
+    if (nextSkus.has(sku) && nextSkus.get(sku) !== row.id) {
+      const duplicate = byId.get(row.id) || byId.get(nextSkus.get(sku));
+      return `Dòng ${duplicate?.sourceLine || '?'}: SKU sau cập nhật bị trùng trong tệp. Không có dòng nào được cập nhật.`;
+    }
+    nextSkus.set(sku, row.id);
+    if (barcode) {
+      if (nextBarcodes.has(barcode) && nextBarcodes.get(barcode) !== row.id) {
+        const duplicate = byId.get(row.id) || byId.get(nextBarcodes.get(barcode));
+        return `Dòng ${duplicate?.sourceLine || '?'}: mã vạch sau cập nhật bị trùng trong tệp. Không có dòng nào được cập nhật.`;
+      }
+      nextBarcodes.set(barcode, row.id);
+    }
+  }
+  return null;
 }
 
 function registerProductRoutes(app, { pool, env }) {
@@ -258,6 +353,165 @@ function registerProductRoutes(app, { pool, env }) {
     }
   });
 
+  app.post('/api/stores/:storeId/products/bulk-update', async (request, reply) => {
+    const auth = await authenticate(pool, request);
+    requireCsrf(request, env);
+    const { storeId } = request.params;
+    if (!UUID_PATTERN.test(storeId)) throw new ApiError(400, 'validation_error', 'Cửa hàng không hợp lệ.');
+    const idempotencyKey = request.headers['idempotency-key'];
+    if (typeof idempotencyKey !== 'string' || idempotencyKey.length < 16 || idempotencyKey.length > 200) {
+      throw new ApiError(400, 'idempotency_key_required', 'Thiếu mã lưu thao tác an toàn. Hãy thử lại.');
+    }
+    const items = validateBulkUpdateRows(request.body?.items);
+    const requestHash = createHash('sha256').update(JSON.stringify(items)).digest();
+    const bulkUpdateId = randomUUID();
+    let outcome;
+    try {
+      outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
+      requireEditor(membership.role);
+      const reserved = await client.query(
+        `INSERT INTO idempotency_records (store_id, actor_user_id, idempotency_key, request_hash)
+         VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING RETURNING idempotency_key`,
+        [storeId, auth.userId, idempotencyKey, requestHash]
+      );
+      if (!reserved.rowCount) {
+        const previous = await client.query(
+          `SELECT request_hash, response_status, response_body FROM idempotency_records
+           WHERE store_id = $1 AND actor_user_id = $2 AND idempotency_key = $3 FOR UPDATE`,
+          [storeId, auth.userId, idempotencyKey]
+        );
+        const record = previous.rows[0];
+        if (!record || !Buffer.from(record.request_hash).equals(requestHash)) throw new ApiError(409, 'idempotency_conflict', 'Mã cập nhật đã được dùng cho bộ dữ liệu khác.');
+        if (!record.response_body || !record.response_status) throw new ApiError(409, 'request_in_progress', 'Tệp đang được xử lý. Hãy thử lại sau.');
+        return { status: record.response_status, body: record.response_body, replayed: true };
+      }
+
+      const productIds = items.map((item) => item.productId);
+      const locked = await client.query(
+        `SELECT id, sku, sku_normalized, barcode, name, category, unit, sale_price_vnd::text AS sale_price_vnd,
+                cost_vnd::text AS cost_vnd, low_stock_threshold::text AS low_stock_threshold,
+                inventory_tracked, status, version
+         FROM products WHERE store_id = $1 AND id = ANY($2::uuid[]) ORDER BY id FOR UPDATE`,
+        [storeId, productIds]
+      );
+      const currentById = new Map(locked.rows.map((row) => [row.id, row]));
+      for (const item of items) {
+        const current = currentById.get(item.productId);
+        if (!current || current.status !== 'active') throw new ApiError(409, 'product_not_found', `Dòng ${item.sourceLine}: không tìm thấy sản phẩm đang hoạt động. Không có dòng nào được cập nhật.`);
+        if (current.version !== item.version) throw new ApiError(409, 'version_conflict', `Dòng ${item.sourceLine}: sản phẩm đã được thay đổi sau khi tải CSV. Không có dòng nào được cập nhật; hãy tải lại tệp rồi áp dụng thay đổi.`);
+      }
+      const requestedSkus = items.filter((item) => item.sku).map((item) => item.sku.toLocaleLowerCase('vi'));
+      const requestedBarcodes = items.filter((item) => item.barcode).map((item) => item.barcode);
+      const externalConflicts = await client.query(
+        `SELECT id, sku_normalized, barcode FROM products
+         WHERE store_id = $1 AND NOT (id = ANY($2::uuid[]))
+           AND (sku_normalized = ANY($3::text[]) OR barcode = ANY($4::text[]))`,
+        [storeId, productIds, requestedSkus, requestedBarcodes]
+      );
+      const conflictMessage = describeBulkUpdateConflict(items, [...locked.rows, ...externalConflicts.rows]);
+      if (conflictMessage) throw new ApiError(409, 'product_conflict', conflictMessage);
+
+      const nextById = new Map();
+      const stagedRows = [];
+      items.forEach((item, index) => {
+        const old = currentById.get(item.productId);
+        const next = {
+          sku: item.sku ?? old.sku,
+          barcode: item.clearBarcode ? null : (item.barcode ?? old.barcode),
+          name: item.name ?? old.name,
+          category: item.category ?? old.category,
+          unit: item.unit ?? old.unit,
+          salePriceVnd: item.salePriceVnd ?? Number(old.sale_price_vnd),
+          costVnd: item.costVnd ?? Number(old.cost_vnd),
+          lowStockThreshold: item.lowStockThreshold ?? old.low_stock_threshold,
+        };
+        nextById.set(item.productId, next);
+        const changeSku = old.sku_normalized !== next.sku.toLocaleLowerCase('vi');
+        const changeBarcode = (old.barcode ?? null) !== (next.barcode ?? null);
+        if (changeSku || changeBarcode) {
+          const temporarySku = `slink-tmp-${bulkUpdateId}-${index}`;
+          stagedRows.push({ id: item.productId, temporarySku, temporarySkuNormalized: temporarySku.toLocaleLowerCase('vi'), changeSku, changeBarcode, version: item.version });
+        }
+      });
+      if (stagedRows.length) {
+        const staged = await client.query(
+          `UPDATE products AS p
+           SET sku = CASE WHEN stage.change_sku THEN stage.temporary_sku ELSE p.sku END,
+               sku_normalized = CASE WHEN stage.change_sku THEN stage.temporary_sku_normalized ELSE p.sku_normalized END,
+               barcode = CASE WHEN stage.change_barcode THEN NULL ELSE p.barcode END
+           FROM unnest($2::uuid[], $3::text[], $4::text[], $5::boolean[], $6::boolean[], $7::integer[])
+             AS stage(id, temporary_sku, temporary_sku_normalized, change_sku, change_barcode, version)
+           WHERE p.store_id = $1 AND p.id = stage.id AND p.version = stage.version`,
+          [storeId, stagedRows.map((row) => row.id), stagedRows.map((row) => row.temporarySku),
+            stagedRows.map((row) => row.temporarySkuNormalized), stagedRows.map((row) => row.changeSku),
+            stagedRows.map((row) => row.changeBarcode), stagedRows.map((row) => row.version)]
+        );
+        if (staged.rowCount !== stagedRows.length) throw new ApiError(409, 'version_conflict', 'Một sản phẩm vừa được thay đổi. Không có dòng nào được cập nhật; hãy tải CSV mới rồi thử lại.');
+      }
+
+      const updatedProducts = [];
+      for (const item of items) {
+        const old = currentById.get(item.productId);
+        const next = nextById.get(item.productId);
+        const changes = {};
+        for (const [key, before, after] of [
+          ['sku', old.sku, next.sku], ['barcode', old.barcode, next.barcode], ['name', old.name, next.name],
+          ['category', old.category, next.category], ['unit', old.unit, next.unit],
+          ['salePriceVnd', String(old.sale_price_vnd), String(next.salePriceVnd)],
+          ['costVnd', String(old.cost_vnd), String(next.costVnd)],
+          ['lowStockThreshold', String(old.low_stock_threshold), String(next.lowStockThreshold)],
+        ]) {
+          const previousValue = key === 'lowStockThreshold' ? canonicalQuantityText(before) : String(before ?? '');
+          const nextValue = key === 'lowStockThreshold' ? canonicalQuantityText(after) : String(after ?? '');
+          if (previousValue !== nextValue) changes[key] = { before: before ?? null, after };
+        }
+        if (Object.keys(changes).length === 0) {
+          updatedProducts.push({ id: old.id, sku: old.sku, version: old.version, unchanged: true });
+          continue;
+        }
+        const updated = await client.query(
+          `UPDATE products SET sku = $3, sku_normalized = $4, barcode = $5, name = $6, category = $7, unit = $8,
+               sale_price_vnd = $9, cost_vnd = $10, low_stock_threshold = $11,
+               version = version + 1, updated_at = now()
+           WHERE store_id = $1 AND id = $2 AND version = $12
+           RETURNING id, sku, barcode, name, category, unit, sale_price_vnd::text AS sale_price_vnd,
+                     cost_vnd::text AS cost_vnd, low_stock_threshold::text AS low_stock_threshold,
+                     inventory_tracked, status, version, updated_at`,
+          [storeId, item.productId, next.sku, next.sku.toLocaleLowerCase('vi'), next.barcode, next.name, next.category,
+            next.unit, next.salePriceVnd, next.costVnd, next.lowStockThreshold, item.version]
+        );
+        if (!updated.rowCount) throw new ApiError(409, 'version_conflict', `Dòng ${item.sourceLine}: sản phẩm vừa được thay đổi. Không có dòng nào được cập nhật.`);
+        if (next.costVnd !== Number(old.cost_vnd)) {
+          await client.query(
+            `INSERT INTO product_cost_history (store_id, product_id, unit_cost_vnd, source_type, actor_user_id)
+             VALUES ($1, $2, $3, 'manual_adjustment', $4)`,
+            [storeId, item.productId, next.costVnd, auth.userId]
+          );
+        }
+        await client.query(
+          `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, metadata)
+           VALUES ($1, $2, 'product.bulk_updated', 'product', $3, $4::jsonb)`,
+          [storeId, auth.userId, item.productId, JSON.stringify({ bulkUpdateId, sourceLine: item.sourceLine, changes })]
+        );
+        updatedProducts.push(updated.rows[0]);
+      }
+      const changedCount = updatedProducts.filter((product) => !product.unchanged).length;
+      const unchangedCount = updatedProducts.length - changedCount;
+      const body = { bulkUpdateId, count: updatedProducts.length, changedCount, unchangedCount, products: updatedProducts };
+      await client.query(
+        `UPDATE idempotency_records SET response_status = 200, response_body = $4::jsonb, completed_at = now()
+         WHERE store_id = $1 AND actor_user_id = $2 AND idempotency_key = $3`,
+        [storeId, auth.userId, idempotencyKey, JSON.stringify(body)]
+      );
+      return { status: 200, body, replayed: false };
+      });
+    } catch (error) {
+      return conflict(error);
+    }
+    if (outcome.replayed) reply.header('idempotent-replayed', 'true');
+    return reply.code(outcome.status).send(outcome.body);
+  });
+
   app.post('/api/stores/:storeId/products', async (request) => {
     const auth = await authenticate(pool, request);
     requireCsrf(request, env);
@@ -381,4 +635,4 @@ function registerProductRoutes(app, { pool, env }) {
   });
 }
 
-module.exports = { registerProductRoutes, validateProduct };
+module.exports = { registerProductRoutes, validateBulkUpdateRows, validateProduct };

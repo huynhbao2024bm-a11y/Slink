@@ -21,6 +21,8 @@ const { registerStoreSettingsRoutes } = require('./settings');
 const { registerExportRoutes } = require('./exports');
 const { registerStaffRoutes } = require('./staff');
 const { registerCashRegisterRoutes } = require('./cash-register');
+const { registerAuditRoutes } = require('./audit');
+const { registerSecurityRoutes } = require('./security');
 
 const APP_ROOT = path.resolve(__dirname, '..');
 const ASSETS = new Map([
@@ -154,6 +156,8 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
     registerExportRoutes(app, { pool, env });
     registerStaffRoutes(app, { pool, env });
     registerCashRegisterRoutes(app, { pool, env });
+    registerAuditRoutes(app, { pool, env });
+    registerSecurityRoutes(app, { pool, env });
   }
 
   for (const [route, fileName] of ASSETS) {

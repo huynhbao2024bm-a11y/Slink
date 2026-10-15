@@ -6,6 +6,8 @@
 
 Trợ lý vận hành cho cửa hàng bán lẻ nhỏ: bán nhanh, biết chính xác còn bao nhiêu hàng, nhớ khách và xem tiền lời trong ngày. Người dùng chính là chủ cửa hàng/thu ngân thao tác trên điện thoại; máy tính là màn hình quản lý rộng hơn.
 
+**Phạm vi mở rộng do người dùng yêu cầu (2026-10-15):** tiến tới vận hành đa kênh gồm gian hàng marketplace/website, OMS, PIM, WMS đa kho, vận chuyển/COD, đối soát phí và CRM. Toàn bộ danh sách gốc và bảng đối chiếu được lưu tại [`USER_FEATURE_INVENTORY.md`](USER_FEATURE_INVENTORY.md) và [`MULTICHANNEL_SCOPE.md`](MULTICHANNEL_SCOPE.md). Đây là phạm vi kế hoạch; chỉ các khả năng có bằng chứng trong roadmap mới được coi là đang hoạt động.
+
 ## Điều hướng
 
 | Khu vực | Việc chính | Kết quả mong muốn |
@@ -19,6 +21,10 @@ Trợ lý vận hành cho cửa hàng bán lẻ nhỏ: bán nhanh, biết chính
 | Tài chính | Mở/chốt ca, thu/chi, dòng tiền, nợ phải thu | Đối soát được tiền mặt và khoản còn lại |
 | Báo cáo | Doanh thu, lãi gộp ước tính, top sản phẩm | Hỗ trợ quyết định nhập hàng và ưu đãi |
 | Nhân viên | Mời thành viên, gán vai trò, tạm khóa hoặc mở lại quyền | Chủ cửa hàng kiểm soát ai được truy cập cửa hàng |
+| Nhật ký hoạt động | Lọc theo ngày, tìm thao tác/người/lý do và xem lịch sử nghiệp vụ | Chủ cửa hàng và quản lý truy vết các thay đổi đã ghi sổ |
+| Bảo mật tài khoản | Xem các phiên của chính mình, đăng xuất thiết bị khác và xem lịch sử đăng nhập/bảo mật | Người dùng phát hiện và thu hồi phiên lạ mà không xem được phiên của người khác |
+
+Màn hình **Bảo mật tài khoản** trong Cài đặt liệt kê tối đa 50 phiên còn hiệu lực và 50 sự kiện gần nhất của đúng tài khoản đang đăng nhập. Người dùng có thể thu hồi một phiên khác sau khi xác nhận; phiên hiện tại phải đăng xuất theo luồng thông thường. Nhật ký lưu loại sự kiện và thời điểm, không lưu mật khẩu, mã phiên, địa chỉ IP hoặc vị trí. Migration/API/UI và PGlite acceptance đã được thêm; native PostgreSQL và trình duyệt sau migration vẫn cần nghiệm thu.
 
 ## Luồng nghiệp vụ cốt lõi
 
@@ -30,6 +36,8 @@ Trợ lý vận hành cho cửa hàng bán lẻ nhỏ: bán nhanh, biết chính
 5. **Đối soát ca tiền mặt:** chủ cửa hàng, quản lý hoặc thu ngân mở một ca cho quầy bằng số tiền đầu ca đã đếm. Mọi giao dịch tiền mặt phải gắn với ca đang mở; chuyển khoản, QR và các khoản không phải tiền mặt không làm thay đổi tiền dự kiến trong quầy. Khi chốt ca, người thao tác nhập số tiền thực đếm; chênh lệch bắt buộc có lý do và được ghi thành bút toán cùng sự kiện kiểm toán. Chỉ một ca được mở cho mỗi cửa hàng; các giao dịch tiền mặt khóa cùng ca để thao tác chốt không bỏ sót giao dịch đang chạy. API và sổ cái đã được chấp nhận trên PGlite dùng một lần, bao gồm bán hàng có tiền thối, trả tiền mặt, thu nợ, trả nhà cung cấp, nhập hàng có thanh toán, chênh lệch, gửi lại và rollback khi audit lỗi. PostgreSQL thật, đồng thời giữa thiết bị và giao diện trên trình duyệt vẫn cần nghiệm thu.
 6. **Xuất và khôi phục dữ liệu:** từ các màn hình danh mục, đơn hàng, khách hàng, kho và tài chính, chủ cửa hàng có thể chọn bộ dữ liệu để tải CSV từ máy chủ. Tệp giữ nguyên số VND nguyên, hỗ trợ chia theo ngày địa phương của cửa hàng và báo lỗi rõ nếu quá 50.000 dòng; bản xuất sản phẩm đã được tải và xác minh BOM UTF-8 trên PGlite cục bộ, các bộ khác vẫn cần nghiệm thu trên PostgreSQL và điện thoại. Xuất CSV không thay thế backup/restore: quy trình sao lưu và khôi phục có kiểm soát ở máy chủ vẫn phải được xây dựng và diễn tập trước khi dùng thật. Ứng dụng không cung cấp sao lưu/khôi phục JSON trên trình duyệt.
 7. **Quản lý nhân viên:** chủ cửa hàng mời bằng email và chọn quản lý, thu ngân, nhân viên kho hoặc kế toán. Lời mời có thời hạn 7 ngày; người nhận tạo tài khoản hoặc đăng nhập bằng đúng email, xác minh email rồi mới có thành viên hoạt động. Chủ cửa hàng có thể gửi lại/thu hồi lời mời, đổi vai trò hoặc tạm khóa thành viên; quyền chủ cửa hàng không thể cấp qua lời mời hay đổi tại màn hình này. Mọi thay đổi được ghi vào nhật ký cửa hàng. Luồng này đã chạy trên cơ sở PGlite dùng một lần; gửi email thật và PostgreSQL thật vẫn cần nghiệm thu.
+
+8. **Cập nhật danh mục hàng loạt:** người có quyền quản lý sản phẩm tải CSV hiện tại từ Slink, giữ nguyên mã sản phẩm và phiên bản dữ liệu, sửa một hay nhiều trường được hỗ trợ, rồi tải lên để xem trước. Bản xem trước đối chiếu giá trị trong CSV xuất với giá trị mới; giá trị cũ chỉ là ảnh chụp của tệp, còn máy chủ xác minh phiên bản trước khi lưu. Ô cập nhật trống nghĩa là giữ nguyên; để xóa mã vạch phải ghi “Có” ở cột riêng “Xóa mã vạch”, thao tác này không thể kết hợp với cập nhật mã vạch trên cùng dòng. Giá bán/giá vốn là VND nguyên. Máy chủ kiểm tra quyền, cửa hàng, phiên bản, mã SKU/barcode trùng và toàn bộ dữ liệu trước khi ghi; batch được lưu nguyên tử, có mã chống gửi trùng và audit theo từng sản phẩm. Kết quả phân biệt số sản phẩm thực sự thay đổi với số dòng giống dữ liệu cũ. Giá vốn tiếp tục ghi lịch sử. Thay đổi tồn kho không được đưa vào thao tác này; kiểm kê/nhập hàng vẫn là nguồn duy nhất để thay đổi số lượng. API đã được nghiệm thu trên PGlite tạm với đổi SKU/mã vạch, gửi lại và rollback; giao diện chỉ được mở xem trên cửa hàng rỗng. Xuất tệp, tải CSV, xem trước trên trình duyệt và PostgreSQL thật vẫn chưa được nghiệm thu.
 
 ### Ranh giới quyền xem tài chính
 
