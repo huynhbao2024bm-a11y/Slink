@@ -1072,7 +1072,7 @@
     const pendingNote = checkoutPendingPayload ? `<div class='modal-note' style='margin:0 14px 10px'>Có đơn đang chờ xác nhận. <button class='link-button' data-action='retry-pending-sale'>Kiểm tra đơn →</button></div>` : '';
     const rows = cart.map(function (item) {
       const product = productById(item.id); if (!product) return '';
-      return `<div class='cart-row'><div><div class='cart-item-name'>${esc(product.name)}</div><div class='cart-item-price'>${money(product.price)} / ${esc(product.unit)}</div></div><div class='qty-control'><button data-action='cart-qty' data-id='${product.id}' data-delta='-1' ${checkoutPendingPayload ? 'disabled' : ''} aria-label='Giảm'>−</button><button data-action='cart-qty-edit' data-id='${product.id}' ${checkoutPendingPayload ? 'disabled' : ''} aria-label='Sửa số lượng'>${number(item.qty)}</button><button data-action='cart-qty' data-id='${product.id}' data-delta='1' ${checkoutPendingPayload || item.qty >= product.stock ? 'disabled' : ''} aria-label='Tăng'>＋</button></div></div>`;
+      return `<div class='cart-row'><div><div class='cart-item-name'>${esc(product.name)}</div><div class='cart-item-price'>${money(product.price)} / ${esc(product.unit)}</div></div><div class='qty-control'><button data-action='cart-qty' data-id='${product.id}' data-delta='-1' ${checkoutPendingPayload ? 'disabled' : ''} aria-label='Giảm'>−</button><button data-action='cart-qty-edit' data-id='${product.id}' ${checkoutPendingPayload ? 'disabled' : ''} aria-label='Sửa số lượng'>${number(item.qty)}</button><button data-action='cart-qty' data-id='${product.id}' data-delta='1' ${checkoutPendingPayload || (product.inventoryTracked && item.qty >= product.stock) ? 'disabled' : ''} aria-label='Tăng'>＋</button></div></div>`;
     }).join('');
     return `<section class='panel cart-panel'><div class='cart-heading'><h2>Đơn hàng mới</h2><span>${number(totals.count)} sản phẩm</span></div><div class='cart-customer'><button data-action='pick-customer' ${checkoutPendingPayload ? 'disabled' : ''}><span class='avatar' style='width:24px;height:24px;font-size:8px'>${customer ? initials(customer.name) : '+'}</span><span>${customer ? esc(customer.name) : 'Thêm khách hàng'}</span><strong>${customer ? esc(customer.phone) : '＋'}</strong></button></div>${pendingNote}<div class='cart-items'>${rows || `<div class='cart-empty'><div><span>🛍️</span>${checkoutPendingPayload ? 'Đơn đang chờ xác nhận.' : 'Chọn sản phẩm để bắt đầu đơn hàng'}</div></div>`}</div><div class='cart-totals'><div class='cart-total-line'><span>Tạm tính</span><strong>${money(totals.subtotal)}</strong></div><button class='cart-total-line' data-action='discount' ${checkoutPendingPayload ? 'disabled' : ''} style='border:0;background:transparent;padding:0;text-align:left'><span>Giảm giá <span style='color:#4a7b58'>＋</span></span><strong>${totals.discount ? '−' + money(totals.discount) : 'Thêm'}</strong></button><div class='cart-total-line total'><span>Khách cần trả</span><strong>${money(totals.total)}</strong></div></div><div class='cart-footer'><button class='btn btn-primary' data-action='checkout' ${cart.length || checkoutPendingPayload ? '' : 'disabled'}>${checkoutPendingPayload ? 'Kiểm tra đơn đang chờ' : 'Thanh toán'} <span style='margin-left:auto'>${money(checkoutPendingPayload ? checkoutPendingPayload.totalVnd : totals.total)} →</span></button><div class='cart-hint'>${checkoutPendingPayload ? 'Thử lại dùng đúng thông tin đã gửi trước đó.' : 'Có thể thêm khách hàng và giảm giá trước khi thu tiền'}</div></div></section>`;
   }
@@ -1080,11 +1080,11 @@
   function renderPOS() {
     const query = document.getElementById('pos-search') ? document.getElementById('pos-search').value : '';
     const sourceProducts = posSearchTerm ? posProducts : store.products;
-    const products = filteredProducts(query, categoryFilter, sourceProducts).filter(function (product) { return product.stock > 0; });
+    const products = filteredProducts(query, categoryFilter, sourceProducts).filter(function (product) { return !product.inventoryTracked || product.stock > 0; });
     const categories = ['Tất cả'].concat(Array.from(new Set(store.products.map(function (product) { return product.category; }))));
     const totals = cartTotals();
     return pageHeading('Bán hàng', 'Chọn sản phẩm, thêm vào đơn và thu tiền ngay tại quầy.', `<button class='btn btn-secondary' data-action='scan'>${icon('scan', 14)} Nhập mã</button><button class='btn btn-secondary hide-on-mobile' data-route='orders'>Đơn gần đây</button>`) +
-      `<div class='pos-layout'><div><div class='pos-tools'><div class='search-wrap pos-search'><span class='search-symbol'>⌕</span><input class='input' id='pos-search' type='search' placeholder='Tìm sản phẩm hoặc SKU…' value='${esc(query)}' aria-label='Tìm sản phẩm'></div><button class='btn btn-secondary' data-action='scan' aria-label='Nhập mã'>${icon('scan', 15)}</button></div><div class='category-scroll'>${categories.map(function (category) { return `<button class='pos-category ${categoryFilter === category ? 'active' : ''}' data-action='category' data-category='${esc(category)}'>${esc(category)}</button>`; }).join('')}</div><div class='pos-product-grid' id='pos-products'>${products.map(function (product) { return `<button class='pos-product' data-action='add-cart' data-id='${product.id}'><span class='product-thumb ${product.tone || 'product-sage'}'>${esc(product.emoji || '📦')}</span><span class='pos-stock'>Còn ${number(product.stock)}</span><strong>${esc(product.name)}</strong><small>${esc(product.sku)}</small><span class='pos-price'>${money(product.price)}</span></button>`; }).join('') || `<div class='panel empty-state' style='grid-column:1/-1'><strong>Không có sản phẩm còn hàng</strong><span>Kiểm tra danh mục hoặc nhập kho.</span></div>`}</div></div>${cartPanel()}</div><div class='pos-mobile-cart'><button class='btn' data-action='open-cart'><span class='mobile-cart-count'>${number(totals.count)}</span><span>${totals.count ? 'Xem giỏ hàng' : 'Giỏ hàng đang trống'}</span><strong>${money(totals.total)}　→</strong></button></div><div class='drawer-cart' id='drawer-cart'>${cartPanel()}</div>`;
+      `<div class='pos-layout'><div><div class='pos-tools'><div class='search-wrap pos-search'><span class='search-symbol'>⌕</span><input class='input' id='pos-search' type='search' placeholder='Tìm sản phẩm hoặc SKU…' value='${esc(query)}' aria-label='Tìm sản phẩm'></div><button class='btn btn-secondary' data-action='scan' aria-label='Nhập mã'>${icon('scan', 15)}</button></div><div class='category-scroll'>${categories.map(function (category) { return `<button class='pos-category ${categoryFilter === category ? 'active' : ''}' data-action='category' data-category='${esc(category)}'>${esc(category)}</button>`; }).join('')}</div><div class='pos-product-grid' id='pos-products'>${products.map(function (product) { return `<button class='pos-product' data-action='add-cart' data-id='${product.id}'><span class='product-thumb ${product.tone || 'product-sage'}'>${esc(product.emoji || '📦')}</span><span class='pos-stock'>${product.inventoryTracked ? `Còn ${number(product.stock)}` : 'Không theo dõi tồn'}</span><strong>${esc(product.name)}</strong><small>${esc(product.sku)}</small><span class='pos-price'>${money(product.price)}</span></button>`; }).join('') || `<div class='panel empty-state' style='grid-column:1/-1'><strong>Chưa có sản phẩm để bán</strong><span>Thêm sản phẩm hoặc nhập kho mặt hàng có theo dõi tồn.</span></div>`}</div></div>${cartPanel()}</div><div class='pos-mobile-cart'><button class='btn' data-action='open-cart'><span class='mobile-cart-count'>${number(totals.count)}</span><span>${totals.count ? 'Xem giỏ hàng' : 'Giỏ hàng đang trống'}</span><strong>${money(totals.total)}　→</strong></button></div><div class='drawer-cart' id='drawer-cart'>${cartPanel()}</div>`;
   }
 
   function orderRows(orders) {
@@ -2245,11 +2245,11 @@
 
   function addProductToCart(product) {
     if (checkoutPendingPayload) { toast('Đang chờ xác nhận đơn', 'Hãy kiểm tra hoặc gửi lại đơn trước khi tạo đơn mới.', 'error'); return false; }
-    if (!product || !(product.stock > 0)) { toast('Sản phẩm đã hết hàng', 'Hãy nhập kho trước khi bán.', 'error'); return false; }
+    if (!product || (product.inventoryTracked && !(product.stock > 0))) { toast('Sản phẩm đã hết hàng', 'Hãy nhập kho trước khi bán.', 'error'); return false; }
     const current = cart.find(function (item) { return item.id === product.id; });
-    const remaining = product.stock - (current ? current.qty : 0);
-    if (!(remaining > 0)) { toast('Không đủ số lượng tồn', 'Giỏ hàng đã đạt số lượng đang có trong kho.', 'error'); return false; }
-    const increment = Math.min(1, remaining);
+    const remaining = product.inventoryTracked ? product.stock - (current ? current.qty : 0) : Infinity;
+    if (product.inventoryTracked && !(remaining > 0)) { toast('Không đủ số lượng tồn', 'Giỏ hàng đã đạt số lượng đang có trong kho.', 'error'); return false; }
+    const increment = product.inventoryTracked ? Math.min(1, remaining) : 1;
     if (current) current.qty += increment;
     else cart.push({ id: product.id, qty: increment });
     render();
@@ -2265,7 +2265,7 @@
     const item = cart.find(function (x) { return x.id === id; }); const p = productById(id); if (!item) return;
     item.qty += Number(delta);
     if (item.qty <= 0) cart = cart.filter(function (x) { return x.id !== id; });
-    else if (p && item.qty > p.stock) { item.qty = p.stock; toast('Đã đạt số lượng tồn', 'Kho hiện còn ' + p.stock + ' ' + p.unit + '.', 'error'); }
+    else if (p && p.inventoryTracked && item.qty > p.stock) { item.qty = p.stock; toast('Đã đạt số lượng tồn', 'Kho hiện còn ' + p.stock + ' ' + p.unit + '.', 'error'); }
     render();
   }
 
@@ -2274,7 +2274,9 @@
     const item = cart.find(function (row) { return row.id === id; });
     const product = productById(id);
     if (!item || !product) return;
-    const form = `<form id='entity-form' data-form='cart-quantity' data-id='${product.id}'><div class='form-field'><label class='input-label'>Số lượng · ${esc(product.unit)}</label><input class='input' name='quantity' type='number' min='0.001' max='${product.stock}' step='0.001' value='${item.qty}' required/><small class='muted'>Còn ${number(product.stock)} ${esc(product.unit)} trong kho</small></div><div class='modal-note'>Số lượng được ghi vào đơn khi bạn hoàn tất thanh toán.</div></form>`;
+    const stockLimit = product.inventoryTracked ? `max='${product.stock}'` : '';
+    const stockNote = product.inventoryTracked ? `Còn ${number(product.stock)} ${esc(product.unit)} trong kho` : 'Mặt hàng này không theo dõi tồn kho.';
+    const form = `<form id='entity-form' data-form='cart-quantity' data-id='${product.id}'><div class='form-field'><label class='input-label'>Số lượng · ${esc(product.unit)}</label><input class='input' name='quantity' type='number' min='0.001' ${stockLimit} step='0.001' value='${item.qty}' required/><small class='muted'>${stockNote}</small></div><div class='modal-note'>Số lượng được ghi vào đơn khi bạn hoàn tất thanh toán.</div></form>`;
     showModal('Thay đổi số lượng', product.name, form, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Hủy</button><button class='btn btn-primary' type='submit' form='entity-form'>Cập nhật</button>`);
   }
 
@@ -2285,7 +2287,7 @@
     const quantity = Number(new FormData(form).get('quantity'));
     if (!item || !product) return closeModal();
     if (!Number.isFinite(quantity) || quantity <= 0 || Math.abs(quantity * 1000 - Math.round(quantity * 1000)) > 1e-6) return toast('Số lượng không hợp lệ', 'Nhập số lượng lớn hơn 0, tối đa 3 chữ số thập phân.', 'error');
-    if (quantity > product.stock) return toast('Không đủ hàng trong kho', `Hiện còn ${number(product.stock)} ${product.unit}.`, 'error');
+    if (product.inventoryTracked && quantity > product.stock) return toast('Không đủ hàng trong kho', `Hiện còn ${number(product.stock)} ${product.unit}.`, 'error');
     item.qty = quantity;
     closeModal();
     render();
@@ -2850,9 +2852,9 @@
       const normalized = code.toLocaleLowerCase('vi');
       const product = products.find(function (item) { return item.sku.toLocaleLowerCase('vi') === normalized || item.barcode === code || item.name.toLocaleLowerCase('vi') === normalized; });
       if (!product) return toast('Không tìm thấy sản phẩm', 'Kiểm tra lại mã SKU, mã vạch hoặc tên chính xác.', 'error');
-      if (!(product.stock > 0)) return toast('Sản phẩm đã hết hàng', 'Hãy nhập kho trước khi bán.', 'error');
+      if (product.inventoryTracked && !(product.stock > 0)) return toast('Sản phẩm đã hết hàng', 'Hãy nhập kho trước khi bán.', 'error');
       const current = cart.find(function (item) { return item.id === product.id; });
-      if (current && current.qty >= product.stock) return toast('Không đủ số lượng tồn', 'Giỏ hàng đã đạt số lượng đang có trong kho.', 'error');
+      if (product.inventoryTracked && current && current.qty >= product.stock) return toast('Không đủ số lượng tồn', 'Giỏ hàng đã đạt số lượng đang có trong kho.', 'error');
       closeModal();
       page = 'pos';
       if (!addProductToCart(product)) return;
@@ -3331,7 +3333,7 @@
       const requestNumber = ++posSearchRequestNumber;
       window.clearTimeout(posSearchTimer);
       posSearchTerm = query;
-      if (!query) { posProducts = store.products.slice(); const list = document.getElementById('pos-products'); if (list) list.innerHTML = filteredProducts('', categoryFilter, posProducts).filter(function (p) { return p.stock > 0; }).map(function (p) { return `<button class='pos-product' data-action='add-cart' data-id='${p.id}'><span class='product-thumb ${p.tone || 'product-sage'}'>${esc(p.emoji || '📦')}</span><span class='pos-stock'>Còn ${number(p.stock)}</span><strong>${esc(p.name)}</strong><small>${esc(p.sku)}</small><span class='pos-price'>${money(p.price)}</span></button>`; }).join('') || `<div class='panel empty-state' style='grid-column:1/-1'><strong>Không có sản phẩm còn hàng</strong><span>Kiểm tra danh mục hoặc nhập kho.</span></div>`; }
+      if (!query) { posProducts = store.products.slice(); const list = document.getElementById('pos-products'); if (list) list.innerHTML = filteredProducts('', categoryFilter, posProducts).filter(function (p) { return !p.inventoryTracked || p.stock > 0; }).map(function (p) { return `<button class='pos-product' data-action='add-cart' data-id='${p.id}'><span class='product-thumb ${p.tone || 'product-sage'}'>${esc(p.emoji || '📦')}</span><span class='pos-stock'>${p.inventoryTracked ? `Còn ${number(p.stock)}` : 'Không theo dõi tồn'}</span><strong>${esc(p.name)}</strong><small>${esc(p.sku)}</small><span class='pos-price'>${money(p.price)}</span></button>`; }).join('') || `<div class='panel empty-state' style='grid-column:1/-1'><strong>Chưa có sản phẩm để bán</strong><span>Thêm sản phẩm hoặc nhập kho mặt hàng có theo dõi tồn.</span></div>`; }
       else {
         const list = document.getElementById('pos-products');
         if (list) list.innerHTML = `<div class='panel empty-state' style='grid-column:1/-1'>Đang tìm trong danh mục…</div>`;
@@ -3341,7 +3343,7 @@
             if (requestNumber !== posSearchRequestNumber || page !== 'pos') return;
             posProducts = result.products.map(mapProduct);
             const next = document.getElementById('pos-products');
-            if (next) next.innerHTML = filteredProducts(query, categoryFilter, posProducts).filter(function (p) { return p.stock > 0; }).map(function (p) { return `<button class='pos-product' data-action='add-cart' data-id='${p.id}'><span class='product-thumb ${p.tone || 'product-sage'}'>${esc(p.emoji || '📦')}</span><span class='pos-stock'>Còn ${number(p.stock)}</span><strong>${esc(p.name)}</strong><small>${esc(p.sku)}</small><span class='pos-price'>${money(p.price)}</span></button>`; }).join('') || `<div class='panel empty-state' style='grid-column:1/-1'><strong>Không có sản phẩm phù hợp</strong><span>Thử từ khóa khác.</span></div>`;
+            if (next) next.innerHTML = filteredProducts(query, categoryFilter, posProducts).filter(function (p) { return !p.inventoryTracked || p.stock > 0; }).map(function (p) { return `<button class='pos-product' data-action='add-cart' data-id='${p.id}'><span class='product-thumb ${p.tone || 'product-sage'}'>${esc(p.emoji || '📦')}</span><span class='pos-stock'>${p.inventoryTracked ? `Còn ${number(p.stock)}` : 'Không theo dõi tồn'}</span><strong>${esc(p.name)}</strong><small>${esc(p.sku)}</small><span class='pos-price'>${money(p.price)}</span></button>`; }).join('') || `<div class='panel empty-state' style='grid-column:1/-1'><strong>Không có sản phẩm phù hợp</strong><span>Thử từ khóa khác.</span></div>`;
           } catch (error) {
             if (requestNumber !== posSearchRequestNumber) return;
             if (error.status === 401) showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
