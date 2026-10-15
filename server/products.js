@@ -413,6 +413,7 @@ function registerProductRoutes(app, { pool, env }) {
       return { valid: !conflictMessage, count: items.length, conflict: conflictMessage };
     });
   });
+
   app.post('/api/stores/:storeId/products/bulk-update', async (request, reply) => {
     const auth = await authenticate(pool, request);
     requireCsrf(request, env);
@@ -640,6 +641,16 @@ function registerProductRoutes(app, { pool, env }) {
           lowStockThreshold: product.lowStockThreshold ?? Number(old.low_stock_threshold),
           inventoryTracked: product.inventoryTracked ?? old.inventory_tracked,
         };
+        if (old.inventory_tracked && !next.inventoryTracked) {
+          const balance = await client.query(
+            `SELECT on_hand > 0 AS has_on_hand, reserved > 0 AS has_reserved
+             FROM inventory_balances WHERE store_id = $1 AND product_id = $2 FOR UPDATE`,
+            [storeId, productId]
+          );
+          if (!balance.rowCount || balance.rows[0].has_on_hand || balance.rows[0].has_reserved) {
+            throw new ApiError(409, 'inventory_tracking_change_requires_zero', 'Hãy điều chỉnh tồn thực tế và số lượng đang giữ về 0 trước khi tắt theo dõi tồn kho.');
+          }
+        }
         const updated = await client.query(
           `UPDATE products SET sku = $3, sku_normalized = $4, barcode = $5, name = $6, category = $7, unit = $8,
                sale_price_vnd = $9, cost_vnd = $10, low_stock_threshold = $11, inventory_tracked = $12,

@@ -67,7 +67,7 @@ const EXPORTS = {
             SELECT movement_type, quantity_delta, reason, occurred_at FROM inventory_movements m
             WHERE m.store_id = p.store_id AND m.product_id = p.id ORDER BY m.occurred_at DESC, m.id DESC LIMIT 1
           ) latest ON true
-          WHERE p.store_id = $1`,
+          WHERE p.store_id = $1 AND p.inventory_tracked = true`,
   },
   'inventory-movements': {
     filename: 'slink-bien-dong-kho.csv',

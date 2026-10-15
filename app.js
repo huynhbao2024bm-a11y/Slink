@@ -998,7 +998,7 @@
     return `<div class='page-heading'><div><h1>${esc(title)}</h1><p>${esc(subtitle || '')}</p></div><div class='heading-actions'>${actions || ''}</div></div>`;
   }
 
-  function lowStockProducts() { return store.products.filter(function (p) { return p.stock <= p.minStock; }).sort(function (a, b) { return a.stock - b.stock; }); }
+  function lowStockProducts() { return store.products.filter(function (p) { return p.inventoryTracked && p.stock <= p.minStock; }).sort(function (a, b) { return a.stock - b.stock; }); }
   function chartDays(days) {
     if (!analyticsData || !Array.isArray(analyticsData.days)) return [];
     return analyticsData.days.map(function (item) {
@@ -1034,6 +1034,7 @@
   }
 
   function stockBadge(product) {
+    if (!product.inventoryTracked) return `<span class='badge badge-neutral'>Không theo dõi tồn</span>`;
     if (product.stock <= 0) return `<span class='badge badge-danger'>Hết hàng</span>`;
     if (product.stock <= product.minStock) return `<span class='badge badge-warning'>Sắp hết</span>`;
     return `<span class='badge badge-success'>Đang bán</span>`;
@@ -1042,13 +1043,13 @@
   function productRow(product) {
     const canEdit = ['owner', 'manager', 'stockkeeper'].includes(store.role);
     const showCost = store.role !== 'cashier';
-    return `<tr><td><div class='product-cell'><span class='product-thumb ${product.tone || 'product-sage'}'>${esc(product.emoji || '📦')}</span><span class='product-name-stack'><strong>${esc(product.name)}</strong><small>${esc(product.sku)}</small></span></div></td><td>${esc(product.category)}</td><td class='text-right'>${money(product.price)}</td>${showCost ? `<td class='text-right'>${money(product.cost)}</td>` : ''}<td class='text-right'><span class='stock-number ${product.stock <= 0 ? 'out' : product.stock <= product.minStock ? 'low' : ''}'>${number(product.stock)} ${esc(product.unit)}</span></td><td>${stockBadge(product)}</td><td class='text-right'>${canEdit ? `<button class='row-action' data-action='edit-product' data-id='${product.id}' aria-label='Sửa ${esc(product.name)}'>•••</button>` : ''}</td></tr>`;
+    return `<tr><td><div class='product-cell'><span class='product-thumb ${product.tone || 'product-sage'}'>${esc(product.emoji || '📦')}</span><span class='product-name-stack'><strong>${esc(product.name)}</strong><small>${esc(product.sku)}</small></span></div></td><td>${esc(product.category)}</td><td class='text-right'>${money(product.price)}</td>${showCost ? `<td class='text-right'>${money(product.cost)}</td>` : ''}<td class='text-right'><span class='stock-number ${product.inventoryTracked && product.stock <= 0 ? 'out' : product.inventoryTracked && product.stock <= product.minStock ? 'low' : ''}'>${product.inventoryTracked ? `${number(product.stock)} ${esc(product.unit)}` : '—'}</span></td><td>${stockBadge(product)}</td><td class='text-right'>${canEdit ? `<button class='row-action' data-action='edit-product' data-id='${product.id}' aria-label='Sửa ${esc(product.name)}'>•••</button>` : ''}</td></tr>`;
   }
 
   function productMobileCard(product) {
     const canEdit = ['owner', 'manager', 'stockkeeper'].includes(store.role);
     const tag = canEdit ? 'button' : 'div';
-    return `<${tag} class='product-mobile-card' ${canEdit ? `data-action='edit-product' data-id='${product.id}'` : ''} style='width:100%;text-align:left'><span class='product-thumb ${product.tone || 'product-sage'}'>${esc(product.emoji || '📦')}</span><span class='product-mobile-info'><strong>${esc(product.name)}</strong><small>${esc(product.sku)} · ${esc(product.category)}</small></span><span class='product-mobile-side'><strong>${money(product.price)}</strong><small>${product.stock <= 0 ? 'Hết hàng' : `Còn ${number(product.stock)} ${esc(product.unit)}`}</small></span></${tag}>`;
+    return `<${tag} class='product-mobile-card' ${canEdit ? `data-action='edit-product' data-id='${product.id}'` : ''} style='width:100%;text-align:left'><span class='product-thumb ${product.tone || 'product-sage'}'>${esc(product.emoji || '📦')}</span><span class='product-mobile-info'><strong>${esc(product.name)}</strong><small>${esc(product.sku)} · ${esc(product.category)}</small></span><span class='product-mobile-side'><strong>${money(product.price)}</strong><small>${product.inventoryTracked ? (product.stock <= 0 ? 'Hết hàng' : `Còn ${number(product.stock)} ${esc(product.unit)}`) : 'Không theo dõi tồn'}</small></span></${tag}>`;
   }
 
   function renderProducts() {
