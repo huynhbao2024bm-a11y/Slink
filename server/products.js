@@ -237,6 +237,30 @@ function registerProductRoutes(app, { pool, env }) {
     });
   });
 
+  app.post('/api/stores/:storeId/products/import/preview', async (request) => {
+    const auth = await authenticate(pool, request);
+    requireCsrf(request, env);
+    const { storeId } = request.params;
+    if (!UUID_PATTERN.test(storeId)) throw new ApiError(400, 'validation_error', 'Cửa hàng không hợp lệ.');
+    const products = validateImportRows(request.body?.items);
+    const skuValues = products.map((product) => product.sku.toLocaleLowerCase('vi'));
+    const barcodeValues = products.map((product) => product.barcode).filter(Boolean);
+    return withStore(pool, auth.userId, storeId, async (client, membership) => {
+      requireEditor(membership.role);
+      const existing = await client.query(
+        `SELECT sku, sku_normalized, barcode FROM products
+         WHERE store_id = $1 AND (sku_normalized = ANY($2::text[]) OR barcode = ANY($3::text[]))`,
+        [storeId, skuValues, barcodeValues]
+      );
+      const conflictMessage = describeImportConflict(products, existing.rows);
+      return {
+        valid: !conflictMessage,
+        count: products.length,
+        conflict: conflictMessage,
+      };
+    });
+  });
+
   app.post('/api/stores/:storeId/products/import', async (request, reply) => {
     const auth = await authenticate(pool, request);
     requireCsrf(request, env);

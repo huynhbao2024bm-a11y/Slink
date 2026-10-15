@@ -1546,7 +1546,7 @@
     const submit = modal.querySelector('button[type="submit"][form="entity-form"]');
     if (!preview) return;
     if (productImportReading) {
-      preview.innerHTML = `<div class='notice-item' role='status'><span>…</span><span><strong>Đang đọc tệp CSV</strong><small>Đợi Slink kiểm tra tệp trước khi gửi.</small></span></div>`;
+      preview.innerHTML = `<div class='notice-item' role='status'><span>…</span><span><strong>Đang kiểm tra tệp CSV</strong><small>Slink đang kiểm tra dữ liệu và mã trùng trên máy chủ; bước này chưa ghi sản phẩm.</small></span></div>`;
     } else if (productImportErrors.length) {
       preview.innerHTML = `<div class='auth-message error'><strong>Chưa thể nhập tệp.</strong><br/>${productImportErrors.slice(0, 8).map(esc).join('<br/>')}${productImportErrors.length > 8 ? `<br/>Còn ${productImportErrors.length - 8} lỗi khác.` : ''}</div>`;
     } else if (productImportRows.length) {
@@ -3280,12 +3280,33 @@
       renderProductImportPreview();
       const reader = new FileReader();
       const readGeneration = modalGeneration;
-      reader.onload = function () {
+      reader.onload = async function () {
         if (readGeneration !== modalGeneration || readNumber !== productImportReadNumber || modal.hidden) return;
-        productImportReading = false;
         const parsed = parseProductImportCsv(String(reader.result || ''));
-        productImportRows = parsed.items;
         productImportErrors = parsed.errors;
+        productImportRows = [];
+        if (parsed.errors.length) {
+          productImportReading = false;
+          renderProductImportPreview();
+          return;
+        }
+        try {
+          const previewResult = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/products/import/preview`, {
+            method: 'POST', body: { items: parsed.items },
+          });
+          if (readGeneration !== modalGeneration || readNumber !== productImportReadNumber || modal.hidden) return;
+          productImportReading = false;
+          if (!previewResult.valid) productImportErrors = [previewResult.conflict || 'Tệp có mã sản phẩm đã tồn tại trong cửa hàng.'];
+          else productImportRows = parsed.items;
+        } catch (error) {
+          if (readGeneration !== modalGeneration || readNumber !== productImportReadNumber || modal.hidden) return;
+          productImportReading = false;
+          const fileInput = modal.querySelector('#product-import-file');
+          if (fileInput) fileInput.value = '';
+          productImportErrors = [error.status === 401
+            ? 'Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại rồi chọn tệp để kiểm tra.'
+            : `Chưa kiểm tra được dữ liệu với cửa hàng: ${error.message} Hãy chọn lại tệp để thử lại. Tệp chưa được nhập.`];
+        }
         renderProductImportPreview();
       };
       reader.onerror = function () {
