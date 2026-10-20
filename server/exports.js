@@ -23,6 +23,7 @@ const EXPORTS = {
     columns: [
       ['Mã sản phẩm', 'id', 'text'], ['Phiên bản dữ liệu', 'version', 'number'], ['SKU', 'sku', 'text'], ['Mã vạch', 'barcode', 'text'],
       ['Tên sản phẩm', 'name', 'text'], ['Danh mục', 'category', 'text'], ['Đơn vị', 'unit', 'text'],
+      ['Mã nhóm biến thể', 'variant_group_id', 'text'], ['Tên nhóm biến thể', 'variant_group_name', 'text'], ['Thuộc tính biến thể', 'variant_attributes', 'text'],
       ['Giá bán (VND)', 'sale_price_vnd', 'number'], ['Giá vốn (VND)', 'cost_vnd', 'number'],
       ['Ngưỡng tồn thấp', 'low_stock_threshold', 'number'], ['Theo dõi tồn kho', 'inventory_tracked', 'text'],
       ['Cập nhật SKU', 'update_sku', 'text'], ['Cập nhật mã vạch', 'update_barcode', 'text'],
@@ -35,6 +36,7 @@ const EXPORTS = {
     ],
     dateColumn: 'p.created_at', orderBy: 'p.created_at, p.id',
     sql: `SELECT p.id, p.sku, p.barcode, p.name, p.category, p.unit,
+                 p.variant_group_id, p.variant_group_name, p.variant_attributes::text AS variant_attributes,
                  p.version, p.sale_price_vnd::text AS sale_price_vnd, p.cost_vnd::text AS cost_vnd,
                  p.low_stock_threshold::text AS low_stock_threshold, p.inventory_tracked::text AS inventory_tracked,
                  ''::text AS update_sku, ''::text AS update_barcode, ''::text AS clear_barcode, ''::text AS update_name,

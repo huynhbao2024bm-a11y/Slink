@@ -60,10 +60,22 @@ function validateProduct(input, { partial = false } = {}) {
     if (typeof tracked !== 'boolean') throw new ApiError(400, 'validation_error', 'Cấu hình theo dõi tồn kho không hợp lệ.');
     values.inventoryTracked = tracked;
   }
+  if (source.variantAttributes !== undefined) {
+    if (!source.variantAttributes || typeof source.variantAttributes !== 'object' || Array.isArray(source.variantAttributes)) {
+      throw new ApiError(400, 'validation_error', 'Thuộc tính biến thể không hợp lệ.');
+    }
+    const normalized = normalizeVariantAttributes(
+      Object.entries(source.variantAttributes).map(([name, value]) => ({ name, value })), 1
+    );
+    values.variantAttributes = normalized.attributes;
+  }
   return values;
 }
 
 function conflict(error) {
+  if (error.code === '23505' && error.constraint === 'products_variant_group_attributes_idx') {
+    throw new ApiError(409, 'duplicate_variant_attributes', 'Tổ hợp thuộc tính này đã có trong nhóm biến thể.');
+  }
   if (error.code === '23505') throw new ApiError(409, 'product_conflict', 'Mã sản phẩm hoặc mã vạch đã được sử dụng trong cửa hàng này.');
   throw error;
 }
@@ -74,7 +86,8 @@ function validateImportRows(input) {
   }
   const seenSkus = new Map();
   const seenBarcodes = new Map();
-  return input.map((row, index) => {
+  const groups = new Map();
+  const products = input.map((row, index) => {
     const line = Number.isSafeInteger(row?.sourceLine) && row.sourceLine >= 2 && row.sourceLine <= 1_000_000
       ? row.sourceLine
       : index + 2;
@@ -96,6 +109,36 @@ function validateImportRows(input) {
     if (!product.inventoryTracked && openingQuantity !== 0) {
       throw new ApiError(400, 'validation_error', `Dòng ${line}: sản phẩm không theo dõi tồn kho phải có tồn đầu kỳ bằng 0.`);
     }
+    const groupNameInput = row.variantGroupName;
+    const rawAttributes = row.variantAttributes;
+    let variantGroupName = null;
+    let variantAttributes = null;
+    let groupKey = null;
+    if (groupNameInput !== undefined || rawAttributes !== undefined) {
+      if (typeof groupNameInput !== 'string' || !groupNameInput.trim() || groupNameInput.trim().length > 200 || !rawAttributes || typeof rawAttributes !== 'object' || Array.isArray(rawAttributes)) {
+        throw new ApiError(400, 'validation_error', `Dòng ${line}: cần khai báo đồng thời tên nhóm và thuộc tính biến thể.`);
+      }
+      variantGroupName = groupNameInput.trim();
+      const normalized = normalizeVariantAttributes(Object.entries(rawAttributes).map(([name, value]) => ({ name, value })), line);
+      variantAttributes = normalized.attributes;
+      groupKey = variantGroupName.toLocaleLowerCase('vi');
+      const group = groups.get(groupKey) || { name: variantGroupName, category: product.category, unit: product.unit, attributeKeys: null, signatures: new Set(), count: 0 };
+      if (group.category !== product.category || group.unit !== product.unit) {
+        throw new ApiError(400, 'variant_group_inconsistent', `Dòng ${line}: danh mục và đơn vị phải giống nhau trong cùng nhóm biến thể.`);
+      }
+      const attributeKeys = Object.keys(variantAttributes).map((key) => key.toLocaleLowerCase('vi')).sort();
+      const attributeKeySignature = JSON.stringify(attributeKeys);
+      if (group.attributeKeys !== null && group.attributeKeys !== attributeKeySignature) {
+        throw new ApiError(400, 'variant_attribute_shape', `Dòng ${line}: tên thuộc tính phải giống các dòng khác trong nhóm.`);
+      }
+      if (group.signatures.has(normalized.signature)) throw new ApiError(400, 'duplicate_variant_attributes', `Dòng ${line}: tổ hợp thuộc tính bị trùng trong nhóm.`);
+      group.attributeKeys = attributeKeySignature;
+      group.signatures.add(normalized.signature);
+      group.count += 1;
+      groups.set(groupKey, group);
+      product.name = `${variantGroupName} · ${Object.values(variantAttributes).join(' · ')}`;
+      if (product.name.length > 240) throw new ApiError(400, 'validation_error', `Dòng ${line}: tên hiển thị được ghép từ nhóm và thuộc tính vượt quá 240 ký tự.`);
+    }
     const normalizedSku = product.sku.toLocaleLowerCase('vi');
     if (seenSkus.has(normalizedSku)) throw new ApiError(400, 'duplicate_import_sku', `Dòng ${line}: mã SKU bị trùng với dòng ${seenSkus.get(normalizedSku)} trong tệp.`);
     seenSkus.set(normalizedSku, line);
@@ -106,8 +149,12 @@ function validateImportRows(input) {
     const wholeQuantity = quantityMatch[1].replace(/^0+(?=\d)/, '');
     const fractionQuantity = (quantityMatch[2] || '').replace(/0+$/, '');
     const openingQuantityText = wholeQuantity + (fractionQuantity ? `.${fractionQuantity}` : '');
-    return { ...product, openingQuantity, openingQuantityText, sourceLine: line };
+    return { ...product, variantGroupName, variantAttributes, groupKey, openingQuantity, openingQuantityText, sourceLine: line };
   });
+  for (const group of groups.values()) {
+    if (group.count < 2) throw new ApiError(400, 'variant_group_too_small', `Nhóm “${group.name}” cần ít nhất 2 SKU trong cùng tệp.`);
+  }
+  return products;
 }
 
 function describeImportConflict(products, existingRows) {
@@ -210,6 +257,79 @@ function describeBulkUpdateConflict(items, existingRows) {
   return null;
 }
 
+function normalizeVariantAttributes(entries, line = 1) {
+  if (!Array.isArray(entries) || entries.length < 1 || entries.length > 8) {
+    throw new ApiError(400, 'validation_error', `Biến thể ${line}: cần có từ 1 đến 8 thuộc tính.`);
+  }
+  const byNormalizedName = new Map();
+  const attributes = Object.create(null);
+  for (const entry of entries) {
+    const key = typeof entry?.name === 'string' ? entry.name.trim() : '';
+    const value = typeof entry?.value === 'string' ? entry.value.trim() : '';
+    const normalizedKey = key.toLocaleLowerCase('vi');
+    if (!key || key.length > 32 || key.includes('=') || key.includes(';') || !value || value.length > 80 || value.includes(';') || byNormalizedName.has(normalizedKey)) {
+      throw new ApiError(400, 'validation_error', `Biến thể ${line}: tên thuộc tính cần duy nhất (tối đa 32 ký tự), giá trị tối đa 80 ký tự; không để trống hoặc chứa dấu “;” (tên cũng không chứa “=”).`);
+    }
+    byNormalizedName.set(normalizedKey, value.toLocaleLowerCase('vi'));
+    attributes[key] = value;
+  }
+  const canonicalAttributes = Object.fromEntries(Object.entries(attributes).sort(([a], [b]) => a.toLocaleLowerCase('vi').localeCompare(b.toLocaleLowerCase('vi'), 'vi')));
+  const signature = JSON.stringify(Object.entries(canonicalAttributes).map(([key, value]) => [key.toLocaleLowerCase('vi'), value.toLocaleLowerCase('vi')]));
+  return { attributes: canonicalAttributes, signature };
+}
+
+function validateVariantGroup(input, { minVariants = 2 } = {}) {
+  const source = input || {};
+  const extraField = Object.keys(source).find((key) => !['name', 'category', 'unit', 'variants'].includes(key));
+  if (extraField) throw new ApiError(400, 'validation_error', `Trường ${extraField} chưa được hỗ trợ khi tạo nhóm biến thể.`);
+  const groupName = typeof source.name === 'string' ? source.name.trim() : '';
+  if ((source.category !== undefined && typeof source.category !== 'string') || (source.unit !== undefined && typeof source.unit !== 'string')) {
+    throw new ApiError(400, 'validation_error', 'Danh mục hoặc đơn vị không hợp lệ.');
+  }
+  const category = typeof source.category === 'string' && source.category.trim() ? source.category.trim() : 'Chưa phân loại';
+  const unit = typeof source.unit === 'string' && source.unit.trim() ? source.unit.trim() : 'cái';
+  if (groupName.length < 1 || groupName.length > 200 || category.length > 120 || unit.length > 40) {
+    throw new ApiError(400, 'validation_error', 'Tên nhóm, danh mục hoặc đơn vị không hợp lệ.');
+  }
+  if (!Array.isArray(source.variants) || source.variants.length < minVariants || source.variants.length > 50) {
+    throw new ApiError(400, 'validation_error', minVariants === 1 ? 'Cần từ 1 đến 50 biến thể mới.' : 'Một nhóm cần từ 2 đến 50 biến thể.');
+  }
+  const seenSkus = new Map();
+  const seenBarcodes = new Map();
+  const seenAttributes = new Set();
+  return {
+    name: groupName,
+    category,
+    unit,
+    variants: source.variants.map((row, index) => {
+      const line = index + 1;
+      if (!row || typeof row !== 'object' || Array.isArray(row)) {
+        throw new ApiError(400, 'validation_error', `Biến thể ${line}: cần có từ 1 đến 8 thuộc tính.`);
+      }
+      const extraVariantField = Object.keys(row).find((key) => !['sku', 'barcode', 'attributes', 'salePriceVnd', 'costVnd', 'lowStockThreshold', 'inventoryTracked'].includes(key));
+      if (extraVariantField) throw new ApiError(400, 'validation_error', `Biến thể ${line}: trường ${extraVariantField} chưa được hỗ trợ.`);
+      const { attributes: canonicalAttributes, signature: canonicalKey } = normalizeVariantAttributes(row.attributes, line);
+      if (seenAttributes.has(canonicalKey)) throw new ApiError(400, 'duplicate_variant_attributes', `Biến thể ${line}: tổ hợp thuộc tính bị trùng.`);
+      seenAttributes.add(canonicalKey);
+      const displayName = `${groupName} · ${Object.values(canonicalAttributes).join(' · ')}`;
+      let product;
+      try {
+        product = validateProduct({ ...row, name: displayName, category, unit });
+      } catch (error) {
+        throw new ApiError(400, 'validation_error', `Biến thể ${line}: ${error.message}`);
+      }
+      const normalizedSku = product.sku.toLocaleLowerCase('vi');
+      if (seenSkus.has(normalizedSku)) throw new ApiError(400, 'duplicate_import_sku', `Biến thể ${line}: SKU bị trùng với biến thể ${seenSkus.get(normalizedSku)}.`);
+      seenSkus.set(normalizedSku, line);
+      if (product.barcode !== null) {
+        if (seenBarcodes.has(product.barcode)) throw new ApiError(400, 'duplicate_import_barcode', `Biến thể ${line}: mã vạch bị trùng với biến thể ${seenBarcodes.get(product.barcode)}.`);
+        seenBarcodes.set(product.barcode, line);
+      }
+      return { ...product, variantAttributes: canonicalAttributes };
+    }),
+  };
+}
+
 function registerProductRoutes(app, { pool, env }) {
   app.get('/api/stores/:storeId/products', async (request) => {
     const auth = await authenticate(pool, request);
@@ -230,6 +350,7 @@ function registerProductRoutes(app, { pool, env }) {
                 p.sale_price_vnd::text AS sale_price_vnd,
                 CASE WHEN $5::boolean THEN p.cost_vnd::text ELSE NULL END AS cost_vnd,
                 p.low_stock_threshold::text AS low_stock_threshold, p.inventory_tracked,
+                p.variant_group_id, p.variant_group_name, p.variant_attributes,
                 p.status, p.version, COALESCE(i.on_hand, 0)::text AS on_hand,
                 COALESCE(i.reserved, 0)::text AS reserved, COALESCE(i.version, 1)::int AS inventory_version,
                 p.updated_at, COUNT(*) OVER()::int AS total_count
@@ -240,7 +361,8 @@ function registerProductRoutes(app, { pool, env }) {
                   MAX(b.version) FILTER (WHERE ($6::uuid IS NULL OR b.warehouse_id = $6) AND ($7::uuid[] IS NULL OR b.warehouse_id = ANY($7))) AS version
            FROM inventory_balances b WHERE b.store_id = p.store_id AND b.product_id = p.id
          ) i ON true
-         WHERE p.status = $1 AND ($2 = '' OR p.name ILIKE '%' || $2 || '%' OR p.sku_normalized LIKE '%' || lower($2) || '%' OR p.barcode = $2)
+         WHERE p.status = $1 AND ($2 = '' OR p.name ILIKE '%' || $2 || '%' OR p.variant_group_name ILIKE '%' || $2 || '%'
+           OR p.variant_attributes::text ILIKE '%' || $2 || '%' OR p.sku_normalized LIKE '%' || lower($2) || '%' OR p.barcode = $2)
          ORDER BY p.name, p.id LIMIT $3 OFFSET $4`,
         [status, search, limit + 1, offset, canViewCost, requestedWarehouseId || null, warehouseIds]
       );
@@ -320,6 +442,7 @@ function registerProductRoutes(app, { pool, env }) {
       return {
         valid: !conflictMessage,
         count: products.length,
+        variantGroupCount: new Set(products.map((product) => product.groupKey).filter(Boolean)).size,
         conflict: conflictMessage,
         warehouseId: warehouse.id,
         warehouseName: warehouse.name
@@ -376,19 +499,26 @@ function registerProductRoutes(app, { pool, env }) {
         const conflictMessage = describeImportConflict(products, existing.rows);
         if (conflictMessage) throw new ApiError(409, 'product_conflict', conflictMessage);
 
+        const variantGroupIds = new Map();
+        for (const product of products) {
+          if (product.groupKey && !variantGroupIds.has(product.groupKey)) variantGroupIds.set(product.groupKey, randomUUID());
+        }
         const createdProducts = [];
         for (const product of products) {
+          const variantGroupId = product.groupKey ? variantGroupIds.get(product.groupKey) : null;
           const inserted = await client.query(
             `INSERT INTO products (
                store_id, sku, sku_normalized, barcode, name, category, unit,
-               sale_price_vnd, cost_vnd, low_stock_threshold, inventory_tracked, created_by
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+               sale_price_vnd, cost_vnd, low_stock_threshold, inventory_tracked, created_by,
+               variant_group_id, variant_group_name, variant_attributes
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb)
              RETURNING id, sku, barcode, name, category, unit, sale_price_vnd::text AS sale_price_vnd,
                        cost_vnd::text AS cost_vnd, low_stock_threshold::text AS low_stock_threshold,
-                       inventory_tracked, status, version, created_at`,
+                       inventory_tracked, status, version, variant_group_id, variant_group_name, variant_attributes, created_at`,
             [storeId, product.sku, product.sku.toLocaleLowerCase('vi'), product.barcode, product.name,
               product.category, product.unit, product.salePriceVnd, product.costVnd,
-              product.lowStockThreshold, product.inventoryTracked, auth.userId]
+              product.lowStockThreshold, product.inventoryTracked, auth.userId, variantGroupId,
+              product.variantGroupName, JSON.stringify(product.variantAttributes || {})]
           );
           const created = inserted.rows[0];
           await client.query(
@@ -420,10 +550,23 @@ function registerProductRoutes(app, { pool, env }) {
           }
           await client.query(
             `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, metadata)
-             VALUES ($1, $2, 'product.created', 'product', $3, jsonb_build_object('sku', $4::text, 'openingQuantity', $5::text, 'importId', $6::text, 'warehouseId', $7::text))`,
-            [storeId, auth.userId, created.id, created.sku, openingQuantity, importId, warehouse.id]
+             VALUES ($1, $2, $3, 'product', $4,
+               jsonb_build_object('sku', $5::text, 'openingQuantity', $6::text, 'importId', $7::text,
+                 'warehouseId', $8::text, 'groupId', $9::text, 'attributes', $10::jsonb))`,
+            [storeId, auth.userId, variantGroupId ? 'product.variant_created' : 'product.created', created.id,
+              created.sku, openingQuantity, importId, warehouse.id, variantGroupId, JSON.stringify(product.variantAttributes || {})]
           );
           createdProducts.push({ ...created, on_hand: openingQuantity, reserved: '0', import_id: importId, warehouse_id: warehouse.id, warehouse_name: warehouse.name });
+        }
+        for (const [groupKey, groupId] of variantGroupIds) {
+          const group = products.find((product) => product.groupKey === groupKey);
+          const count = products.filter((product) => product.groupKey === groupKey).length;
+          await client.query(
+            `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, metadata)
+             VALUES ($1, $2, 'product.variant_group_created', 'product_variant_group', $3,
+               jsonb_build_object('name', $4::text, 'count', $5::integer, 'importId', $6::text))`,
+            [storeId, auth.userId, groupId, group.variantGroupName, count, importId]
+          );
         }
         await client.query(
           `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, metadata)
@@ -754,6 +897,249 @@ function registerProductRoutes(app, { pool, env }) {
     }
   });
 
+  app.post('/api/stores/:storeId/products/variants', async (request, reply) => {
+    const auth = await authenticate(pool, request);
+    requireCsrf(request, env);
+    const { storeId } = request.params;
+    if (!UUID_PATTERN.test(storeId)) throw new ApiError(400, 'validation_error', 'Cửa hàng không hợp lệ.');
+    const idempotencyKey = request.headers['idempotency-key'];
+    if (typeof idempotencyKey !== 'string' || idempotencyKey.length < 16 || idempotencyKey.length > 200) {
+      throw new ApiError(400, 'idempotency_key_required', 'Thiếu mã lưu thao tác an toàn. Hãy thử lại.');
+    }
+    const group = validateVariantGroup(request.body);
+    const requestHash = createHash('sha256').update(JSON.stringify(group)).digest();
+    const groupId = randomUUID();
+    let outcome;
+    try {
+      outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
+      requireEditor(membership.role);
+      const reserved = await client.query(
+        `INSERT INTO idempotency_records (store_id, actor_user_id, idempotency_key, request_hash)
+         VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING RETURNING idempotency_key`,
+        [storeId, auth.userId, idempotencyKey, requestHash]
+      );
+      if (!reserved.rowCount) {
+        const previous = await client.query(
+          `SELECT request_hash, response_status, response_body FROM idempotency_records
+           WHERE store_id = $1 AND actor_user_id = $2 AND idempotency_key = $3 FOR UPDATE`,
+          [storeId, auth.userId, idempotencyKey]
+        );
+        const record = previous.rows[0];
+        if (!record || !Buffer.from(record.request_hash).equals(requestHash)) throw new ApiError(409, 'idempotency_conflict', 'Mã tạo nhóm đã được dùng cho dữ liệu khác.');
+        if (!record.response_body || !record.response_status) throw new ApiError(409, 'request_in_progress', 'Nhóm biến thể đang được xử lý. Hãy thử lại sau.');
+        return { status: record.response_status, body: record.response_body, replayed: true };
+      }
+
+      const skuValues = group.variants.map((item) => item.sku.toLocaleLowerCase('vi'));
+      const barcodeValues = group.variants.map((item) => item.barcode).filter(Boolean);
+      const existing = await client.query(
+        `SELECT sku, sku_normalized, barcode FROM products
+         WHERE store_id = $1 AND (sku_normalized = ANY($2::text[]) OR barcode = ANY($3::text[]))`,
+        [storeId, skuValues, barcodeValues]
+      );
+      if (existing.rowCount) {
+        const bySku = new Map(existing.rows.map((row) => [row.sku_normalized, row.sku]));
+        const byBarcode = new Set(existing.rows.map((row) => row.barcode).filter(Boolean));
+        const conflictVariant = group.variants.find((item) => bySku.has(item.sku.toLocaleLowerCase('vi')) || (item.barcode && byBarcode.has(item.barcode)));
+        if (conflictVariant) throw new ApiError(409, 'product_conflict', `SKU ${conflictVariant.sku} hoặc mã vạch đã có trong cửa hàng. Không có biến thể nào được tạo.`);
+      }
+
+      const products = [];
+      for (const variant of group.variants) {
+        const inserted = await client.query(
+          `INSERT INTO products (
+             store_id, sku, sku_normalized, barcode, name, category, unit,
+             sale_price_vnd, cost_vnd, low_stock_threshold, inventory_tracked, created_by,
+             variant_group_id, variant_group_name, variant_attributes
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb)
+           RETURNING id, sku, barcode, name, category, unit, sale_price_vnd::text AS sale_price_vnd,
+                     cost_vnd::text AS cost_vnd, low_stock_threshold::text AS low_stock_threshold,
+                     inventory_tracked, version, variant_group_id, variant_group_name, variant_attributes, created_at`,
+          [storeId, variant.sku, variant.sku.toLocaleLowerCase('vi'), variant.barcode, variant.name, group.category, group.unit,
+            variant.salePriceVnd, variant.costVnd, variant.lowStockThreshold, variant.inventoryTracked, auth.userId,
+            groupId, group.name, JSON.stringify(variant.variantAttributes)]
+        );
+        const product = inserted.rows[0];
+        await client.query(
+          `INSERT INTO product_sale_price_history (store_id, product_id, previous_price_vnd, new_price_vnd, source_type, actor_user_id)
+           VALUES ($1, $2, NULL, $3, 'created', $4)`,
+          [storeId, product.id, variant.salePriceVnd, auth.userId]
+        );
+        await client.query(
+          `INSERT INTO inventory_balances (store_id, warehouse_id, product_id, on_hand)
+           SELECT $1, w.id, $2, 0 FROM warehouses w WHERE w.store_id = $1 AND w.status = 'active'`,
+          [storeId, product.id]
+        );
+        if (variant.costVnd > 0) {
+          await client.query(
+            `INSERT INTO product_cost_history (store_id, product_id, unit_cost_vnd, source_type, actor_user_id)
+             VALUES ($1, $2, $3, 'manual_adjustment', $4)`,
+            [storeId, product.id, variant.costVnd, auth.userId]
+          );
+        }
+        await client.query(
+          `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, metadata)
+           VALUES ($1, $2, 'product.variant_created', 'product', $3, jsonb_build_object('groupId', $4::text, 'sku', $5::text, 'attributes', $6::jsonb))`,
+          [storeId, auth.userId, product.id, groupId, product.sku, JSON.stringify(variant.variantAttributes)]
+        );
+        products.push({ ...product, on_hand: '0', reserved: '0' });
+      }
+      await client.query(
+        `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, metadata)
+         VALUES ($1, $2, 'product.variant_group_created', 'product_variant_group', $3, jsonb_build_object('name', $4::text, 'count', $5::integer))`,
+        [storeId, auth.userId, groupId, group.name, products.length]
+      );
+      const body = { groupId, name: group.name, count: products.length, products };
+      await client.query(
+        `UPDATE idempotency_records SET response_status = 201, response_body = $4::jsonb, completed_at = now()
+         WHERE store_id = $1 AND actor_user_id = $2 AND idempotency_key = $3`,
+        [storeId, auth.userId, idempotencyKey, JSON.stringify(body)]
+      );
+      return { status: 201, body, replayed: false };
+      });
+    } catch (error) {
+      return conflict(error);
+    }
+    if (outcome.replayed) reply.header('idempotent-replayed', 'true');
+    return reply.code(outcome.status).send(outcome.body);
+  });
+
+  app.post('/api/stores/:storeId/products/:productId/variants', async (request, reply) => {
+    const auth = await authenticate(pool, request);
+    requireCsrf(request, env);
+    const { storeId, productId } = request.params;
+    if (!UUID_PATTERN.test(storeId) || !UUID_PATTERN.test(productId)) throw new ApiError(400, 'validation_error', 'Cửa hàng hoặc sản phẩm không hợp lệ.');
+    const source = request.body || {};
+    if (Object.keys(source).some((key) => key !== 'variants')) throw new ApiError(400, 'validation_error', 'Chỉ nhận danh sách biến thể mới.');
+    const idempotencyKey = request.headers['idempotency-key'];
+    if (typeof idempotencyKey !== 'string' || idempotencyKey.length < 16 || idempotencyKey.length > 200) {
+      throw new ApiError(400, 'idempotency_key_required', 'Thiếu mã lưu thao tác an toàn. Hãy thử lại.');
+    }
+    try {
+      const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
+        requireEditor(membership.role);
+        const anchorResult = await client.query(
+          'SELECT * FROM products WHERE store_id = $1 AND id = $2',
+          [storeId, productId]
+        );
+        let anchor = anchorResult.rows[0];
+        if (!anchor || anchor.status !== 'active') throw new ApiError(404, 'product_not_found', 'Không tìm thấy sản phẩm đang hoạt động.');
+        if (!anchor.variant_group_id) throw new ApiError(409, 'variant_group_required', 'Sản phẩm này chưa thuộc nhóm biến thể.');
+        const siblingResult = await client.query(
+          `SELECT *
+           FROM products WHERE store_id = $1 AND variant_group_id = $2
+           ORDER BY id FOR UPDATE`,
+          [storeId, anchor.variant_group_id]
+        );
+        if (!siblingResult.rowCount) throw new ApiError(409, 'variant_group_unavailable', 'Nhóm biến thể không còn sản phẩm hoạt động.');
+        anchor = siblingResult.rows.find((row) => String(row.id).toLowerCase() === productId.toLowerCase());
+        if (!anchor || anchor.status !== 'active') throw new ApiError(404, 'product_not_found', 'Không tìm thấy sản phẩm đang hoạt động.');
+        const group = validateVariantGroup({
+          name: anchor.variant_group_name, category: anchor.category, unit: anchor.unit, variants: source.variants,
+        }, { minVariants: 1 });
+        const expectedAttributeKeys = Object.keys(siblingResult.rows[0].variant_attributes || {}).sort((a, b) => a.localeCompare(b, 'vi'));
+        const existingAttributeKeys = new Set(siblingResult.rows.map((row) => {
+          const attributes = row.variant_attributes || {};
+          return JSON.stringify(Object.keys(attributes).sort((a, b) => a.localeCompare(b, 'vi')));
+        }));
+        if (existingAttributeKeys.size !== 1) throw new ApiError(409, 'variant_group_inconsistent', 'Nhóm biến thể đang có cấu trúc thuộc tính không đồng nhất; cần xử lý trước khi thêm SKU.');
+        const existingAttributes = new Set(siblingResult.rows.map((row) => normalizeVariantAttributes(
+          Object.entries(row.variant_attributes || {}).map(([name, value]) => ({ name, value: String(value) })), 1
+        ).signature));
+        const requestHash = createHash('sha256').update(JSON.stringify({ groupId: anchor.variant_group_id, group })).digest();
+        const reserved = await client.query(
+          `INSERT INTO idempotency_records (store_id, actor_user_id, idempotency_key, request_hash)
+           VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING RETURNING idempotency_key`,
+          [storeId, auth.userId, idempotencyKey, requestHash]
+        );
+        if (!reserved.rowCount) {
+          const previous = await client.query(
+            `SELECT request_hash, response_status, response_body FROM idempotency_records
+             WHERE store_id = $1 AND actor_user_id = $2 AND idempotency_key = $3 FOR UPDATE`,
+            [storeId, auth.userId, idempotencyKey]
+          );
+          const record = previous.rows[0];
+          if (!record || !Buffer.from(record.request_hash).equals(requestHash)) throw new ApiError(409, 'idempotency_conflict', 'Mã thêm biến thể đã được dùng cho dữ liệu khác.');
+          if (!record.response_body || !record.response_status) throw new ApiError(409, 'request_in_progress', 'Biến thể đang được xử lý. Hãy thử lại sau.');
+          return { status: record.response_status, body: record.response_body, replayed: true };
+        }
+        const skuValues = group.variants.map((item) => item.sku.toLocaleLowerCase('vi'));
+        const barcodeValues = group.variants.map((item) => item.barcode).filter(Boolean);
+        const existingCodes = await client.query(
+          `SELECT sku, sku_normalized, barcode FROM products
+           WHERE store_id = $1 AND (sku_normalized = ANY($2::text[]) OR barcode = ANY($3::text[]))`,
+          [storeId, skuValues, barcodeValues]
+        );
+        if (existingCodes.rowCount) {
+          const bySku = new Map(existingCodes.rows.map((row) => [row.sku_normalized, row.sku]));
+          const byBarcode = new Set(existingCodes.rows.map((row) => row.barcode).filter(Boolean));
+          const conflictVariant = group.variants.find((item) => bySku.has(item.sku.toLocaleLowerCase('vi')) || (item.barcode && byBarcode.has(item.barcode)));
+          if (conflictVariant) throw new ApiError(409, 'product_conflict', `SKU ${conflictVariant.sku} hoặc mã vạch đã có trong cửa hàng. Không có biến thể nào được thêm.`);
+        }
+        const duplicatesInGroup = group.variants.find((item) => existingAttributes.has(normalizeVariantAttributes(
+          Object.entries(item.variantAttributes).map(([name, value]) => ({ name, value })), 1
+        ).signature) || JSON.stringify(expectedAttributeKeys) !== JSON.stringify(Object.keys(item.variantAttributes).sort((a, b) => a.localeCompare(b, 'vi'))));
+        if (duplicatesInGroup) throw new ApiError(409, 'duplicate_variant_attributes', 'Tổ hợp thuộc tính đã có trong nhóm hoặc cấu trúc thuộc tính không khớp với các biến thể hiện tại.');
+        const products = [];
+        for (const variant of group.variants) {
+          const inserted = await client.query(
+            `INSERT INTO products (
+               store_id, sku, sku_normalized, barcode, name, category, unit,
+               sale_price_vnd, cost_vnd, low_stock_threshold, inventory_tracked, created_by,
+               variant_group_id, variant_group_name, variant_attributes
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb)
+             RETURNING id, sku, barcode, name, category, unit, sale_price_vnd::text AS sale_price_vnd,
+                       cost_vnd::text AS cost_vnd, low_stock_threshold::text AS low_stock_threshold,
+                       inventory_tracked, status, version, variant_group_id, variant_group_name, variant_attributes, created_at`,
+            [storeId, variant.sku, variant.sku.toLocaleLowerCase('vi'), variant.barcode, variant.name, group.category, group.unit,
+              variant.salePriceVnd, variant.costVnd, variant.lowStockThreshold, variant.inventoryTracked, auth.userId,
+              anchor.variant_group_id, anchor.variant_group_name, JSON.stringify(variant.variantAttributes)]
+          );
+          const product = inserted.rows[0];
+          await client.query(
+            `INSERT INTO product_sale_price_history (store_id, product_id, previous_price_vnd, new_price_vnd, source_type, actor_user_id)
+             VALUES ($1, $2, NULL, $3, 'created', $4)`,
+            [storeId, product.id, variant.salePriceVnd, auth.userId]
+          );
+          await client.query(
+            `INSERT INTO inventory_balances (store_id, warehouse_id, product_id, on_hand)
+             SELECT $1, w.id, $2, 0 FROM warehouses w WHERE w.store_id = $1 AND w.status = 'active'`,
+            [storeId, product.id]
+          );
+          if (variant.costVnd > 0) {
+            await client.query(
+              `INSERT INTO product_cost_history (store_id, product_id, unit_cost_vnd, source_type, actor_user_id)
+               VALUES ($1, $2, $3, 'manual_adjustment', $4)`,
+              [storeId, product.id, variant.costVnd, auth.userId]
+            );
+          }
+          await client.query(
+            `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, metadata)
+             VALUES ($1, $2, 'product.variant_created', 'product', $3, jsonb_build_object('groupId', $4::text, 'sku', $5::text, 'attributes', $6::jsonb))`,
+            [storeId, auth.userId, product.id, anchor.variant_group_id, product.sku, JSON.stringify(variant.variantAttributes)]
+          );
+          products.push({ ...product, on_hand: '0', reserved: '0' });
+        }
+        await client.query(
+          `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, metadata)
+           VALUES ($1, $2, 'product.variant_group_extended', 'product_variant_group', $3, jsonb_build_object('name', $4::text, 'count', $5::integer))`,
+          [storeId, auth.userId, anchor.variant_group_id, anchor.variant_group_name, products.length]
+        );
+        const body = { groupId: anchor.variant_group_id, name: anchor.variant_group_name, count: products.length, products };
+        await client.query(
+          `UPDATE idempotency_records SET response_status = 201, response_body = $4::jsonb, completed_at = now()
+           WHERE store_id = $1 AND actor_user_id = $2 AND idempotency_key = $3`,
+          [storeId, auth.userId, idempotencyKey, JSON.stringify(body)]
+        );
+        return { status: 201, body, replayed: false };
+      });
+      if (outcome.replayed) reply.header('idempotent-replayed', 'true');
+      return reply.code(outcome.status).send(outcome.body);
+    } catch (error) {
+      return conflict(error);
+    }
+  });
+
   app.put('/api/stores/:storeId/products/:productId', async (request) => {
     const auth = await authenticate(pool, request);
     requireCsrf(request, env);
@@ -769,6 +1155,32 @@ function registerProductRoutes(app, { pool, env }) {
         if (!current.rowCount || current.rows[0].status === 'archived') throw new ApiError(404, 'product_not_found', 'Không tìm thấy sản phẩm đang hoạt động.');
         if (current.rows[0].version !== expectedVersion) throw new ApiError(409, 'version_conflict', 'Sản phẩm đã được thay đổi trên thiết bị khác. Hãy tải lại rồi thử lại.');
         const old = current.rows[0];
+        if (old.variant_group_id && product.name !== undefined && product.name !== old.name) {
+          throw new ApiError(400, 'variant_name_managed', 'Tên hiển thị của biến thể được tạo từ tên nhóm và thuộc tính. Hãy sửa thuộc tính bên dưới.');
+        }
+        if (old.variant_group_id && ((product.category !== undefined && product.category !== old.category) || (product.unit !== undefined && product.unit !== old.unit))) {
+          throw new ApiError(400, 'variant_group_fields_managed', 'Danh mục và đơn vị hiện được dùng chung trong nhóm, chưa thể sửa riêng cho một SKU.');
+        }
+        if (!old.variant_group_id && product.variantAttributes !== undefined) {
+          throw new ApiError(400, 'variant_group_required', 'Chỉ sản phẩm trong nhóm biến thể mới có thuộc tính nhóm.');
+        }
+        let nextVariantAttributes = old.variant_attributes || {};
+        if (old.variant_group_id && product.variantAttributes !== undefined) {
+          const siblings = await client.query(
+          `SELECT id, variant_attributes FROM products
+             WHERE store_id = $1 AND variant_group_id = $2
+             ORDER BY id`,
+            [storeId, old.variant_group_id]
+          );
+          const keySets = new Set(siblings.rows.map((row) => JSON.stringify(Object.keys(row.variant_attributes || {}).sort((a, b) => a.localeCompare(b, 'vi')))));
+          if (keySets.size !== 1) throw new ApiError(409, 'variant_group_inconsistent', 'Nhóm biến thể đang có cấu trúc thuộc tính không đồng nhất; không thể sửa thuộc tính an toàn.');
+          const expectedKeys = JSON.parse([...keySets][0]);
+          const nextKeys = Object.keys(product.variantAttributes).sort((a, b) => a.localeCompare(b, 'vi'));
+          if (JSON.stringify(nextKeys) !== JSON.stringify(expectedKeys)) {
+            throw new ApiError(400, 'variant_attribute_shape', 'Tên thuộc tính phải giữ nguyên cấu trúc chung của nhóm. Chỉ sửa giá trị như màu hoặc kích cỡ.');
+          }
+          nextVariantAttributes = product.variantAttributes;
+        }
         const next = {
           sku: product.sku ?? old.sku,
           barcode: product.barcode !== undefined ? product.barcode : old.barcode,
@@ -779,7 +1191,12 @@ function registerProductRoutes(app, { pool, env }) {
           costVnd: product.costVnd ?? Number(old.cost_vnd),
           lowStockThreshold: product.lowStockThreshold ?? Number(old.low_stock_threshold),
           inventoryTracked: product.inventoryTracked ?? old.inventory_tracked,
+          variantAttributes: nextVariantAttributes,
         };
+        if (old.variant_group_id && product.variantAttributes !== undefined) {
+          next.name = `${old.variant_group_name} · ${Object.values(nextVariantAttributes).join(' · ')}`;
+          if (next.name.length > 240) throw new ApiError(400, 'validation_error', 'Tên hiển thị được ghép từ nhóm và thuộc tính vượt quá 240 ký tự.');
+        }
         if (old.inventory_tracked && !next.inventoryTracked) {
           const balance = await client.query(
             `SELECT on_hand > 0 AS has_on_hand, reserved > 0 AS has_reserved
@@ -805,13 +1222,14 @@ function registerProductRoutes(app, { pool, env }) {
         const updated = await client.query(
           `UPDATE products SET sku = $3, sku_normalized = $4, barcode = $5, name = $6, category = $7, unit = $8,
                sale_price_vnd = $9, cost_vnd = $10, low_stock_threshold = $11, inventory_tracked = $12,
-               version = version + 1, updated_at = now()
+               variant_attributes = $14::jsonb, version = version + 1, updated_at = now()
            WHERE store_id = $1 AND id = $2 AND version = $13
            RETURNING id, sku, barcode, name, category, unit, sale_price_vnd::text AS sale_price_vnd,
                      cost_vnd::text AS cost_vnd, low_stock_threshold::text AS low_stock_threshold,
-                     inventory_tracked, status, version, updated_at`,
+                     inventory_tracked, status, version, variant_group_id, variant_group_name, variant_attributes, updated_at`,
           [storeId, productId, next.sku, next.sku.toLocaleLowerCase('vi'), next.barcode, next.name, next.category,
-            next.unit, next.salePriceVnd, next.costVnd, next.lowStockThreshold, next.inventoryTracked, expectedVersion]
+            next.unit, next.salePriceVnd, next.costVnd, next.lowStockThreshold, next.inventoryTracked, expectedVersion,
+            JSON.stringify(next.variantAttributes)]
         );
         if (next.costVnd !== Number(old.cost_vnd)) {
           await client.query(
@@ -829,8 +1247,10 @@ function registerProductRoutes(app, { pool, env }) {
         }
         await client.query(
           `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, metadata)
-           VALUES ($1, $2, 'product.updated', 'product', $3, jsonb_build_object('version', $4::integer))`,
-          [storeId, auth.userId, productId, updated.rows[0].version]
+           VALUES ($1, $2, $3, 'product', $4,
+             jsonb_build_object('version', $5::integer, 'oldVariantAttributes', $6::jsonb, 'newVariantAttributes', $7::jsonb))`,
+          [storeId, auth.userId, old.variant_group_id && product.variantAttributes !== undefined ? 'product.variant_attributes_updated' : 'product.updated',
+            productId, updated.rows[0].version, JSON.stringify(old.variant_attributes || {}), JSON.stringify(next.variantAttributes)]
         );
         return { product: updated.rows[0] };
       });

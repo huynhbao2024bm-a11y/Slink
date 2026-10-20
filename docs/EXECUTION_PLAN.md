@@ -75,20 +75,20 @@
 
 **Bằng chứng để qua chặng:** Người bán tự hoàn thành kịch bản; phản hồi và lỗi được ghi lại; vấn đề được chuyển thành mục triển khai cụ thể.
 
-### 6. Hồ sơ dự thi khởi nghiệp — **Bản đầu có; bản thương mại Canva đang chờ sau lát cắt hiện tại**
+### 6. Hồ sơ dự thi khởi nghiệp — **Người dùng đã có tài liệu riêng; dừng tạo Canva**
 
 **Mục đích:** Có video ngắn hoặc pitch deck với hình ảnh/chứng cứ thật để trình bày sản phẩm.
 
-**Phạm vi:** Làm bản giới thiệu sản phẩm bằng Canva cho khách hàng và hội đồng cuộc thi, phong cách tối giản, sạch, tinh tế như Apple Keynote; sản phẩm và luồng sử dụng là trọng tâm, không trình bày kỹ thuật. Nêu vấn đề, khách hàng mục tiêu, giá trị và các màn hình/luồng thật; không dùng số liệu người dùng, hiệu quả, thị trường hoặc tích hợp chưa có bằng chứng. Giữ bản v2 hiện có làm bản lưu; không ghi đè.
+**Phạm vi:** Người dùng cho biết đã có tài liệu giới thiệu và yêu cầu dừng làm phần này. Không tạo thêm thiết kế/video Canva, không ghi đè hay sửa tài liệu hiện có. Chỉ quay lại nếu người dùng yêu cầu review hoặc cập nhật.
 
-**Phụ thuộc:** Môi trường demo ổn định và danh sách tuyên bố đã đối chiếu với roadmap. Không cần chờ toàn bộ sản phẩm hoàn tất.
+**Phụ thuộc:** Tài liệu hiện có do người dùng quản lý; bản thân nó chưa được cung cấp để review.
 
-**Bằng chứng:** Bản v2 [`pitch/Slink_Pitch_Vietnamese_2026-10-20-v2.pptx`](../pitch/Slink_Pitch_Vietnamese_2026-10-20-v2.pptx) là bản lưu nội bộ đã được kiểm tra cấu trúc/layout; chưa đáp ứng phong cách thương mại mới. Bản Canva chưa tạo. Cần xác minh từng lời giới thiệu với roadmap và dùng ảnh giao diện Slink; không đưa dữ liệu khách hàng hoặc tài khoản lên thiết kế.
+**Bằng chứng:** Bản v2 [`pitch/Slink_Pitch_Vietnamese_2026-10-20-v2.pptx`](../pitch/Slink_Pitch_Vietnamese_2026-10-20-v2.pptx) là bản nháp nội bộ. Người dùng báo có tài liệu riêng; chưa thấy hoặc xác minh nội dung đó. Không tuyên bố tài liệu đã được nghiệm thu.
 
 ## Việc kế tiếp
 
-1. Tiếp tục PIM/OMS: biến thể/thuộc tính sản phẩm; lịch sử giá bán đã có source implementation nhưng cần chờ native migration/browser check.
-2. Chạy migrations 0018–0019 và kiểm tra native PostgreSQL qua quy trình backup-gated khi cổng local DB sẵn sàng; môi trường hiện tại không được phép kết nối TCP tới PostgreSQL local. Không ghi nhận migrations là đã chạy.
-3. Tiếp tục các phần độc lập của nhiều kênh; connector chỉ sau khi có đối tác, sandbox và quyền API.
-4. Trước khi pilot, hoàn tất hosting/HTTPS, diễn tập phục hồi, kiểm tra bảo mật cần thiết, rồi để người bán thử giao diện và thiết bị thật.
-5. Sau lát cắt kỹ thuật đang làm, dùng Canva tạo bản giới thiệu thương mại theo brief mới; bổ sung video demo sau khi có cửa hàng demo ổn định, không lộ dữ liệu cá nhân.
+1. **Đã triển khai trong source:** tạo nhóm biến thể, thêm SKU, sửa thuộc tính, CSV có xem trước/nhập nguyên tử và CSV cũ vẫn đọc được. Full Node/PGlite suite đạt 32/32. PostgreSQL native, trình duyệt sau migration và điện thoại còn mở.
+2. **Cần cập nhật schema cục bộ:** preflight chỉ đọc từ phiên này nhận `EACCES` với socket PostgreSQL của Windows, nên chưa tuyên bố schema đã cập nhật. Trong PowerShell cùng Windows user đang chạy PostgreSQL, chạy `Set-Location D:\Slink` rồi `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\postgres-backup-prepare-local.ps1 -ApplyMigrations`. Script tự tạo/xác minh backup mã hóa trước, áp migrations còn thiếu và chạy kiểm tra role; sau đó API cần được khởi động lại trước nghiệm thu trình duyệt.
+3. Tiếp tục mô hình đa kênh độc lập với nhà cung cấp: mapping SKU, đơn ngoài, trạng thái đồng bộ, lỗi và retry. Connector chỉ sau khi có đối tác, sandbox và quyền API.
+4. Trước pilot, hoàn tất hosting/HTTPS, diễn tập phục hồi, kiểm tra bảo mật cần thiết, rồi để người bán thử giao diện và thiết bị thật.
+5. Không tạo thêm pitch/video vì người dùng cho biết đã có tài liệu riêng; quay lại chỉ khi được yêu cầu review hoặc chỉnh sửa.
