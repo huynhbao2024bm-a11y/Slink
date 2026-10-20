@@ -132,6 +132,7 @@
   let cartCustomerId = '';
   let checkoutIdempotencyKey = '';
   let checkoutPendingPayload = null;
+  let checkoutPromotion = null;
   let returnPending = null;
   let productImportReadNumber = 0;
   let productImportReading = false;
@@ -1300,7 +1301,7 @@
     const categories = ['Tất cả'].concat(Array.from(new Set(store.products.map(function (product) { return product.category; }))));
     const totals = cartTotals();
     const posWarehousePicker = warehouses.length > 1 ? `<label class='pos-warehouse-picker'><span>Xuất từ kho</span><div class='select-wrap'><select class='input' id='pos-warehouse' ${cart.length || checkoutPendingPayload ? 'disabled' : ''}>${warehouses.map(function (warehouse) { return `<option value='${esc(warehouse.id)}' ${warehouse.id === selectedWarehouseId ? 'selected' : ''}>${esc(warehouse.name)}</option>`; }).join('')}</select></div></label>` : '';
-    return pageHeading('Bán hàng', 'Chọn sản phẩm, thêm vào đơn và thu tiền ngay tại quầy.', `<button class='btn btn-secondary' data-action='scan'>${icon('scan', 14)} Nhập mã</button><button class='btn btn-secondary hide-on-mobile' data-route='orders'>Đơn gần đây</button>`) +
+    return pageHeading('Bán hàng', 'Chọn sản phẩm, thêm vào đơn và thu tiền ngay tại quầy.', `${['owner', 'manager'].includes(store.role) ? `<button class='btn btn-secondary' data-action='manage-promotions'>Mã khuyến mãi</button>` : ''}<button class='btn btn-secondary' data-action='scan'>${icon('scan', 14)} Nhập mã</button><button class='btn btn-secondary hide-on-mobile' data-route='orders'>Đơn gần đây</button>`) +
       `<div class='pos-layout'><div><div class='pos-tools'><div class='search-wrap pos-search'><span class='search-symbol'>⌕</span><input class='input' id='pos-search' type='search' placeholder='Tìm sản phẩm hoặc SKU…' value='${esc(query)}' aria-label='Tìm sản phẩm'></div>${posWarehousePicker}<button class='btn btn-secondary' data-action='scan' aria-label='Nhập mã'>${icon('scan', 15)}</button></div><div class='category-scroll'>${categories.map(function (category) { return `<button class='pos-category ${categoryFilter === category ? 'active' : ''}' data-action='category' data-category='${esc(category)}'>${esc(category)}</button>`; }).join('')}</div><div class='pos-product-grid' id='pos-products'>${products.map(function (product) { return `<button class='pos-product' data-action='add-cart' data-id='${product.id}'><span class='product-thumb ${product.tone || 'product-sage'}'>${esc(product.emoji || '📦')}</span><span class='pos-stock'>${product.inventoryTracked ? `Còn ${number(product.stock)}` : 'Không theo dõi tồn'}</span><strong>${esc(product.name)}</strong><small>${esc(product.sku)}</small><span class='pos-price'>${money(product.price)}</span></button>`; }).join('') || `<div class='panel empty-state' style='grid-column:1/-1'><strong>Chưa có sản phẩm để bán</strong><span>Thêm sản phẩm hoặc nhập kho mặt hàng có theo dõi tồn.</span></div>`}</div></div>${cartPanel()}</div><div class='pos-mobile-cart'><button class='btn' data-action='open-cart'><span class='mobile-cart-count'>${number(totals.count)}</span><span>${totals.count ? 'Xem giỏ hàng' : 'Giỏ hàng đang trống'}</span><strong>${money(totals.total)}　→</strong></button></div><div class='drawer-cart' id='drawer-cart'>${cartPanel()}</div>`;
   }
 
@@ -2818,10 +2819,73 @@
     updateCheckoutTenderSummary(form);
   }
 
+  async function applyCheckoutPromotion() {
+    const form = modal.querySelector('[data-form="checkout"]');
+    if (!form || checkoutPendingPayload) return;
+    const input = form.querySelector('[name="promotionCode"]');
+    const status = form.querySelector('#checkout-promotion-status');
+    const button = form.querySelector('[data-action="apply-promotion"]');
+    const code = String(input?.value || '').trim().toUpperCase();
+    const baseTotal = Number(form.dataset.baseTotalVnd || 0);
+    const previousTotal = Number(form.dataset.totalVnd || baseTotal);
+    const previousCash = Array.from(form.querySelectorAll('[data-tender-row]')).find((row) => row.querySelector('[data-tender-method]')?.value === 'cash')?.querySelector('[data-tender-amount]');
+    if (previousCash && previousTotal !== baseTotal && Number(previousCash.value) === previousTotal) previousCash.value = String(baseTotal);
+    const showStatus = (message, isError = false) => {
+      if (!status) return;
+      status.textContent = message;
+      status.classList.toggle('error', isError);
+    };
+    checkoutPromotion = null;
+    form.dataset.promotionDiscountVnd = '0';
+    form.dataset.totalVnd = String(baseTotal);
+    form.querySelector('#checkout-due')?.replaceChildren(document.createTextNode(money(baseTotal)));
+    if (!code) {
+      showStatus('Nhập mã để kiểm tra điều kiện áp dụng.');
+      updateCheckoutTenderSummary(form);
+      return;
+    }
+    if (button) button.disabled = true;
+    showStatus('Đang kiểm tra mã…');
+    try {
+      const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/promotions/preview`, {
+        method: 'POST', body: {
+          code,
+          subtotalVnd: String(cartTotals().subtotal),
+          customerId: String(form.querySelector('[name="customerId"]')?.value || '') || null,
+        },
+      });
+      const promotion = result.promotion;
+      const discount = Number(promotion.discountVnd);
+      if (!Number.isSafeInteger(discount) || discount < 1 || discount > baseTotal) throw new Error('Mức giảm trả về không hợp lệ.');
+      const total = baseTotal - discount;
+      const defaultCash = Array.from(form.querySelectorAll('[data-tender-row]')).find((row) => row.querySelector('[data-tender-method]')?.value === 'cash');
+      const cashAmount = defaultCash?.querySelector('[data-tender-amount]');
+      if (cashAmount && Number(cashAmount.value) === baseTotal) cashAmount.value = String(total);
+      checkoutPromotion = {
+        code: promotion.code,
+        discountVnd: String(promotion.discountVnd),
+        customerId: String(form.querySelector('[name="customerId"]')?.value || '') || null,
+      };
+      form.dataset.promotionDiscountVnd = String(promotion.discountVnd);
+      form.dataset.totalVnd = String(total);
+      form.querySelector('#checkout-due')?.replaceChildren(document.createTextNode(money(total)));
+      showStatus(`${promotion.code} · ${promotion.name}: giảm ${money(discount)}.`);
+    } catch (error) {
+      showStatus(error.message || 'Chưa kiểm tra được mã.', true);
+    } finally {
+      if (button && !checkoutPendingPayload) button.disabled = false;
+      updateCheckoutTenderSummary(form);
+    }
+  }
+
   function openCheckout() {
     if (!cart.length && !checkoutPendingPayload) return toast('Giỏ hàng đang trống', 'Chọn sản phẩm trước khi thanh toán.', 'error');
     const pending = checkoutPendingPayload;
-    const totals = pending ? { total: Number(pending.totalVnd), count: pending.items.reduce(function (sum, item) { return sum + Number(item.quantity); }, 0) } : cartTotals();
+    if (!pending) checkoutPromotion = null;
+    const baseTotals = pending ? { total: Number(pending.totalVnd), count: pending.items.reduce(function (sum, item) { return sum + Number(item.quantity); }, 0) } : cartTotals();
+    if (pending && pending.promotionCode) checkoutPromotion = { code: pending.promotionCode, discountVnd: String(pending.promotionDiscountVnd || '0'), customerId: pending.customerId || null };
+    const promotionDiscount = pending ? Number(pending.promotionDiscountVnd || 0) : Number(checkoutPromotion?.discountVnd || 0);
+    const totals = { ...baseTotals, total: pending ? baseTotals.total : Math.max(0, baseTotals.total - promotionDiscount) };
     const selectedCustomer = pending ? pending.customerId || '' : cartCustomerId;
     const selectedTenders = pending
       ? (Array.isArray(pending.tenders) && pending.tenders.length ? pending.tenders : [{ method: pending.method || 'cash', amountReceivedVnd: pending.amountReceivedVnd || 0 }])
@@ -2830,7 +2894,7 @@
     const disabled = pending ? 'disabled' : '';
     const customers = `<option value=''>Khách lẻ</option>` + store.customers.map(function (c) { return `<option value='${c.id}' ${selectedCustomer === c.id ? 'selected' : ''}>${esc(c.name)} · ${esc(c.phone)}</option>`; }).join('');
     if (!checkoutIdempotencyKey) checkoutIdempotencyKey = newIdempotencyKey();
-    const body = `<form id='entity-form' data-form='checkout' data-total-vnd='${totals.total}'><div class='checkout-total'><span>Khách cần thanh toán</span><strong>${money(totals.total)}</strong></div><div class='form-grid'><div class='form-field full'><label class='input-label'>Khách hàng</label><div class='select-wrap'><select class='input' name='customerId' ${disabled}>${customers}</select></div></div><div class='form-field full'><span class='input-label'>Các khoản thanh toán</span><div id='checkout-tenders'>${selectedTenders.map(function (tender, index) { return checkoutTenderRow(tender, index, selectedTenders.length, disabled); }).join('')}</div>${pending ? '' : `<button class='link-button' type='button' data-action='add-tender'>＋ Thêm phương thức thanh toán</button>`}<div id='checkout-tender-summary' class='checkout-tender-summary' aria-live='polite'></div></div><div class='form-field full'><label class='input-label'>Ghi chú đơn hàng</label><input class='input' name='note' value='${esc(pending ? pending.note : '')}' placeholder='Ghi chú không bắt buộc' ${disabled}/></div></div><div class='modal-note'>${pending ? 'Slink chưa nhận được xác nhận hoàn tất từ lần gửi trước. Hãy thử lại đúng yêu cầu đã gửi; hệ thống sẽ không tạo đơn trùng.' : 'Có thể chia số tiền giữa nhiều phương thức. Khoản không tiền mặt không được vượt tổng đơn; tiền mặt nhận dư sẽ được tính phần thối. Chuyển khoản, QR và thẻ hiện được nhân viên xác nhận thủ công.'}</div></form>`;
+    const body = `<form id='entity-form' data-form='checkout' data-base-total-vnd='${baseTotals.total}' data-promotion-discount-vnd='${promotionDiscount}' data-total-vnd='${totals.total}'><div class='checkout-total'><span>Khách cần thanh toán</span><strong id='checkout-due'>${money(totals.total)}</strong></div><div class='form-grid'><div class='form-field full'><label class='input-label'>Khách hàng</label><div class='select-wrap'><select class='input' name='customerId' ${disabled}>${customers}</select></div></div>${pending ? '' : `<div class='form-field full'><label class='input-label' for='checkout-promotion-code'>Mã khuyến mãi</label><div class='form-field-inline'><input class='input' id='checkout-promotion-code' name='promotionCode' maxlength='32' autocomplete='off' placeholder='Nhập mã của khách'/><button class='btn btn-secondary' type='button' data-action='apply-promotion'>Kiểm tra</button></div><small id='checkout-promotion-status' class='muted' aria-live='polite'>Mã được xác nhận lại trong lúc lưu đơn.</small></div>`}<div class='form-field full'><span class='input-label'>Các khoản thanh toán</span><div id='checkout-tenders'>${selectedTenders.map(function (tender, index) { return checkoutTenderRow(tender, index, selectedTenders.length, disabled); }).join('')}</div>${pending ? '' : `<button class='link-button' type='button' data-action='add-tender'>＋ Thêm phương thức thanh toán</button>`}<div id='checkout-tender-summary' class='checkout-tender-summary' aria-live='polite'></div></div><div class='form-field full'><label class='input-label'>Ghi chú đơn hàng</label><input class='input' name='note' value='${esc(pending ? pending.note : '')}' placeholder='Ghi chú không bắt buộc' ${disabled}/></div></div><div class='modal-note'>${pending ? 'Slink chưa nhận được xác nhận hoàn tất từ lần gửi trước. Hãy thử lại đúng yêu cầu đã gửi; hệ thống sẽ không tạo đơn trùng.' : 'Có thể chia số tiền giữa nhiều phương thức. Khoản không tiền mặt không được vượt tổng đơn; tiền mặt nhận dư sẽ được tính phần thối. Chuyển khoản, QR và thẻ hiện được nhân viên xác nhận thủ công.'}</div></form>`;
     showModal(pending ? 'Kiểm tra đơn hàng đang chờ' : 'Xác nhận thanh toán', `${totals.count} sản phẩm trong đơn · ${money(totals.total)}`, body, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Để sau</button><button class='btn btn-primary' type='submit' form='entity-form'>${pending ? 'Thử lại đơn hàng' : 'Hoàn tất đơn hàng'}</button>`);
     updateCheckoutTenderSummary(modal.querySelector('[data-form="checkout"]'));
   }
@@ -3074,6 +3138,7 @@
         createdAt: row.occurredAt,
         subtotalVndText: row.subtotalVnd,
         discountVndText: row.discountVnd,
+        promotion: row.promotion || null,
         totalVndText: row.totalVnd,
         paidVndText: paidVndText,
         cashReceivedVndText: row.cashReceivedVnd || '0',
@@ -3132,7 +3197,7 @@
     const c = customerById(o.customerId);
     const items = o.items.map(function (i) { return `<div class='detail-line'><span>${esc(i.name)} <small>× ${number(i.qty)} ${esc(i.unit)}</small></span><strong>${money(i.total)}</strong></div>`; }).join('');
     const returnHistory = o.returns.map(function (r) { return `<div class='timeline-item'><span class='timeline-dot'></span><span><strong>Trả hàng ${esc(r.return_number)}</strong><small>${humanDate(r.occurred_at, true)} · ${money(Number(r.refund_total_vnd))}${r.restock_warehouse_name ? ` · Nhập lại ${esc(r.restock_warehouse_name)}` : ''}</small></span></div>`; }).join('');
-    const body = `<div class='order-details'><section class='panel detail-card'><div class='detail-heading'><div><h2>${esc(o.number)}</h2><p>${humanDate(o.createdAt, true)}${c ? ' · ' + esc(c.name) : ' · Khách lẻ'}</p></div>${statusBadge(o.status)}</div><div class='detail-lines'>${items}<div class='detail-line'><span>Tạm tính</span><strong>${money(o.subtotal)}</strong></div>${o.discount ? `<div class='detail-line'><span>Giảm giá</span><strong>−${money(o.discount)}</strong></div>` : ''}<div class='detail-line'><span>Tổng đã thu</span><strong>${money(o.paid)}</strong></div>${o.paymentLines.map(function (payment) { return `<div class='detail-line'><span>· ${esc(payment.method)}</span><strong>${money(payment.amount)}</strong></div>`; }).join('')}${o.cashReceived ? `<div class='detail-line'><span>Tiền mặt khách đưa</span><strong>${money(o.cashReceived)}</strong></div>` : ''}${o.cashChange ? `<div class='detail-line'><span>Tiền thối</span><strong>−${money(o.cashChange)}</strong></div>` : ''}${o.refunded ? `<div class='detail-line'><span>Đã hoàn tiền</span><strong>−${money(o.refunded)}</strong></div>` : ''}${o.due ? `<div class='detail-line'><span>Còn phải thu</span><strong style='color:#aa762a'>${money(o.due)}</strong></div>` : ''}<div class='detail-total'><span>Tổng cộng</span><strong>${money(o.total)}</strong></div></div></section><section class='panel detail-card'><div class='section-title'><h2>Thông tin giao dịch</h2><p>Biên nhận và thay đổi được lưu trên máy chủ</p></div><div class='order-timeline'><div class='timeline-item'><span class='timeline-dot'></span><span><strong>Đơn hàng đã tạo</strong><small>${humanDate(o.createdAt, true)}</small></span></div><div class='timeline-item'><span class='timeline-dot'></span><span><strong>${o.due > 0 ? 'Còn khoản phải thu' : 'Đã đối soát khoản thu'}</strong><small>${money(o.paid)} · ${esc(o.method)}</small></span></div>${o.rawStatus === 'voided' ? `<div class='timeline-item'><span class='timeline-dot'></span><span><strong>Đơn đã hủy</strong><small>Hoàn tồn vào kho ${esc(o.voidRestockWarehouseName || 'đã ghi nhận')}</small></span></div>` : ''}${returnHistory}${c ? `<div class='timeline-item'><span class='timeline-dot'></span><span><strong>Khách hàng: ${esc(c.name)}</strong><small>${esc(c.phone)}</small></span></div>` : ''}</div>${o.note ? `<div class='modal-note'>${esc(o.note)}</div>` : ''}</section></div>`;
+    const body = `<div class='order-details'><section class='panel detail-card'><div class='detail-heading'><div><h2>${esc(o.number)}</h2><p>${humanDate(o.createdAt, true)}${c ? ' · ' + esc(c.name) : ' · Khách lẻ'}</p></div>${statusBadge(o.status)}</div><div class='detail-lines'>${items}<div class='detail-line'><span>Tạm tính</span><strong>${money(o.subtotal)}</strong></div>${o.discount ? `<div class='detail-line'><span>Giảm giá</span><strong>−${money(o.discount)}</strong></div>` : ''}${o.promotion ? `<div class='detail-line'><span>Mã ${esc(o.promotion.code)}</span><strong>−${moneyVndText(o.promotion.discountVnd)}</strong></div>` : ''}<div class='detail-line'><span>Tổng đã thu</span><strong>${money(o.paid)}</strong></div>${o.paymentLines.map(function (payment) { return `<div class='detail-line'><span>· ${esc(payment.method)}</span><strong>${money(payment.amount)}</strong></div>`; }).join('')}${o.cashReceived ? `<div class='detail-line'><span>Tiền mặt khách đưa</span><strong>${money(o.cashReceived)}</strong></div>` : ''}${o.cashChange ? `<div class='detail-line'><span>Tiền thối</span><strong>−${money(o.cashChange)}</strong></div>` : ''}${o.refunded ? `<div class='detail-line'><span>Đã hoàn tiền</span><strong>−${money(o.refunded)}</strong></div>` : ''}${o.due ? `<div class='detail-line'><span>Còn phải thu</span><strong style='color:#aa762a'>${money(o.due)}</strong></div>` : ''}<div class='detail-total'><span>Tổng cộng</span><strong>${money(o.total)}</strong></div></div></section><section class='panel detail-card'><div class='section-title'><h2>Thông tin giao dịch</h2><p>Biên nhận và thay đổi được lưu trên máy chủ</p></div><div class='order-timeline'><div class='timeline-item'><span class='timeline-dot'></span><span><strong>Đơn hàng đã tạo</strong><small>${humanDate(o.createdAt, true)}</small></span></div><div class='timeline-item'><span class='timeline-dot'></span><span><strong>${o.due > 0 ? 'Còn khoản phải thu' : 'Đã đối soát khoản thu'}</strong><small>${money(o.paid)} · ${esc(o.method)}</small></span></div>${o.rawStatus === 'voided' ? `<div class='timeline-item'><span class='timeline-dot'></span><span><strong>Đơn đã hủy</strong><small>Hoàn tồn vào kho ${esc(o.voidRestockWarehouseName || 'đã ghi nhận')}</small></span></div>` : ''}${returnHistory}${c ? `<div class='timeline-item'><span class='timeline-dot'></span><span><strong>Khách hàng: ${esc(c.name)}</strong><small>${esc(c.phone)}</small></span></div>` : ''}</div>${o.note ? `<div class='modal-note'>${esc(o.note)}</div>` : ''}</section></div>`;
     const pendingMutation = loadPendingOrderMutation(o.id);
     const canCollaborate = ['owner', 'manager', 'cashier', 'accountant'].includes(store.role);
     const tagChips = o.tags.map(function (tag) {
@@ -3700,6 +3765,52 @@
     modalForm('Áp dụng giảm giá', 'Số tiền giảm sẽ được lưu cùng đơn hàng.', form, 'Áp dụng');
   }
 
+  async function openPromotions() {
+    try {
+      const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/promotions`);
+      const rows = result.promotions.map(function (promo) {
+        const offer = promo.discountType === 'fixed' ? moneyVndText(promo.discountVnd) : `${promo.discountPercent}%`;
+        const limit = promo.usageLimit === null ? 'Không giới hạn lượt' : `${number(promo.usageCount)} / ${number(promo.usageLimit)} lượt`;
+        const dates = promo.endsAt ? `Hết hạn ${humanDate(promo.endsAt, true)}` : 'Không đặt ngày hết hạn';
+        return `<article class='purchase-order-card'><div class='purchase-order-summary'><div><strong>${esc(promo.code)} · ${esc(promo.name)}</strong><small>Giảm ${offer} · Đơn tối thiểu ${moneyVndText(promo.minimumSubtotalVnd)}</small><small>${limit} · ${dates}</small></div><span class='purchase-order-status ${promo.isActive ? 'status-received' : 'status-cancelled'}'>${promo.isActive ? 'Đang áp dụng' : 'Đã ngừng'}</span></div>${promo.isActive ? `<div class='purchase-order-actions'><button class='link-button danger-link' data-action='archive-promotion' data-id='${esc(promo.id)}'>Ngừng mã</button></div>` : ''}</article>`;
+      }).join('');
+      showModal('Mã khuyến mãi', 'Tạo mã giảm tại quầy; lượt sử dụng được ghi cùng đơn hàng.', `<div class='purchase-order-list'>${rows || `<div class='panel empty-state'><strong>Chưa có mã khuyến mãi</strong><span>Tạo mã đầu tiên để nhân viên áp dụng trong lúc thanh toán.</span></div>`}</div>`, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button><button class='btn btn-primary' type='button' data-action='new-promotion'>＋ Tạo mã</button>`, true);
+    } catch (error) { toast('Chưa tải được mã khuyến mãi', error.message, 'error'); }
+  }
+
+  function openPromotionCreate() {
+    const form = `<form id='entity-form' data-form='promotion-create'><div class='form-grid'><div class='form-field'><label class='input-label' for='promotion-code'>Mã *</label><input class='input' id='promotion-code' name='code' maxlength='32' pattern='[A-Za-z0-9_-]{3,32}' required placeholder='VD: KHAITRUONG10'/></div><div class='form-field'><label class='input-label' for='promotion-name'>Tên chương trình *</label><input class='input' id='promotion-name' name='name' maxlength='120' required placeholder='Ưu đãi khai trương'/></div><div class='form-field'><label class='input-label' for='promotion-type'>Kiểu giảm</label><div class='select-wrap'><select class='input' id='promotion-type' name='discountType'><option value='percent'>Theo phần trăm</option><option value='fixed'>Số tiền cố định</option></select></div></div><div class='form-field'><label class='input-label' for='promotion-percent'>Phần trăm giảm</label><input class='input' id='promotion-percent' name='discountPercent' type='number' inputmode='decimal' min='0.01' max='100' step='0.01' value='10'/></div><div class='form-field'><label class='input-label' for='promotion-vnd'>Số tiền giảm (VND)</label><input class='input' id='promotion-vnd' name='discountVnd' type='number' inputmode='numeric' min='1' step='1'/></div><div class='form-field'><label class='input-label' for='promotion-minimum'>Đơn tối thiểu (VND)</label><input class='input' id='promotion-minimum' name='minimumSubtotalVnd' type='number' inputmode='numeric' min='0' step='1' value='0'/></div><div class='form-field'><label class='input-label' for='promotion-cap'>Giảm tối đa (VND, tùy chọn)</label><input class='input' id='promotion-cap' name='maximumDiscountVnd' type='number' inputmode='numeric' min='1' step='1'/></div><div class='form-field'><label class='input-label' for='promotion-limit'>Tổng lượt dùng (để trống: không giới hạn)</label><input class='input' id='promotion-limit' name='usageLimit' type='number' min='1' step='1'/></div><div class='form-field'><label class='input-label' for='promotion-customer-limit'>Lượt dùng mỗi khách (tùy chọn)</label><input class='input' id='promotion-customer-limit' name='perCustomerLimit' type='number' min='1' step='1'/></div><div class='form-field'><label class='input-label' for='promotion-start'>Bắt đầu (tùy chọn)</label><input class='input' id='promotion-start' name='startsAt' type='datetime-local'/></div><div class='form-field'><label class='input-label' for='promotion-end'>Kết thúc (tùy chọn)</label><input class='input' id='promotion-end' name='endsAt' type='datetime-local'/></div></div><div class='modal-note'>Mỗi đơn dùng tối đa một mã. Hệ thống tính lại điều kiện và giới hạn trong giao dịch bán, không dựa vào số giảm do trình duyệt gửi.</div></form>`;
+    modalForm('Tạo mã khuyến mãi', 'Mã chỉ áp dụng cho một đơn; tắt mã không xóa lịch sử đã dùng.', form, 'Tạo mã', true);
+  }
+
+  async function savePromotion(form) {
+    const data = new FormData(form);
+    const value = (key) => String(data.get(key) || '').trim();
+    const toIso = (key) => { const raw = value(key); return raw ? new Date(raw).toISOString() : null; };
+    const discountType = value('discountType');
+    const payload = {
+      code: value('code'), name: value('name'), discountType,
+      discountPercent: discountType === 'percent' ? value('discountPercent') : undefined,
+      discountVnd: discountType === 'fixed' ? value('discountVnd') : undefined,
+      minimumSubtotalVnd: value('minimumSubtotalVnd') || '0', maximumDiscountVnd: value('maximumDiscountVnd') || null,
+      usageLimit: value('usageLimit') || null, perCustomerLimit: value('perCustomerLimit') || null,
+      startsAt: toIso('startsAt'), endsAt: toIso('endsAt'),
+    };
+    try {
+      await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/promotions`, { method: 'POST', body: payload });
+      toast('Đã tạo mã khuyến mãi', payload.code.toUpperCase(), 'success');
+      openPromotions();
+    } catch (error) { toast('Chưa tạo được mã', error.message, 'error'); }
+  }
+
+  async function archivePromotion(id) {
+    try {
+      await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/promotions/${encodeURIComponent(id)}/archive`, { method: 'POST', body: {} });
+      toast('Đã ngừng mã khuyến mãi', '', 'success');
+      openPromotions();
+    } catch (error) { toast('Chưa ngừng được mã', error.message, 'error'); }
+  }
+
   function showHelp() {
     showModal('Trợ giúp Slink', 'Thông tin về các chức năng đang hoạt động.', `<div class='notice-list'><div class='notice-item'><span>📦</span><span><strong>Sản phẩm và kho</strong><small>Quản lý danh mục, kiểm kê tồn, nhập hàng và xem biến động kho. Mỗi phiếu nhập cập nhật giá vốn và công nợ nhà cung cấp.</small></span></div><div class='notice-item'><span>🧾</span><span><strong>Bán hàng và đơn hàng</strong><small>Đơn bán cập nhật kho, khoản thu và công nợ trong cùng một giao dịch. Từ chi tiết đơn, có thể ghi nhận thu nợ hoặc trả một phần hàng.</small></span></div><div class='notice-item'><span>💳</span><span><strong>Phương thức thanh toán</strong><small>Tiền mặt, chuyển khoản, QR và thẻ hiện được nhân viên xác nhận thủ công. Slink chưa kết nối trực tiếp với ngân hàng hoặc cổng thanh toán.</small></span></div><div class='notice-item'><span>🔐</span><span><strong>Bảo vệ dữ liệu</strong><small>Dữ liệu được lưu theo cửa hàng trên máy chủ. Chỉ thành viên được cấp quyền mới xem hoặc thay đổi được thông tin tương ứng.</small></span></div></div>`, `<button class='btn btn-primary' data-action='close-modal'>Đã hiểu</button>`, true);
   }
@@ -3757,8 +3868,16 @@
   async function createSale(form) {
     const data = new FormData(form);
     const totals = cartTotals();
+    const checkoutTotal = Number(form.dataset.totalVnd || totals.total);
     const customerId = String(data.get('customerId') || '') || null;
     if (!checkoutPendingPayload) {
+      const enteredPromotionCode = String(data.get('promotionCode') || '').trim().toUpperCase();
+      if (enteredPromotionCode && (!checkoutPromotion || checkoutPromotion.code !== enteredPromotionCode || checkoutPromotion.customerId !== customerId)) {
+        return toast('Hãy kiểm tra lại mã', 'Mã khuyến mãi hoặc khách hàng đã thay đổi sau lần kiểm tra.', 'error');
+      }
+      if (!enteredPromotionCode && Number(form.dataset.promotionDiscountVnd || 0) > 0) {
+        return toast('Hãy kiểm tra lại mã', 'Mã khuyến mãi đã bị xóa. Hãy bấm Kiểm tra trước khi thanh toán.', 'error');
+      }
       const tenderInputs = checkoutTenderValues(form);
       const tenders = [];
       const usedMethods = new Set();
@@ -3777,19 +3896,21 @@
         else nonCashReceived += amountReceived;
         tenders.push({ method: input.method, amountReceivedVnd: amountReceived });
       }
-      if (nonCashReceived > totals.total) return toast('Khoản không tiền mặt quá lớn', 'Tiền chuyển khoản, QR hoặc thẻ không được vượt tổng đơn.', 'error');
-      if (amountReceivedVnd > totals.total && cashReceived === 0) return toast('Không thể tính tiền thối', 'Chỉ khoản tiền mặt mới được nhận cao hơn số còn phải thanh toán.', 'error');
-      if (amountReceivedVnd < totals.total && !customerId) return toast('Chọn khách hàng', 'Cần gắn khách hàng để lưu khoản còn nợ.', 'error');
+      if (nonCashReceived > checkoutTotal) return toast('Khoản không tiền mặt quá lớn', 'Tiền chuyển khoản, QR hoặc thẻ không được vượt tổng đơn.', 'error');
+      if (amountReceivedVnd > checkoutTotal && cashReceived === 0) return toast('Không thể tính tiền thối', 'Chỉ khoản tiền mặt mới được nhận cao hơn số còn phải thanh toán.', 'error');
+      if (amountReceivedVnd < checkoutTotal && !customerId) return toast('Chọn khách hàng', 'Cần gắn khách hàng để lưu khoản còn nợ.', 'error');
       checkoutIdempotencyKey = checkoutIdempotencyKey || newIdempotencyKey();
       checkoutPendingPayload = {
         items: cart.map(function (item) { return { productId: item.id, quantity: item.qty }; }),
         customerId: customerId,
         discountVnd: totals.discount,
+        promotionCode: String(data.get('promotionCode') || '').trim().toUpperCase() || undefined,
+        promotionDiscountVnd: String(form.dataset.promotionDiscountVnd || '0'),
         method: tenders.length === 1 ? tenders[0].method : (tenderInputs[0]?.method || 'cash'),
         tenders: tenders,
         amountReceivedVnd: amountReceivedVnd,
         note: String(data.get('note') || '').trim(),
-        totalVnd: totals.total,
+        totalVnd: checkoutTotal,
         warehouseId: selectedWarehouseId || undefined,
       };
     }
@@ -3806,6 +3927,7 @@
       });
       cart = [];
       cartCustomerId = '';
+      checkoutPromotion = null;
       clearPendingSale();
       closeModal();
       page = 'orders';
@@ -4566,7 +4688,7 @@
     const showRefunded = BigInt(String(o.refundedVndText ?? o.refunded ?? '0')) > 0n;
     const html = `<html lang='vi'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Biên nhận ${esc(o.number)}</title><style>
       @page{size:auto;margin:8mm}*{box-sizing:border-box}body{font:13px Arial,sans-serif;width:100%;max-width:76mm;margin:0 auto;padding:5mm 3mm;color:#222}h1{font-size:18px;line-height:1.25;margin:0 0 4px;overflow-wrap:anywhere}p{font-size:11px;line-height:1.4;margin:4px 0;color:#555;overflow-wrap:anywhere}.center{text-align:center}.muted{color:#666}.rule{border:0;border-top:1px dashed #999;margin:10px 0}.receipt-title{font-size:13px;font-weight:700;letter-spacing:.04em}.cancelled{display:inline-block;margin:8px 0;padding:5px 8px;border:1px solid #a33;color:#a33;font-weight:700}.item-line,.summary-line{display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px dashed #ddd;font-size:12px;break-inside:avoid}.item-copy{display:grid;gap:3px;min-width:0}.item-copy strong{overflow-wrap:anywhere}.item-copy small{color:#555;font-size:10px}.item-line>strong,.summary-line>strong{white-space:nowrap}.summary{margin-top:4px}.grand-total{font-size:15px;font-weight:700;border-bottom:0;padding-top:9px}.payment-line{padding-top:2px;padding-bottom:2px;border-bottom:0;color:#555}.footer{margin-top:16px}@media screen{body{margin:16px auto;padding:12px;border:1px solid #ddd;box-shadow:0 2px 12px #0001}}@media print{body{padding:0;border:0;box-shadow:none}}
-    </style></head><body><header class='center'><h1>${esc(store.settings.storeName || 'Slink')}</h1>${store.settings.address ? `<p>${esc(store.settings.address)}</p>` : ''}${store.settings.phone ? `<p>${esc(store.settings.phone)}</p>` : ''}<hr class='rule'><div class='receipt-title'>BIÊN NHẬN BÁN HÀNG</div><p>${esc(o.number)}<br>${humanDate(o.createdAt, true)}</p><p>Khách hàng: ${esc(customerName)}${customerPhone ? `<br>${esc(customerPhone)}` : ''}</p>${cancelled ? `<div class='cancelled'>ĐƠN HÀNG ĐÃ HỦY</div>` : ''}</header><hr class='rule'><main>${items || `<p class='muted'>Không có dòng sản phẩm.</p>`}<section class='summary'><div class='summary-line'><span>Tạm tính</span><strong>${moneyVndText(o.subtotalVndText ?? o.subtotal)}</strong></div>${showDiscount ? `<div class='summary-line'><span>Giảm giá đơn hàng</span><strong>−${moneyVndText(o.discountVndText ?? o.discount)}</strong></div>` : ''}<div class='summary-line grand-total'><span>Tổng cộng</span><strong>${moneyVndText(o.totalVndText ?? o.total)}</strong></div><div class='summary-line'><span>Đã thanh toán</span><strong>${moneyVndText(o.paidVndText ?? o.paid)}</strong></div>${payments}${showCashReceived ? `<div class='summary-line'><span>Tiền mặt khách đưa</span><strong>${moneyVndText(o.cashReceivedVndText ?? o.cashReceived)}</strong></div>` : ''}${showCashChange ? `<div class='summary-line'><span>Tiền thối</span><strong>${moneyVndText(o.cashChangeVndText ?? o.cashChange)}</strong></div>` : ''}${showDue ? `<div class='summary-line'><span>Còn phải thu</span><strong>${moneyVndText(o.dueVndText ?? o.due)}</strong></div>` : ''}${returnLines}${!returnLines && showRefunded ? `<div class='summary-line'><span>Đã hoàn</span><strong>−${moneyVndText(o.refundedVndText ?? o.refunded)}</strong></div>` : ''}</section></main><footer class='center footer'><p>${esc(store.settings.receiptFooter || 'Cảm ơn quý khách!')}</p></footer><script>window.onload=function(){window.print()}<\/script></body></html>`;
+    </style></head><body><header class='center'><h1>${esc(store.settings.storeName || 'Slink')}</h1>${store.settings.address ? `<p>${esc(store.settings.address)}</p>` : ''}${store.settings.phone ? `<p>${esc(store.settings.phone)}</p>` : ''}<hr class='rule'><div class='receipt-title'>BIÊN NHẬN BÁN HÀNG</div><p>${esc(o.number)}<br>${humanDate(o.createdAt, true)}</p><p>Khách hàng: ${esc(customerName)}${customerPhone ? `<br>${esc(customerPhone)}` : ''}</p>${cancelled ? `<div class='cancelled'>ĐƠN HÀNG ĐÃ HỦY</div>` : ''}</header><hr class='rule'><main>${items || `<p class='muted'>Không có dòng sản phẩm.</p>`}<section class='summary'><div class='summary-line'><span>Tạm tính</span><strong>${moneyVndText(o.subtotalVndText ?? o.subtotal)}</strong></div>${showDiscount ? `<div class='summary-line'><span>Giảm giá đơn hàng</span><strong>−${moneyVndText(o.discountVndText ?? o.discount)}</strong></div>` : ''}${o.promotion ? `<div class='summary-line'><span>Mã ${esc(o.promotion.code)}</span><strong>−${moneyVndText(o.promotion.discountVnd)}</strong></div>` : ''}<div class='summary-line grand-total'><span>Tổng cộng</span><strong>${moneyVndText(o.totalVndText ?? o.total)}</strong></div><div class='summary-line'><span>Đã thanh toán</span><strong>${moneyVndText(o.paidVndText ?? o.paid)}</strong></div>${payments}${showCashReceived ? `<div class='summary-line'><span>Tiền mặt khách đưa</span><strong>${moneyVndText(o.cashReceivedVndText ?? o.cashReceived)}</strong></div>` : ''}${showCashChange ? `<div class='summary-line'><span>Tiền thối</span><strong>${moneyVndText(o.cashChangeVndText ?? o.cashChange)}</strong></div>` : ''}${showDue ? `<div class='summary-line'><span>Còn phải thu</span><strong>${moneyVndText(o.dueVndText ?? o.due)}</strong></div>` : ''}${returnLines}${!returnLines && showRefunded ? `<div class='summary-line'><span>Đã hoàn</span><strong>−${moneyVndText(o.refundedVndText ?? o.refunded)}</strong></div>` : ''}</section></main><footer class='center footer'><p>${esc(store.settings.receiptFooter || 'Cảm ơn quý khách!')}</p></footer><script>window.onload=function(){window.print()}<\/script></body></html>`;
     const win = window.open('', '_blank', 'width=430,height=680');
     if (!win) return toast('Trình duyệt đã chặn cửa sổ in', 'Cho phép cửa sổ bật lên rồi thử lại.', 'error');
     win.document.open();
@@ -4595,6 +4717,7 @@
       ...itemLines,
       '',
       BigInt(String(order.discountVndText ?? order.discount ?? '0')) > 0n ? `Giảm giá đơn hàng: −${moneyVndText(order.discountVndText ?? order.discount)}` : null,
+      order.promotion ? `Mã khuyến mãi ${shareLabel(order.promotion.code, 32)}: −${moneyVndText(order.promotion.discountVnd)}` : null,
       `Tổng cộng: ${moneyVndText(order.totalVndText ?? order.total)}`,
       `Đã thanh toán: ${moneyVndText(order.paidVndText ?? order.paid)}`,
       ...paymentLines,
@@ -4973,6 +5096,9 @@
     else if (action === 'order-tag-remove') changeOrderTag(id, 'remove', button.dataset.tag || '');
     else if (action === 'retry-order-mutation') sendPendingOrderMutation(id);
     else if (action === 'void-order') openVoidOrder(id);
+    else if (action === 'manage-promotions') openPromotions();
+    else if (action === 'new-promotion') openPromotionCreate();
+    else if (action === 'archive-promotion') archivePromotion(id);
     else if (action === 'purchase-detail') openPurchaseDetail(id);
     else if (action === 'purchase-order-detail') openPurchaseOrderDetail(id);
     else if (action === 'new-purchase-order') openPurchaseOrder('');
@@ -4992,6 +5118,7 @@
     else if (action === 'cart-qty') setCartQty(id, Number(button.dataset.delta));
     else if (action === 'cart-qty-edit') editCartQuantity(id);
     else if (action === 'checkout') openCheckout();
+    else if (action === 'apply-promotion') applyCheckoutPromotion();
     else if (action === 'add-tender') {
       if (checkoutPendingPayload) return toast('Đơn đang chờ xác nhận', 'Không thể đổi các khoản thanh toán của đơn đã gửi.', 'error');
       const form = modal.querySelector('[data-form="checkout"]');
@@ -5528,6 +5655,7 @@
     if (authForm) { event.preventDefault(); submitAuth(authForm); return; }
     const form = event.target.closest('form[data-form]'); if (!form) return; event.preventDefault(); const type = form.dataset.form;
     if (type === 'product') saveProduct(form);
+    else if (type === 'promotion-create') savePromotion(form);
     else if (type === 'audit-filter') {
       const data = new FormData(form);
       const filters = { from: String(data.get('from') || ''), to: String(data.get('to') || ''), q: String(data.get('q') || '').trim().slice(0, 100) };

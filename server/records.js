@@ -866,6 +866,11 @@ function registerRecordRoutes(app, { pool, env }) {
         [storeId, orderId]
       );
       if (!order.rowCount) throw new ApiError(404, 'order_not_found', 'Không tìm thấy đơn hàng.');
+      const promotion = await client.query(
+        `SELECT code_snapshot, discount_vnd::text AS discount_vnd
+         FROM promotion_redemptions WHERE store_id = $1 AND order_id = $2`,
+        [storeId, orderId]
+      );
       const lines = await client.query(
         `SELECT ol.id, ol.product_id, ol.product_name_snapshot, ol.sku_snapshot, ol.unit_snapshot, ol.quantity::text AS quantity,
                 ol.unit_price_vnd::text AS unit_price_vnd,
@@ -925,6 +930,7 @@ function registerRecordRoutes(app, { pool, env }) {
           status: item.status,
           subtotalVnd: item.subtotal_vnd_text,
           discountVnd: item.discount_vnd_text,
+          promotion: promotion.rowCount ? { code: promotion.rows[0].code_snapshot, discountVnd: promotion.rows[0].discount_vnd } : null,
           totalVnd: item.total_vnd_text,
           cashReceivedVnd: item.cash_received_vnd_text,
           cashChangeVnd: item.cash_change_vnd_text,

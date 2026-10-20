@@ -238,6 +238,8 @@ VII. CHĂM SÓC KHÁCH HÀNG (CRM)
    · Gửi tin nhắn chăm sóc
    · Khách hàng bỏ giỏ (abandoned cart)
 
+**Trạng thái triển khai Slink (2026-10-20):** Đã có một lát cắt mã giảm tại POS: chủ/quản lý tạo mã theo số tiền hoặc phần trăm, thời gian áp dụng, mức đơn tối thiểu và giới hạn lượt; thu ngân kiểm tra mã ở màn thanh toán; server tính lại số giảm, lưu redemption cùng đơn và chặn dùng quá hạn mức/trùng đơn. Đây chưa phải toàn bộ marketing: chưa có flash sale tự động, combo, điểm khách hàng hay gửi email/SMS. Migration `0018_promotions_vouchers.sql` cần áp dụng vào database cửa hàng theo luồng backup có sẵn trước khi dùng trên cửa hàng thật; giao diện cần thử trực tiếp bởi người bán.
+
 ---
 
 VIII. BÁO CÁO & PHÂN TÍCH

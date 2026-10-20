@@ -6,6 +6,7 @@ var/
 .local-data/
 *.log
 coverage/
+.pitch-build/
 *.db
 *.db-shm
 *.db-wal

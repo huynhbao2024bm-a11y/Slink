@@ -278,6 +278,72 @@ async function run() {
     assertQuantity(afterConcurrentSale.json().products.find((row) => row.id === product.id)?.on_hand, '0.000', 'Inventory after competing sales');
     process.stdout.write('PASS concurrent native sales serialize; exactly one consumes the available stock\n');
 
+    const promotionItem = {
+      sku: `PROMO-${suffix}`, name: 'Native voucher acceptance item',
+      salePriceVnd: 20000, costVnd: 8000, openingQuantity: '1',
+    };
+    const promotionProductImport = await app.inject({
+      method: 'POST', url: `/api/stores/${store.id}/products/import`,
+      headers: { ...writeHeaders, 'idempotency-key': `native-promotion-import-${suffix}` },
+      payload: { items: [promotionItem] },
+    });
+    requireStatus(promotionProductImport, 201, 'Voucher test product import');
+    const promotionProductId = promotionProductImport.json().products[0].id;
+    const promotionCode = `SAVE10-${suffix}`;
+    const promotionCreated = await app.inject({
+      method: 'POST', url: `/api/stores/${store.id}/promotions`, headers: writeHeaders,
+      payload: {
+        code: promotionCode, name: 'Native acceptance voucher', discountType: 'percent',
+        discountPercent: '10', minimumSubtotalVnd: '10000', maximumDiscountVnd: '1000', usageLimit: 1,
+      },
+    });
+    requireStatus(promotionCreated, 201, 'Native voucher creation');
+    const promotionId = promotionCreated.json().promotion.id;
+    const promotionPreview = await app.inject({
+      method: 'POST', url: `/api/stores/${store.id}/promotions/preview`, headers: writeHeaders,
+      payload: { code: promotionCode.toLowerCase(), subtotalVnd: '20000' },
+    });
+    requireStatus(promotionPreview, 200, 'Read-only voucher preview');
+    assert.equal(promotionPreview.json().promotion.discountVnd, '1000');
+    const promotionListBeforeSale = await app.inject({ method: 'GET', url: `/api/stores/${store.id}/promotions`, headers });
+    requireStatus(promotionListBeforeSale, 200, 'Voucher usage before sale');
+    assert.equal(promotionListBeforeSale.json().promotions.find((row) => row.id === promotionId)?.usageCount, 0);
+    const crossStorePromotions = await app.inject({ method: 'GET', url: `/api/stores/${store.id}/promotions`, headers: secondHeaders });
+    requireStatus(crossStorePromotions, 403, 'Cross-store voucher listing');
+
+    const promotionSalePayload = {
+      items: [{ productId: promotionProductId, quantity: 1 }], promotionCode,
+      promotionDiscountVnd: '999999', tenders: [{ method: 'bank_transfer', amountReceivedVnd: '19000' }],
+    };
+    const promotionSaleHeaders = { ...writeHeaders, 'idempotency-key': `native-promotion-sale-${suffix}-01` };
+    const promotionSale = await app.inject({
+      method: 'POST', url: `/api/stores/${store.id}/sales`, headers: promotionSaleHeaders, payload: promotionSalePayload,
+    });
+    requireStatus(promotionSale, 201, 'Voucher sale');
+    assert.equal(promotionSale.json().order.discountVnd, '1000', 'server recalculates discount instead of trusting the client');
+    assert.equal(promotionSale.json().order.totalVnd, '19000');
+    assert.equal(promotionSale.json().order.promotion.code, promotionCode);
+    const promotionSaleReplay = await app.inject({
+      method: 'POST', url: `/api/stores/${store.id}/sales`, headers: promotionSaleHeaders, payload: promotionSalePayload,
+    });
+    requireStatus(promotionSaleReplay, 201, 'Voucher sale retry');
+    assert.equal(promotionSaleReplay.headers['idempotent-replayed'], 'true');
+    const promotionOrder = await app.inject({
+      method: 'GET', url: `/api/stores/${store.id}/orders/${promotionSale.json().order.id}`, headers,
+    });
+    requireStatus(promotionOrder, 200, 'Voucher order history');
+    assert.deepEqual(promotionOrder.json().order.promotion, { code: promotionCode, discountVnd: '1000' });
+    const exhaustedPromotion = await app.inject({
+      method: 'POST', url: `/api/stores/${store.id}/promotions/preview`, headers: writeHeaders,
+      payload: { code: promotionCode, subtotalVnd: '20000' },
+    });
+    assert.equal(exhaustedPromotion.statusCode, 422, exhaustedPromotion.body);
+    assert.equal(exhaustedPromotion.json().error.code, 'promotion_limit_reached');
+    const promotionProductAfterSale = await app.inject({ method: 'GET', url: `/api/stores/${store.id}/products?q=${promotionItem.sku}`, headers });
+    requireStatus(promotionProductAfterSale, 200, 'Voucher product inventory after replay');
+    assertQuantity(promotionProductAfterSale.json().products[0]?.on_hand, '0.000', 'Voucher retry leaves inventory unchanged');
+    process.stdout.write('PASS native voucher preview, exact discount, tenant denial, usage limit and idempotent redemption\n');
+
     const exportResponse = await app.inject({ method: 'GET', url: `/api/stores/${store.id}/exports/products`, headers });
     requireStatus(exportResponse, 200, 'Server-side product CSV export');
     assert.match(exportResponse.headers['content-type'] || '', /text\/csv/i);

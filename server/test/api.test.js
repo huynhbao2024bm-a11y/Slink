@@ -2902,3 +2902,117 @@ test('saved customer segments are tenant-scoped, auditable, versioned and idempo
   `);
   assert.deepEqual(roleChecks.rows[0], { can_select: true, can_insert: true, can_update: true, can_delete: true, can_truncate: false, forced_rls: true });
 });
+
+test('promotion preview is read-only and a sale consumes its voucher atomically once', async (t) => {
+  const app = await testApp(t);
+  await app.testDb.exec(`
+    REVOKE ALL ON public.promotions, public.promotion_redemptions FROM slink_app;
+    GRANT SELECT, INSERT, UPDATE ON public.promotions TO slink_app;
+    GRANT SELECT, INSERT ON public.promotion_redemptions TO slink_app;
+  `);
+  const roleBoundary = await app.testDb.query(`
+    SELECT has_table_privilege('slink_app', 'public.promotions', 'SELECT') AS promotions_read,
+           has_table_privilege('slink_app', 'public.promotions', 'UPDATE') AS promotions_update,
+           has_table_privilege('slink_app', 'public.promotions', 'DELETE') AS promotions_delete,
+           has_table_privilege('slink_app', 'public.promotion_redemptions', 'INSERT') AS redemptions_insert,
+           has_table_privilege('slink_app', 'public.promotion_redemptions', 'UPDATE') AS redemptions_update,
+           has_table_privilege('slink_app', 'public.promotion_redemptions', 'DELETE') AS redemptions_delete,
+           (SELECT relrowsecurity AND relforcerowsecurity FROM pg_class WHERE oid = 'public.promotions'::regclass) AS promotions_forced_rls,
+           (SELECT relrowsecurity AND relforcerowsecurity FROM pg_class WHERE oid = 'public.promotion_redemptions'::regclass) AS redemptions_forced_rls,
+           EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'promotions' AND policyname = 'tenant_scope' AND position('app.store_id' IN coalesce(qual, '')) > 0 AND position('app.store_id' IN coalesce(with_check, '')) > 0) AS promotions_tenant_policy,
+           EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'promotion_redemptions' AND policyname = 'tenant_scope' AND position('app.store_id' IN coalesce(qual, '')) > 0 AND position('app.store_id' IN coalesce(with_check, '')) > 0) AS redemptions_tenant_policy
+  `);
+  assert.deepEqual(roleBoundary.rows[0], {
+    promotions_read: true, promotions_update: true, promotions_delete: false,
+    redemptions_insert: true, redemptions_update: false, redemptions_delete: false,
+    promotions_forced_rls: true, redemptions_forced_rls: true,
+    promotions_tenant_policy: true, redemptions_tenant_policy: true,
+  });
+  const owner = await registerAndLogin(app, {
+    email: 'promotion-owner@example.com', displayName: 'Chủ cửa hàng', storeName: 'Cửa hàng ưu đãi',
+  });
+  const storeId = owner.store.id;
+  const headers = { cookie: cookieHeader(owner.cookies), origin, 'x-csrf-token': owner.cookies.slink_csrf };
+  const customer = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/customers`, headers,
+    payload: { name: 'Khách dùng voucher', phone: '0901234567' },
+  });
+  assert.equal(customer.statusCode, 201, customer.body);
+  const imported = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/products/import`,
+    headers: { ...headers, 'idempotency-key': 'promotion-stock-import-0001' },
+    payload: { items: [{ sku: 'PROMO-001', name: 'Sản phẩm ưu đãi', salePriceVnd: 20000, costVnd: 8000, openingQuantity: '5' }] },
+  });
+  assert.equal(imported.statusCode, 201, imported.body);
+  const productId = imported.json().products[0].id;
+
+  const created = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/promotions`, headers,
+    payload: {
+      code: 'WELCOME10', name: 'Ưu đãi khách mới', discountType: 'percent', discountPercent: '10',
+      minimumSubtotalVnd: '15000', maximumDiscountVnd: '1000', usageLimit: 1, perCustomerLimit: 1,
+    },
+  });
+  assert.equal(created.statusCode, 201, created.body);
+  const promotionId = created.json().promotion.id;
+  const other = await registerAndLogin(app, {
+    email: 'promotion-other@example.com', displayName: 'Chủ cửa hàng khác', storeName: 'Cửa hàng khác',
+  });
+  const crossStoreList = await app.inject({
+    method: 'GET', url: `/api/stores/${storeId}/promotions`,
+    headers: { cookie: cookieHeader(other.cookies), origin },
+  });
+  assert.equal(crossStoreList.statusCode, 403, crossStoreList.body);
+
+  const preview = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/promotions/preview`, headers,
+    payload: { code: ' welcome10 ', subtotalVnd: '20000', customerId: customer.json().customer.id },
+  });
+  assert.equal(preview.statusCode, 200, preview.body);
+  assert.equal(preview.json().promotion.discountVnd, '1000');
+  let usage = await app.testDb.query('SELECT usage_count FROM promotions WHERE store_id = $1 AND id = $2', [storeId, promotionId]);
+  assert.equal(usage.rows[0].usage_count, 0, 'preview does not consume a redemption');
+
+  const salePayload = {
+    items: [{ productId, quantity: 1 }], customerId: customer.json().customer.id,
+    promotionCode: 'WELCOME10', promotionDiscountVnd: '999999',
+    tenders: [{ method: 'bank_transfer', amountReceivedVnd: '19000' }],
+  };
+  const saleHeaders = { ...headers, 'idempotency-key': 'promotion-sale-submit-0001' };
+  const competingHeaders = { ...headers, 'idempotency-key': 'promotion-sale-submit-0002' };
+  const [saleAttempt, competingAttempt] = await Promise.all([
+    app.inject({ method: 'POST', url: `/api/stores/${storeId}/sales`, headers: saleHeaders, payload: salePayload }),
+    app.inject({ method: 'POST', url: `/api/stores/${storeId}/sales`, headers: competingHeaders, payload: salePayload }),
+  ]);
+  const sale = saleAttempt.statusCode === 201 ? saleAttempt : competingAttempt;
+  const successfulHeaders = saleAttempt.statusCode === 201 ? saleHeaders : competingHeaders;
+  const rejectedAttempt = saleAttempt.statusCode === 201 ? competingAttempt : saleAttempt;
+  assert.equal(sale.statusCode, 201, sale.body);
+  assert.equal(rejectedAttempt.statusCode, 422, rejectedAttempt.body);
+  assert.equal(rejectedAttempt.json().error.code, 'promotion_limit_reached');
+  assert.equal(sale.json().order.discountVnd, '1000', 'server ignores client-supplied discount amounts');
+  assert.equal(sale.json().order.totalVnd, '19000');
+  assert.equal(sale.json().order.promotion.code, 'WELCOME10');
+
+  const retry = await app.inject({ method: 'POST', url: `/api/stores/${storeId}/sales`, headers: successfulHeaders, payload: salePayload });
+  assert.equal(retry.statusCode, 201, retry.body);
+  assert.equal(retry.headers['idempotent-replayed'], 'true');
+  const orderId = sale.json().order.id;
+  const detail = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/orders/${orderId}`, headers });
+  assert.equal(detail.statusCode, 200, detail.body);
+  assert.deepEqual(detail.json().order.promotion, { code: 'WELCOME10', discountVnd: '1000' });
+
+  const exhaustedPreview = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/promotions/preview`, headers,
+    payload: { code: 'WELCOME10', subtotalVnd: '20000', customerId: customer.json().customer.id },
+  });
+  assert.equal(exhaustedPreview.statusCode, 422, exhaustedPreview.body);
+  assert.equal(exhaustedPreview.json().error.code, 'promotion_limit_reached');
+  usage = await app.testDb.query(`
+    SELECT p.usage_count, COUNT(r.id)::int AS redemption_count
+    FROM promotions p LEFT JOIN promotion_redemptions r ON r.store_id = p.store_id AND r.promotion_id = p.id
+    WHERE p.store_id = $1 AND p.id = $2 GROUP BY p.usage_count`, [storeId, promotionId]);
+  assert.deepEqual(usage.rows[0], { usage_count: 1, redemption_count: 1 });
+  const inventory = await app.testDb.query('SELECT on_hand::text AS on_hand FROM inventory_balances WHERE store_id = $1 AND product_id = $2', [storeId, productId]);
+  assert.equal(inventory.rows[0].on_hand, '4.000', 'replay does not change stock twice');
+});

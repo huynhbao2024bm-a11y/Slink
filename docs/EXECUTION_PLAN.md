@@ -15,7 +15,7 @@
 
 ## Các chặng
 
-### 0. Ổn định và xuất bản trạng thái mã nguồn — **Đang làm**
+### 0. Ổn định và xuất bản trạng thái mã nguồn — **Hoàn tất 2026-10-20**
 
 **Mục đích:** Đưa mã nguồn hiện có lên repo mới một cách xem lại được trước khi tiếp tục mở rộng.
 
@@ -23,7 +23,7 @@
 
 **Phụ thuộc:** Quyền GitHub của tài khoản mới đã đăng nhập.
 
-**Bằng chứng để qua chặng:** Commit rõ phạm vi, nhánh remote được cập nhật và trạng thái Git sau push được xác nhận. CI nếu chạy tự động là tín hiệu cho thay đổi mã/dữ liệu, không thay cho thử nghiệm của người bán.
+**Bằng chứng:** Commit `14e3cb2` đã được rebase trên 13 commit mới từ GitHub và đẩy fast-forward lên `origin/codex/production-container-ci`; GitHub trả `[up to date]`. File cấu hình cá nhân/diagnostic vẫn ở ngoài commit. Không dùng force push. CI nếu chạy tự động là tín hiệu cho thay đổi mã/dữ liệu, không thay cho thử nghiệm của người bán.
 
 ### 1. Hoàn thiện luồng bán lẻ cơ bản — **Đang làm**
 
@@ -35,11 +35,11 @@
 
 **Bằng chứng để qua chặng:** Khi đụng dữ liệu hoặc quyền, kiểm tra có trọng tâm các invariant giao dịch, VND nguyên, chống gửi trùng, RLS và rollback. Thao tác điện thoại và mức dễ dùng chờ người thật xác nhận.
 
-### 2. Hoàn thiện PIM, OMS, WMS và công cụ cửa hàng — **Chưa làm xong**
+### 2. Hoàn thiện PIM, OMS, WMS và công cụ cửa hàng — **Đang làm**
 
 **Mục đích:** Mở rộng các luồng nội bộ mà cửa hàng có thể dùng trước khi phụ thuộc sàn hoặc hãng vận chuyển.
 
-**Phạm vi:** Biến thể/thuộc tính và quy tắc giá; lô/hạn sử dụng khi phù hợp; khuyến mãi/voucher/điểm khách hàng; tác vụ và phê duyệt nhân viên; tìm kiếm/bộ lọc/lịch sử; báo cáo theo kho và nhân viên; xuất dữ liệu cần thiết. Chia từng phần nhỏ theo dữ liệu nguồn hiện có.
+**Phạm vi:** Biến thể/thuộc tính và quy tắc giá; lô/hạn sử dụng khi phù hợp; khuyến mãi/voucher/điểm khách hàng; tác vụ và phê duyệt nhân viên; tìm kiếm/bộ lọc/lịch sử; báo cáo theo kho và nhân viên; xuất dữ liệu cần thiết. Lát cắt đang có: mã giảm cố định hoặc phần trăm tại POS, ngày bắt đầu/kết thúc, ngưỡng đơn, giới hạn tổng lượt và mỗi khách; chỉ dùng một mã/đơn. Chưa có flash sale tự động, combo, loyalty points, giá theo kênh hoặc chiến dịch nhắn tin.
 
 **Phụ thuộc:** Quy tắc cửa hàng rõ ràng cho giá, khuyến mãi, hoàn/đổi và quyền nhân viên. Không giả định nhà cung cấp ngoài.
 
@@ -75,18 +75,20 @@
 
 **Bằng chứng để qua chặng:** Người bán tự hoàn thành kịch bản; phản hồi và lỗi được ghi lại; vấn đề được chuyển thành mục triển khai cụ thể.
 
-### 6. Hồ sơ dự thi khởi nghiệp — **Cần tạo sau khi chốt lát cắt demo**
+### 6. Hồ sơ dự thi khởi nghiệp — **Hoàn tất bản deck đầu 2026-10-20; còn có thể bổ sung video sau**
 
 **Mục đích:** Có video ngắn hoặc pitch deck với hình ảnh/chứng cứ thật để trình bày sản phẩm.
 
-**Phạm vi:** Kịch bản giới thiệu vấn đề, khách hàng mục tiêu, luồng sản phẩm đang chạy, khác biệt dưới dạng giả thuyết, mô hình kinh doanh dự kiến và lộ trình. Dùng ảnh/video từ giao diện thật nếu chạy được; ghi rõ tính năng đang có, đang phát triển và phụ thuộc nhà cung cấp.
+**Phạm vi:** Kịch bản giới thiệu vấn đề, khách hàng mục tiêu, luồng sản phẩm, khác biệt dưới dạng giả thuyết, mô hình kinh doanh dự kiến và lộ trình. Deck hiện dùng nhận diện Slink, không chứa số liệu tài khoản hoặc số liệu thị trường chưa kiểm chứng; ghi rõ tính năng đang có, đang phát triển và phụ thuộc nhà cung cấp.
 
 **Phụ thuộc:** Môi trường demo ổn định và danh sách tuyên bố đã đối chiếu với roadmap. Không cần chờ toàn bộ sản phẩm hoàn tất.
 
-**Bằng chứng để qua chặng:** File video hoặc deck mở được, nội dung không nhầm kế hoạch với năng lực đã phát hành và có kịch bản demo trực tiếp.
+**Bằng chứng:** [`pitch/Slink_Pitch_Vietnamese_2026-10-20-v2.pptx`](../pitch/Slink_Pitch_Vietnamese_2026-10-20-v2.pptx) có 9 slide, ghi chú thuyết trình, vượt kiểm tra cấu trúc và bố cục của finalizer; từng slide đã được xem lại ở kích thước đầy đủ. Deck nêu rõ voucher 0018 chưa có trên CSDL local và chưa có pilot / thử thiết bị. Chưa phải video; demo trực tiếp cần môi trường riêng và chạy lại trước cuộc thi.
 
 ## Việc kế tiếp
 
-1. Hoàn tất chặng 0: kiểm tra các thay đổi hiện có, loại file máy cá nhân, commit và push nhánh làm việc lên GitHub.
-2. Bắt đầu chặng 1/2 bằng một chức năng nội bộ có thể làm trọn trong repo, không chờ tài khoản sàn.
-3. Cập nhật kế hoạch này và `DELIVERY_ROADMAP.md` khi có thay đổi; khi có lát cắt demo ổn định, bắt đầu chặng 6 song song với phần còn lại.
+1. Tiếp tục PIM/OMS: biến thể sản phẩm và lịch sử giá; sau đó báo cáo theo kho/nhân viên.
+2. Chạy migration 0018 và kiểm tra native PostgreSQL qua quy trình backup-gated khi cổng local DB sẵn sàng; môi trường hiện tại không được phép kết nối TCP tới PostgreSQL local. Không ghi nhận migration là đã chạy.
+3. Tiếp tục các phần độc lập của nhiều kênh; connector chỉ sau khi có đối tác, sandbox và quyền API.
+4. Trước khi pilot, hoàn tất hosting/HTTPS, diễn tập phục hồi, kiểm tra bảo mật cần thiết, rồi để người bán thử giao diện và thiết bị thật.
+5. Giữ pitch deck khớp roadmap; bổ sung video demo sau khi có cửa hàng demo ổn định và không lộ dữ liệu cá nhân.

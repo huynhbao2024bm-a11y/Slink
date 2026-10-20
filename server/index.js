@@ -10,6 +10,7 @@ const { ApiError, registerAuthRoutes } = require('./auth');
 const { createPool } = require('./db');
 const { registerProductRoutes } = require('./products');
 const { registerSalesRoutes } = require('./sales');
+const { registerPromotionRoutes } = require('./promotions');
 const { registerReturnRoutes } = require('./returns');
 const { registerRecordRoutes } = require('./records');
 const { registerStockRoutes } = require('./stock');
@@ -147,6 +148,7 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
     registerAuthRoutes(app, { pool, env });
     registerProductRoutes(app, { pool, env });
     registerSalesRoutes(app, { pool, env });
+    registerPromotionRoutes(app, { pool, env });
     registerReturnRoutes(app, { pool, env });
     registerRecordRoutes(app, { pool, env });
     registerStockRoutes(app, { pool, env });

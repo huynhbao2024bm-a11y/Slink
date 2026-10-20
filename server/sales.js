@@ -4,6 +4,7 @@ const { createHash } = require('node:crypto');
 const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
 const { lockActiveCashSession } = require('./cash-register');
+const { calculatePromotion, consumePromotion, promotionCode } = require('./promotions');
 
 const MAX_BIGINT = 9223372036854775807n;
 const SELL_ROLES = new Set(['owner', 'manager', 'cashier']);
@@ -61,6 +62,9 @@ function normalizeSale(body) {
     }
   }
   const discountVnd = amount(body.discountVnd ?? 0, 'Khoản giảm giá');
+  const appliedPromotionCode = body.promotionCode === undefined || body.promotionCode === null || body.promotionCode === ''
+    ? null
+    : promotionCode(body.promotionCode);
   const rawTenders = body.tenders === undefined
     ? [{ method: body.method || 'cash', amountReceivedVnd: body.amountReceivedVnd }]
     : body.tenders;
@@ -92,7 +96,7 @@ function normalizeSale(body) {
   if (note.length > 500) throw new ApiError(400, 'validation_error', 'Ghi chú tối đa 500 ký tự.');
   const warehouseId = body.warehouseId || null;
   if (warehouseId !== null && (typeof warehouseId !== 'string' || !UUID_PATTERN.test(warehouseId))) throw new ApiError(400, 'validation_error', 'Kho bán hàng không hợp lệ.');
-  return { items, discountVnd, amountReceivedVnd, method, tenders, customerId, note, warehouseId: warehouseId?.toLowerCase() || null };
+  return { items, discountVnd, appliedPromotionCode, amountReceivedVnd, method, tenders, customerId, note, warehouseId: warehouseId?.toLowerCase() || null };
 }
 
 function distributeDiscount(lines, discount, subtotal) {
@@ -130,6 +134,7 @@ function registerSalesRoutes(app, { pool, env }) {
       customerId: sale.customerId,
       note: sale.note,
     };
+    if (sale.appliedPromotionCode) canonicalSale.promotionCode = sale.appliedPromotionCode;
     if (sale.warehouseId) canonicalSale.warehouseId = sale.warehouseId;
     // Keep the original single-tender request hash stable so a pending sale
     // can still be safely retried by a client upgraded to this version.
@@ -211,10 +216,17 @@ function registerSalesRoutes(app, { pool, env }) {
         return { ...line, product, price, cost, grossVnd };
       });
       const subtotal = lines.reduce((sum, line) => sum + line.grossVnd, 0n);
-      if (subtotal > MAX_BIGINT || sale.discountVnd > subtotal) {
+      const appliedPromotion = sale.appliedPromotionCode
+        ? await calculatePromotion(client, {
+          storeId, code: sale.appliedPromotionCode, customerId: sale.customerId, subtotalVnd: subtotal, lock: true,
+        })
+        : null;
+      const promotionDiscountVnd = appliedPromotion?.discountVnd || 0n;
+      const totalDiscountVnd = sale.discountVnd + promotionDiscountVnd;
+      if (subtotal > MAX_BIGINT || totalDiscountVnd > subtotal) {
         throw new ApiError(400, 'validation_error', 'Khoản giảm giá không được vượt quá tiền hàng.');
       }
-      const total = subtotal - sale.discountVnd;
+      const total = subtotal - totalDiscountVnd;
       const nonCashReceived = sale.tenders.filter((tender) => tender.method !== 'cash')
         .reduce((sum, tender) => sum + tender.amountReceivedVnd, 0n);
       const cashTender = sale.tenders.find((tender) => tender.method === 'cash');
@@ -232,7 +244,9 @@ function registerSalesRoutes(app, { pool, env }) {
         amountVnd: tender.method === 'cash' ? cashApplied : tender.amountReceivedVnd,
         amountReceivedVnd: tender.amountReceivedVnd,
       })).filter((tender) => tender.amountVnd > 0n);
-      const allocatedDiscount = distributeDiscount(lines, sale.discountVnd, subtotal || 1n);
+      const allocatedDiscount = distributeDiscount(lines, totalDiscountVnd, subtotal || 1n);
+
+      if (appliedPromotion) await consumePromotion(client, { storeId, promotionId: appliedPromotion.id });
 
       const sequenceResult = await client.query(
         `UPDATE store_sequences SET next_order_number = next_order_number + 1
@@ -248,10 +262,17 @@ function registerSalesRoutes(app, { pool, env }) {
          RETURNING id, order_number, status, subtotal_vnd::text AS subtotal_vnd,
                    discount_vnd::text AS discount_vnd, total_vnd::text AS total_vnd,
                    cash_received_vnd::text AS cash_received_vnd, cash_change_vnd::text AS cash_change_vnd, occurred_at`,
-        [storeId, orderNumber, sale.customerId, auth.userId, warehouseId, subtotal.toString(), sale.discountVnd.toString(),
+        [storeId, orderNumber, sale.customerId, auth.userId, warehouseId, subtotal.toString(), totalDiscountVnd.toString(),
           total.toString(), cashReceived.toString(), change.toString(), sale.note]
       );
       const order = orderResult.rows[0];
+      if (appliedPromotion) {
+        await client.query(
+          `INSERT INTO promotion_redemptions (store_id, promotion_id, order_id, customer_id, cashier_id, code_snapshot, discount_vnd)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [storeId, appliedPromotion.id, order.id, sale.customerId, auth.userId, appliedPromotion.code, promotionDiscountVnd.toString()]
+        );
+      }
       for (let index = 0; index < lines.length; index += 1) {
         const line = lines[index];
         const lineTotal = line.grossVnd - allocatedDiscount[index];
@@ -329,6 +350,7 @@ function registerSalesRoutes(app, { pool, env }) {
           receivedVnd: sale.amountReceivedVnd.toString(),
           cashReceivedVnd: cashReceived.toString(),
           cashChangeVnd: change.toString(),
+          promotion: appliedPromotion ? { code: appliedPromotion.code, discountVnd: promotionDiscountVnd.toString() } : null,
           payments: appliedTenders.map((tender) => ({ method: tender.method, amountVnd: tender.amountVnd.toString() })),
         })]
       );
@@ -339,6 +361,7 @@ function registerSalesRoutes(app, { pool, env }) {
           status: order.status,
           subtotalVnd: order.subtotal_vnd,
           discountVnd: order.discount_vnd,
+          promotion: appliedPromotion ? { code: appliedPromotion.code, name: appliedPromotion.name, discountVnd: promotionDiscountVnd.toString() } : null,
           totalVnd: order.total_vnd,
           paidVnd: paid.toString(),
           dueVnd: (total - paid).toString(),
