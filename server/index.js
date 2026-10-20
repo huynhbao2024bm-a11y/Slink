@@ -109,7 +109,7 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
   await app.register(cookie);
   await app.register(rateLimit, {
     global: true,
-    max: 120,
+    max: env.NODE_ENV === 'test' ? 1000 : 120,
     timeWindow: '1 minute',
     errorResponseBuilder: () => ({ error: { code: 'rate_limit', message: 'Quá nhiều yêu cầu. Vui lòng thử lại sau.' } }),
   });

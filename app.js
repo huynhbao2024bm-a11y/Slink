@@ -4252,6 +4252,17 @@
     showModal('Tất cả chức năng', 'Chọn khu vực bạn muốn mở.', body, `<button class='btn btn-secondary' data-action='close-modal'>Đóng</button>`, true);
   }
 
+  function showAccountMenu() {
+    const user = authSession && authSession.user ? authSession.user : {};
+    const displayName = esc(user.displayName || 'Tài khoản Slink');
+    const email = esc(user.email || '');
+    const avatar = esc(initials(user.displayName || user.email || 'S'));
+    const storeName = esc(store.settings.storeName || 'Cửa hàng của bạn');
+    const body = `<div class='account-summary'><span class='account-avatar' aria-hidden='true'>${avatar}</span><div class='account-summary-copy'><strong>${displayName}</strong><span>${email}</span></div></div><div class='account-store'><span class='account-store-label'>Cửa hàng</span><strong>${storeName}</strong></div>`;
+    const footer = `<button class='btn btn-secondary' data-action='account-settings'>Cài đặt tài khoản</button><button class='btn btn-danger' data-action='logout'>Đăng xuất</button>`;
+    showModal('Tài khoản', 'Quản lý phiên đăng nhập và thông tin cửa hàng.', body, footer);
+  }
+
   function showScan() {
     const body = `<form id='entity-form' data-form='scan'><div class='scan-camera-panel'><video id='scan-camera-video' class='scan-camera-video' playsinline muted hidden aria-label='Xem hình ảnh camera khi quét mã'></video><button class='btn btn-secondary' type='button' data-action='start-camera-scan'>Mở camera để quét</button><p id='scan-camera-status' class='scan-camera-status' role='status'>Trên trình duyệt hỗ trợ, bạn có thể quét mã vạch hoặc QR. Nếu camera không dùng được, hãy nhập mã bên dưới.</p></div><div class='form-field'><label class='input-label' for='scan-code'>Mã SKU, mã vạch hoặc QR</label><input id='scan-code' class='input' name='code' autofocus placeholder='Nhập hoặc dán mã sản phẩm…' autocomplete='off' inputmode='text'/></div></form>`;
     showModal('Tìm sản phẩm nhanh', 'Quét bằng camera hoặc nhập mã SKU, mã vạch trên sản phẩm.', body, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Hủy</button><button class='btn btn-primary' type='submit' form='entity-form'>Tìm sản phẩm</button>`);
@@ -5797,7 +5808,9 @@
     const button = event.target.closest('[data-action]'); if (!button) return;
     const action = button.dataset.action; const id = button.dataset.id;
     if (action === 'auth-mode') { authMode = button.dataset.mode || 'login'; renderAuth(); }
-    else if (action === 'logout') signOut();
+    else if (action === 'logout') { closeModal(); signOut(); }
+    else if (action === 'account-menu') showAccountMenu();
+    else if (action === 'account-settings') { closeModal(); routeTo('settings'); }
     else if (action === 'reload-security') loadAccountSecurity();
     else if (action === 'revoke-session') revokeAccountSession(id);
     else if (action === 'products-page') loadProductsPage(searchTerms.products, Number(button.dataset.offset) || 0);

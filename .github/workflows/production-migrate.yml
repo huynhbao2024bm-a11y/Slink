@@ -1,0 +1,50 @@
+name: Prepare production database
+
+on:
+  workflow_dispatch:
+    inputs:
+      verified_backup_reference:
+        description: Reference for the verified pre-migration backup
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: slink-production-database-migration
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-24.04
+    environment: production
+    permissions:
+      contents: read
+    env:
+      NODE_ENV: production
+      PG_SSL: 'true'
+      MIGRATION_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
+      BACKUP_REFERENCE: ${{ inputs.verified_backup_reference }}
+    steps:
+      - name: Require a verified-backup reference
+        run: |
+          if [[ -z "${BACKUP_REFERENCE//[[:space:]]/}" ]]; then
+            echo 'A verified pre-migration backup reference is required.' >&2
+            exit 1
+          fi
+          echo 'Backup reference recorded for this manually approved migration.'
+      - name: Check out migration source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Node.js and pnpm
+        uses: pnpm/setup@a0881977cd8ea73b1ed212236c99ca10dcc80cf4 # v3.1.1
+        with:
+          runtime: node@24.22.0
+          require-lockfile: true
+          cache: true
+      - name: Install production dependencies
+        run: pnpm install --prod --frozen-lockfile
+      - name: Apply database migrations
+        run: node server/migrate.js
+      - name: Verify application and migration role boundaries
+        run: node scripts/postgres-role-check.js

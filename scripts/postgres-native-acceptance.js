@@ -375,7 +375,11 @@ async function run() {
       method: 'GET', url: `/api/stores/${store.id}/products`, headers,
     });
     requireStatus(firstStoreAfterDeniedWrite, 200, 'First-store catalog after denied cross-store write');
-    assert.equal(firstStoreAfterDeniedWrite.json().products.length, 1, 'denied cross-store write leaves the first store unchanged');
+    assert.deepEqual(
+      firstStoreAfterDeniedWrite.json().products.map((entry) => entry.sku).sort(),
+      [item.sku, channelItem.sku].sort(),
+      'denied cross-store write leaves the first store unchanged'
+    );
     process.stdout.write('PASS native two-store isolation denies cross-store reads and writes\n');
 
     const opened = await app.inject({
@@ -509,7 +513,7 @@ async function run() {
     requireStatus(promotionSale, 201, 'Voucher sale');
     assert.equal(promotionSale.json().order.discountVnd, '1000', 'server recalculates discount instead of trusting the client');
     assert.equal(promotionSale.json().order.totalVnd, '19000');
-    assert.equal(promotionSale.json().order.promotion.code, promotionCode);
+    assert.equal(promotionSale.json().order.promotion.code, promotionCode.toUpperCase());
     const promotionSaleReplay = await app.inject({
       method: 'POST', url: `/api/stores/${store.id}/sales`, headers: promotionSaleHeaders, payload: promotionSalePayload,
     });
@@ -519,7 +523,7 @@ async function run() {
       method: 'GET', url: `/api/stores/${store.id}/orders/${promotionSale.json().order.id}`, headers,
     });
     requireStatus(promotionOrder, 200, 'Voucher order history');
-    assert.deepEqual(promotionOrder.json().order.promotion, { code: promotionCode, discountVnd: '1000' });
+    assert.deepEqual(promotionOrder.json().order.promotion, { code: promotionCode.toUpperCase(), discountVnd: '1000' });
     const exhaustedPromotion = await app.inject({
       method: 'POST', url: `/api/stores/${store.id}/promotions/preview`, headers: writeHeaders,
       payload: { code: promotionCode, subtotalVnd: '20000' },

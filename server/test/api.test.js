@@ -3326,7 +3326,7 @@ test('manual channel orders reserve, ship, cancel, and audit stock without recor
   const imported = await app.inject({
     method: 'POST', url: `/api/stores/${storeId}/products/import`,
     headers: { ...headers, 'idempotency-key': 'channel-order-products-001' },
-    payload: { items: [{ sku: 'CH-ORD-001', name: 'Áo đơn kênh', salePriceVnd: 25000, costVnd: 12000, openingQuantity: '5' }] },
+    payload: { items: [{ sku: 'CH-ORD-001', name: 'Áo đơn kênh', salePriceVnd: 25000, costVnd: 12000, openingQuantity: '3' }] },
   });
   assert.equal(imported.statusCode, 201, imported.body);
   const productId = imported.json().products[0].id;
@@ -3403,7 +3403,7 @@ test('manual channel orders reserve, ship, cancel, and audit stock without recor
     'SELECT on_hand::text AS on_hand, reserved::text AS reserved FROM inventory_balances WHERE store_id = $1 AND warehouse_id = $2 AND product_id = $3',
     [storeId, warehouseId, productId]
   );
-  assert.equal(stock.rows[0].on_hand, '5.000');
+  assert.equal(stock.rows[0].on_hand, '3.000');
   assert.equal(stock.rows[0].reserved, '2.000');
 
   const attemptedOversell = await app.inject({
@@ -3441,7 +3441,7 @@ test('manual channel orders reserve, ship, cancel, and audit stock without recor
     'SELECT on_hand::text AS on_hand, reserved::text AS reserved FROM inventory_balances WHERE store_id = $1 AND warehouse_id = $2 AND product_id = $3',
     [storeId, warehouseId, productId]
   );
-  assert.equal(stock.rows[0].on_hand, '3.000', 'shipping deducts the reserved quantity exactly once');
+  assert.equal(stock.rows[0].on_hand, '1.000', 'shipping deducts the reserved quantity exactly once');
   assert.equal(stock.rows[0].reserved, '0.000');
   const movement = await app.testDb.query(
     "SELECT COUNT(*)::int AS count FROM inventory_movements WHERE store_id = $1 AND source_type = 'channel_order' AND source_id = $2 AND movement_type = 'sale'",
@@ -3476,7 +3476,7 @@ test('manual channel orders reserve, ship, cancel, and audit stock without recor
     'SELECT on_hand::text AS on_hand, reserved::text AS reserved FROM inventory_balances WHERE store_id = $1 AND warehouse_id = $2 AND product_id = $3',
     [storeId, warehouseId, productId]
   );
-  assert.equal(stock.rows[0].on_hand, '3.000', 'cancel releases the reservation without changing physical stock');
+  assert.equal(stock.rows[0].on_hand, '1.000', 'cancel releases the reservation without changing physical stock');
   assert.equal(stock.rows[0].reserved, '0.000');
   const financial = await app.testDb.query(`
     SELECT (SELECT COUNT(*)::int FROM orders WHERE store_id = $1) AS sales_orders,

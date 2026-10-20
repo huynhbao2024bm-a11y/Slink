@@ -346,6 +346,14 @@ function registerChannelOrderRoutes(app, { pool, env }) {
            WHERE store_id = $1 AND id = $2 AND status = 'active' FOR UPDATE`, [storeId, profileId]
         );
         if (!profile.rowCount) throw new ApiError(404, 'channel_profile_not_found', 'Không tìm thấy gian hàng đang hoạt động.');
+        const existingOrder = await client.query(
+          `SELECT 1 FROM channel_orders
+           WHERE store_id = $1 AND channel_profile_id = $2 AND external_order_ref_normalized = $3`,
+          [storeId, profileId, externalOrderRefNormalized]
+        );
+        if (existingOrder.rowCount) {
+          throw new ApiError(409, 'channel_order_exists', 'Mã đơn này đã được ghi nhận trong gian hàng. Hãy tải danh sách để kiểm tra đơn hiện có.');
+        }
         const mappingIds = items.map((item) => item.mappingId).sort();
         const mappings = await client.query(
           `SELECT m.id AS mapping_id, m.external_sku, m.channel_profile_id, p.id AS product_id,
