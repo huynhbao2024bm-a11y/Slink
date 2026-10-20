@@ -1,4 +1,4 @@
-const CACHE_NAME = 'slink-shell-v13';
+const CACHE_NAME = 'slink-shell-v14';
 const APP_SHELL = ['./', './index.html', './styles.css', './app.js', './register-sw.js', './manifest.webmanifest', './assets/slink-icon.svg', './assets/slink-icon-180.png', './assets/slink-icon-192.png', './assets/slink-icon-512.png', './assets/slink-icon-maskable-512.png'];
 
 self.addEventListener('install', function (event) {

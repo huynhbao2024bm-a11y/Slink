@@ -2372,7 +2372,7 @@
     const orderView = channelState.view === 'orders';
     const viewTabs = `<div class='channel-view-tabs' role='tablist' aria-label='Khu vực kênh bán'><button class='segment ${!orderView ? 'active' : ''}' data-action='channel-view' data-view='mappings' role='tab' aria-selected='${!orderView}'>Gian hàng & SKU</button><button class='segment ${orderView ? 'active' : ''}' data-action='channel-view' data-view='orders' role='tab' aria-selected='${orderView}'>Đơn kênh bán</button></div>`;
     const headingActions = orderView
-      ? `<button class='btn btn-secondary' data-action='reload-channel-orders'>Tải lại</button><button class='btn btn-primary' data-action='new-channel-order' ${activeProfiles.length ? '' : 'disabled title="Thêm gian hàng trước"'}>${icon('plus', 15)} Ghi nhận đơn</button>`
+      ? `${canExportData() ? `<button class='btn btn-secondary' data-action='open-export'>Xuất CSV</button>` : ''}<button class='btn btn-secondary' data-action='reload-channel-orders'>Tải lại</button><button class='btn btn-primary' data-action='new-channel-order' ${activeProfiles.length ? '' : 'disabled title="Thêm gian hàng trước"'}>${icon('plus', 15)} Ghi nhận đơn</button>`
       : `<button class='btn btn-secondary' data-action='reload-channel-catalog'>Tải lại</button><button class='btn btn-primary' data-action='new-channel-profile'>${icon('plus', 15)} Thêm gian hàng</button>`;
     const header = pageHeading('Kênh bán', orderView ? 'Theo dõi đơn được cửa hàng ghi nhận từ các gian hàng.' : 'Khai báo gian hàng và đối chiếu SKU để chuẩn bị quản lý bán hàng đa kênh.', headingActions) +
       `<div class='notice-item channel-boundary-note'><span>${icon('alert', 17)}</span><span><strong>Quản lý thủ công · chưa kết nối với sàn</strong><small>Không có đồng bộ tự động sản phẩm, tồn kho, đơn hàng, giá hoặc tài chính. Các đơn được ghi bởi nhân viên.</small></span></div>${viewTabs}`;
@@ -5269,6 +5269,7 @@
     products: 'slink-san-pham.csv', inventory: 'slink-ton-kho.csv', 'inventory-movements': 'slink-bien-dong-kho.csv',
     customers: 'slink-khach-hang.csv', 'customer-ledger': 'slink-so-cong-no-khach-hang.csv', orders: 'slink-don-hang.csv',
     'order-lines': 'slink-chi-tiet-don-hang.csv', payments: 'slink-thanh-toan.csv', returns: 'slink-hang-tra.csv',
+    'channel-orders': 'slink-don-kenh-ban.csv',
     refunds: 'slink-hoan-tien.csv', cashbook: 'slink-so-thu-chi.csv', suppliers: 'slink-nha-cung-cap.csv',
     'supplier-ledger': 'slink-so-cong-no-nha-cung-cap.csv', purchases: 'slink-phieu-nhap-hang.csv', 'purchase-orders': 'slink-don-dat-hang.csv',
   };
@@ -5282,6 +5283,7 @@
       ['customers', 'Hồ sơ khách hàng', ['owner', 'manager', 'accountant']],
       ['customer-ledger', 'Sổ công nợ khách hàng', ['owner', 'manager', 'accountant']],
       ['orders', 'Đơn hàng', ['owner', 'manager', 'accountant']],
+      ['channel-orders', 'Đơn kênh bán ghi nhận thủ công', ['owner', 'manager', 'stockkeeper']],
       ['order-lines', 'Chi tiết sản phẩm trong đơn', ['owner', 'manager', 'accountant']],
       ['payments', 'Giao dịch thanh toán', ['owner', 'manager', 'accountant']],
       ['returns', 'Chi tiết hàng trả', ['owner', 'manager', 'accountant']],
@@ -5308,7 +5310,7 @@
     if (!groupsHtml) return toast('Không có quyền xuất dữ liệu', 'Vai trò tài khoản hiện tại không được tải dữ liệu cửa hàng.', 'error');
     const warehouseOptions = `<option value=''>Tất cả kho</option>${warehouses.map(function (warehouse) { return `<option value='${esc(warehouse.id)}'>${esc(warehouse.name)}${warehouse.is_default ? ' · Kho chính' : ''}</option>`; }).join('')}`;
     const warehouseField = warehouses.length ? `<div class='form-field full'><label class='input-label' for='export-warehouse'>Lọc theo kho (tùy chọn)</label><div class='select-wrap'><select class='input' id='export-warehouse'>${warehouseOptions}</select></div></div>` : '';
-    const body = `<div class='form-grid'><div class='form-field full'><label class='input-label' for='export-dataset'>Loại dữ liệu *</label><div class='select-wrap'><select class='input' id='export-dataset' required>${groupsHtml}</select></div></div>${warehouseField}<div class='form-field'><label class='input-label' for='export-from'>Từ ngày (tùy chọn)</label><input class='input' id='export-from' type='date'/></div><div class='form-field'><label class='input-label' for='export-to'>Đến ngày (tùy chọn)</label><input class='input' id='export-to' type='date'/></div></div><div class='modal-note'>Bỏ trống ngày để xuất toàn bộ. CSV tồn kho luôn chỉ chứa một kho để kiểm kê đúng địa điểm; nếu chưa chọn kho, Slink dùng kho đang mở. Với biến động kho, phiếu nhập và đơn đặt hàng, có thể chọn “Tất cả kho” hoặc lọc theo một kho. Khoảng ngày tính theo múi giờ cửa hàng; tồn kho lọc theo lần thay đổi tồn gần nhất, sổ lọc theo ngày phát sinh. Mỗi tệp tối đa 50.000 dòng; số tiền giữ nguyên bằng VND.</div>`;
+    const body = `<div class='form-grid'><div class='form-field full'><label class='input-label' for='export-dataset'>Loại dữ liệu *</label><div class='select-wrap'><select class='input' id='export-dataset' required>${groupsHtml}</select></div></div>${warehouseField}<div class='form-field'><label class='input-label' for='export-from'>Từ ngày (tùy chọn)</label><input class='input' id='export-from' type='date'/></div><div class='form-field'><label class='input-label' for='export-to'>Đến ngày (tùy chọn)</label><input class='input' id='export-to' type='date'/></div></div><div class='modal-note'>Bỏ trống ngày để xuất toàn bộ. CSV tồn kho luôn chỉ chứa một kho để kiểm kê đúng địa điểm; nếu chưa chọn kho, Slink dùng kho đang mở. Với biến động kho, phiếu nhập, đơn đặt hàng và đơn kênh bán, có thể chọn “Tất cả kho” hoặc lọc theo một kho được giao. Đơn kênh bán xuất từng dòng hàng; trạng thái thanh toán trong tệp là ảnh chụp trên kênh, không phải giao dịch tài chính Slink. Khoảng ngày tính theo múi giờ cửa hàng; tồn kho lọc theo lần thay đổi tồn gần nhất, sổ lọc theo ngày phát sinh. Mỗi tệp tối đa 50.000 dòng; số tiền giữ nguyên bằng VND.</div>`;
     const footer = `<button class='btn btn-secondary' type='button' data-action='close-modal'>Hủy</button><button class='btn btn-primary' type='button' data-action='export-dataset'>Tải tệp CSV</button>`;
     showModal('Xuất dữ liệu cửa hàng', 'Tải dữ liệu đã ghi nhận trên máy chủ để lưu trữ hoặc làm báo cáo.', body, footer, true);
   }
@@ -5323,7 +5325,7 @@
     if (from) query.set('from', from);
     if (to) query.set('to', to);
     if (dataset === 'inventory' && (warehouseId || selectedWarehouseId)) query.set('warehouseId', warehouseId || selectedWarehouseId);
-    else if (['inventory-movements', 'purchases', 'purchase-orders'].includes(dataset) && warehouseId) query.set('warehouseId', warehouseId);
+    else if (['inventory-movements', 'purchases', 'purchase-orders', 'channel-orders'].includes(dataset) && warehouseId) query.set('warehouseId', warehouseId);
     const suffix = query.toString();
     try {
       const response = await fetch(`/api/stores/${encodeURIComponent(store.id)}/exports/${encodeURIComponent(dataset)}${suffix ? '?' + suffix : ''}`, {

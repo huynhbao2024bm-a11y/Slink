@@ -321,8 +321,17 @@ async function run() {
     requireStatus(stockAfterCancel, 200, 'Channel stock after cancellation');
     assertQuantity(stockAfterCancel.json().products[0]?.on_hand, '1', 'Cancellation does not change on-hand stock');
     assertQuantity(stockAfterCancel.json().products[0]?.reserved, '0', 'Cancellation releases held stock');
+    const channelCsv = await app.inject({
+      method: 'GET', url: `/api/stores/${store.id}/exports/channel-orders?warehouseId=${channelWarehouse.id}`, headers,
+    });
+    requireStatus(channelCsv, 200, 'Native channel-order CSV export');
+    assert.match(channelCsv.headers['content-type'] || '', /text\/csv/i);
+    assert.ok(channelCsv.body.startsWith('\uFEFF'));
+    assert.ok(channelCsv.body.includes(channelOrderPayload.externalOrderRef));
+    assert.ok(channelCsv.body.includes(`SH-CANCEL-${suffix}`));
+    assert.ok(channelCsv.body.includes('cod'));
     assert.deepEqual(await businessCounts(), financeBeforeChannelOrder, 'manual channel-order payment snapshot creates no Slink revenue, debt, payment, or cash movement');
-    process.stdout.write('PASS native manual channel orders, idempotency, reservation, shipment ledger, cancellation, tenant-safe history and finance isolation\n');
+    process.stdout.write('PASS native manual channel orders, idempotency, reservation, shipment ledger, cancellation, scoped CSV export, tenant-safe history and finance isolation\n');
 
     const secondTenant = await registerSyntheticStore(app, {
       email: `native-isolation-${suffix}@slink.invalid`,

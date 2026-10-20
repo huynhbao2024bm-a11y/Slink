@@ -2331,6 +2331,36 @@ test('selected stockkeeper warehouse scopes cover inventory, transfers, purchase
   const scopedMovements = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/exports/inventory-movements`, headers: scopedHeaders });
   assert.equal(scopedMovements.statusCode, 200, scopedMovements.body);
   assert.equal(scopedMovements.body.replace(/^\uFEFF/, '').trim().split('\r\n').length, 5, 'the movement export contains only scoped secondary-warehouse opening, count, receipt, and transfer movements');
+
+  const scopedChannelProfile = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/channel-profiles`, headers: { ...ownerHeaders, 'idempotency-key': 'scope-channel-profile-001' },
+    payload: { channelCode: 'shopee', shopLabel: 'Gian hàng đơn kênh' },
+  });
+  assert.equal(scopedChannelProfile.statusCode, 201, scopedChannelProfile.body);
+  const scopedChannelMapping = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/channel-mappings`, headers: { ...ownerHeaders, 'idempotency-key': 'scope-channel-mapping-001' },
+    payload: { channelProfileId: scopedChannelProfile.json().profile.id, productId, externalSku: 'SH-SCOPE-1' },
+  });
+  assert.equal(scopedChannelMapping.statusCode, 201, scopedChannelMapping.body);
+  const mainWarehouseChannelOrder = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/channel-orders`, headers: { ...ownerHeaders, 'idempotency-key': 'scope-channel-order-001' },
+    payload: {
+      channelProfileId: scopedChannelProfile.json().profile.id, warehouseId: mainWarehouseId,
+      externalOrderRef: 'SH-MAIN-WAREHOUSE-001', paymentStatusSnapshot: 'paid',
+      items: [{ mappingId: scopedChannelMapping.json().mapping.id, quantity: '1', unitPriceVnd: '1000' }],
+    },
+  });
+  assert.equal(mainWarehouseChannelOrder.statusCode, 201, mainWarehouseChannelOrder.body);
+  const scopedChannelOrders = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/channel-orders`, headers: scopedHeaders });
+  assert.equal(scopedChannelOrders.statusCode, 200, scopedChannelOrders.body);
+  assert.equal(scopedChannelOrders.json().total, 0, 'stockkeeper order list cannot reveal an order from an unassigned warehouse');
+  const scopedChannelExport = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/exports/channel-orders`, headers: scopedHeaders });
+  assert.equal(scopedChannelExport.statusCode, 200, scopedChannelExport.body);
+  assert.ok(!scopedChannelExport.body.includes('SH-MAIN-WAREHOUSE-001'), 'CSV export is filtered to the stockkeeper warehouse scope');
+  const offScopeChannelExport = await app.inject({
+    method: 'GET', url: `/api/stores/${storeId}/exports/channel-orders?warehouseId=${mainWarehouseId}`, headers: scopedHeaders,
+  });
+  assert.equal(offScopeChannelExport.statusCode, 404, offScopeChannelExport.body);
 });
 
 test('business audit timeline is filterable and limited to authorized store managers', async (t) => {
@@ -3438,4 +3468,16 @@ test('manual channel orders reserve, ship, cancel, and audit stock without recor
   assert.deepEqual(financial.rows[0], { sales_orders: 0, payments: 0, cash_movements: 0 }, 'channel payment status is not recorded as Slink revenue');
   const histories = await app.testDb.query('SELECT COUNT(*)::int AS count FROM channel_order_events WHERE store_id = $1', [storeId]);
   assert.equal(histories.rows[0].count, 6);
+  const channelCsv = await app.inject({
+    method: 'GET', url: `/api/stores/${storeId}/exports/channel-orders?warehouseId=${warehouseId}`, headers,
+  });
+  assert.equal(channelCsv.statusCode, 200, channelCsv.body);
+  assert.match(channelCsv.headers['content-type'], /text\/csv/i);
+  assert.match(channelCsv.headers['content-disposition'], /slink-don-kenh-ban\.csv/);
+  assert.ok(channelCsv.body.startsWith('\uFEFF'));
+  assert.ok(channelCsv.body.includes('SH-ORDER-1001'));
+  assert.ok(channelCsv.body.includes('SH-ORDER-1003'));
+  assert.ok(channelCsv.body.includes('cod'));
+  assert.ok(channelCsv.body.includes('23000'));
+  assert.ok(!channelCsv.body.includes('SH-ORDER-1002'), 'rejected oversell is absent from the export');
 });

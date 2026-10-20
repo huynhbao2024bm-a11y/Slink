@@ -7,10 +7,12 @@ const { allowedWarehouseIds, findAccessibleWarehouse } = require('./warehouse-ac
 const MAX_EXPORT_ROWS = 50_000;
 const FINANCE_EXPORT_ROLES = new Set(['owner', 'manager', 'accountant']);
 const STOCK_EXPORT_ROLES = new Set(['owner', 'manager', 'stockkeeper', 'accountant']);
+const CHANNEL_ORDER_EXPORT_ROLES = new Set(['owner', 'manager', 'stockkeeper']);
 const EXPORT_ROLES = {
   products: STOCK_EXPORT_ROLES, inventory: STOCK_EXPORT_ROLES, 'inventory-movements': STOCK_EXPORT_ROLES,
   customers: FINANCE_EXPORT_ROLES, 'customer-ledger': FINANCE_EXPORT_ROLES,
   orders: FINANCE_EXPORT_ROLES, 'order-lines': FINANCE_EXPORT_ROLES, payments: FINANCE_EXPORT_ROLES,
+  'channel-orders': CHANNEL_ORDER_EXPORT_ROLES,
   returns: FINANCE_EXPORT_ROLES, refunds: FINANCE_EXPORT_ROLES, cashbook: FINANCE_EXPORT_ROLES,
   suppliers: STOCK_EXPORT_ROLES, 'supplier-ledger': FINANCE_EXPORT_ROLES, purchases: STOCK_EXPORT_ROLES, 'purchase-orders': STOCK_EXPORT_ROLES,
 };
@@ -171,6 +173,33 @@ const EXPORTS = {
           FROM orders o LEFT JOIN customers c ON c.store_id = o.store_id AND c.id = o.customer_id
           LEFT JOIN warehouses vw ON vw.store_id = o.store_id AND vw.id = o.void_restock_warehouse_id
           JOIN users u ON u.id = o.cashier_id WHERE o.store_id = $1`,
+  },
+  'channel-orders': {
+    filename: 'slink-don-kenh-ban.csv',
+    columns: [
+      ['Mã đơn kênh', 'external_order_ref', 'text'], ['Mã nội bộ', 'id', 'text'], ['Kênh', 'channel_code', 'text'],
+      ['Gian hàng', 'shop_label', 'text'], ['Trạng thái xử lý', 'fulfillment_status', 'text'],
+      ['Thanh toán hiển thị trên kênh', 'payment_status_snapshot', 'text'], ['Kho giao', 'warehouse_name', 'text'],
+      ['Người nhận', 'customer_name_snapshot', 'text'], ['Ghi chú nội bộ', 'internal_note', 'text'],
+      ['SKU trên kênh', 'external_sku_snapshot', 'text'], ['SKU Slink', 'internal_sku_snapshot', 'text'],
+      ['Tên sản phẩm', 'product_name_snapshot', 'text'], ['Đơn vị', 'unit_snapshot', 'text'],
+      ['Số lượng', 'quantity', 'number'], ['Đơn giá theo kênh (VND)', 'unit_price_vnd', 'number'],
+      ['Thành tiền dòng (VND)', 'line_total_vnd', 'number'], ['Tổng đơn (VND)', 'total_vnd', 'number'],
+      ['Phiên bản', 'version', 'number'], ['Tạo lúc', 'created_at', 'date'], ['Đã gửi lúc', 'shipped_at', 'date'],
+      ['Đã giao lúc', 'delivered_at', 'date'], ['Đã hủy lúc', 'cancelled_at', 'date'],
+    ],
+    dateColumn: 'co.created_at', orderBy: 'co.created_at, co.id, col.line_number',
+    sql: `SELECT co.external_order_ref, co.id, cp.channel_code, cp.shop_label, co.fulfillment_status,
+                 co.payment_status_snapshot, w.name AS warehouse_name, co.customer_name_snapshot, co.internal_note,
+                 col.external_sku_snapshot, col.internal_sku_snapshot, col.product_name_snapshot, col.unit_snapshot,
+                 col.quantity::text AS quantity, col.unit_price_vnd::text AS unit_price_vnd,
+                 col.line_total_vnd::text AS line_total_vnd, co.total_vnd::text AS total_vnd, co.version,
+                 co.created_at, co.shipped_at, co.delivered_at, co.cancelled_at
+          FROM channel_orders co
+          JOIN sales_channel_profiles cp ON cp.store_id = co.store_id AND cp.id = co.channel_profile_id
+          JOIN warehouses w ON w.store_id = co.store_id AND w.id = co.fulfillment_warehouse_id
+          JOIN channel_order_lines col ON col.store_id = co.store_id AND col.order_id = co.id
+          WHERE co.store_id = $1 AND ($6::uuid IS NULL OR co.fulfillment_warehouse_id = $6)`,
   },
   'order-lines': {
     filename: 'slink-chi-tiet-don-hang.csv',
@@ -391,7 +420,7 @@ function registerExportRoutes(app, { pool }) {
       const allowedIds = allowedWarehouseIds(membership);
       let scopedWarehouseId = null;
       let scopedWarehouseIds = null;
-      if (['inventory', 'inventory-movements', 'purchases', 'purchase-orders'].includes(key)) {
+      if (['inventory', 'inventory-movements', 'purchases', 'purchase-orders', 'channel-orders'].includes(key)) {
         const requestedWarehouseId = request.query?.warehouseId;
         if (requestedWarehouseId !== undefined && (typeof requestedWarehouseId !== 'string' || !UUID_PATTERN.test(requestedWarehouseId))) {
           throw new ApiError(400, 'validation_error', 'Kho tồn kho không hợp lệ.');
@@ -408,6 +437,7 @@ function registerExportRoutes(app, { pool }) {
         'inventory-movements': 'm.warehouse_id',
         purchases: 'p.warehouse_id',
         'purchase-orders': 'po.warehouse_id',
+        'channel-orders': 'co.fulfillment_warehouse_id',
       }[key];
       const warehouseScopeFilter = scopedWarehouseIds !== null ? ` AND ${scopeColumn} = ANY($7::uuid[])` : '';
       const dateFilter = dataset.dateColumn
@@ -416,7 +446,7 @@ function registerExportRoutes(app, { pool }) {
         : '';
       const sql = `${dataset.sql}${dateFilter}${warehouseScopeFilter} ORDER BY ${dataset.orderBy} LIMIT $5`;
       const parameters = [storeId, from, to, membership.timezone, MAX_EXPORT_ROWS + 1];
-      if (['inventory', 'inventory-movements', 'purchases', 'purchase-orders'].includes(key)) parameters.push(scopedWarehouseId);
+      if (['inventory', 'inventory-movements', 'purchases', 'purchase-orders', 'channel-orders'].includes(key)) parameters.push(scopedWarehouseId);
       else if (key === 'products') parameters.push(allowedIds);
       if (scopedWarehouseIds !== null) parameters.push(scopedWarehouseIds);
       const rows = await client.query(sql, parameters);
