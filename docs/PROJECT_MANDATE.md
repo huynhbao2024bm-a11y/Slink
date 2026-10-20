@@ -10,11 +10,18 @@ Giao diện demo, dữ liệu mẫu, mã nguồn có sẵn, API có mặt, cú p
 
 ## Cách bắt đầu mỗi phiên
 
-1. Đọc trang này, [`BUILD_CHARTER.md`](BUILD_CHARTER.md), [`DELIVERY_ROADMAP.md`](DELIVERY_ROADMAP.md), rồi [`PRODUCT.md`](PRODUCT.md) nếu sửa luồng nghiệp vụ. Xem [`README.md`](README.md) để hiểu vai trò các tài liệu.
+1. Đọc trang này, [`BUILD_CHARTER.md`](BUILD_CHARTER.md), [`DELIVERY_ROADMAP.md`](DELIVERY_ROADMAP.md), [`EXECUTION_PLAN.md`](EXECUTION_PLAN.md), rồi [`PRODUCT.md`](PRODUCT.md) nếu sửa luồng nghiệp vụ. Xem [`README.md`](README.md) để hiểu vai trò các tài liệu.
 2. Kiểm tra trạng thái workspace, mã nguồn, dịch vụ đang chạy và cấu hình hiện tại. Dùng bằng chứng hiện tại làm chuẩn; không dựa vào trí nhớ hoặc lời khẳng định trước đây.
 3. Chọn việc kế tiếp từ lộ trình có tác động lớn nhất tới độ đúng của giao dịch, độ bền dữ liệu, quyền truy cập, khả năng dùng trên điện thoại hoặc khả năng vận hành. Không chọn việc chỉ dễ làm nếu nó giữ sản phẩm ở trạng thái demo.
 4. Làm hết phần có thể hoàn thành trong workspace; nếu một phụ thuộc bên ngoài chặn một phần, tiếp tục các phần độc lập và ghi rõ chính xác điều gì đang thiếu.
 5. Sau thay đổi, cập nhật lộ trình/tài liệu liên quan và kiểm tra bằng chứng đúng tầm với yêu cầu. Nếu chỉ kiểm tra tĩnh, phải ghi là kiểm tra tĩnh; không suy ra giao dịch hoặc nền tảng đã được nghiệm thu.
+
+## Chỉ đạo triển khai mới nhất của người dùng (2026-10-20)
+
+- Ưu tiên triển khai các lĩnh vực còn thiếu và hoàn thiện chức năng hiện có; không để nghiệm thu UX tự động làm tắc công việc.
+- Chỉ dùng kiểm tra tự động có trọng tâm cho dữ liệu, giao dịch, quyền, bảo mật, sao lưu hoặc khôi phục. Giao diện và trải nghiệm sử dụng thực tế cần người thật thử.
+- Luôn dùng [`EXECUTION_PLAN.md`](EXECUTION_PLAN.md) để chọn việc kế tiếp; cập nhật kế hoạch và [`DELIVERY_ROADMAP.md`](DELIVERY_ROADMAP.md) sau mỗi lát cắt.
+- Chuẩn bị video demo hoặc pitch deck trung thực cho cuộc thi khởi nghiệp khi có lát cắt sản phẩm trình bày được; không cần chờ toàn bộ sản phẩm hoàn tất.
 
 ## Cách đánh giá một luồng kinh doanh
 

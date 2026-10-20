@@ -21,11 +21,20 @@ const pool = new Pool({
 
 async function main() {
   try {
+    const migrationRole = await pool.query(`
+      SELECT current_user AS role_name, r.rolsuper, r.rolbypassrls,
+        has_schema_privilege(current_user, 'public', 'CREATE') AS can_create_public_schema
+      FROM pg_catalog.pg_roles r WHERE r.rolname = current_user
+    `);
+    if (!migrationRole.rowCount) throw new Error('Cannot inspect the connected migration role.');
+
     const tables = await pool.query(`
       SELECT to_regclass('public.schema_migrations') AS migration_table,
-        to_regclass('public.user_security_events') AS security_table
+        to_regclass('public.user_security_events') AS security_table,
+        to_regclass('public.customer_tag_events') AS customer_tag_table,
+        to_regclass('public.customer_saved_segments') AS customer_saved_segments_table
     `);
-    if (!tables.rows[0].migration_table || !tables.rows[0].security_table) {
+    if (!tables.rows[0].migration_table || !tables.rows[0].security_table || !tables.rows[0].customer_tag_table || !tables.rows[0].customer_saved_segments_table) {
       throw new Error('Expected migration or account-security table is missing. Apply database migrations first.');
     }
 
@@ -46,6 +55,19 @@ async function main() {
         has_table_privilege(app.rolname, 'public.user_security_events', 'UPDATE') AS events_update,
         has_table_privilege(app.rolname, 'public.user_security_events', 'DELETE') AS events_delete,
         has_table_privilege(app.rolname, 'public.user_security_events', 'TRUNCATE') AS events_truncate,
+        has_table_privilege(app.rolname, 'public.customer_tag_events', 'SELECT') AS customer_tags_select,
+        has_table_privilege(app.rolname, 'public.customer_tag_events', 'INSERT') AS customer_tags_insert,
+        has_table_privilege(app.rolname, 'public.customer_tag_events', 'UPDATE') AS customer_tags_update,
+        has_table_privilege(app.rolname, 'public.customer_tag_events', 'DELETE') AS customer_tags_delete,
+        has_table_privilege(app.rolname, 'public.customer_tag_events', 'TRUNCATE') AS customer_tags_truncate,
+        has_sequence_privilege(app.rolname, 'public.customer_tag_events_id_seq', 'USAGE') AS customer_tags_sequence_usage,
+        has_sequence_privilege(app.rolname, 'public.customer_tag_events_id_seq', 'SELECT') AS customer_tags_sequence_select,
+        has_sequence_privilege(app.rolname, 'public.customer_tag_events_id_seq', 'UPDATE') AS customer_tags_sequence_update,
+        has_table_privilege(app.rolname, 'public.customer_saved_segments', 'SELECT') AS customer_segments_select,
+        has_table_privilege(app.rolname, 'public.customer_saved_segments', 'INSERT') AS customer_segments_insert,
+        has_table_privilege(app.rolname, 'public.customer_saved_segments', 'UPDATE') AS customer_segments_update,
+        has_table_privilege(app.rolname, 'public.customer_saved_segments', 'DELETE') AS customer_segments_delete,
+        has_table_privilege(app.rolname, 'public.customer_saved_segments', 'TRUNCATE') AS customer_segments_truncate,
         NOT EXISTS (
           SELECT 1 FROM pg_class relation
           JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
@@ -54,8 +76,14 @@ async function main() {
             AND relation.relowner = app.oid
         ) AS app_owns_no_public_objects,
         security.relowner <> app.oid AS app_does_not_own_security_table,
+        customer_tags.relowner <> app.oid AS app_does_not_own_customer_tag_table,
+        customer_segments.relowner <> app.oid AS app_does_not_own_customer_segments_table,
         security.relrowsecurity AS events_rls_enabled,
         security.relforcerowsecurity AS events_rls_forced,
+        customer_tags.relrowsecurity AS customer_tags_rls_enabled,
+        customer_tags.relforcerowsecurity AS customer_tags_rls_forced,
+        customer_segments.relrowsecurity AS customer_segments_rls_enabled,
+        customer_segments.relforcerowsecurity AS customer_segments_rls_forced,
         EXISTS (
           SELECT 1 FROM pg_policies policy
           WHERE policy.schemaname = 'public'
@@ -64,15 +92,40 @@ async function main() {
             AND policy.cmd = 'ALL'
             AND position('app.user_id' IN coalesce(policy.qual, '')) > 0
             AND position('app.user_id' IN coalesce(policy.with_check, '')) > 0
-        ) AS events_policy_is_user_scoped
+        ) AS events_policy_is_user_scoped,
+        EXISTS (
+          SELECT 1 FROM pg_policies policy
+          WHERE policy.schemaname = 'public'
+            AND policy.tablename = 'customer_tag_events'
+            AND policy.policyname = 'tenant_scope'
+            AND policy.cmd = 'ALL'
+            AND position('app.store_id' IN coalesce(policy.qual, '')) > 0
+            AND position('app.store_id' IN coalesce(policy.with_check, '')) > 0
+        ) AS customer_tags_policy_is_tenant_scoped,
+        EXISTS (
+          SELECT 1 FROM pg_policies policy
+          WHERE policy.schemaname = 'public'
+            AND policy.tablename = 'customer_saved_segments'
+            AND policy.policyname = 'tenant_scope'
+            AND policy.cmd = 'ALL'
+            AND position('app.store_id' IN coalesce(policy.qual, '')) > 0
+            AND position('app.store_id' IN coalesce(policy.with_check, '')) > 0
+        ) AS customer_segments_policy_is_tenant_scoped
       FROM pg_roles app
       JOIN pg_class security ON security.oid = to_regclass('public.user_security_events')
+      JOIN pg_class customer_tags ON customer_tags.oid = to_regclass('public.customer_tag_events')
+      JOIN pg_class customer_segments ON customer_segments.oid = to_regclass('public.customer_saved_segments')
       WHERE app.rolname = 'slink_app'
     `);
     if (!result.rowCount) throw new Error('The slink_app role is missing.');
 
     const row = result.rows[0];
+    const migration = migrationRole.rows[0];
     const checks = [
+      ['connected as slink_migrator', migration.role_name === 'slink_migrator'],
+      ['migration role is not a superuser', !migration.rolsuper],
+      ['migration role can bypass forced tenant RLS for backfills', migration.rolbypassrls],
+      ['migration role can create in the public schema', migration.can_create_public_schema],
       ['not a superuser', !row.app_superuser],
       ['does not bypass RLS', !row.app_bypass_rls],
       ['has no database, role-management or replication privileges', !row.app_has_admin_capability],
@@ -84,10 +137,27 @@ async function main() {
       ['cannot update security events', !row.events_update],
       ['cannot delete security events', !row.events_delete],
       ['cannot truncate security events', !row.events_truncate],
+      ['can read customer tag history', row.customer_tags_select],
+      ['can insert customer tag history', row.customer_tags_insert],
+      ['cannot update customer tag history', !row.customer_tags_update],
+      ['cannot delete customer tag history', !row.customer_tags_delete],
+      ['cannot truncate customer tag history', !row.customer_tags_truncate],
+      ['can allocate customer tag IDs without changing the sequence', row.customer_tags_sequence_usage && row.customer_tags_sequence_select && !row.customer_tags_sequence_update],
+      ['can read saved customer segments', row.customer_segments_select],
+      ['can create saved customer segments', row.customer_segments_insert],
+      ['can update saved customer segments', row.customer_segments_update],
+      ['can delete saved customer segments', row.customer_segments_delete],
+      ['cannot truncate saved customer segments', !row.customer_segments_truncate],
       ['owns no public database objects', row.app_owns_no_public_objects],
       ['does not own the security table', row.app_does_not_own_security_table],
+      ['does not own the customer tag table', row.app_does_not_own_customer_tag_table],
+      ['does not own the saved customer segments table', row.app_does_not_own_customer_segments_table],
       ['security-event RLS is enabled and forced', row.events_rls_enabled && row.events_rls_forced],
       ['security-event policy scopes reads and writes by user', row.events_policy_is_user_scoped],
+      ['customer-tag RLS is enabled and forced', row.customer_tags_rls_enabled && row.customer_tags_rls_forced],
+      ['customer-tag policy scopes reads and writes by store', row.customer_tags_policy_is_tenant_scoped],
+      ['saved-customer-segment RLS is enabled and forced', row.customer_segments_rls_enabled && row.customer_segments_rls_forced],
+      ['saved-customer-segment policy scopes reads and writes by store', row.customer_segments_policy_is_tenant_scoped],
     ];
 
     process.stdout.write(`Database: ${row.database_name}\n`);
@@ -99,6 +169,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  process.stderr.write(`Application-role check failed: ${error.message}\n`);
+  process.stderr.write(`PostgreSQL role check failed: ${error.message}\n`);
   process.exitCode = 1;
 });

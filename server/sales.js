@@ -90,7 +90,9 @@ function normalizeSale(body) {
   }
   const note = typeof body.note === 'string' ? body.note.trim() : '';
   if (note.length > 500) throw new ApiError(400, 'validation_error', 'Ghi chú tối đa 500 ký tự.');
-  return { items, discountVnd, amountReceivedVnd, method, tenders, customerId, note };
+  const warehouseId = body.warehouseId || null;
+  if (warehouseId !== null && (typeof warehouseId !== 'string' || !UUID_PATTERN.test(warehouseId))) throw new ApiError(400, 'validation_error', 'Kho bán hàng không hợp lệ.');
+  return { items, discountVnd, amountReceivedVnd, method, tenders, customerId, note, warehouseId: warehouseId?.toLowerCase() || null };
 }
 
 function distributeDiscount(lines, discount, subtotal) {
@@ -128,6 +130,7 @@ function registerSalesRoutes(app, { pool, env }) {
       customerId: sale.customerId,
       note: sale.note,
     };
+    if (sale.warehouseId) canonicalSale.warehouseId = sale.warehouseId;
     // Keep the original single-tender request hash stable so a pending sale
     // can still be safely retried by a client upgraded to this version.
     if (sale.tenders.length > 1) canonicalSale.tenders = sale.tenders;
@@ -163,6 +166,12 @@ function registerSalesRoutes(app, { pool, env }) {
         if (!customer.rowCount) throw new ApiError(404, 'customer_not_found', 'Không tìm thấy khách hàng đang hoạt động.');
       }
 
+      const warehouseResult = sale.warehouseId
+        ? await client.query(`SELECT id FROM warehouses WHERE store_id = $1 AND id = $2 AND status = 'active' FOR UPDATE`, [storeId, sale.warehouseId])
+        : await client.query(`SELECT id FROM warehouses WHERE store_id = $1 AND is_default AND status = 'active' FOR UPDATE`, [storeId]);
+      if (!warehouseResult.rowCount) throw new ApiError(404, 'warehouse_not_found', 'Không tìm thấy kho bán hàng đang hoạt động.');
+      const warehouseId = warehouseResult.rows[0].id;
+
       const productIds = sale.items.map((line) => line.productId).sort();
       const productResult = await client.query(
         `SELECT id, sku, name, unit, sale_price_vnd::text AS sale_price_vnd,
@@ -180,8 +189,9 @@ function registerSalesRoutes(app, { pool, env }) {
         if (!product.inventory_tracked) continue;
         const balance = await client.query(
           `SELECT on_hand::text AS on_hand, reserved::text AS reserved
-           FROM inventory_balances WHERE store_id = $1 AND product_id = $2 FOR UPDATE`,
-          [storeId, productId]
+           FROM inventory_balances WHERE store_id = $1 AND product_id = $2 AND warehouse_id = $3
+           FOR UPDATE`,
+          [storeId, productId, warehouseId]
         );
         if (!balance.rowCount) throw new ApiError(409, 'inventory_unavailable', 'Chưa có số dư tồn kho cho một sản phẩm. Hãy cập nhật danh mục.');
         const line = sale.items.find((item) => item.productId === productId);
@@ -232,13 +242,13 @@ function registerSalesRoutes(app, { pool, env }) {
       if (!sequenceResult.rowCount) throw new Error('Store order sequence is missing.');
       const orderNumber = `SL-${sequenceResult.rows[0].order_number}`;
       const orderResult = await client.query(
-        `INSERT INTO orders (store_id, order_number, customer_id, cashier_id, status, subtotal_vnd,
+        `INSERT INTO orders (store_id, order_number, customer_id, cashier_id, warehouse_id, status, subtotal_vnd,
                              discount_vnd, tax_vnd, total_vnd, cash_received_vnd, cash_change_vnd, note)
-         VALUES ($1, $2, $3, $4, 'completed', $5, $6, 0, $7, $8, $9, $10)
+         VALUES ($1, $2, $3, $4, $5, 'completed', $6, $7, 0, $8, $9, $10, $11)
          RETURNING id, order_number, status, subtotal_vnd::text AS subtotal_vnd,
                    discount_vnd::text AS discount_vnd, total_vnd::text AS total_vnd,
                    cash_received_vnd::text AS cash_received_vnd, cash_change_vnd::text AS cash_change_vnd, occurred_at`,
-        [storeId, orderNumber, sale.customerId, auth.userId, subtotal.toString(), sale.discountVnd.toString(),
+        [storeId, orderNumber, sale.customerId, auth.userId, warehouseId, subtotal.toString(), sale.discountVnd.toString(),
           total.toString(), cashReceived.toString(), change.toString(), sale.note]
       );
       const order = orderResult.rows[0];
@@ -255,18 +265,19 @@ function registerSalesRoutes(app, { pool, env }) {
         if (line.product.inventory_tracked) {
           await client.query(
             `UPDATE inventory_balances SET on_hand = on_hand - $3::numeric, version = version + 1, updated_at = now()
-             WHERE store_id = $1 AND product_id = $2`,
-            [storeId, line.product.id, quantityText(line.quantityMilli)]
+             WHERE store_id = $1 AND product_id = $2 AND warehouse_id = $4`,
+            [storeId, line.product.id, quantityText(line.quantityMilli), warehouseId]
           );
           const after = await client.query(
-            'SELECT on_hand::text AS on_hand FROM inventory_balances WHERE store_id = $1 AND product_id = $2',
-            [storeId, line.product.id]
+            `SELECT on_hand::text AS on_hand FROM inventory_balances WHERE store_id = $1 AND product_id = $2
+             AND warehouse_id = $3`,
+            [storeId, line.product.id, warehouseId]
           );
           await client.query(
-            `INSERT INTO inventory_movements (store_id, product_id, movement_type, quantity_delta, quantity_after,
+            `INSERT INTO inventory_movements (store_id, warehouse_id, product_id, movement_type, quantity_delta, quantity_after,
                                                reason, source_type, source_id, actor_user_id)
-             VALUES ($1, $2, 'sale', -$3::numeric, $4::numeric, $5, 'order', $6, $7)`,
-            [storeId, line.product.id, quantityText(line.quantityMilli), after.rows[0].on_hand,
+             VALUES ($1, $2, $3, 'sale', -$4::numeric, $5::numeric, $6, 'order', $7, $8)`,
+            [storeId, warehouseId, line.product.id, quantityText(line.quantityMilli), after.rows[0].on_hand,
               `Bán hàng ${orderNumber}`, order.id, auth.userId]
           );
         }

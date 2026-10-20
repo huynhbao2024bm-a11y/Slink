@@ -3,6 +3,7 @@
 const { createHash, randomUUID } = require('node:crypto');
 const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
+const { allowedWarehouseIds, findAccessibleWarehouse } = require('./warehouse-access');
 
 const EDIT_ROLES = new Set(['owner', 'manager', 'stockkeeper']);
 const MAX_VND = Number.MAX_SAFE_INTEGER;
@@ -216,8 +217,12 @@ function registerProductRoutes(app, { pool, env }) {
     const offset = Math.min(Math.max(Number.parseInt(request.query?.offset || '0', 10) || 0, 0), 10000);
     const search = typeof request.query?.q === 'string' ? request.query.q.trim().slice(0, 120) : '';
     const status = request.query?.status === 'archived' ? 'archived' : 'active';
+    const requestedWarehouseId = request.query?.warehouseId;
+    if (requestedWarehouseId !== undefined && (typeof requestedWarehouseId !== 'string' || !UUID_PATTERN.test(requestedWarehouseId))) throw new ApiError(400, 'validation_error', 'Kho không hợp lệ.');
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
       const canViewCost = ['owner', 'manager', 'stockkeeper', 'accountant'].includes(membership.role);
+      if (requestedWarehouseId && !await findAccessibleWarehouse(client, storeId, membership, requestedWarehouseId)) throw new ApiError(404, 'warehouse_not_found', 'Không tìm thấy kho đang hoạt động.');
+      const warehouseIds = allowedWarehouseIds(membership);
       const result = await client.query(
         `SELECT p.id, p.sku, p.barcode, p.name, p.category, p.unit,
                 p.sale_price_vnd::text AS sale_price_vnd,
@@ -227,10 +232,15 @@ function registerProductRoutes(app, { pool, env }) {
                 COALESCE(i.reserved, 0)::text AS reserved, COALESCE(i.version, 1)::int AS inventory_version,
                 p.updated_at, COUNT(*) OVER()::int AS total_count
          FROM products p
-         LEFT JOIN inventory_balances i ON i.store_id = p.store_id AND i.product_id = p.id
+         LEFT JOIN LATERAL (
+           SELECT SUM(b.on_hand) FILTER (WHERE ($6::uuid IS NULL OR b.warehouse_id = $6) AND ($7::uuid[] IS NULL OR b.warehouse_id = ANY($7))) AS on_hand,
+                  SUM(b.reserved) FILTER (WHERE ($6::uuid IS NULL OR b.warehouse_id = $6) AND ($7::uuid[] IS NULL OR b.warehouse_id = ANY($7))) AS reserved,
+                  MAX(b.version) FILTER (WHERE ($6::uuid IS NULL OR b.warehouse_id = $6) AND ($7::uuid[] IS NULL OR b.warehouse_id = ANY($7))) AS version
+           FROM inventory_balances b WHERE b.store_id = p.store_id AND b.product_id = p.id
+         ) i ON true
          WHERE p.status = $1 AND ($2 = '' OR p.name ILIKE '%' || $2 || '%' OR p.sku_normalized LIKE '%' || lower($2) || '%' OR p.barcode = $2)
          ORDER BY p.name, p.id LIMIT $3 OFFSET $4`,
-        [status, search, limit + 1, offset, canViewCost]
+        [status, search, limit + 1, offset, canViewCost, requestedWarehouseId || null, warehouseIds]
       );
       const hasMore = result.rows.length > limit;
       return { products: result.rows.slice(0, limit), total: Number(result.rows[0]?.total_count || 0), nextOffset: hasMore ? offset + limit : null };
@@ -245,8 +255,12 @@ function registerProductRoutes(app, { pool, env }) {
     const products = validateImportRows(request.body?.items);
     const skuValues = products.map((product) => product.sku.toLocaleLowerCase('vi'));
     const barcodeValues = products.map((product) => product.barcode).filter(Boolean);
+    const requestedWarehouseId = request.body?.warehouseId;
+    if (requestedWarehouseId !== undefined && (typeof requestedWarehouseId !== 'string' || !UUID_PATTERN.test(requestedWarehouseId))) throw new ApiError(400, 'validation_error', 'Kho nhận tồn đầu kỳ không hợp lệ.');
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
       requireEditor(membership.role);
+      const warehouse = await findAccessibleWarehouse(client, storeId, membership, requestedWarehouseId?.toLowerCase() || null);
+      if (!warehouse) throw new ApiError(404, 'warehouse_not_found', 'Không tìm thấy kho nhận tồn đầu kỳ đang hoạt động.');
       const existing = await client.query(
         `SELECT sku, sku_normalized, barcode FROM products
          WHERE store_id = $1 AND (sku_normalized = ANY($2::text[]) OR barcode = ANY($3::text[]))`,
@@ -257,6 +271,8 @@ function registerProductRoutes(app, { pool, env }) {
         valid: !conflictMessage,
         count: products.length,
         conflict: conflictMessage,
+        warehouseId: warehouse.id,
+        warehouseName: warehouse.name
       };
     });
   });
@@ -271,13 +287,20 @@ function registerProductRoutes(app, { pool, env }) {
       throw new ApiError(400, 'idempotency_key_required', 'Thiếu mã lưu thao tác an toàn. Hãy thử lại.');
     }
     const products = validateImportRows(request.body?.items);
-    const requestHash = createHash('sha256').update(JSON.stringify(products)).digest();
+    const warehouseInput = request.body?.warehouseId;
+    if (warehouseInput !== undefined && (typeof warehouseInput !== 'string' || !UUID_PATTERN.test(warehouseInput))) throw new ApiError(400, 'validation_error', 'Kho nhận tồn đầu kỳ không hợp lệ.');
+    const requestedWarehouseId = warehouseInput?.toLowerCase() || null;
     const importId = randomUUID();
     const skuValues = products.map((product) => product.sku.toLocaleLowerCase('vi'));
     const barcodeValues = products.map((product) => product.barcode).filter(Boolean);
     try {
       const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
         requireEditor(membership.role);
+        const warehouse = await findAccessibleWarehouse(client, storeId, membership, requestedWarehouseId, { lock: true });
+        if (!warehouse) throw new ApiError(404, 'warehouse_not_found', 'Không tìm thấy kho nhận tồn đầu kỳ đang hoạt động.');
+        const requestHash = createHash('sha256').update(JSON.stringify(
+          requestedWarehouseId ? { items: products, warehouseId: requestedWarehouseId } : products
+        )).digest();
         const reserved = await client.query(
           `INSERT INTO idempotency_records (store_id, actor_user_id, idempotency_key, request_hash)
            VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING RETURNING idempotency_key`,
@@ -320,8 +343,10 @@ function registerProductRoutes(app, { pool, env }) {
           const created = inserted.rows[0];
           const openingQuantity = product.openingQuantityText;
           await client.query(
-            `INSERT INTO inventory_balances (store_id, product_id, on_hand) VALUES ($1, $2, $3::numeric)`,
-            [storeId, created.id, openingQuantity]
+            `INSERT INTO inventory_balances (store_id, warehouse_id, product_id, on_hand)
+             SELECT $1, w.id, $2, CASE WHEN w.id = $3 THEN $4::numeric ELSE 0 END
+             FROM warehouses w WHERE w.store_id = $1 AND w.status = 'active'`,
+            [storeId, created.id, warehouse.id, openingQuantity]
           );
           if (product.costVnd > 0) {
             await client.query(
@@ -333,24 +358,24 @@ function registerProductRoutes(app, { pool, env }) {
           if (product.openingQuantity > 0) {
             await client.query(
               `INSERT INTO inventory_movements (store_id, product_id, movement_type, quantity_delta, quantity_after,
-                                                 reason, source_type, source_id, actor_user_id)
-               VALUES ($1, $2, 'opening', $3::numeric, $3::numeric, 'Tồn đầu kỳ khi nhập danh mục', 'opening_import', $4, $5)`,
-              [storeId, created.id, openingQuantity, importId, auth.userId]
+                                                 reason, source_type, source_id, actor_user_id, warehouse_id)
+               VALUES ($1, $2, 'opening', $3::numeric, $3::numeric, 'Tồn đầu kỳ khi nhập danh mục', 'opening_import', $4, $5, $6)`,
+              [storeId, created.id, openingQuantity, importId, auth.userId, warehouse.id]
             );
           }
           await client.query(
             `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, metadata)
-             VALUES ($1, $2, 'product.created', 'product', $3, jsonb_build_object('sku', $4::text, 'openingQuantity', $5::text, 'importId', $6::text))`,
-            [storeId, auth.userId, created.id, created.sku, openingQuantity, importId]
+             VALUES ($1, $2, 'product.created', 'product', $3, jsonb_build_object('sku', $4::text, 'openingQuantity', $5::text, 'importId', $6::text, 'warehouseId', $7::text))`,
+            [storeId, auth.userId, created.id, created.sku, openingQuantity, importId, warehouse.id]
           );
-          createdProducts.push({ ...created, on_hand: openingQuantity, reserved: '0', import_id: importId });
+          createdProducts.push({ ...created, on_hand: openingQuantity, reserved: '0', import_id: importId, warehouse_id: warehouse.id, warehouse_name: warehouse.name });
         }
         await client.query(
           `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, metadata)
            VALUES ($1, $2, 'products.imported', 'product_import', $3, jsonb_build_object('count', $4::integer))`,
           [storeId, auth.userId, importId, createdProducts.length]
         );
-        const body = { importId, count: createdProducts.length, products: createdProducts };
+        const body = { importId, count: createdProducts.length, warehouseId: warehouse.id, warehouseName: warehouse.name, products: createdProducts };
         await client.query(
           `UPDATE idempotency_records SET response_status = 201, response_body = $4::jsonb, completed_at = now()
            WHERE store_id = $1 AND actor_user_id = $2 AND idempotency_key = $3`,
@@ -387,7 +412,9 @@ function registerProductRoutes(app, { pool, env }) {
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
       requireEditor(membership.role);
       const selected = await client.query(
-        `SELECT id, sku, sku_normalized, barcode, status, version
+        `SELECT id, sku, sku_normalized, barcode, name, category, unit,
+                sale_price_vnd::text AS sale_price_vnd, cost_vnd::text AS cost_vnd,
+                low_stock_threshold::text AS low_stock_threshold, status, version
          FROM products WHERE store_id = $1 AND id = ANY($2::uuid[]) ORDER BY id`,
         [storeId, productIds]
       );
@@ -395,10 +422,10 @@ function registerProductRoutes(app, { pool, env }) {
       for (const item of items) {
         const current = selectedById.get(item.productId);
         if (!current || current.status !== 'active') {
-          return { valid: false, count: items.length, conflict: `Dòng ${item.sourceLine}: không tìm thấy sản phẩm đang hoạt động. Tệp chưa được cập nhật.` };
+          return { valid: false, count: items.length, conflict: `Dòng ${item.sourceLine}: không tìm thấy sản phẩm đang hoạt động. Tệp chưa được cập nhật.`, items: [] };
         }
         if (current.version !== item.version) {
-          return { valid: false, count: items.length, conflict: `Dòng ${item.sourceLine}: sản phẩm đã thay đổi sau khi tải CSV. Hãy xuất lại danh sách rồi áp dụng thay đổi.` };
+          return { valid: false, count: items.length, conflict: `Dòng ${item.sourceLine}: sản phẩm đã thay đổi sau khi tải CSV. Hãy xuất lại danh sách rồi áp dụng thay đổi.`, items: [] };
         }
       }
       const requestedSkus = items.filter((item) => item.sku).map((item) => item.sku.toLocaleLowerCase('vi'));
@@ -410,7 +437,48 @@ function registerProductRoutes(app, { pool, env }) {
         [storeId, productIds, requestedSkus, requestedBarcodes]
       );
       const conflictMessage = describeBulkUpdateConflict(items, [...selected.rows, ...external.rows]);
-      return { valid: !conflictMessage, count: items.length, conflict: conflictMessage };
+      if (conflictMessage) return { valid: false, count: items.length, conflict: conflictMessage, items: [] };
+
+      const previewItems = items.map((item) => {
+        const current = selectedById.get(item.productId);
+        const before = {
+          sku: current.sku,
+          barcode: current.barcode,
+          name: current.name,
+          category: current.category,
+          unit: current.unit,
+          salePriceVnd: current.sale_price_vnd,
+          costVnd: current.cost_vnd,
+          lowStockThreshold: current.low_stock_threshold,
+        };
+        const next = {
+          sku: item.sku ?? current.sku,
+          barcode: item.clearBarcode ? null : (item.barcode ?? current.barcode),
+          name: item.name ?? current.name,
+          category: item.category ?? current.category,
+          unit: item.unit ?? current.unit,
+          salePriceVnd: item.salePriceVnd ?? Number(current.sale_price_vnd),
+          costVnd: item.costVnd ?? Number(current.cost_vnd),
+          lowStockThreshold: item.lowStockThreshold ?? current.low_stock_threshold,
+        };
+        const unchanged = current.sku === next.sku
+          && (current.barcode ?? null) === (next.barcode ?? null)
+          && current.name === next.name
+          && current.category === next.category
+          && current.unit === next.unit
+          && String(current.sale_price_vnd) === String(next.salePriceVnd)
+          && String(current.cost_vnd) === String(next.costVnd)
+          && canonicalQuantityText(current.low_stock_threshold) === canonicalQuantityText(next.lowStockThreshold);
+        return { ...item, before, unchanged };
+      });
+      return {
+        valid: true,
+        count: items.length,
+        changedCount: previewItems.filter((item) => !item.unchanged).length,
+        unchangedCount: previewItems.filter((item) => item.unchanged).length,
+        conflict: null,
+        items: previewItems,
+      };
     });
   });
 
@@ -595,7 +663,11 @@ function registerProductRoutes(app, { pool, env }) {
             product.lowStockThreshold, product.inventoryTracked, auth.userId]
         );
         const created = inserted.rows[0];
-        await client.query('INSERT INTO inventory_balances (store_id, product_id, on_hand) VALUES ($1, $2, 0)', [storeId, created.id]);
+        await client.query(
+          `INSERT INTO inventory_balances (store_id, warehouse_id, product_id, on_hand)
+           SELECT $1, w.id, $2, 0 FROM warehouses w WHERE w.store_id = $1 AND w.status = 'active'`,
+          [storeId, created.id]
+        );
         if (product.costVnd > 0) {
           await client.query(
             `INSERT INTO product_cost_history (store_id, product_id, unit_cost_vnd, source_type, actor_user_id)
@@ -644,11 +716,23 @@ function registerProductRoutes(app, { pool, env }) {
         if (old.inventory_tracked && !next.inventoryTracked) {
           const balance = await client.query(
             `SELECT on_hand > 0 AS has_on_hand, reserved > 0 AS has_reserved
-             FROM inventory_balances WHERE store_id = $1 AND product_id = $2 FOR UPDATE`,
+             FROM inventory_balances WHERE store_id = $1 AND product_id = $2 ORDER BY warehouse_id FOR UPDATE`,
             [storeId, productId]
           );
-          if (!balance.rowCount || balance.rows[0].has_on_hand || balance.rows[0].has_reserved) {
+          if (!balance.rowCount || balance.rows.some((row) => row.has_on_hand || row.has_reserved)) {
             throw new ApiError(409, 'inventory_tracking_change_requires_zero', 'Hãy điều chỉnh tồn thực tế và số lượng đang giữ về 0 trước khi tắt theo dõi tồn kho.');
+          }
+          const outstandingPurchaseOrder = await client.query(
+            `SELECT 1 FROM purchase_order_lines l
+             JOIN purchase_orders po ON po.store_id = l.store_id AND po.id = l.purchase_order_id
+             WHERE l.store_id = $1 AND l.product_id = $2
+               AND po.status IN ('draft', 'ordered', 'partially_received')
+               AND l.quantity_received < l.quantity_ordered
+             LIMIT 1`,
+            [storeId, productId]
+          );
+          if (outstandingPurchaseOrder.rowCount) {
+            throw new ApiError(409, 'inventory_tracking_change_requires_open_purchase_order', 'Hãy nhận đủ hoặc hủy các đơn đặt hàng còn mở trước khi tắt theo dõi tồn kho.');
           }
         }
         const updated = await client.query(

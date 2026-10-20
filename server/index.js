@@ -15,6 +15,7 @@ const { registerRecordRoutes } = require('./records');
 const { registerStockRoutes } = require('./stock');
 const { registerPaymentRoutes } = require('./payments');
 const { registerPurchaseRoutes } = require('./purchases');
+const { registerPurchaseOrderRoutes } = require('./purchase-orders');
 const { registerFinanceRoutes } = require('./finance');
 const { registerAnalyticsRoutes } = require('./analytics');
 const { registerStoreSettingsRoutes } = require('./settings');
@@ -23,6 +24,7 @@ const { registerStaffRoutes } = require('./staff');
 const { registerCashRegisterRoutes } = require('./cash-register');
 const { registerAuditRoutes } = require('./audit');
 const { registerSecurityRoutes } = require('./security');
+const { registerWarehouseRoutes } = require('./warehouses');
 
 const APP_ROOT = path.resolve(__dirname, '..');
 const ASSETS = new Map([
@@ -150,6 +152,7 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
     registerStockRoutes(app, { pool, env });
     registerPaymentRoutes(app, { pool, env });
     registerPurchaseRoutes(app, { pool, env });
+    registerPurchaseOrderRoutes(app, { pool, env });
     registerFinanceRoutes(app, { pool, env });
     registerAnalyticsRoutes(app, { pool, env });
     registerStoreSettingsRoutes(app, { pool, env });
@@ -158,6 +161,7 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
     registerCashRegisterRoutes(app, { pool, env });
     registerAuditRoutes(app, { pool, env });
     registerSecurityRoutes(app, { pool, env });
+    registerWarehouseRoutes(app, { pool, env });
   }
 
   for (const [route, fileName] of ASSETS) {

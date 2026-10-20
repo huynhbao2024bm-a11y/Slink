@@ -46,7 +46,12 @@ async function withStore(pool, userId, storeId, operation) {
   return withUser(pool, userId, async (client) => {
     await client.query("SELECT set_config('app.store_id', $1, true)", [storeId]);
     const membership = await client.query(
-      `SELECT m.role, s.name AS store_name, s.status AS store_status, s.timezone
+      `SELECT m.role, m.warehouse_scope_mode,
+              COALESCE((SELECT array_agg(mws.warehouse_id ORDER BY mws.warehouse_id)
+                        FROM membership_warehouse_scopes mws
+                        JOIN warehouses scoped_w ON scoped_w.store_id = mws.store_id AND scoped_w.id = mws.warehouse_id AND scoped_w.status = 'active'
+                        WHERE mws.store_id = m.store_id AND mws.user_id = m.user_id), ARRAY[]::uuid[]) AS warehouse_scope_ids,
+              s.name AS store_name, s.status AS store_status, s.timezone
        FROM memberships m
        JOIN stores s ON s.id = m.store_id
        WHERE m.store_id = $1 AND m.user_id = $2 AND m.status = 'active' AND s.status = 'active'`,

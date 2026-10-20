@@ -7,12 +7,13 @@ Mục đích của thư mục này là giữ hướng sản phẩm, quyết đ�
 1. [`PROJECT_MANDATE.md`](PROJECT_MANDATE.md) — mục tiêu không được thu nhỏ, cách chọn việc, quy tắc làm và tiêu chuẩn bằng chứng.
 2. [`BUILD_CHARTER.md`](BUILD_CHARTER.md) — định nghĩa sản phẩm hoàn chỉnh và các cổng bắt buộc trước khi giao khách.
 3. [`DELIVERY_ROADMAP.md`](DELIVERY_ROADMAP.md) — hiện trạng đã kiểm chứng, thiếu sót, ưu tiên kế tiếp và phụ thuộc bên ngoài.
-4. [`PRODUCT.md`](PRODUCT.md) — luồng nghiệp vụ, hành vi giao diện và nghiên cứu sản phẩm; bắt buộc trước khi đổi nghiệp vụ.
-5. [`BACKEND_SETUP.md`](BACKEND_SETUP.md) — cách chạy API, cơ sở dữ liệu và giới hạn triển khai.
-6. [`DEPLOYMENT.md`](DEPLOYMENT.md) — đóng gói container, chạy migration và các cổng vận hành production.
-7. [`COMMERCIAL_READINESS.md`](COMMERCIAL_READINESS.md) — trạng thái, tiêu chí chọn và phụ thuộc của tích hợp thương mại.
-8. [`decisions/`](decisions/) — lý do của các quyết định kiến trúc đã ghi nhận.
-9. [`USER_FEATURE_INVENTORY.md`](USER_FEATURE_INVENTORY.md) và [`MULTICHANNEL_SCOPE.md`](MULTICHANNEL_SCOPE.md) — nguyên văn danh sách tính năng người dùng cung cấp và bảng so sánh/phạm vi mở rộng đã sắp thứ tự.
+4. [`EXECUTION_PLAN.md`](EXECUTION_PLAN.md) — hàng việc triển khai sống và cách làm theo chỉ đạo mới nhất.
+5. [`PRODUCT.md`](PRODUCT.md) — luồng nghiệp vụ, hành vi giao diện và nghiên cứu sản phẩm; bắt buộc trước khi đổi nghiệp vụ.
+6. [`BACKEND_SETUP.md`](BACKEND_SETUP.md) — cách chạy API, cơ sở dữ liệu và giới hạn triển khai.
+7. [`DEPLOYMENT.md`](DEPLOYMENT.md) — đóng gói container, chạy migration và các cổng vận hành production.
+8. [`COMMERCIAL_READINESS.md`](COMMERCIAL_READINESS.md) — trạng thái, tiêu chí chọn và phụ thuộc của tích hợp thương mại.
+9. [`decisions/`](decisions/) — lý do của các quyết định kiến trúc đã ghi nhận.
+10. [`USER_FEATURE_INVENTORY.md`](USER_FEATURE_INVENTORY.md) và [`MULTICHANNEL_SCOPE.md`](MULTICHANNEL_SCOPE.md) — nguyên văn danh sách tính năng người dùng cung cấp và bảng so sánh/phạm vi mở rộng đã sắp thứ tự.
 
 ## Mỗi tài liệu tồn tại để làm gì
 
@@ -22,6 +23,7 @@ Mục đích của thư mục này là giữ hướng sản phẩm, quyết đ�
 | `BUILD_CHARTER.md` | Định nghĩa “hoàn thành” và mọi năng lực/cổng giao khách | Chỉ khi người dùng đổi phạm vi hoặc có bằng chứng làm thay đổi yêu cầu |
 | `PRODUCT.md` | Mô tả cách từng luồng phải hoạt động và nguyên tắc giao diện | Khi thêm/đổi luồng nghiệp vụ hoặc có nghiên cứu đáng tin làm đổi quyết định |
 | `DELIVERY_ROADMAP.md` | Nhật ký bằng chứng, trạng thái, rủi ro, ưu tiên và phụ thuộc | Sau mỗi thay đổi làm đổi hiện trạng; không nâng trạng thái nếu thiếu bằng chứng |
+| `EXECUTION_PLAN.md` | Hàng việc sống, ưu tiên triển khai, phụ thuộc và đầu ra trình bày | Sau mỗi chặng hoặc khi người dùng đổi thứ tự/cách nghiệm thu |
 | `BACKEND_SETUP.md` | Hướng dẫn thiết lập và ranh giới triển khai | Khi đổi runtime, cấu hình, migration, dịch vụ email hoặc cách triển khai |
 | `DEPLOYMENT.md` | Quy trình tạo ảnh, migration, health check, secret, backup và rollback | Khi chốt nhà cung cấp hoặc thay đổi release/operations |
 | `COMMERCIAL_READINESS.md` | Hiện trạng và phụ thuộc của nhà cung cấp thương mại | Khi lựa chọn hoặc nghiệm thu tích hợp, giá, hợp đồng hoặc cách hỗ trợ |

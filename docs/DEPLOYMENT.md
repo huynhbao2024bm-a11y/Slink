@@ -33,13 +33,13 @@ Slink có công cụ sao lưu logic mã hóa để tạo tệp phục hồi đ�
 - Đặt `PG_DUMP_BIN` nếu `pg_dump` không có trong `PATH`, sau đó chạy `pnpm db:backup`. Lệnh tạo custom archive bằng cách mã hóa AES-256-GCM khi đang truyền dữ liệu, ký manifest bằng HMAC-SHA-256 và ghi SHA-256, rồi công bố tên tệp sau khi hoàn tất. Không có plaintext archive trung gian được ghi ra đĩa.
 - Xác minh mã hóa, chữ ký manifest và checksum bằng `pnpm db:backup:verify -- <đường-dẫn-manifest>`. Sao chép cả archive và manifest tới vùng lưu trữ riêng. Thông tin URL kết nối không nằm trong manifest hoặc dòng lệnh của `pg_dump`.
 
-Không coi một job exit code 0 là bằng chứng phục hồi. Trước khi phát hành, dựng một PostgreSQL đích tạm riêng và tạo database mới từ `template0` để tránh các đối tượng cài thêm trong `template1`; cấp quyền `CREATE` trên database đích và schema `public` nếu schema này đã tồn tại cho role `slink_migrator`, đồng thời tạo trước các role được ACL trong archive tham chiếu, tối thiểu `slink_app` và role backup. Lệnh restore dùng `slink_migrator` không phải superuser để các đối tượng khôi phục thuộc role chạy migration. Dùng endpoint đã xác minh TLS cho đích từ xa; không đặt `APP_DATABASE_URL` làm biến backup/restore. Tài liệu PostgreSQL cũng khuyến nghị `template0` khi nạp archive vào database mới để đảm bảo database ban đầu trống ([pg_restore](https://www.postgresql.org/docs/current/app-pgrestore.html)).
+Không coi một job exit code 0 là bằng chứng phục hồi. Trước khi phát hành, dựng một PostgreSQL đích tạm riêng và tạo database mới từ `template0` để tránh các đối tượng cài thêm trong `template1`; cấp quyền `CREATE` trên database đích và schema `public` nếu schema này đã tồn tại cho role `slink_migrator`, đồng thời tạo trước các role được ACL trong archive tham chiếu, tối thiểu `slink_app` và role backup. Lệnh restore dùng `slink_migrator` không phải superuser để các đối tượng khôi phục thuộc role chạy migration. Dùng endpoint đã xác minh TLS cho đích từ xa; không đặt `APP_DATABASE_URL` làm biến backup/restore. Cơ sở dữ liệu đích không được có đối tượng ứng dụng ngoài đối tượng thuộc extension; nếu có extension cài từ `template0`, danh sách tên, phiên bản và schema phải trùng với manifest đã ký của backup. Tài liệu PostgreSQL cũng khuyến nghị `template0` khi nạp archive vào database mới để tránh các đối tượng cài thêm trong template mặc định ([pg_restore](https://www.postgresql.org/docs/18/app-pgrestore.html)).
 
 ### Phục hồi có kiểm soát
 
-1. Chọn môi trường tách khỏi dữ liệu đang phục vụ và tạo database phục hồi mới từ `template0`; chuẩn bị sẵn các role được archive tham chiếu. `RESTORE_DATABASE_URL` phải đăng nhập bằng `slink_migrator` không phải superuser. Công cụ không tạo hoặc xóa database, không dùng `--clean`, kiểm tra database phải trống và nạp trong một transaction.
+1. Chọn môi trường tách khỏi dữ liệu đang phục vụ và tạo database phục hồi mới từ `template0`; chuẩn bị sẵn các role được archive tham chiếu. `RESTORE_DATABASE_URL` phải đăng nhập bằng `slink_migrator` không phải superuser. Công cụ không tạo hoặc xóa database, không dùng `--clean`, từ chối đối tượng ứng dụng trong database đích, xác nhận extension khớp chính xác manifest và nạp trong một transaction.
 2. Cấp đúng khóa theo `SLINK_BACKUP_KEY_ID`, đặt `RESTORE_DATABASE_URL`, `SLINK_RESTORE_CONFIRM_DATABASE` bằng chính xác tên database đích, `SLINK_RESTORE_ALLOW_EMPTY_TARGET=YES`; nếu đích từ xa, đặt thêm `SLINK_RESTORE_ALLOW_REMOTE=YES` sau khi xác nhận đó là môi trường phục hồi cô lập. `PG_RESTORE_BIN` có thể chỉ rõ `pg_restore`.
-3. Chạy `pnpm db:restore -- <đường-dẫn-manifest>`. Công cụ kiểm tra SHA-256 và thẻ xác thực GCM trước kết nối, từ chối PostgreSQL cũ hơn nguồn, từ chối đích có bảng/sequence/routine/schema/extension ứng dụng, và chỉ dùng `pg_restore --single-transaction --exit-on-error`.
+3. Chạy `pnpm db:restore -- <đường-dẫn-manifest>`. Công cụ kiểm tra SHA-256, thẻ xác thực GCM và danh sách extension đã ký trước kết nối, từ chối PostgreSQL cũ hơn nguồn, từ chối đích có đối tượng ngoài các extension khớp manifest, và chỉ dùng `pg_restore --single-transaction --exit-on-error`.
 4. Sau restore, chạy migration release job với `MIGRATION_DATABASE_URL`, kiểm tra `/api/ready`, đăng nhập tài khoản diễn tập, đối soát số lượng bản ghi và các ledger tổng hợp với thời điểm backup, rồi ghi lại thời gian phục hồi và lượng dữ liệu mất tối đa theo chính sách đã duyệt. Chỉ một người vận hành mới được quyết định chuyển traffic.
 
 Các lệnh cần thiết:
@@ -50,7 +50,15 @@ pnpm db:backup:verify -- <đường-dẫn-manifest>
 pnpm db:restore -- <đường-dẫn-manifest>
 ```
 
-Không chạy restore vào database đang phục vụ. Chưa có endpoint sản xuất, secret manager, scheduler/retention, offsite storage hay đợt diễn tập restore nào được cấu hình trong workspace; các script/runbook này mới là phần chuẩn bị, không phải bằng chứng cổng phục hồi đã đạt.
+Không chạy restore vào database đang phục vụ. Chưa có endpoint sản xuất, secret manager, scheduler/retention, offsite storage hoặc đợt diễn tập restore production; các script/runbook này mới là phần chuẩn bị, không phải bằng chứng cổng phục hồi đã đạt.
+
+Trên máy Windows phát triển, có thể kiểm tra luồng backup/restore mã hóa mà không chạm vào database `slink` đang dùng bằng lệnh nghiệm thu cô lập:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\postgres-native-acceptance.ps1 -IncludeBackupRestore
+```
+
+Lệnh này cần PostgreSQL 18, `pg_dump`/`pg_restore`, Node.js 24, các URL role và khóa backup đã lưu trong `.env` ACL-protected, cùng credential PostgreSQL cục bộ được bảo vệ bằng DPAPI. Nó tạo giao dịch tổng hợp trên database tạm, xác minh backup, phục hồi vào database mới từ `template0`, so sánh tất cả bảng `public` và trạng thái sequence, kiểm tra migrations/role, đăng nhập bằng tài khoản nghiệm thu đã khôi phục và đọc danh mục qua API, rồi xóa các database cùng artifact chỉ do lượt chạy đó tạo. Đây là bằng chứng diễn tập cục bộ sau khi chạy thành công, không thay thế lưu trữ offsite, retention, snapshot/PITR hay kiểm tra phục hồi production.
 
 ## Tạo ảnh và chạy migration
 
@@ -60,7 +68,7 @@ Tạo ảnh từ root của repo:
 docker build --pull --tag slink:<release> .
 ```
 
-Đẩy ảnh lên registry riêng của môi trường đã được chọn. Cụm PostgreSQL phải được chuẩn bị trước với hai role riêng (`slink_migrator` và `slink_app`); role ứng dụng không được là superuser, có `BYPASSRLS`, sở hữu bảng, hoặc có quyền tạo schema. Trước khi khởi động phiên bản ứng dụng mới, chạy một release job một lần bằng đúng ảnh đó và chỉ cấp cho job các biến `NODE_ENV=production`, `PG_SSL=true`, `MIGRATION_DATABASE_URL`:
+Đẩy ảnh lên registry riêng của môi trường đã được chọn. Cụm PostgreSQL phải được chuẩn bị trước với hai role riêng. `slink_migrator` phải là role chuyên dụng, không phải superuser, có `BYPASSRLS` để chạy backfill xuyên tenant và có quyền `CREATE` trên schema `public`. `slink_app` phải là role không phải superuser, `NOBYPASSRLS`, không sở hữu bảng và không có quyền tạo schema. Trước mỗi migration release job, phải có backup thành công và đã xác minh. Runner kiểm tra các điều kiện của `slink_migrator` cùng sự tồn tại của `slink_app` trước khi áp dụng migration. Sau đó, chạy job một lần bằng đúng ảnh và chỉ cấp cho job các biến `NODE_ENV=production`, `PG_SSL=true`, `MIGRATION_DATABASE_URL`:
 
 ```text
 node server/migrate.js
