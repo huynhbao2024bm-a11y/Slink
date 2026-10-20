@@ -26,8 +26,11 @@ async function testApp(t) {
     GRANT SELECT, INSERT ON public.order_internal_notes, public.order_tag_events TO slink_app;
     REVOKE ALL ON public.customer_tag_events FROM slink_app;
     GRANT SELECT, INSERT ON public.customer_tag_events TO slink_app;
+    REVOKE ALL ON public.product_sale_price_history FROM slink_app;
+    GRANT SELECT, INSERT ON public.product_sale_price_history TO slink_app;
     GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO slink_app;
     REVOKE UPDATE ON SEQUENCE public.customer_tag_events_id_seq FROM slink_app;
+    REVOKE UPDATE ON SEQUENCE public.product_sale_price_history_id_seq FROM slink_app;
   `);
   const pool = createPGlitePool(db);
   const app = await buildServer({ pool, logger: false, env: { NODE_ENV: 'test', PUBLIC_ORIGIN: origin } });
@@ -142,6 +145,36 @@ test('account verification, session security, and tenant-scoped product workflow
   const product = created.json().product;
   assert.equal(product.on_hand, '0');
   assert.equal(product.sale_price_vnd, '85000');
+  const initialPriceHistory = await app.inject({ method: 'GET', url: `/api/stores/${first.store.id}/products/${product.id}/price-history`, headers });
+  assert.equal(initialPriceHistory.statusCode, 200, initialPriceHistory.body);
+  assert.equal(initialPriceHistory.json().history.length, 1);
+  assert.equal(initialPriceHistory.json().history[0].source_type, 'created');
+  assert.equal(initialPriceHistory.json().history[0].previous_price_vnd, null);
+  assert.equal(initialPriceHistory.json().history[0].new_price_vnd, '85000');
+  assert.equal(initialPriceHistory.json().history[0].actor_name, 'Chủ cửa hàng');
+  assert.equal(initialPriceHistory.json().historyStartsAtMigrationBaseline, false);
+  await assert.rejects(
+    app.testDb.query('UPDATE product_sale_price_history SET new_price_vnd = 1 WHERE product_id = $1', [product.id]),
+    /append-only/i,
+  );
+  await assert.rejects(
+    app.testDb.query('DELETE FROM product_sale_price_history WHERE product_id = $1', [product.id]),
+    /append-only/i,
+  );
+  const priceHistoryPrivileges = await app.testDb.query(`
+    SELECT has_table_privilege('slink_app', 'public.product_sale_price_history', 'SELECT') AS can_read,
+           has_table_privilege('slink_app', 'public.product_sale_price_history', 'INSERT') AS can_insert,
+           has_table_privilege('slink_app', 'public.product_sale_price_history', 'UPDATE') AS can_update,
+           has_table_privilege('slink_app', 'public.product_sale_price_history', 'DELETE') AS can_delete,
+           has_table_privilege('slink_app', 'public.product_sale_price_history', 'TRUNCATE') AS can_truncate,
+           has_sequence_privilege('slink_app', 'public.product_sale_price_history_id_seq', 'USAGE') AS sequence_usage,
+           has_sequence_privilege('slink_app', 'public.product_sale_price_history_id_seq', 'SELECT') AS sequence_select,
+           has_sequence_privilege('slink_app', 'public.product_sale_price_history_id_seq', 'UPDATE') AS sequence_update
+  `);
+  assert.deepEqual(priceHistoryPrivileges.rows[0], {
+    can_read: true, can_insert: true, can_update: false, can_delete: false, can_truncate: false,
+    sequence_usage: true, sequence_select: true, sequence_update: false,
+  });
 
   const listed = await app.inject({ method: 'GET', url: `/api/stores/${first.store.id}/products?q=phê`, headers });
   assert.equal(listed.statusCode, 200, listed.body);
@@ -162,12 +195,26 @@ test('account verification, session security, and tenant-scoped product workflow
   });
   assert.equal(updated.statusCode, 200, updated.body);
   assert.equal(updated.json().product.version, 2);
+  const changedPriceHistory = await app.inject({ method: 'GET', url: `/api/stores/${first.store.id}/products/${product.id}/price-history?limit=1`, headers });
+  assert.equal(changedPriceHistory.statusCode, 200, changedPriceHistory.body);
+  assert.equal(changedPriceHistory.json().history.length, 1);
+  assert.equal(changedPriceHistory.json().history[0].previous_price_vnd, '85000');
+  assert.equal(changedPriceHistory.json().history[0].new_price_vnd, '90000');
+  assert.ok(changedPriceHistory.json().nextCursor);
+  const olderPriceHistory = await app.inject({
+    method: 'GET', url: `/api/stores/${first.store.id}/products/${product.id}/price-history?limit=1&before=${changedPriceHistory.json().nextCursor}`, headers,
+  });
+  assert.equal(olderPriceHistory.statusCode, 200, olderPriceHistory.body);
+  assert.equal(olderPriceHistory.json().history[0].source_type, 'created');
+  assert.equal(olderPriceHistory.json().nextCursor, null);
   const stale = await app.inject({
     method: 'PUT', url: `/api/stores/${first.store.id}/products/${product.id}`,
     headers: { ...headers, origin, 'x-csrf-token': first.cookies.slink_csrf },
     payload: { version: 1, salePriceVnd: 91000 },
   });
   assert.equal(stale.statusCode, 409);
+  const invalidHistoryCursor = await app.inject({ method: 'GET', url: `/api/stores/${first.store.id}/products/${product.id}/price-history?before=0`, headers });
+  assert.equal(invalidHistoryCursor.statusCode, 400);
 
   const second = await registerAndLogin(app, {
     email: 'owner3@example.com', displayName: 'Chủ khác', storeName: 'Cửa hàng khác',
@@ -176,6 +223,19 @@ test('account verification, session security, and tenant-scoped product workflow
     method: 'GET', url: `/api/stores/${first.store.id}/products`, headers: { cookie: cookieHeader(second.cookies) },
   });
   assert.equal(crossTenant.statusCode, 403);
+  const crossTenantHistory = await app.inject({
+    method: 'GET', url: `/api/stores/${first.store.id}/products/${product.id}/price-history`, headers: { cookie: cookieHeader(second.cookies) },
+  });
+  assert.equal(crossTenantHistory.statusCode, 403);
+  const cashier = await inviteAndLogin(app, {
+    storeId: first.store.id,
+    ownerHeaders: { ...headers, origin, 'x-csrf-token': first.cookies.slink_csrf },
+    email: 'price-history-cashier@example.com', role: 'cashier',
+  });
+  const cashierHistory = await app.inject({
+    method: 'GET', url: `/api/stores/${first.store.id}/products/${product.id}/price-history`, headers: cashier.headers,
+  });
+  assert.equal(cashierHistory.statusCode, 403);
 
   const badCsrf = await app.inject({
     method: 'POST', url: `/api/stores/${first.store.id}/products`,
@@ -222,6 +282,13 @@ test('product import validates all rows, writes opening stock atomically, and re
   assert.equal(imported.json().products[0].sale_price_vnd, '15000');
   assert.equal(imported.json().products[0].cost_vnd, '9000');
   assert.equal(imported.json().products[0].on_hand, '2.125');
+  const importedPriceHistory = await app.inject({
+    method: 'GET', url: `/api/stores/${storeId}/products/${imported.json().products[0].id}/price-history`, headers,
+  });
+  assert.equal(importedPriceHistory.statusCode, 200, importedPriceHistory.body);
+  assert.equal(importedPriceHistory.json().history[0].source_type, 'csv_import');
+  assert.equal(importedPriceHistory.json().history[0].new_price_vnd, '15000');
+  assert.equal(importedPriceHistory.json().history[0].source_id, imported.json().importId);
 
   const catalog = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/products`, headers });
   assert.equal(catalog.statusCode, 200, catalog.body);
@@ -234,6 +301,10 @@ test('product import validates all rows, writes opening stock atomically, and re
   assert.equal(replay.statusCode, 201, replay.body);
   assert.equal(replay.headers['idempotent-replayed'], 'true');
   assert.deepEqual(replay.json(), imported.json());
+  const replayedPriceHistory = await app.inject({
+    method: 'GET', url: `/api/stores/${storeId}/products/${imported.json().products[0].id}/price-history`, headers,
+  });
+  assert.equal(replayedPriceHistory.json().history.length, 1, 'import replay must not duplicate sale-price history');
 
   const changedPayload = await app.inject({
     method: 'POST', url: `/api/stores/${storeId}/products/import`, headers: importHeaders,
@@ -1152,7 +1223,7 @@ test('product bulk updates validate final unique keys, stage swaps atomically, a
   assert.ok(productA && productB);
 
   const items = [
-    { productId: productA.id, version: productA.version, sourceLine: 2, sku: 'BULK-B', clearBarcode: true, costVnd: 5500 },
+    { productId: productA.id, version: productA.version, sourceLine: 2, sku: 'BULK-B', clearBarcode: true, costVnd: 5500, salePriceVnd: 11000 },
     { productId: productB.id, version: productB.version, sourceLine: 3, sku: 'BULK-A', barcode: '8930000000001' },
   ];
   const preview = await app.inject({
@@ -1208,6 +1279,12 @@ test('product bulk updates validate final unique keys, stage swaps atomically, a
   assert.equal(updatedB.sku, 'BULK-A');
   assert.equal(updatedB.barcode, '8930000000001');
   assert.equal(updatedB.version, 2);
+  const bulkPriceHistory = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/products/${productA.id}/price-history`, headers });
+  assert.equal(bulkPriceHistory.statusCode, 200, bulkPriceHistory.body);
+  assert.equal(bulkPriceHistory.json().history[0].source_type, 'bulk_update');
+  assert.equal(bulkPriceHistory.json().history[0].previous_price_vnd, '10000');
+  assert.equal(bulkPriceHistory.json().history[0].new_price_vnd, '11000');
+  assert.equal(bulkPriceHistory.json().history[0].source_id, updated.json().bulkUpdateId);
 
   const stalePreview = await app.inject({
     method: 'POST', url: `/api/stores/${storeId}/products/bulk-update/preview`, headers,
@@ -1248,6 +1325,8 @@ test('product bulk updates validate final unique keys, stage swaps atomically, a
   assert.equal(unchanged.statusCode, 200, unchanged.body);
   assert.equal(unchanged.json().changedCount, 0);
   assert.equal(unchanged.json().unchangedCount, 1);
+  const unchangedPriceHistory = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/products/${productA.id}/price-history`, headers });
+  assert.equal(unchangedPriceHistory.json().history.length, 2, 'no-op updates must not create price history');
 
   const conflicting = await app.inject({
     method: 'POST', url: `/api/stores/${storeId}/products/bulk-update`,
@@ -1306,7 +1385,7 @@ test('product bulk updates validate final unique keys, stage swaps atomically, a
     CREATE TRIGGER fail_product_bulk_update_audit BEFORE INSERT ON audit_events
       FOR EACH ROW EXECUTE FUNCTION fail_product_bulk_update_audit();
   `);
-  const rollbackItems = [{ productId: productB.id, version: 2, sourceLine: 2, sku: 'ROLLBACK-SKU', barcode: '8930000000002' }];
+  const rollbackItems = [{ productId: productB.id, version: 2, sourceLine: 2, sku: 'ROLLBACK-SKU', barcode: '8930000000002', salePriceVnd: 13000 }];
   const rollbackHeaders = { ...headers, 'idempotency-key': 'bulk-update-rollback-01' };
   const failed = await app.inject({
     method: 'POST', url: `/api/stores/${storeId}/products/bulk-update`, headers: rollbackHeaders, payload: { items: rollbackItems },
@@ -1317,6 +1396,9 @@ test('product bulk updates validate final unique keys, stage swaps atomically, a
   assert.equal(rolledBackProduct.sku, 'BULK-A');
   assert.equal(rolledBackProduct.barcode, '8930000000001');
   assert.equal(rolledBackProduct.version, 2);
+  assert.equal(rolledBackProduct.sale_price_vnd, '12000');
+  const rolledBackPriceHistory = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/products/${productB.id}/price-history`, headers });
+  assert.equal(rolledBackPriceHistory.json().history.length, 1, 'audit failure must roll back the appended price record');
   await app.testDb.exec('DROP TRIGGER fail_product_bulk_update_audit ON audit_events; DROP FUNCTION fail_product_bulk_update_audit();');
 
   const retry = await app.inject({
@@ -1324,6 +1406,10 @@ test('product bulk updates validate final unique keys, stage swaps atomically, a
   });
   assert.equal(retry.statusCode, 200, retry.body);
   assert.equal(retry.json().changedCount, 1);
+  const retriedPriceHistory = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/products/${productB.id}/price-history`, headers });
+  assert.equal(retriedPriceHistory.json().history.length, 2);
+  assert.equal(retriedPriceHistory.json().history[0].previous_price_vnd, '12000');
+  assert.equal(retriedPriceHistory.json().history[0].new_price_vnd, '13000');
   const history = await app.testDb.query(
     `SELECT
        (SELECT count(*)::int FROM product_cost_history WHERE store_id = $1 AND product_id = $2) AS costs,
@@ -1948,6 +2034,9 @@ test('manager, accountant, and stockkeeper receive different finance and record 
     assert.equal(analytics.json().summary.averageTicketVnd, '0', 'an empty report must return integer VND for the average');
     const productList = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/products`, headers: staff.headers });
     assert.equal(productList.json().products.find((item) => item.id === productId).cost_vnd, '250');
+    const priceHistory = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/products/${productId}/price-history`, headers: staff.headers });
+    assert.equal(priceHistory.statusCode, 200, priceHistory.body);
+    assert.equal(priceHistory.json().history[0].source_type, 'csv_import');
     const customers = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/customers`, headers: staff.headers });
     assert.equal(customers.statusCode, 200, customers.body);
     const orders = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/orders`, headers: staff.headers });
@@ -1972,6 +2061,8 @@ test('manager, accountant, and stockkeeper receive different finance and record 
 
   const stockkeeperProducts = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/products`, headers: stockkeeper.headers });
   assert.equal(stockkeeperProducts.json().products.find((item) => item.id === productId).cost_vnd, '250');
+  const stockkeeperPriceHistory = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/products/${productId}/price-history`, headers: stockkeeper.headers });
+  assert.equal(stockkeeperPriceHistory.statusCode, 200, stockkeeperPriceHistory.body);
   const stockkeeperCustomers = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/customers`, headers: stockkeeper.headers });
   assert.equal(stockkeeperCustomers.statusCode, 403, stockkeeperCustomers.body);
   const stockkeeperOrders = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/orders`, headers: stockkeeper.headers });

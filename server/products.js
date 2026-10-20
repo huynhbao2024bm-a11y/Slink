@@ -6,7 +6,9 @@ const { UUID_PATTERN, withStore } = require('./db');
 const { allowedWarehouseIds, findAccessibleWarehouse } = require('./warehouse-access');
 
 const EDIT_ROLES = new Set(['owner', 'manager', 'stockkeeper']);
+const PRICE_HISTORY_READ_ROLES = new Set(['owner', 'manager', 'stockkeeper', 'accountant']);
 const MAX_VND = Number.MAX_SAFE_INTEGER;
+const MAX_BIGINT = 9223372036854775807n;
 
 function canonicalQuantityText(value) {
   const match = /^(\d{1,11})(?:\.(\d{1,3}))?$/.exec(String(value));
@@ -247,6 +249,54 @@ function registerProductRoutes(app, { pool, env }) {
     });
   });
 
+  app.get('/api/stores/:storeId/products/:productId/price-history', async (request) => {
+    const auth = await authenticate(pool, request);
+    const { storeId, productId } = request.params;
+    if (!UUID_PATTERN.test(storeId) || !UUID_PATTERN.test(productId)) throw new ApiError(400, 'validation_error', 'Cửa hàng hoặc sản phẩm không hợp lệ.');
+    const rawLimit = request.query?.limit === undefined ? '30' : request.query.limit;
+    if (typeof rawLimit !== 'string' || !/^\d+$/.test(rawLimit)) throw new ApiError(400, 'validation_error', 'Số dòng lịch sử không hợp lệ.');
+    const limit = Number(rawLimit);
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw new ApiError(400, 'validation_error', 'Mỗi trang lịch sử chỉ được từ 1 đến 50 dòng.');
+    const rawBefore = request.query?.before;
+    let before = null;
+    if (rawBefore !== undefined) {
+      if (typeof rawBefore !== 'string' || !/^[1-9]\d{0,18}$/.test(rawBefore) || BigInt(rawBefore) > MAX_BIGINT) {
+        throw new ApiError(400, 'validation_error', 'Mốc trang lịch sử không hợp lệ.');
+      }
+      before = rawBefore;
+    }
+    return withStore(pool, auth.userId, storeId, async (client, membership) => {
+      if (!PRICE_HISTORY_READ_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Vai trò của bạn không được xem lịch sử giá sản phẩm.');
+      const product = await client.query(
+        `SELECT p.id, p.sku, p.name, p.sale_price_vnd::text AS current_price_vnd,
+                EXISTS (SELECT 1 FROM product_sale_price_history h
+                        WHERE h.store_id = p.store_id AND h.product_id = p.id
+                          AND h.source_type = 'migration_baseline') AS has_migration_baseline
+         FROM products p WHERE p.store_id = $1 AND p.id = $2`,
+        [storeId, productId]
+      );
+      if (!product.rowCount) throw new ApiError(404, 'product_not_found', 'Không tìm thấy sản phẩm trong cửa hàng này.');
+      const result = await client.query(
+        `SELECT h.id::text AS id, h.previous_price_vnd::text AS previous_price_vnd,
+                h.new_price_vnd::text AS new_price_vnd, h.source_type, h.source_id,
+                h.created_at, u.display_name AS actor_name
+         FROM product_sale_price_history h
+         LEFT JOIN users u ON u.id = h.actor_user_id
+         WHERE h.store_id = $1 AND h.product_id = $2 AND ($3::bigint IS NULL OR h.id < $3::bigint)
+         ORDER BY h.id DESC LIMIT $4`,
+        [storeId, productId, before, limit + 1]
+      );
+      const hasMore = result.rows.length > limit;
+      const history = result.rows.slice(0, limit);
+      return {
+        product: product.rows[0],
+        history,
+        nextCursor: hasMore ? history[history.length - 1].id : null,
+        historyStartsAtMigrationBaseline: product.rows[0].has_migration_baseline,
+      };
+    });
+  });
+
   app.post('/api/stores/:storeId/products/import/preview', async (request) => {
     const auth = await authenticate(pool, request);
     requireCsrf(request, env);
@@ -341,6 +391,11 @@ function registerProductRoutes(app, { pool, env }) {
               product.lowStockThreshold, product.inventoryTracked, auth.userId]
           );
           const created = inserted.rows[0];
+          await client.query(
+            `INSERT INTO product_sale_price_history (store_id, product_id, previous_price_vnd, new_price_vnd, source_type, source_id, actor_user_id)
+             VALUES ($1, $2, NULL, $3, 'csv_import', $4, $5)`,
+            [storeId, created.id, product.salePriceVnd, importId, auth.userId]
+          );
           const openingQuantity = product.openingQuantityText;
           await client.query(
             `INSERT INTO inventory_balances (store_id, warehouse_id, product_id, on_hand)
@@ -617,6 +672,13 @@ function registerProductRoutes(app, { pool, env }) {
             [storeId, item.productId, next.costVnd, auth.userId]
           );
         }
+        if (next.salePriceVnd !== Number(old.sale_price_vnd)) {
+          await client.query(
+            `INSERT INTO product_sale_price_history (store_id, product_id, previous_price_vnd, new_price_vnd, source_type, source_id, actor_user_id)
+             VALUES ($1, $2, $3, $4, 'bulk_update', $5, $6)`,
+            [storeId, item.productId, old.sale_price_vnd, next.salePriceVnd, bulkUpdateId, auth.userId]
+          );
+        }
         await client.query(
           `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, metadata)
            VALUES ($1, $2, 'product.bulk_updated', 'product', $3, $4::jsonb)`,
@@ -663,6 +725,11 @@ function registerProductRoutes(app, { pool, env }) {
             product.lowStockThreshold, product.inventoryTracked, auth.userId]
         );
         const created = inserted.rows[0];
+        await client.query(
+          `INSERT INTO product_sale_price_history (store_id, product_id, previous_price_vnd, new_price_vnd, source_type, actor_user_id)
+           VALUES ($1, $2, NULL, $3, 'created', $4)`,
+          [storeId, created.id, product.salePriceVnd, auth.userId]
+        );
         await client.query(
           `INSERT INTO inventory_balances (store_id, warehouse_id, product_id, on_hand)
            SELECT $1, w.id, $2, 0 FROM warehouses w WHERE w.store_id = $1 AND w.status = 'active'`,
@@ -751,6 +818,13 @@ function registerProductRoutes(app, { pool, env }) {
             `INSERT INTO product_cost_history (store_id, product_id, unit_cost_vnd, source_type, actor_user_id)
              VALUES ($1, $2, $3, 'manual_adjustment', $4)`,
             [storeId, productId, next.costVnd, auth.userId]
+          );
+        }
+        if (next.salePriceVnd !== Number(old.sale_price_vnd)) {
+          await client.query(
+            `INSERT INTO product_sale_price_history (store_id, product_id, previous_price_vnd, new_price_vnd, source_type, actor_user_id)
+             VALUES ($1, $2, $3, $4, 'manual_adjustment', $5)`,
+            [storeId, productId, old.sale_price_vnd, next.salePriceVnd, auth.userId]
           );
         }
         await client.query(

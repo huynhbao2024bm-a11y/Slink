@@ -86,6 +86,10 @@ async function main() {
       GRANT SELECT, INSERT ON public.customer_tag_events TO slink_app;
       REVOKE UPDATE ON SEQUENCE public.customer_tag_events_id_seq FROM slink_app;
       GRANT USAGE, SELECT ON SEQUENCE public.customer_tag_events_id_seq TO slink_app;
+      REVOKE UPDATE, DELETE, TRUNCATE ON public.product_sale_price_history FROM slink_app;
+      GRANT SELECT, INSERT ON public.product_sale_price_history TO slink_app;
+      REVOKE UPDATE ON SEQUENCE public.product_sale_price_history_id_seq FROM slink_app;
+      GRANT USAGE, SELECT ON SEQUENCE public.product_sale_price_history_id_seq TO slink_app;
     `);
   } finally {
     if (locked) await client.query('SELECT pg_advisory_unlock($1)', [741293847]);

@@ -2,6 +2,8 @@
 
 const assert = require('node:assert/strict');
 const { createHash } = require('node:crypto');
+const { readdir } = require('node:fs/promises');
+const path = require('node:path');
 const { Pool } = require('pg');
 const { buildServer } = require('../server');
 
@@ -19,7 +21,7 @@ function parseLocalDatabaseUrl(value, role, databaseName, label) {
   return url;
 }
 
-async function snapshot(connectionString, label) {
+async function snapshot(connectionString, label, expectedMigrations) {
   const pool = new Pool({
     connectionString,
     max: 1,
@@ -80,8 +82,8 @@ async function snapshot(connectionString, label) {
     }
 
     const migration = await pool.query('SELECT count(*)::integer AS count, max(version) AS latest FROM public.schema_migrations');
-    assert.equal(migration.rows[0].latest, '0016_customer_tags.sql', `${label}: expected the current migration set`);
-    assert.equal(migration.rows[0].count, 16, `${label}: expected all 16 migrations`);
+    assert.equal(migration.rows[0].latest, expectedMigrations.at(-1), `${label}: expected the current migration set`);
+    assert.equal(migration.rows[0].count, expectedMigrations.length, `${label}: expected all recorded migrations`);
     for (const tableName of [
       'users', 'stores', 'products', 'orders', 'order_lines', 'payments',
       'inventory_movements', 'customer_ledger_entries', 'supplier_ledger_entries',
@@ -106,6 +108,10 @@ async function snapshot(connectionString, label) {
 }
 
 async function main() {
+  const expectedMigrations = (await readdir(path.join(__dirname, '..', 'server', 'migrations')))
+    .filter((name) => name.endsWith('.sql'))
+    .sort();
+  if (!expectedMigrations.length) throw new Error('No application migrations were found.');
   const sourceName = process.env.SLINK_RESTORE_SOURCE_DATABASE || '';
   const targetName = process.env.SLINK_RESTORE_TARGET_DATABASE || '';
   if (!/^slink_accept_[a-f0-9]{12}$/.test(sourceName)
@@ -119,8 +125,8 @@ async function main() {
   assert.equal(sourceUrl.hostname, targetUrl.hostname);
   assert.equal(sourceUrl.port, targetUrl.port);
 
-  const source = await snapshot(sourceUrl.toString(), 'source');
-  const restored = await snapshot(targetUrl.toString(), 'restored');
+  const source = await snapshot(sourceUrl.toString(), 'source', expectedMigrations);
+  const restored = await snapshot(targetUrl.toString(), 'restored', expectedMigrations);
   assert.deepEqual(restored, source, 'Every public table and sequence must match the source backup.');
   process.stdout.write(`PASS restore preserved all ${source.tables.size} public tables row-for-row, sequence values, retail ledgers and audit history\n`);
 

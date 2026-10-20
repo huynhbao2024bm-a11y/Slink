@@ -159,6 +159,14 @@ async function run() {
     });
     requireStatus(importReplay, 201, 'Idempotent import retry');
     assert.equal(importReplay.headers['idempotent-replayed'], 'true');
+    const importedPriceHistory = await app.inject({
+      method: 'GET', url: `/api/stores/${store.id}/products/${product.id}/price-history`, headers,
+    });
+    requireStatus(importedPriceHistory, 200, 'Native imported product sale-price history');
+    assert.equal(importedPriceHistory.json().history.length, 1);
+    assert.equal(importedPriceHistory.json().history[0].source_type, 'csv_import');
+    assert.equal(importedPriceHistory.json().history[0].new_price_vnd, '15000');
+    assert.equal(importedPriceHistory.json().history[0].source_id, imported.json().importId);
     process.stdout.write('PASS catalog import preview, opening inventory and duplicate-submit protection\n');
 
     const secondTenant = await registerSyntheticStore(app, {
@@ -177,6 +185,10 @@ async function run() {
       method: 'GET', url: `/api/stores/${store.id}/products`, headers: secondHeaders,
     });
     requireStatus(crossStoreRead, 403, 'Cross-store catalog read');
+    const crossStorePriceHistory = await app.inject({
+      method: 'GET', url: `/api/stores/${store.id}/products/${product.id}/price-history`, headers: secondHeaders,
+    });
+    requireStatus(crossStorePriceHistory, 403, 'Cross-store sale-price history read');
     const crossStoreWrite = await app.inject({
       method: 'POST',
       url: `/api/stores/${store.id}/products`,
@@ -628,12 +640,21 @@ async function run() {
     assert.equal(updatedBulkProduct.name, 'Native bulk update acceptance item');
     assert.equal(updatedBulkProduct.sale_price_vnd, '17000');
     assert.equal(updatedBulkProduct.version, bulkUpdateProduct.version + 1);
+    const bulkPriceHistory = await app.inject({
+      method: 'GET', url: `/api/stores/${store.id}/products/${purchaseProductId}/price-history`, headers,
+    });
+    requireStatus(bulkPriceHistory, 200, 'Native product bulk-updated sale-price history');
+    assert.equal(bulkPriceHistory.json().history[0].source_type, 'bulk_update');
+    assert.equal(bulkPriceHistory.json().history[0].previous_price_vnd, '15000');
+    assert.equal(bulkPriceHistory.json().history[0].new_price_vnd, '17000');
+    assert.equal(bulkPriceHistory.json().history[0].source_id, bulkUpdated.json().bulkUpdateId);
+    assert.equal(bulkPriceHistory.json().history.length, 2, 'bulk-update replay must not duplicate price history');
     const inventoryAfterBulkUpdate = await app.inject({ method: 'GET', url: `/api/stores/${store.id}/inventory`, headers });
     requireStatus(inventoryAfterBulkUpdate, 200, 'Inventory after native product bulk update');
     const inventoryAfterBulkUpdateProduct = inventoryAfterBulkUpdate.json().products.find((row) => row.id === purchaseProductId);
     assert.equal(inventoryAfterBulkUpdateProduct.on_hand, countedProduct.on_hand, 'catalog update must not change stock');
     assert.equal(inventoryAfterBulkUpdateProduct.inventory_version, countedProduct.inventory_version, 'catalog update must not change stock version');
-    process.stdout.write('PASS native product bulk-update preview, no-write assertion, commit and idempotent replay\n');
+    process.stdout.write('PASS native product bulk-update and append-only sale-price history with replay protection\n');
 
     const closePayload = { countedCashVnd: '10999', note: 'One VND short at close' };
     const closeHeaders = { ...writeHeaders, 'idempotency-key': `native-cash-close-${suffix}-001` };

@@ -71,6 +71,8 @@
   let productLoading = false;
   let productError = '';
   let productRequestNumber = 0;
+  let productPriceHistoryRequestNumber = 0;
+  let productPriceHistoryState = { productId: '', currentPriceVnd: null, history: [], nextCursor: null, loading: false, error: '', historyStartsAtMigrationBaseline: false };
   let productSearchTimer = null;
   let purchaseProductSearchTimer = null;
   let purchaseProductRequestNumber = 0;
@@ -1258,14 +1260,16 @@
 
   function productRow(product) {
     const canEdit = ['owner', 'manager', 'stockkeeper'].includes(store.role);
+    const canViewPriceHistory = ['owner', 'manager', 'stockkeeper', 'accountant'].includes(store.role);
     const showCost = store.role !== 'cashier';
-    return `<tr><td><div class='product-cell'><span class='product-thumb ${product.tone || 'product-sage'}'>${esc(product.emoji || '📦')}</span><span class='product-name-stack'><strong>${esc(product.name)}</strong><small>${esc(product.sku)}</small></span></div></td><td>${esc(product.category)}</td><td class='text-right'>${money(product.price)}</td>${showCost ? `<td class='text-right'>${money(product.cost)}</td>` : ''}<td class='text-right'><span class='stock-number ${product.inventoryTracked && product.stock <= 0 ? 'out' : product.inventoryTracked && product.stock <= product.minStock ? 'low' : ''}'>${product.inventoryTracked ? `${number(product.stock)} ${esc(product.unit)}` : '—'}</span></td><td>${stockBadge(product)}</td><td class='text-right'>${canEdit ? `<button class='row-action' data-action='edit-product' data-id='${product.id}' aria-label='Sửa ${esc(product.name)}'>•••</button>` : ''}</td></tr>`;
+    return `<tr><td><div class='product-cell'><span class='product-thumb ${product.tone || 'product-sage'}'>${esc(product.emoji || '📦')}</span><span class='product-name-stack'><strong>${esc(product.name)}</strong><small>${esc(product.sku)}</small></span></div></td><td>${esc(product.category)}</td><td class='text-right'>${money(product.price)}</td>${showCost ? `<td class='text-right'>${money(product.cost)}</td>` : ''}<td class='text-right'><span class='stock-number ${product.inventoryTracked && product.stock <= 0 ? 'out' : product.inventoryTracked && product.stock <= product.minStock ? 'low' : ''}'>${product.inventoryTracked ? `${number(product.stock)} ${esc(product.unit)}` : '—'}</span></td><td>${stockBadge(product)}</td><td class='text-right'>${canViewPriceHistory ? `<button class='row-action' data-action='product-price-history' data-id='${product.id}' aria-label='Xem lịch sử giá ${esc(product.name)}' title='Lịch sử giá'>${icon('clock', 15)}</button>` : ''}${canEdit ? `<button class='row-action' data-action='edit-product' data-id='${product.id}' aria-label='Sửa ${esc(product.name)}'>•••</button>` : ''}</td></tr>`;
   }
 
   function productMobileCard(product) {
     const canEdit = ['owner', 'manager', 'stockkeeper'].includes(store.role);
-    const tag = canEdit ? 'button' : 'div';
-    return `<${tag} class='product-mobile-card' ${canEdit ? `data-action='edit-product' data-id='${product.id}'` : ''} style='width:100%;text-align:left'><span class='product-thumb ${product.tone || 'product-sage'}'>${esc(product.emoji || '📦')}</span><span class='product-mobile-info'><strong>${esc(product.name)}</strong><small>${esc(product.sku)} · ${esc(product.category)}</small></span><span class='product-mobile-side'><strong>${money(product.price)}</strong><small>${product.inventoryTracked ? (product.stock <= 0 ? 'Hết hàng' : `Còn ${number(product.stock)} ${esc(product.unit)}`) : 'Không theo dõi tồn'}</small></span></${tag}>`;
+    const canViewPriceHistory = ['owner', 'manager', 'stockkeeper', 'accountant'].includes(store.role);
+    const productMain = `<span class='product-thumb ${product.tone || 'product-sage'}'>${esc(product.emoji || '📦')}</span><span class='product-mobile-info'><strong>${esc(product.name)}</strong><small>${esc(product.sku)} · ${esc(product.category)}</small></span><span class='product-mobile-side'><strong>${money(product.price)}</strong><small>${product.inventoryTracked ? (product.stock <= 0 ? 'Hết hàng' : `Còn ${number(product.stock)} ${esc(product.unit)}`) : 'Không theo dõi tồn'}</small></span>`;
+    return `<article class='product-mobile-card'>${canEdit ? `<button class='product-mobile-main' data-action='edit-product' data-id='${product.id}' aria-label='Sửa ${esc(product.name)}'>${productMain}</button>` : `<div class='product-mobile-main'>${productMain}</div>`}${canViewPriceHistory ? `<button class='product-history-button' data-action='product-price-history' data-id='${product.id}' aria-label='Xem lịch sử giá ${esc(product.name)}' title='Lịch sử giá'>${icon('clock', 17)}</button>` : ''}</article>`;
   }
 
   function renderProducts() {
@@ -2664,8 +2668,89 @@
   function openProduct(id) {
     const p = id ? productById(id) : null;
     const form = `<form id='entity-form' data-form='product' data-id='${p ? p.id : ''}' data-version='${p ? p.version : ''}'><div class='form-grid'><div class='form-field full'><label class='input-label'>Tên sản phẩm *</label><input class='input' name='name' value='${esc(p ? p.name : '')}' placeholder='Ví dụ: Cà phê rang xay' required maxlength='240'/></div><div class='form-field'><label class='input-label'>Mã SKU *</label><input class='input' name='sku' value='${esc(p ? p.sku : '')}' placeholder='VD: CF-250' required maxlength='80'/></div><div class='form-field'><label class='input-label'>Mã vạch</label><input class='input' name='barcode' value='${esc(p ? p.barcode : '')}' placeholder='Nhập mã vạch nếu có' maxlength='80'/></div><div class='form-field'><label class='input-label'>Danh mục</label><input class='input' name='category' list='categories' value='${esc(p ? p.category : '')}' placeholder='Chọn hoặc nhập mới'/><datalist id='categories'>${Array.from(new Set(store.products.map(function (x) { return x.category; }))).map(function (x) { return `<option value='${esc(x)}'></option>`; }).join('')}</datalist></div><div class='form-field'><label class='input-label'>Đơn vị tính</label><input class='input' name='unit' value='${esc(p ? p.unit : 'cái')}' placeholder='cái, hộp, kg' maxlength='40'/></div><div class='form-field'><label class='input-label'>Giá bán (VND) *</label><input class='input' name='price' type='number' min='0' step='1' value='${p ? p.price : ''}' placeholder='0' required/></div><div class='form-field'><label class='input-label'>Giá vốn (VND)</label><input class='input' name='cost' type='number' min='0' step='1' value='${p ? p.cost : ''}' placeholder='0'/></div><div class='form-field'><label class='input-label'>Nhắc khi còn</label><input class='input' name='minStock' type='number' min='0' step='0.001' value='${p ? p.minStock : '5'}'/></div>${p ? `<div class='form-field'><label class='input-label'>Tồn kho hiện tại</label><div class='input' aria-readonly='true'>${number(p.stock)} ${esc(p.unit)}</div></div>` : `<div class='form-field full'><div class='modal-note'>Sản phẩm mới bắt đầu với tồn kho bằng 0. Số lượng chỉ thay đổi qua nghiệp vụ kho.</div></div>`}</div><label class='install-hint' style='display:flex;align-items:flex-start;gap:9px;grid-column:1/-1'><input type='checkbox' name='inventoryTracked' ${!p || p.inventoryTracked ? 'checked' : ''} style='margin-top:2px;flex:none'/><span><strong>Theo dõi tồn kho</strong><small style='display:block;margin-top:4px'>Tắt cho dịch vụ hoặc mặt hàng không quản lý số lượng. Trước khi tắt, cần điều chỉnh tồn và lượng đang giữ về 0.</small></span></label></div></form>`;
-    const footer = `<button class='btn btn-secondary' type='button' data-action='close-modal'>Hủy</button>${p && ['owner', 'manager', 'stockkeeper'].includes(store.role) ? `<button class='btn btn-secondary' type='button' data-action='adjust-stock' data-id='${p.id}'>Kiểm kê tồn</button>` : ''}${p ? `<button class='btn btn-danger' type='button' data-action='archive-product' data-id='${p.id}'>Lưu trữ</button>` : ''}<button class='btn btn-primary' type='submit' form='entity-form'>${p ? 'Lưu thay đổi' : 'Thêm sản phẩm'}</button>`;
+    const footer = `<button class='btn btn-secondary' type='button' data-action='close-modal'>Hủy</button>${p && ['owner', 'manager', 'stockkeeper'].includes(store.role) ? `<button class='btn btn-secondary' type='button' data-action='adjust-stock' data-id='${p.id}'>Kiểm kê tồn</button>` : ''}${p && ['owner', 'manager', 'stockkeeper', 'accountant'].includes(store.role) ? `<button class='btn btn-secondary' type='button' data-action='product-price-history' data-id='${p.id}'>Lịch sử giá</button>` : ''}${p ? `<button class='btn btn-danger' type='button' data-action='archive-product' data-id='${p.id}'>Lưu trữ</button>` : ''}<button class='btn btn-primary' type='submit' form='entity-form'>${p ? 'Lưu thay đổi' : 'Thêm sản phẩm'}</button>`;
     showModal(p ? 'Cập nhật sản phẩm' : 'Thêm sản phẩm mới', p ? 'Chỉnh sửa thông tin sản phẩm. Tồn kho được theo dõi riêng.' : 'Thêm một mặt hàng vào danh mục cửa hàng.', form, footer, true);
+  }
+
+  function productPriceSourceName(source) {
+    return ({ created: 'Tạo sản phẩm', csv_import: 'Nhập danh mục CSV', manual_adjustment: 'Điều chỉnh thủ công', bulk_update: 'Cập nhật danh mục hàng loạt', migration_baseline: 'Giá tại thời điểm bắt đầu ghi lịch sử' })[source] || 'Cập nhật giá';
+  }
+
+  function renderProductPriceHistory() {
+    if (productPriceHistoryState.loading && !productPriceHistoryState.history.length) {
+      return `<div class='empty-state product-price-history-empty'><strong>Đang tải lịch sử giá…</strong></div>`;
+    }
+    if (productPriceHistoryState.error && !productPriceHistoryState.history.length) {
+      return `<div class='auth-message error'>${esc(productPriceHistoryState.error)} <button class='link-button' data-action='product-price-history' data-id='${productPriceHistoryState.productId}'>Thử lại</button></div>`;
+    }
+    const entries = productPriceHistoryState.history.map(function (entry) {
+      const transition = entry.previous_price_vnd === null
+        ? `<strong>${moneyVndText(entry.new_price_vnd)}</strong>`
+        : `<span>${moneyVndText(entry.previous_price_vnd)}</span><b aria-hidden='true'>→</b><strong>${moneyVndText(entry.new_price_vnd)}</strong>`;
+      return `<article class='product-price-history-entry'><i aria-hidden='true'></i><div class='product-price-history-copy'><div class='product-price-history-top'><strong>${esc(productPriceSourceName(entry.source_type))}</strong><time datetime='${esc(entry.created_at)}'>${esc(humanDate(entry.created_at, true))}</time></div><div class='product-price-history-transition'>${transition}</div><small>${entry.actor_name ? `Thực hiện bởi ${esc(entry.actor_name)}` : entry.source_type === 'migration_baseline' ? 'Mốc khởi tạo từ dữ liệu hiện có' : 'Không có thông tin người thực hiện'}</small></div></article>`;
+    }).join('');
+    const baselineNote = productPriceHistoryState.historyStartsAtMigrationBaseline
+      ? `<p class='product-price-history-note'>Lịch sử bắt đầu ghi từ ngày cập nhật này. Các lần đổi giá trước đó không thể khôi phục.</p>` : '';
+    const currentPrice = productPriceHistoryState.currentPriceVnd !== null
+      ? `<div class='product-price-current'><span>Giá bán hiện tại</span><strong>${moneyVndText(productPriceHistoryState.currentPriceVnd)}</strong></div>` : '';
+    const loadMore = productPriceHistoryState.nextCursor
+      ? `<button class='btn btn-secondary' type='button' data-action='load-more-product-price-history' ${productPriceHistoryState.loading ? 'disabled' : ''}>${productPriceHistoryState.loading ? 'Đang tải…' : 'Xem thay đổi cũ hơn'}</button>` : '';
+    return `<div aria-live='polite'>${currentPrice}${baselineNote}<div class='product-price-history-list'>${entries || `<div class='empty-state product-price-history-empty'><strong>Chưa có lịch sử giá</strong></div>`}</div>${productPriceHistoryState.error ? `<div class='auth-message error'>${esc(productPriceHistoryState.error)}</div>` : ''}${loadMore ? `<div class='product-price-history-more'>${loadMore}</div>` : ''}</div>`;
+  }
+
+  function paintProductPriceHistory(generation) {
+    if (generation !== modalGeneration || modal.hidden) return;
+    const body = modal.querySelector('.modal-body');
+    if (body) body.innerHTML = renderProductPriceHistory();
+    const footer = modal.querySelector('.modal-footer');
+    if (footer) footer.innerHTML = `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button>`;
+  }
+
+  async function openProductPriceHistory(productId) {
+    if (!['owner', 'manager', 'stockkeeper', 'accountant'].includes(store.role)) return toast('Không có quyền', 'Vai trò của bạn không được xem lịch sử giá sản phẩm.', 'error');
+    const product = productById(productId);
+    if (!productId || !store.id) return;
+    const requestNumber = ++productPriceHistoryRequestNumber;
+    productPriceHistoryState = { productId, currentPriceVnd: null, history: [], nextCursor: null, loading: true, error: '', historyStartsAtMigrationBaseline: false };
+    showModal('Lịch sử giá bán', product ? `${product.name} · ${product.sku}` : 'Thay đổi giá bán đã lưu trong cửa hàng.', renderProductPriceHistory(), `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button>`, true);
+    const generation = modalGeneration;
+    try {
+      const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/products/${encodeURIComponent(productId)}/price-history?limit=30`);
+      if (requestNumber !== productPriceHistoryRequestNumber || generation !== modalGeneration || modal.hidden) return;
+      productPriceHistoryState.currentPriceVnd = result.product?.current_price_vnd ?? null;
+      productPriceHistoryState.history = result.history || [];
+      productPriceHistoryState.nextCursor = result.nextCursor || null;
+      productPriceHistoryState.historyStartsAtMigrationBaseline = result.historyStartsAtMigrationBaseline === true;
+      productPriceHistoryState.loading = false;
+      paintProductPriceHistory(generation);
+    } catch (error) {
+      if (requestNumber !== productPriceHistoryRequestNumber || generation !== modalGeneration || modal.hidden) return;
+      productPriceHistoryState.loading = false;
+      productPriceHistoryState.error = error.message;
+      paintProductPriceHistory(generation);
+    }
+  }
+
+  async function loadMoreProductPriceHistory() {
+    if (productPriceHistoryState.loading || !productPriceHistoryState.nextCursor) return;
+    const requestNumber = ++productPriceHistoryRequestNumber;
+    const generation = modalGeneration;
+    productPriceHistoryState.loading = true;
+    productPriceHistoryState.error = '';
+    paintProductPriceHistory(generation);
+    try {
+      const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/products/${encodeURIComponent(productPriceHistoryState.productId)}/price-history?limit=30&before=${encodeURIComponent(productPriceHistoryState.nextCursor)}`);
+      if (requestNumber !== productPriceHistoryRequestNumber || generation !== modalGeneration || modal.hidden) return;
+      productPriceHistoryState.history = productPriceHistoryState.history.concat(result.history || []);
+      productPriceHistoryState.nextCursor = result.nextCursor || null;
+      productPriceHistoryState.loading = false;
+      paintProductPriceHistory(generation);
+    } catch (error) {
+      if (requestNumber !== productPriceHistoryRequestNumber || generation !== modalGeneration || modal.hidden) return;
+      productPriceHistoryState.loading = false;
+      productPriceHistoryState.error = error.message;
+      paintProductPriceHistory(generation);
+    }
   }
 
   function openCustomer(id) {
@@ -5082,6 +5167,8 @@
     else if (action === 'more-menu') showMoreMenu();
     else if (action === 'new-product') openProduct('');
     else if (action === 'edit-product') openProduct(id);
+    else if (action === 'product-price-history') openProductPriceHistory(id);
+    else if (action === 'load-more-product-price-history') loadMoreProductPriceHistory();
     else if (action === 'new-customer') openCustomer('');
     else if (action === 'save-customer-segment') openSaveCustomerSegment();
     else if (action === 'delete-customer-segment') openDeleteCustomerSegment(id);

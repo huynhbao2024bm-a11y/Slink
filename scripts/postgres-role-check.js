@@ -34,9 +34,10 @@ async function main() {
         to_regclass('public.customer_tag_events') AS customer_tag_table,
         to_regclass('public.customer_saved_segments') AS customer_saved_segments_table,
         to_regclass('public.promotions') AS promotions_table,
-        to_regclass('public.promotion_redemptions') AS promotion_redemptions_table
+        to_regclass('public.promotion_redemptions') AS promotion_redemptions_table,
+        to_regclass('public.product_sale_price_history') AS product_sale_price_history_table
     `);
-    if (!tables.rows[0].migration_table || !tables.rows[0].security_table || !tables.rows[0].customer_tag_table || !tables.rows[0].customer_saved_segments_table || !tables.rows[0].promotions_table || !tables.rows[0].promotion_redemptions_table) {
+    if (!tables.rows[0].migration_table || !tables.rows[0].security_table || !tables.rows[0].customer_tag_table || !tables.rows[0].customer_saved_segments_table || !tables.rows[0].promotions_table || !tables.rows[0].promotion_redemptions_table || !tables.rows[0].product_sale_price_history_table) {
       throw new Error('Expected migration or account-security table is missing. Apply database migrations first.');
     }
 
@@ -80,6 +81,14 @@ async function main() {
         has_table_privilege(app.rolname, 'public.promotion_redemptions', 'UPDATE') AS promotion_redemptions_update,
         has_table_privilege(app.rolname, 'public.promotion_redemptions', 'DELETE') AS promotion_redemptions_delete,
         has_table_privilege(app.rolname, 'public.promotion_redemptions', 'TRUNCATE') AS promotion_redemptions_truncate,
+        has_table_privilege(app.rolname, 'public.product_sale_price_history', 'SELECT') AS sale_prices_select,
+        has_table_privilege(app.rolname, 'public.product_sale_price_history', 'INSERT') AS sale_prices_insert,
+        has_table_privilege(app.rolname, 'public.product_sale_price_history', 'UPDATE') AS sale_prices_update,
+        has_table_privilege(app.rolname, 'public.product_sale_price_history', 'DELETE') AS sale_prices_delete,
+        has_table_privilege(app.rolname, 'public.product_sale_price_history', 'TRUNCATE') AS sale_prices_truncate,
+        has_sequence_privilege(app.rolname, 'public.product_sale_price_history_id_seq', 'USAGE') AS sale_prices_sequence_usage,
+        has_sequence_privilege(app.rolname, 'public.product_sale_price_history_id_seq', 'SELECT') AS sale_prices_sequence_select,
+        has_sequence_privilege(app.rolname, 'public.product_sale_price_history_id_seq', 'UPDATE') AS sale_prices_sequence_update,
         NOT EXISTS (
           SELECT 1 FROM pg_class relation
           JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
@@ -98,10 +107,13 @@ async function main() {
         customer_segments.relforcerowsecurity AS customer_segments_rls_forced,
         promotions.relowner <> app.oid AS app_does_not_own_promotions_table,
         redemptions.relowner <> app.oid AS app_does_not_own_promotion_redemptions_table,
+        sale_prices.relowner <> app.oid AS app_does_not_own_sale_price_history_table,
         promotions.relrowsecurity AS promotions_rls_enabled,
         promotions.relforcerowsecurity AS promotions_rls_forced,
         redemptions.relrowsecurity AS promotion_redemptions_rls_enabled,
         redemptions.relforcerowsecurity AS promotion_redemptions_rls_forced,
+        sale_prices.relrowsecurity AS sale_prices_rls_enabled,
+        sale_prices.relforcerowsecurity AS sale_prices_rls_forced,
         EXISTS (
           SELECT 1 FROM pg_policies policy
           WHERE policy.schemaname = 'public'
@@ -142,13 +154,21 @@ async function main() {
             AND policy.policyname = 'tenant_scope' AND policy.cmd = 'ALL'
             AND position('app.store_id' IN coalesce(policy.qual, '')) > 0
             AND position('app.store_id' IN coalesce(policy.with_check, '')) > 0
-        ) AS promotion_redemptions_policy_is_tenant_scoped
+        ) AS promotion_redemptions_policy_is_tenant_scoped,
+        EXISTS (
+          SELECT 1 FROM pg_policies policy
+          WHERE policy.schemaname = 'public' AND policy.tablename = 'product_sale_price_history'
+            AND policy.policyname = 'tenant_scope' AND policy.cmd = 'ALL'
+            AND position('app.store_id' IN coalesce(policy.qual, '')) > 0
+            AND position('app.store_id' IN coalesce(policy.with_check, '')) > 0
+        ) AS sale_prices_policy_is_tenant_scoped
       FROM pg_roles app
       JOIN pg_class security ON security.oid = to_regclass('public.user_security_events')
       JOIN pg_class customer_tags ON customer_tags.oid = to_regclass('public.customer_tag_events')
       JOIN pg_class customer_segments ON customer_segments.oid = to_regclass('public.customer_saved_segments')
       JOIN pg_class promotions ON promotions.oid = to_regclass('public.promotions')
       JOIN pg_class redemptions ON redemptions.oid = to_regclass('public.promotion_redemptions')
+      JOIN pg_class sale_prices ON sale_prices.oid = to_regclass('public.product_sale_price_history')
       WHERE app.rolname = 'slink_app'
     `);
     if (!result.rowCount) throw new Error('The slink_app role is missing.');
@@ -188,12 +208,16 @@ async function main() {
       ['can read promotion redemption history', row.promotion_redemptions_select],
       ['can insert promotion redemption history', row.promotion_redemptions_insert],
       ['cannot update, delete or truncate promotion redemption history', !row.promotion_redemptions_update && !row.promotion_redemptions_delete && !row.promotion_redemptions_truncate],
+      ['can read and append sale-price history', row.sale_prices_select && row.sale_prices_insert],
+      ['cannot update, delete or truncate sale-price history', !row.sale_prices_update && !row.sale_prices_delete && !row.sale_prices_truncate],
+      ['can allocate sale-price history IDs without changing the sequence', row.sale_prices_sequence_usage && row.sale_prices_sequence_select && !row.sale_prices_sequence_update],
       ['owns no public database objects', row.app_owns_no_public_objects],
       ['does not own the security table', row.app_does_not_own_security_table],
       ['does not own the customer tag table', row.app_does_not_own_customer_tag_table],
       ['does not own the saved customer segments table', row.app_does_not_own_customer_segments_table],
       ['does not own the promotions table', row.app_does_not_own_promotions_table],
       ['does not own the promotion redemption table', row.app_does_not_own_promotion_redemptions_table],
+      ['does not own the sale-price history table', row.app_does_not_own_sale_price_history_table],
       ['security-event RLS is enabled and forced', row.events_rls_enabled && row.events_rls_forced],
       ['security-event policy scopes reads and writes by user', row.events_policy_is_user_scoped],
       ['customer-tag RLS is enabled and forced', row.customer_tags_rls_enabled && row.customer_tags_rls_forced],
@@ -204,6 +228,8 @@ async function main() {
       ['promotion policy scopes reads and writes by store', row.promotions_policy_is_tenant_scoped],
       ['promotion-redemption RLS is enabled and forced', row.promotion_redemptions_rls_enabled && row.promotion_redemptions_rls_forced],
       ['promotion-redemption policy scopes reads and writes by store', row.promotion_redemptions_policy_is_tenant_scoped],
+      ['sale-price history RLS is enabled and forced', row.sale_prices_rls_enabled && row.sale_prices_rls_forced],
+      ['sale-price history policy scopes reads and writes by store', row.sale_prices_policy_is_tenant_scoped],
     ];
 
     process.stdout.write(`Database: ${row.database_name}\n`);
