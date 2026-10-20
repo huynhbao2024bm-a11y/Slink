@@ -18,6 +18,7 @@
     { id: 'finance', label: 'Thu chi & công nợ', icon: 'wallet' },
     { id: 'reports', label: 'Báo cáo', icon: 'chart' },
     { id: 'settings', label: 'Cài đặt', icon: 'settings' },
+    { id: 'channels', label: 'Kênh bán', icon: 'shop' },
     { id: 'staff', label: 'Nhân viên', icon: 'users' }
   ];
   const iconPaths = {
@@ -63,6 +64,10 @@
   let invitationToken = '';
   let invitationInfo = null;
   let staffState = { members: [], invitations: [], warehouses: [], loading: false, error: '' };
+  let channelState = { profiles: [], mappings: [], total: 0, nextOffset: null, offset: 0, query: '', state: 'active', view: 'mappings', orders: [], orderTotal: 0, orderOffset: 0, orderNextOffset: null, orderStatus: '', orderQuery: '', orderLoading: false, orderError: '', orderRequestNumber: 0, loading: false, error: '', requestNumber: 0 };
+  let channelProductOptions = [];
+  let channelProductRequestNumber = 0;
+  let channelProductSearchTimer = null;
   let auditState = { events: [], total: 0, nextOffset: null, offset: 0, limit: 50, loading: false, error: '', requestNumber: 0, filters: { from: '', to: '', q: '' } };
   let accountSecurityState = { sessions: [], events: [], loading: false, error: '', requestNumber: 0 };
   let productTotal = 0;
@@ -804,6 +809,9 @@
 
   function showSignedOut(message, tone) {
     closeModal();
+    channelState.requestNumber += 1;
+    channelState = { profiles: [], mappings: [], total: 0, nextOffset: null, offset: 0, query: '', state: 'active', view: 'mappings', orders: [], orderTotal: 0, orderOffset: 0, orderNextOffset: null, orderStatus: '', orderQuery: '', orderLoading: false, orderError: '', orderRequestNumber: channelState.orderRequestNumber, loading: false, error: '', requestNumber: channelState.requestNumber };
+    channelProductRequestNumber += 1;
     customerTagFilter = '';
     customerSegmentFilter = '';
     customerMinSpentVnd = '';
@@ -841,6 +849,9 @@
     orderNoteHistoryCache.clear();
     orderNoteHistoryCursor.clear();
     orderNoteHistoryLoading.clear();
+    channelState.requestNumber += 1;
+    channelState = { profiles: [], mappings: [], total: 0, nextOffset: null, offset: 0, query: '', state: 'active', view: 'mappings', orders: [], orderTotal: 0, orderOffset: 0, orderNextOffset: null, orderStatus: '', orderQuery: '', orderLoading: false, orderError: '', orderRequestNumber: channelState.orderRequestNumber, loading: false, error: '', requestNumber: channelState.requestNumber };
+    channelProductRequestNumber += 1;
     authSession = { user: session.user, stores: session.stores };
     auditState.requestNumber += 1;
     auditState = { events: [], total: 0, nextOffset: null, offset: 0, limit: 50, loading: false, error: '', requestNumber: auditState.requestNumber, filters: { from: '', to: '', q: '' } };
@@ -1207,6 +1218,7 @@
     if (route === 'staff' && store.role !== 'owner') return false;
     if (route === 'audit' && !['owner', 'manager'].includes(store.role)) return false;
     if (route === 'reports' && !['owner', 'manager', 'accountant'].includes(store.role)) return false;
+    if (route === 'channels' && !['owner', 'manager', 'stockkeeper'].includes(store.role)) return false;
     if (store.role === 'stockkeeper' && ['pos', 'orders', 'customers'].includes(route)) return false;
     if (store.role === 'accountant' && route === 'pos') return false;
     return true;
@@ -1228,9 +1240,9 @@
     if (topbarAvatar) topbarAvatar.textContent = initials(userName);
     const visibleNav = navItems.filter(function (item) { return canAccessRoute(item.id); });
     document.getElementById('primary-nav').innerHTML = visibleNav.map(function (n) { return navHtml(n, false); }).join('');
-    const moreActive = ['customers', 'finance', 'reports', 'settings', 'products', 'staff', 'audit', 'product-detail'].includes(page);
+    const moreActive = ['customers', 'finance', 'reports', 'settings', 'products', 'channels', 'staff', 'audit', 'product-detail'].includes(page);
     document.getElementById('mobile-nav').innerHTML = ['dashboard', 'pos', 'orders', 'inventory'].filter(canAccessRoute).map(function (id) { return navHtml(navItems.find(function (n) { return n.id === id; }), true); }).join('') + `<button class='mobile-nav-link ${moreActive ? 'active' : ''}' data-action='more-menu' ${moreActive ? "aria-current='page'" : ''}><span class='nav-icon'>${icon('more', 18)}</span><span>Khác</span></button>`;
-    const names = { dashboard: ['Tổng quan', 'Hôm nay'], pos: ['Bán hàng', 'Tạo đơn'], products: ['Hàng hóa', 'Sản phẩm'], orders: ['Vận hành', 'Đơn hàng'], customers: ['Khách hàng', 'Danh sách'], inventory: ['Kho hàng', 'Tồn kho'], finance: ['Tài chính', 'Thu chi & công nợ'], reports: ['Phân tích', 'Báo cáo'], settings: ['Cửa hàng', 'Cài đặt'], staff: ['Cửa hàng', 'Nhân viên'], audit: ['Quản trị', 'Nhật ký hoạt động'], 'order-detail': ['Đơn hàng', 'Chi tiết đơn'], 'product-detail': ['Hàng hóa', 'Chi tiết sản phẩm'] };
+    const names = { dashboard: ['Tổng quan', 'Hôm nay'], pos: ['Bán hàng', 'Tạo đơn'], products: ['Hàng hóa', 'Sản phẩm'], orders: ['Vận hành', 'Đơn hàng'], customers: ['Khách hàng', 'Danh sách'], inventory: ['Kho hàng', 'Tồn kho'], finance: ['Tài chính', 'Thu chi & công nợ'], reports: ['Phân tích', 'Báo cáo'], settings: ['Cửa hàng', 'Cài đặt'], channels: ['Bán hàng đa kênh', 'Kênh bán'], staff: ['Cửa hàng', 'Nhân viên'], audit: ['Quản trị', 'Nhật ký hoạt động'], 'order-detail': ['Đơn hàng', 'Chi tiết đơn'], 'product-detail': ['Hàng hóa', 'Chi tiết sản phẩm'] };
     const meta = names[page] || ['Slink', 'Cửa hàng'];
     document.getElementById('crumb').textContent = meta[0];
     document.getElementById('crumb-current').textContent = meta[1];
@@ -2059,6 +2071,8 @@
       'customer.created': 'Tạo khách hàng', 'customer.updated': 'Cập nhật khách hàng', 'customer.archived': 'Lưu trữ khách hàng',
       'customer.opening_balance_recorded': 'Ghi nhận công nợ đầu kỳ', 'customer.payment_recorded': 'Thu công nợ khách hàng', 'supplier.created': 'Tạo nhà cung cấp',
       'supplier.opening_balance_recorded': 'Ghi nhận phải trả đầu kỳ', 'supplier.payment_recorded': 'Thanh toán nhà cung cấp',
+      'channel.profile_created': 'Khai báo gian hàng bán', 'channel.profile_updated': 'Cập nhật tên gian hàng', 'channel.profile_archived': 'Lưu trữ gian hàng',
+      'channel.mapping_created': 'Tạo ánh xạ SKU thủ công', 'channel.mapping_updated': 'Cập nhật ánh xạ SKU', 'channel.mapping_archived': 'Lưu trữ ánh xạ SKU',
       'order.note_added': 'Thêm ghi chú nội bộ', 'order.tag_added': 'Gắn nhãn đơn hàng', 'order.tag_removed': 'Gỡ nhãn đơn hàng',
       'staff.invited': 'Mời nhân viên', 'staff.joined': 'Nhân viên tham gia', 'staff.access_changed': 'Thay đổi quyền nhân viên',
       'staff.invitation_resent': 'Gửi lại lời mời', 'staff.invitation_revoked': 'Thu hồi lời mời', 'store.settings_updated': 'Cập nhật cài đặt cửa hàng',
@@ -2098,10 +2112,396 @@
       `${staffState.error ? `<div class='auth-message error'>${esc(staffState.error)} <button class='link-button' data-action='reload-staff'>Tải lại</button></div>` : ''}<section class='panel staff-panel'><div class='panel-header'><div><h2>Thành viên</h2><p>Chủ cửa hàng không thể bị tạm khóa hoặc hạ quyền tại đây.</p></div><span class='badge badge-info'><i class='badge-dot'></i>${staffState.members.length} nhân viên</span></div>${staffState.loading ? `<div class='empty-state'><strong>Đang tải thành viên…</strong></div>` : memberRows ? `<div class='staff-list'>${memberRows}</div>` : `<div class='empty-state'><strong>Chưa có nhân viên</strong><span>Mời người đầu tiên để phân chia công việc tại cửa hàng.</span></div>`}</section><section class='panel staff-panel'><div class='panel-header'><div><h2>Lời mời</h2><p>Liên kết chỉ dùng một lần, hết hạn sau 7 ngày và cần xác minh email.</p></div></div>${inviteRows ? `<div class='staff-list'>${inviteRows}</div>` : `<div class='empty-state'><strong>Chưa có lời mời</strong><span>Lời mời đang chờ sẽ xuất hiện ở đây.</span></div>`}</section><div class='staff-role-note'><strong>Vai trò không thể cấp quyền chủ cửa hàng.</strong><span>Quản lý nhân viên chỉ được thực hiện bởi chủ cửa hàng. Mọi thay đổi vai trò và trạng thái đều được ghi vào nhật ký cửa hàng.</span></div>`;
   }
 
+  const channelNames = { shopee: 'Shopee', lazada: 'Lazada', tiktok_shop: 'TikTok Shop', tiki: 'Tiki', sendo: 'Sendo', grabmart: 'GrabMart', website: 'Website', other: 'Kênh khác' };
+
+  async function loadChannelCatalog(offset) {
+    if (!authSession || !store.id || !canAccessRoute('channels')) return;
+    const requestedStoreId = store.id;
+    const requestNumber = ++channelState.requestNumber;
+    channelState.offset = Math.max(0, Number(offset) || 0);
+    channelState.loading = true;
+    channelState.error = '';
+    if (page === 'channels') render();
+    const params = new URLSearchParams({ limit: '50', offset: String(channelState.offset), state: channelState.state });
+    if (channelState.query) params.set('q', channelState.query);
+    try {
+      const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/channel-catalog?${params}`);
+      if (requestNumber !== channelState.requestNumber || store.id !== requestedStoreId) return;
+      channelState.profiles = Array.isArray(result.profiles) ? result.profiles : [];
+      channelState.mappings = Array.isArray(result.mappings) ? result.mappings : [];
+      channelState.total = Number(result.total) || 0;
+      channelState.nextOffset = result.nextOffset;
+      channelState.loading = false;
+    } catch (error) {
+      if (requestNumber !== channelState.requestNumber) return;
+      channelState.loading = false;
+      channelState.error = error.message;
+      if (error.status === 401) return showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
+    }
+    if (page === 'channels') render();
+  }
+
+  const channelOrderStatusNames = { reserved: 'Đã giữ tồn', packed: 'Đã đóng gói', shipped: 'Đã gửi', delivered: 'Đã giao', cancelled: 'Đã hủy' };
+  const channelPaymentNames = { unpaid: 'Chưa thanh toán', paid: 'Đã thanh toán', cod: 'Thu hộ COD', unknown: 'Chưa rõ' };
+  let channelOrderMappingOptions = [];
+  let channelOrderCatalogRequest = 0;
+  let channelOrderSearchTimer = null;
+
+  async function loadChannelOrders(offset) {
+    if (!authSession || !store.id || !canAccessRoute('channels')) return;
+    const requestedStoreId = store.id;
+    const requestNumber = ++channelState.orderRequestNumber;
+    channelState.orderOffset = Math.max(0, Number(offset) || 0);
+    channelState.orderLoading = true;
+    channelState.orderError = '';
+    if (page === 'channels') render();
+    const params = new URLSearchParams({ limit: '50', offset: String(channelState.orderOffset) });
+    if (channelState.orderStatus) params.set('status', channelState.orderStatus);
+    if (channelState.orderQuery) params.set('q', channelState.orderQuery);
+    try {
+      const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/channel-orders?${params}`);
+      if (requestNumber !== channelState.orderRequestNumber || store.id !== requestedStoreId) return;
+      channelState.orders = Array.isArray(result.orders) ? result.orders : [];
+      channelState.orderTotal = Number(result.total) || 0;
+      channelState.orderNextOffset = result.nextOffset;
+      channelState.orderLoading = false;
+    } catch (error) {
+      if (requestNumber !== channelState.orderRequestNumber) return;
+      channelState.orderLoading = false;
+      channelState.orderError = error.message;
+      if (error.status === 401) return showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
+    }
+    if (page === 'channels') render();
+  }
+
+  function channelOrderActions(order) {
+    const actions = [];
+    if (order.fulfillmentStatus === 'reserved') actions.push(`<button class='link-button' data-action='channel-order-status' data-id='${esc(order.id)}' data-status='packed'>Đóng gói</button>`);
+    if (order.fulfillmentStatus === 'packed') actions.push(`<button class='link-button' data-action='channel-order-status' data-id='${esc(order.id)}' data-status='shipped'>Đã gửi</button>`);
+    if (order.fulfillmentStatus === 'shipped') actions.push(`<button class='link-button' data-action='channel-order-status' data-id='${esc(order.id)}' data-status='delivered'>Đã giao</button>`);
+    if (['reserved', 'packed'].includes(order.fulfillmentStatus)) actions.push(`<button class='link-button danger-text' data-action='channel-order-status' data-id='${esc(order.id)}' data-status='cancelled'>Hủy</button>`);
+    return actions.join('');
+  }
+
+  function renderChannelOrders() {
+    const statuses = [['', 'Tất cả trạng thái'], ...Object.entries(channelOrderStatusNames)];
+    const rows = channelState.orders.map(function (order) {
+      return `<article class='channel-order-row'><div class='channel-order-primary'><strong>${esc(order.externalOrderRef)}</strong><small>${esc(channelNames[order.channelCode] || 'Kênh khác')} · ${esc(order.shopLabel)} · ${humanDate(order.createdAt, true)}</small></div><div class='channel-order-meta'><span class='badge ${order.fulfillmentStatus === 'delivered' ? 'badge-success' : order.fulfillmentStatus === 'cancelled' ? 'badge-neutral' : 'badge-info'}'>${esc(channelOrderStatusNames[order.fulfillmentStatus] || order.fulfillmentStatus)}</span><small>${esc(channelPaymentNames[order.paymentStatusSnapshot] || 'Chưa rõ')} · ${number(order.lineCount)} dòng</small></div><div class='channel-order-meta'><strong>${moneyVndText(order.totalVnd)}</strong><small>${esc(order.warehouseName || 'Kho giao')}</small></div><div class='channel-order-actions'><button class='link-button' data-action='channel-order-detail' data-id='${esc(order.id)}'>Chi tiết</button>${channelOrderActions(order)}</div></article>`;
+    }).join('');
+    return `<section class='panel channel-orders-panel'><div class='panel-header'><div><h2>Đơn được ghi nhận thủ công</h2><p>Ghi mã đơn từ gian hàng, giữ tồn tại kho rồi cập nhật đóng gói và giao hàng.</p></div><button class='btn btn-primary' data-action='new-channel-order' ${channelState.profiles.some((item) => item.status === 'active') ? '' : 'disabled title="Thêm gian hàng trước"'}>${icon('plus', 15)} Ghi nhận đơn</button></div>
+      <div class='notice-item channel-boundary-note'><span>${icon('alert', 17)}</span><span><strong>Không phải đồng bộ từ sàn</strong><small>Thanh toán chỉ là trạng thái do nhân viên ghi lại. Chưa ghi doanh thu, công nợ hoặc sổ quỹ; tồn được giữ khi tạo đơn và trừ khi đánh dấu đã gửi.</small></span></div>
+      <div class='channel-toolbar'><form data-form='channel-order-filter' class='channel-filter-form'><label class='search-wrap' for='channel-order-search'>${icon('search', 16)}<input class='input' id='channel-order-search' name='q' type='search' maxlength='120' value='${esc(channelState.orderQuery)}' placeholder='Tìm mã đơn hoặc người nhận'/></label><label class='select-wrap'><select class='input' name='status' aria-label='Lọc trạng thái đơn'>${statuses.map((entry) => `<option value='${esc(entry[0])}' ${channelState.orderStatus === entry[0] ? 'selected' : ''}>${esc(entry[1])}</option>`).join('')}</select></label><button class='btn btn-secondary' type='submit'>Lọc</button></form></div>
+      ${channelState.orderError ? `<div class='auth-message error' role='alert'>${esc(channelState.orderError)} <button class='link-button' data-action='reload-channel-orders'>Tải lại</button></div>` : ''}
+      <div class='channel-order-list'>${rows || `<div class='empty-state'><strong>${channelState.orderLoading ? 'Đang tải đơn kênh bán…' : 'Chưa có đơn kênh bán'}</strong><span>${channelState.orderLoading ? 'Đang lấy dữ liệu đã ghi trên máy chủ.' : 'Đơn được ghi thủ công sẽ xuất hiện tại đây; Slink chưa kết nối API của sàn.'}</span></div>`}</div>
+      <div class='pagination'><span>${number(channelState.orderTotal)} đơn</span><span class='pagination-actions'>${channelState.orderOffset > 0 ? `<button class='page-button' data-action='channel-order-page' data-offset='${Math.max(0, channelState.orderOffset - 50)}' aria-label='Trang trước'>‹</button>` : ''}<span class='page-button current'>${Math.floor(channelState.orderOffset / 50) + 1}</span>${channelState.orderNextOffset !== null ? `<button class='page-button' data-action='channel-order-page' data-offset='${channelState.orderNextOffset}' aria-label='Trang sau'>›</button>` : ''}</span></div></section>`;
+  }
+
+  async function loadChannelOrderCatalog(profileId, query) {
+    const form = modal.querySelector('[data-form="channel-order-create"]');
+    if (!form || !profileId) return;
+    const requestNumber = ++channelOrderCatalogRequest;
+    const previous = Array.from(form.querySelectorAll('[data-channel-order-mapping]')).map((select) => select.value);
+    form.querySelectorAll('[data-channel-order-mapping]').forEach((select) => { select.innerHTML = `<option value=''>Đang tải SKU…</option>`; });
+    try {
+      const params = new URLSearchParams({ profileId, limit: '100' });
+      if (query) params.set('q', query);
+      const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/channel-order-catalog?${params}`);
+      if (requestNumber !== channelOrderCatalogRequest || modal.hidden) return;
+      channelOrderMappingOptions = Array.isArray(result.mappings) ? result.mappings : [];
+      const note = document.getElementById('channel-order-catalog-note');
+      if (note) note.textContent = result.nextOffset !== null ? 'Có nhiều SKU phù hợp; nhập từ khóa để thu hẹp danh sách.' : `${number(channelOrderMappingOptions.length)} SKU đã ánh xạ và theo dõi tồn.`;
+      form.querySelectorAll('[data-channel-order-mapping]').forEach((select, index) => {
+        const selected = previous[index] || '';
+        select.innerHTML = `<option value=''>Chọn SKU trên kênh</option>` + channelOrderMappingOptions.map((item) => `<option value='${esc(item.mappingId)}' data-price='${esc(item.suggestedUnitPriceVnd)}' data-label='${esc(item.productName)}'>${esc(item.externalSku)} · ${esc(item.productName)} (${esc(item.sku)})</option>`).join('');
+        select.value = channelOrderMappingOptions.some((item) => item.mappingId === selected) ? selected : (channelOrderMappingOptions[0]?.mappingId || '');
+        const price = select.closest('[data-channel-order-line]')?.querySelector('[data-channel-order-price]');
+        if (price && !price.value) price.value = select.selectedOptions[0]?.dataset.price || '0';
+      });
+      updateChannelOrderTotal(form);
+    } catch (error) {
+      if (requestNumber !== channelOrderCatalogRequest || modal.hidden) return;
+      form.querySelectorAll('[data-channel-order-mapping]').forEach((select) => { select.innerHTML = `<option value=''>Chưa tải được SKU</option>`; });
+      const note = document.getElementById('channel-order-catalog-note');
+      if (note) note.textContent = error.message;
+    }
+  }
+
+  function channelOrderLineRow(index) {
+    const options = channelOrderMappingOptions.map((item) => `<option value='${esc(item.mappingId)}' data-price='${esc(item.suggestedUnitPriceVnd)}' data-label='${esc(item.productName)}'>${esc(item.externalSku)} · ${esc(item.productName)} (${esc(item.sku)})</option>`).join('');
+    const firstPrice = channelOrderMappingOptions[0]?.suggestedUnitPriceVnd || '0';
+    return `<div class='channel-order-line' data-channel-order-line><label class='form-field'><span class='input-label'>SKU trên kênh</span><select class='input' data-channel-order-mapping required><option value=''>${options ? 'Chọn SKU' : 'Đang tải SKU…'}</option>${options}</select></label><label class='form-field'><span class='input-label'>Số lượng</span><input class='input' data-channel-order-quantity inputmode='decimal' value='1' required pattern='^(0|[1-9]\\d{0,9})(?:[.,]\\d{1,3})?$' aria-label='Số lượng dòng ${index + 1}'/></label><label class='form-field'><span class='input-label'>Đơn giá kênh (VND)</span><input class='input' data-channel-order-price inputmode='numeric' value='${esc(firstPrice)}' required pattern='^(0|[1-9]\\d{0,18})$' aria-label='Đơn giá dòng ${index + 1}'/></label><button class='row-action' type='button' data-action='remove-channel-order-line' aria-label='Xóa dòng ${index + 1}'>×</button></div>`;
+  }
+
+  async function openChannelOrderModal() {
+    const profiles = channelState.profiles.filter((item) => item.status === 'active');
+    if (!profiles.length) return toast('Chưa có gian hàng', 'Hãy khai báo gian hàng trước khi ghi nhận đơn.', 'error');
+    const profileOptions = profiles.map((profile) => `<option value='${esc(profile.id)}'>${esc(channelProfileLabel(profile))}</option>`).join('');
+    showModal('Ghi nhận đơn từ kênh', 'Nhập đơn đã thấy trên gian hàng. Việc này không kết nối hoặc đồng bộ với sàn.', `<form id='entity-form' data-form='channel-order-create' data-idempotency-key='${newIdempotencyKey()}'><div class='form-grid'><label class='form-field'><span class='input-label'>Gian hàng *</span><select class='input' id='channel-order-profile-id' name='channelProfileId' required>${profileOptions}</select></label><label class='form-field'><span class='input-label'>Kho giao *</span><select class='input' id='channel-order-warehouse-id' name='warehouseId' required><option value=''>Đang tải kho…</option></select></label><label class='form-field'><span class='input-label'>Mã đơn trên kênh *</span><input class='input' name='externalOrderRef' required maxlength='120' autocomplete='off' placeholder='Ví dụ: 240801ABCDEF'/></label><label class='form-field'><span class='input-label'>Thanh toán hiển thị ở kênh</span><select class='input' name='paymentStatusSnapshot'><option value='unknown'>Chưa rõ</option><option value='unpaid'>Chưa thanh toán</option><option value='paid'>Đã thanh toán</option><option value='cod'>Thu hộ COD</option></select></label><label class='form-field full'><span class='input-label'>Tên người nhận (không bắt buộc)</span><input class='input' name='customerName' maxlength='160' autocomplete='off'/></label><label class='form-field full'><span class='input-label'>Ghi chú nội bộ</span><textarea class='input' name='internalNote' rows='2' maxlength='500'></textarea></label></div><div class='channel-order-catalog-search'><label class='form-field'><span class='input-label'>Tìm SKU đã ánh xạ</span><input class='input' id='channel-order-mapping-search' type='search' maxlength='100' placeholder='Tên, SKU Slink hoặc SKU trên kênh'/></label><small id='channel-order-catalog-note'>Đang tải SKU đã ánh xạ…</small></div><div id='channel-order-lines'>${channelOrderLineRow(0)}</div><button class='btn btn-secondary' type='button' data-action='add-channel-order-line'>Thêm mặt hàng</button><div class='channel-order-total'><span>Tổng mặt hàng theo giá kênh</span><strong data-channel-order-total>—</strong></div><div class='notice-item channel-modal-note'><span>${icon('alert', 16)}</span><span><strong>Xác nhận sẽ giữ số lượng tại kho giao</strong><small>Đánh dấu “Đã gửi” sẽ trừ tồn và ghi thẻ kho. Chưa tạo giao dịch thu tiền, doanh thu hay công nợ trong Slink.</small></span></div></form>`, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Hủy</button><button class='btn btn-primary' type='submit' form='entity-form'>Giữ tồn và ghi đơn</button>`, true);
+    try {
+      const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/warehouses`);
+      if (modal.hidden) return;
+      const active = (result.warehouses || []).filter((item) => item.status === 'active');
+      const select = document.getElementById('channel-order-warehouse-id');
+      if (!select) return;
+      select.innerHTML = active.length ? active.map((item) => `<option value='${esc(item.id)}' ${item.is_default ? 'selected' : ''}>${esc(item.name)}${item.is_default ? ' · Kho chính' : ''}</option>`).join('') : `<option value=''>Không có kho được giao</option>`;
+      const profile = document.getElementById('channel-order-profile-id')?.value;
+      await loadChannelOrderCatalog(profile, '');
+    } catch (error) {
+      const select = document.getElementById('channel-order-warehouse-id');
+      if (select) select.innerHTML = `<option value=''>Chưa tải được kho</option>`;
+      const note = document.getElementById('channel-order-catalog-note');
+      if (note) note.textContent = error.message;
+    }
+  }
+
+  function updateChannelOrderTotal(form) {
+    const output = form?.querySelector('[data-channel-order-total]');
+    if (!output) return;
+    try {
+      let total = 0n;
+      form.querySelectorAll('[data-channel-order-line]').forEach((row) => {
+        const quantity = String(row.querySelector('[data-channel-order-quantity]')?.value || '').replace(',', '.');
+        const price = String(row.querySelector('[data-channel-order-price]')?.value || '');
+        const match = /^(0|[1-9]\d{0,9})(?:\.(\d{1,3}))?$/.exec(quantity);
+        if (!match || !/^(0|[1-9]\d{0,18})$/.test(price)) throw new Error('invalid');
+        const milli = BigInt(match[1]) * 1000n + BigInt((match[2] || '').padEnd(3, '0') || '0');
+        total += (BigInt(price) * milli + 500n) / 1000n;
+      });
+      output.textContent = moneyVndText(total.toString());
+    } catch (_error) { output.textContent = 'Nhập số lượng và đơn giá hợp lệ'; }
+  }
+
+  async function createChannelOrder(form) {
+    const lines = [];
+    for (const row of form.querySelectorAll('[data-channel-order-line]')) {
+      const mappingId = row.querySelector('[data-channel-order-mapping]')?.value || '';
+      const quantity = String(row.querySelector('[data-channel-order-quantity]')?.value || '').trim().replace(',', '.');
+      const unitPriceVnd = String(row.querySelector('[data-channel-order-price]')?.value || '').trim();
+      if (!mappingId || !/^(0|[1-9]\d{0,9})(?:\.\d{1,3})?$/.test(quantity) || !/^(0|[1-9]\d{0,18})$/.test(unitPriceVnd)) {
+        return toast('Dòng hàng chưa hợp lệ', 'Chọn SKU đã ánh xạ, số lượng dương và đơn giá VND nguyên.', 'error');
+      }
+      lines.push({ mappingId, quantity, unitPriceVnd });
+    }
+    const data = new FormData(form);
+    const payload = {
+      channelProfileId: String(data.get('channelProfileId') || ''),
+      warehouseId: String(data.get('warehouseId') || ''),
+      externalOrderRef: String(data.get('externalOrderRef') || '').trim(),
+      paymentStatusSnapshot: String(data.get('paymentStatusSnapshot') || 'unknown'),
+      customerName: String(data.get('customerName') || '').trim(),
+      internalNote: String(data.get('internalNote') || '').trim(),
+      items: lines,
+    };
+    const submit = modal.querySelector('button[type="submit"][form="entity-form"]');
+    if (submit) submit.disabled = true;
+    try {
+      const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/channel-orders`, {
+        method: 'POST', headers: { 'idempotency-key': form.dataset.idempotencyKey }, body: payload,
+      });
+      closeModal();
+      channelState.view = 'orders';
+      await loadChannelOrders(0);
+      render();
+      toast('Đơn kênh đã được ghi nhận', `${result.order.externalOrderRef} · ${moneyVndText(result.order.totalVnd)} · tồn đã được giữ tại ${result.order.warehouseName}.`);
+    } catch (error) {
+      if (submit) submit.disabled = false;
+      toast('Chưa ghi nhận được đơn', error.message, 'error');
+    }
+  }
+
+  function openChannelOrderStatus(order, nextStatus) {
+    if (!order || !new Set(['reserved', 'packed', 'shipped', 'delivered', 'cancelled']).has(nextStatus)) return;
+    const cancel = nextStatus === 'cancelled';
+    const title = cancel ? 'Hủy đơn kênh?' : `${channelOrderStatusNames[nextStatus]}?`;
+    const actionText = cancel ? 'Hủy đơn và nhả tồn' : `Xác nhận ${channelOrderStatusNames[nextStatus].toLocaleLowerCase('vi-VN')}`;
+    const help = nextStatus === 'shipped' ? 'Slink sẽ trừ lượng đang giữ khỏi tồn và ghi thẻ kho trong cùng giao dịch.' : cancel ? 'Chỉ hủy được trước khi gửi. Lượng tồn đang giữ sẽ được trả lại khả dụng.' : 'Trạng thái sẽ được lưu vào lịch sử đơn kênh.';
+    const form = `<form id='entity-form' data-form='channel-order-status' data-id='${esc(order.id)}' data-status='${esc(nextStatus)}' data-version='${esc(order.version)}' data-idempotency-key='${newIdempotencyKey()}'><p><strong>${esc(order.externalOrderRef)}</strong> · ${esc(channelOrderStatusNames[order.fulfillmentStatus])}</p>${cancel ? `<label class='form-field'><span class='input-label'>Lý do hủy *</span><textarea class='input' name='reason' rows='3' minlength='3' maxlength='500' required></textarea></label>` : `<label class='form-field'><span class='input-label'>Ghi chú nội bộ (không bắt buộc)</span><textarea class='input' name='reason' rows='2' maxlength='500'></textarea></label>`}<div class='modal-note'>${esc(help)}</div></form>`;
+    showModal(title, 'Thao tác có kiểm soát phiên bản và sẽ ghi lịch sử.', form, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Quay lại</button><button class='btn ${cancel ? 'btn-danger' : 'btn-primary'}' type='submit' form='entity-form'>${esc(actionText)}</button>`);
+  }
+
+  async function saveChannelOrderStatus(form) {
+    const id = form.dataset.id;
+    const status = form.dataset.status;
+    const reason = String(new FormData(form).get('reason') || '').trim();
+    const submit = modal.querySelector('button[type="submit"][form="entity-form"]');
+    if (submit) submit.disabled = true;
+    try {
+      await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/channel-orders/${encodeURIComponent(id)}/status`, {
+        method: 'POST', headers: { 'idempotency-key': form.dataset.idempotencyKey },
+        body: { status, version: Number(form.dataset.version), reason },
+      });
+      closeModal();
+      await loadChannelOrders(channelState.orderOffset);
+      toast('Đã cập nhật đơn kênh', channelOrderStatusNames[status]);
+    } catch (error) {
+      if (submit) submit.disabled = false;
+      toast('Chưa cập nhật được đơn', error.message, 'error');
+    }
+  }
+
+  async function openChannelOrderDetail(id) {
+    try {
+      const detail = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/channel-orders/${encodeURIComponent(id)}`);
+      const order = detail.order;
+      const lines = detail.lines.map((line) => `<tr><td>${esc(line.productName)}<small class='table-secondary'>${esc(line.sku)} · ${esc(line.externalSku)}</small></td><td>${number(Number(line.quantity))} ${esc(line.unit)}</td><td class='text-right'>${moneyVndText(line.unitPriceVnd)}</td><td class='text-right'>${moneyVndText(line.lineTotalVnd)}</td></tr>`).join('');
+      const events = detail.events.map((event) => `<div class='channel-order-event'><span class='badge badge-neutral'>${esc(channelOrderStatusNames[event.toStatus] || event.toStatus)}</span><div><strong>${esc(event.actorName)}</strong><small>${humanDate(event.occurredAt, true)}${event.reason ? ` · ${esc(event.reason)}` : ''}</small></div></div>`).join('');
+      const body = `<div class='summary-banner'><div><strong>${esc(channelNames[order.channelCode] || 'Kênh khác')} · ${esc(order.shopLabel)}</strong><small>${esc(order.externalOrderRef)} · ${esc(order.warehouseName || '')}</small></div><strong>${moneyVndText(order.totalVnd)}</strong></div><div class='notice-item'><span>${icon('alert', 16)}</span><span><strong>Thanh toán: ${esc(channelPaymentNames[order.paymentStatusSnapshot] || 'Chưa rõ')}</strong><small>Trạng thái do nhân viên ghi lại; không phản ánh tiền đã vào sổ Slink.</small></span></div><section class='panel'><div class='table-wrap'><table class='data-table'><thead><tr><th>Sản phẩm</th><th>Số lượng</th><th class='text-right'>Đơn giá</th><th class='text-right'>Thành tiền</th></tr></thead><tbody>${lines}</tbody></table></div></section><section class='channel-order-timeline'><h3>Lịch sử xử lý</h3>${events || `<div class='empty-state'>Chưa có lịch sử.</div>`}</section>`;
+      showModal(`Đơn ${order.externalOrderRef}`, `${channelOrderStatusNames[order.fulfillmentStatus]} · ${humanDate(order.createdAt, true)}`, body, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button>`, true);
+    } catch (error) { toast('Chưa tải được đơn kênh', error.message, 'error'); }
+  }
+
+  function channelProfileLabel(profile) {
+    return `${channelNames[profile.channel_code] || 'Kênh khác'} · ${profile.shop_label}`;
+  }
+
+  function renderChannelMappings() {
+    if (!canAccessRoute('channels')) return `<section class='panel locked-page'><div class='empty-icon'>${icon('shop', 23)}</div><h2>Không có quyền quản lý kênh bán</h2><p>Chỉ chủ cửa hàng, quản lý hoặc nhân viên kho được quản lý mã sản phẩm trên kênh bán.</p></section>`;
+    const activeProfiles = channelState.profiles.filter(function (profile) { return profile.status === 'active'; });
+    const profileRows = channelState.profiles.map(function (profile) {
+      const archived = profile.status === 'archived';
+      const count = Number(profile.active_mapping_count) || 0;
+      return `<article class='channel-profile-card'><div class='channel-profile-main'><span class='channel-profile-icon'>${icon('shop', 18)}</span><div><div class='channel-profile-title'><strong>${esc(channelNames[profile.channel_code] || 'Kênh khác')}</strong><span class='channel-connection'>Chưa kết nối</span>${archived ? `<span class='channel-archived'>Đã lưu trữ</span>` : ''}</div><p>${esc(profile.shop_label)}</p><small>${number(count)} ánh xạ đang hoạt động · Chưa đồng bộ sản phẩm, tồn kho hoặc đơn hàng</small></div></div><div class='channel-profile-actions'>${!archived ? `<button class='link-button' data-action='edit-channel-profile' data-id='${esc(profile.id)}'>Sửa tên</button><button class='link-button danger-text' data-action='archive-channel-profile' data-id='${esc(profile.id)}' ${count ? 'disabled title="Lưu trữ các ánh xạ trước"' : ''}>Lưu trữ</button>` : ''}</div></article>`;
+    }).join('');
+    const rows = channelState.mappings.map(function (mapping) {
+      const archived = mapping.status === 'archived';
+      const attributes = mapping.variant_attributes && Object.keys(mapping.variant_attributes).length
+        ? ` · ${Object.entries(mapping.variant_attributes).map(function (entry) { return `${entry[0]}: ${entry[1]}`; }).map(esc).join(' · ')}` : '';
+      return `<article class='channel-mapping-row'><div class='channel-product-name'><strong>${esc(mapping.product_name)}</strong><small>${esc(mapping.internal_sku || 'Chưa có SKU')}${attributes}</small></div><div class='channel-mapping-profile'><span>${esc(channelNames[mapping.channel_code] || 'Kênh khác')} · ${esc(mapping.shop_label)}</span><small>Chưa kết nối</small></div><div class='channel-sku-cell'><strong>${esc(mapping.external_sku)}</strong><small>${mapping.external_product_ref ? `Mã mặt hàng: ${esc(mapping.external_product_ref)}` : 'Chưa nhập mã mặt hàng'}</small></div><div class='channel-mapping-actions'>${archived ? `<span class='channel-archived'>Đã lưu trữ</span>` : `<button class='link-button' data-action='edit-channel-mapping' data-id='${esc(mapping.id)}'>Sửa</button><button class='link-button danger-text' data-action='archive-channel-mapping' data-id='${esc(mapping.id)}'>Lưu trữ</button>`}</div></article>`;
+    }).join('');
+    const archivedTab = channelState.state === 'archived';
+    const orderView = channelState.view === 'orders';
+    const viewTabs = `<div class='channel-view-tabs' role='tablist' aria-label='Khu vực kênh bán'><button class='segment ${!orderView ? 'active' : ''}' data-action='channel-view' data-view='mappings' role='tab' aria-selected='${!orderView}'>Gian hàng & SKU</button><button class='segment ${orderView ? 'active' : ''}' data-action='channel-view' data-view='orders' role='tab' aria-selected='${orderView}'>Đơn kênh bán</button></div>`;
+    const headingActions = orderView
+      ? `<button class='btn btn-secondary' data-action='reload-channel-orders'>Tải lại</button><button class='btn btn-primary' data-action='new-channel-order' ${activeProfiles.length ? '' : 'disabled title="Thêm gian hàng trước"'}>${icon('plus', 15)} Ghi nhận đơn</button>`
+      : `<button class='btn btn-secondary' data-action='reload-channel-catalog'>Tải lại</button><button class='btn btn-primary' data-action='new-channel-profile'>${icon('plus', 15)} Thêm gian hàng</button>`;
+    const header = pageHeading('Kênh bán', orderView ? 'Theo dõi đơn được cửa hàng ghi nhận từ các gian hàng.' : 'Khai báo gian hàng và đối chiếu SKU để chuẩn bị quản lý bán hàng đa kênh.', headingActions) +
+      `<div class='notice-item channel-boundary-note'><span>${icon('alert', 17)}</span><span><strong>Quản lý thủ công · chưa kết nối với sàn</strong><small>Không có đồng bộ tự động sản phẩm, tồn kho, đơn hàng, giá hoặc tài chính. Các đơn được ghi bởi nhân viên.</small></span></div>${viewTabs}`;
+    if (orderView) return header + renderChannelOrders();
+    return header +
+      `<section class='panel channel-profiles-panel'><div class='panel-header'><div><h2>Gian hàng đã khai báo</h2><p>Thông tin chỉ giúp bạn nhận diện từng kênh và gian hàng.</p></div><span class='badge badge-neutral'>${number(channelState.profiles.length)} gian hàng</span></div>${profileRows || `<div class='empty-state'><strong>${channelState.loading ? 'Đang tải gian hàng…' : 'Chưa khai báo gian hàng'}</strong><span>Thêm gian hàng để bắt đầu lưu các SKU tương ứng.</span></div>`}</section>
+      <section class='panel channel-mappings-panel'><div class='panel-header'><div><h2>${archivedTab ? 'Ánh xạ đã lưu trữ' : 'Ánh xạ sản phẩm'}</h2><p>SKU nội bộ được ghép thủ công với SKU tại từng gian hàng.</p></div><button class='btn btn-primary' data-action='new-channel-mapping' ${activeProfiles.length ? '' : 'disabled title="Thêm gian hàng trước"'}>${icon('plus', 15)} Thêm ánh xạ</button></div>
+      <div class='channel-toolbar'><form data-form='channel-filter' class='channel-filter-form'><label class='search-wrap' for='channel-search'>${icon('search', 16)}<input class='input' id='channel-search' name='q' type='search' maxlength='120' value='${esc(channelState.query)}' placeholder='Tìm sản phẩm, SKU hoặc gian hàng'/></label><button class='btn btn-secondary' type='submit'>Tìm</button></form><div class='segmented'><button class='segment ${!archivedTab ? 'active' : ''}' data-action='channel-state' data-state='active'>Đang dùng</button><button class='segment ${archivedTab ? 'active' : ''}' data-action='channel-state' data-state='archived'>Đã lưu trữ</button></div></div>
+      ${channelState.error ? `<div class='auth-message error' role='alert'>${esc(channelState.error)} <button class='link-button' data-action='reload-channel-catalog'>Tải lại</button></div>` : ''}<div class='channel-mapping-list'>${rows || `<div class='empty-state'><strong>${channelState.loading ? 'Đang tải ánh xạ…' : archivedTab ? 'Chưa có ánh xạ lưu trữ' : 'Chưa có ánh xạ SKU'}</strong><span>${channelState.loading ? 'Đang lấy thông tin đã lưu trên máy chủ.' : archivedTab ? 'Các ánh xạ đã lưu trữ sẽ xuất hiện tại đây.' : 'Tạo ánh xạ để nhân viên dễ nhận diện mã của cùng một sản phẩm trên từng kênh.'}</span></div>`}</div><div class='pagination'><span>${number(channelState.total)} ánh xạ</span><span class='pagination-actions'>${channelState.offset > 0 ? `<button class='page-button' data-action='channel-page' data-offset='${Math.max(0, channelState.offset - 50)}' aria-label='Trang trước'>‹</button>` : ''}<span class='page-button current'>${Math.floor(channelState.offset / 50) + 1}</span>${channelState.nextOffset !== null ? `<button class='page-button' data-action='channel-page' data-offset='${channelState.nextOffset}' aria-label='Trang sau'>›</button>` : ''}</span></div></section>`;
+  }
+
+  function openChannelProfile(profile) {
+    const isEdit = Boolean(profile);
+    const code = profile ? profile.channel_code : 'shopee';
+    const options = Object.entries(channelNames).map(function (entry) { return `<option value='${entry[0]}' ${code === entry[0] ? 'selected' : ''}>${esc(entry[1])}</option>`; }).join('');
+    const form = `<form id='entity-form' data-form='channel-profile' data-id='${profile ? esc(profile.id) : ''}' data-version='${profile ? profile.version : ''}' data-idempotency-key='${newIdempotencyKey()}'><div class='form-grid'><div class='form-field'><label class='input-label' for='channel-code'>Kênh bán *</label><select class='input' id='channel-code' name='channelCode' ${isEdit ? 'disabled' : ''} required>${options}</select>${isEdit ? `<small>Loại kênh không đổi để giữ nguyên lịch sử SKU.</small>` : ''}</div><div class='form-field'><label class='input-label' for='channel-shop-label'>Tên gian hàng *</label><input class='input' id='channel-shop-label' name='shopLabel' value='${esc(profile ? profile.shop_label : '')}' required maxlength='120' placeholder='Ví dụ: Slink Official'/></div></div><div class='notice-item channel-modal-note'><span>○</span><span><strong>Trạng thái: Chưa kết nối</strong><small>Thêm hồ sơ không đăng nhập hoặc kết nối tài khoản trên sàn.</small></span></div></form>`;
+    showModal(isEdit ? 'Sửa thông tin gian hàng' : 'Thêm gian hàng', 'Khai báo tên để phân biệt các gian hàng đang vận hành.', form, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Hủy</button><button class='btn btn-primary' type='submit' form='entity-form'>${isEdit ? 'Lưu thay đổi' : 'Thêm gian hàng'}</button>`);
+  }
+
+  async function loadChannelProductOptions(query, selectedId) {
+    const requestNumber = ++channelProductRequestNumber;
+    const select = document.getElementById('channel-product-id');
+    if (select) select.innerHTML = `<option value=''>Đang tìm sản phẩm…</option>`;
+    try {
+      const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/products?limit=100&q=${encodeURIComponent(query || '')}`);
+      if (requestNumber !== channelProductRequestNumber || modal.hidden) return;
+      channelProductOptions = Array.isArray(result.products) ? result.products : [];
+      const next = document.getElementById('channel-product-id');
+      if (!next) return;
+      next.innerHTML = `<option value=''>Chọn sản phẩm</option>` + channelProductOptions.map(function (product) {
+        return `<option value='${esc(product.id)}' ${product.id === selectedId ? 'selected' : ''}>${esc(product.name)} · ${esc(product.sku)}</option>`;
+      }).join('');
+      const count = document.getElementById('channel-product-count');
+      if (count) count.textContent = `${number(result.total)} sản phẩm phù hợp${result.nextOffset !== null ? ' · nhập thêm từ khóa để thu hẹp danh sách' : ''}`;
+    } catch (error) {
+      if (requestNumber !== channelProductRequestNumber || modal.hidden) return;
+      const next = document.getElementById('channel-product-id');
+      if (next) next.innerHTML = `<option value=''>Chưa tải được sản phẩm</option>`;
+      const count = document.getElementById('channel-product-count');
+      if (count) count.textContent = error.message;
+    }
+  }
+
+  function openChannelMapping(mapping) {
+    const isEdit = Boolean(mapping);
+    const profiles = channelState.profiles.filter(function (profile) { return profile.status === 'active'; });
+    const selectedProfile = mapping ? mapping.channel_profile_id : profiles[0]?.id || '';
+    const profileOptions = profiles.map(function (profile) { return `<option value='${esc(profile.id)}' ${selectedProfile === profile.id ? 'selected' : ''}>${esc(channelProfileLabel(profile))}</option>`; }).join('');
+    const form = `<form id='entity-form' data-form='channel-mapping' data-id='${mapping ? esc(mapping.id) : ''}' data-version='${mapping ? mapping.version : ''}' data-product-id='${mapping ? esc(mapping.product_id) : ''}' data-idempotency-key='${newIdempotencyKey()}'><div class='form-field'><label class='input-label' for='channel-profile-id'>Gian hàng *</label><select class='input' id='channel-profile-id' name='channelProfileId' ${isEdit ? 'disabled' : ''} required>${profileOptions}</select></div>${isEdit ? `<div class='channel-readonly-product'><small>Sản phẩm nội bộ</small><strong>${esc(mapping.product_name)}</strong><span>${esc(mapping.internal_sku || 'Chưa có SKU')}</span></div>` : `<div class='form-field'><label class='input-label' for='channel-product-search'>Tìm sản phẩm nội bộ</label><input class='input' id='channel-product-search' type='search' maxlength='120' placeholder='Tên sản phẩm hoặc SKU'/><small id='channel-product-count'>Đang tải danh mục…</small></div><div class='form-field'><label class='input-label' for='channel-product-id'>Sản phẩm *</label><select class='input' id='channel-product-id' name='productId' required><option value=''>Đang tải sản phẩm…</option></select></div>`}<div class='form-grid'><div class='form-field'><label class='input-label' for='channel-external-sku'>SKU trên kênh *</label><input class='input' id='channel-external-sku' name='externalSku' value='${mapping ? esc(mapping.external_sku) : ''}' required maxlength='80' autocomplete='off' placeholder='Ví dụ: SP-RED-01'/></div><div class='form-field'><label class='input-label' for='channel-external-ref'>Mã mặt hàng trên kênh</label><input class='input' id='channel-external-ref' name='externalProductRef' value='${mapping ? esc(mapping.external_product_ref || '') : ''}' maxlength='120' autocomplete='off' placeholder='Không bắt buộc'/></div></div><div class='notice-item channel-modal-note'><span>○</span><span><strong>Ánh xạ thủ công · chưa đồng bộ</strong><small>Thay đổi này chỉ lưu mã đối chiếu trong Slink, không cập nhật gian hàng bên ngoài.</small></span></div></form>`;
+    showModal(isEdit ? 'Sửa ánh xạ SKU' : 'Thêm ánh xạ SKU', 'Liên kết một mã hàng trên kênh với đúng một sản phẩm Slink.', form, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Hủy</button><button class='btn btn-primary' type='submit' form='entity-form'>${isEdit ? 'Lưu thay đổi' : 'Tạo ánh xạ'}</button>`, true);
+    if (!isEdit) loadChannelProductOptions('', '');
+  }
+
+  async function saveChannelProfile(form) {
+    const id = form.dataset.id;
+    const payload = { channelCode: form.querySelector('[name="channelCode"]').value, shopLabel: String(new FormData(form).get('shopLabel') || '').trim() };
+    if (id) payload.version = Number(form.dataset.version);
+    const submit = modal.querySelector('[type="submit"][form="entity-form"]');
+    if (submit) submit.disabled = true;
+    try {
+      await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/channel-profiles${id ? `/${encodeURIComponent(id)}` : ''}`, {
+        method: id ? 'PUT' : 'POST', headers: { 'idempotency-key': form.dataset.idempotencyKey }, body: payload,
+      });
+      closeModal();
+      await loadChannelCatalog(channelState.offset);
+      toast('Đã lưu gian hàng', 'Trạng thái kết nối vẫn là chưa kết nối.');
+    } catch (error) {
+      if (submit) submit.disabled = false;
+      toast('Chưa lưu được gian hàng', error.message, 'error');
+    }
+  }
+
+  async function saveChannelMapping(form) {
+    const id = form.dataset.id;
+    const profileSelect = form.querySelector('[name="channelProfileId"]');
+    const productSelect = form.querySelector('[name="productId"]');
+    const payload = {
+      channelProfileId: profileSelect.value,
+      ...(id ? {} : { productId: productSelect.value }),
+      externalSku: String(new FormData(form).get('externalSku') || '').trim(),
+      externalProductRef: String(new FormData(form).get('externalProductRef') || '').trim(),
+    };
+    if (id) payload.version = Number(form.dataset.version);
+    const submit = modal.querySelector('[type="submit"][form="entity-form"]');
+    if (submit) submit.disabled = true;
+    try {
+      await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/channel-mappings${id ? `/${encodeURIComponent(id)}` : ''}`, {
+        method: id ? 'PUT' : 'POST', headers: { 'idempotency-key': form.dataset.idempotencyKey }, body: payload,
+      });
+      closeModal();
+      await loadChannelCatalog(channelState.offset);
+      toast('Đã lưu ánh xạ SKU', 'Ánh xạ chỉ phục vụ đối chiếu thủ công trong Slink.');
+    } catch (error) {
+      if (submit) submit.disabled = false;
+      toast('Chưa lưu được ánh xạ', error.message, 'error');
+    }
+  }
+
+  function confirmChannelArchive(kind, record) {
+    const profile = kind === 'profile';
+    const title = profile ? 'Lưu trữ gian hàng?' : 'Lưu trữ ánh xạ SKU?';
+    const recordName = profile ? record.shop_label : `${record.product_name} · ${record.external_sku}`;
+    const form = `<form id='entity-form' data-form='channel-archive' data-kind='${profile ? 'profile' : 'mapping'}' data-id='${esc(record.id)}' data-version='${record.version}' data-idempotency-key='${newIdempotencyKey()}'><p><strong>${esc(recordName)}</strong> sẽ được lưu trữ và không còn xuất hiện trong danh sách đang dùng. Không có sản phẩm, tồn kho hay dữ liệu sàn nào bị thay đổi.</p></form>`;
+    showModal(title, 'Lịch sử được giữ lại trong cửa hàng.', form, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Giữ lại</button><button class='btn btn-primary' type='submit' form='entity-form'>Lưu trữ</button>`);
+  }
+
+  async function saveChannelArchive(form) {
+    const kind = form.dataset.kind;
+    const id = form.dataset.id;
+    const endpoint = kind === 'profile' ? 'channel-profiles' : 'channel-mappings';
+    const button = modal.querySelector('[type="submit"][form="entity-form"]');
+    if (button) button.disabled = true;
+    try {
+      await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/${endpoint}/${encodeURIComponent(id)}/archive`, {
+        method: 'POST', headers: { 'idempotency-key': form.dataset.idempotencyKey }, body: { version: Number(form.dataset.version) },
+      });
+      closeModal();
+      await loadChannelCatalog(channelState.offset);
+      toast(kind === 'profile' ? 'Đã lưu trữ gian hàng' : 'Đã lưu trữ ánh xạ SKU', 'Lịch sử được giữ trong cửa hàng.');
+    } catch (error) {
+      if (button) button.disabled = false;
+      toast('Chưa lưu trữ được', error.message, 'error');
+    }
+  }
+
   function render() {
     if (!authSession) { renderAuth(); return; }
     renderShell();
-    const renderers = { dashboard: renderDashboard, products: renderProducts, pos: renderPOS, orders: renderOrders, customers: renderCustomers, inventory: renderInventory, finance: renderFinance, reports: renderReports, settings: renderSettings, staff: renderStaff, audit: renderAudit };
+    const renderers = { dashboard: renderDashboard, products: renderProducts, pos: renderPOS, orders: renderOrders, customers: renderCustomers, inventory: renderInventory, finance: renderFinance, reports: renderReports, settings: renderSettings, channels: renderChannelMappings, staff: renderStaff, audit: renderAudit };
     const pageHtml = renderers[page] ? renderers[page]() : `<section class='panel locked-page'><div class='empty-icon'>${icon('clock', 23)}</div><h2>Đang hoàn thiện</h2><p>Khu vực này đang được kết nối với dữ liệu cửa hàng và quy trình lưu sổ. Các thao tác mẫu đã được khóa để tránh tạo giao dịch không có thật.</p><button class='btn btn-primary' data-route='products'>Mở danh mục sản phẩm</button></section>`;
     root.innerHTML = page === 'finance' && store.role !== 'cashier' ? pageHtml + purchaseOrderPanel() + purchaseHistoryPanel() : pageHtml;
     if (page === 'pos') { const oldSearch = document.activeElement && document.activeElement.id === 'pos-search'; if (oldSearch) document.getElementById('pos-search').focus(); }
@@ -5203,6 +5603,7 @@
     else if (page === 'reports') loadAnalytics(chartRange === '30 ngày' ? 30 : 7);
     else if (page === 'settings') { loadStoreProfile(); loadAccountSecurity(); }
     else if (page === 'staff') loadStaffPage();
+    else if (page === 'channels') { loadChannelCatalog(); if (channelState.view === 'orders') loadChannelOrders(0); }
     else if (page === 'audit') loadAuditEvents(null, 0);
     else if (page === 'customers') loadCustomersPage(searchTerms.customers, 0).then(render);
     else if (page === 'orders') loadOrdersPage(searchTerms.orders, 0).then(render);
@@ -5371,6 +5772,64 @@
     else if (action === 'download-customer-import-template') downloadCustomerImportTemplate();
     else if (action === 'help') showHelp();
     else if (action === 'more-menu') showMoreMenu();
+    else if (action === 'new-channel-profile') openChannelProfile(null);
+    else if (action === 'edit-channel-profile') {
+      const profile = channelState.profiles.find(function (item) { return item.id === id; });
+      if (profile) openChannelProfile(profile);
+    }
+    else if (action === 'archive-channel-profile') {
+      const profile = channelState.profiles.find(function (item) { return item.id === id; });
+      if (profile && !Number(profile.active_mapping_count)) confirmChannelArchive('profile', profile);
+    }
+    else if (action === 'new-channel-mapping') openChannelMapping(null);
+    else if (action === 'edit-channel-mapping') {
+      const mapping = channelState.mappings.find(function (item) { return item.id === id; });
+      if (mapping) openChannelMapping(mapping);
+    }
+    else if (action === 'archive-channel-mapping') {
+      const mapping = channelState.mappings.find(function (item) { return item.id === id; });
+      if (mapping) confirmChannelArchive('mapping', mapping);
+    }
+    else if (action === 'channel-view') {
+      channelState.view = button.dataset.view === 'orders' ? 'orders' : 'mappings';
+      render();
+      if (channelState.view === 'orders') loadChannelOrders(0);
+    }
+    else if (action === 'new-channel-order') openChannelOrderModal();
+    else if (action === 'reload-channel-orders') loadChannelOrders(channelState.orderOffset);
+    else if (action === 'channel-order-page') loadChannelOrders(Number(button.dataset.offset) || 0);
+    else if (action === 'channel-order-detail') openChannelOrderDetail(id);
+    else if (action === 'channel-order-status') {
+      const order = channelState.orders.find(function (item) { return item.id === id; });
+      if (order) openChannelOrderStatus(order, button.dataset.status);
+    }
+    else if (action === 'add-channel-order-line') {
+      const container = document.getElementById('channel-order-lines');
+      const rows = container ? container.querySelectorAll('[data-channel-order-line]') : [];
+      if (container && rows.length < 100) {
+        container.insertAdjacentHTML('beforeend', channelOrderLineRow(rows.length));
+        updateChannelOrderTotal(container.closest('[data-form="channel-order-create"]'));
+      } else toast('Đã đạt giới hạn', 'Mỗi đơn kênh có thể có tối đa 100 dòng.', 'error');
+    }
+    else if (action === 'remove-channel-order-line') {
+      const container = document.getElementById('channel-order-lines');
+      const row = button.closest('[data-channel-order-line]');
+      if (container && row && container.querySelectorAll('[data-channel-order-line]').length > 1) {
+        row.remove();
+        container.querySelectorAll('[data-channel-order-line]').forEach((item, index) => {
+          const quantity = item.querySelector('[data-channel-order-quantity]');
+          const price = item.querySelector('[data-channel-order-price]');
+          const remove = item.querySelector('[data-action="remove-channel-order-line"]');
+          if (quantity) quantity.setAttribute('aria-label', `Số lượng dòng ${index + 1}`);
+          if (price) price.setAttribute('aria-label', `Đơn giá dòng ${index + 1}`);
+          if (remove) remove.setAttribute('aria-label', `Xóa dòng ${index + 1}`);
+        });
+        updateChannelOrderTotal(container.closest('[data-form="channel-order-create"]'));
+      }
+    }
+    else if (action === 'reload-channel-catalog') loadChannelCatalog(channelState.offset);
+    else if (action === 'channel-state') { channelState.state = button.dataset.state === 'archived' ? 'archived' : 'active'; loadChannelCatalog(0); }
+    else if (action === 'channel-page') loadChannelCatalog(Number(button.dataset.offset) || 0);
     else if (action === 'new-product') openProduct('');
     else if (action === 'new-product-variant-group') openProductVariantGroup();
     else if (action === 'add-product-variant') {
@@ -5523,6 +5982,23 @@
     if (event.target.matches('[data-order-quantity],[data-order-cost]')) { updatePurchaseOrderTotal(event.target.form); return; }
     if (event.target.matches('[data-receipt-quantity]')) { updatePurchaseOrderReceiptTotal(event.target.form); return; }
     const id = event.target.id;
+    if (event.target.matches('[data-channel-order-quantity],[data-channel-order-price]')) {
+      updateChannelOrderTotal(event.target.form);
+      return;
+    }
+    if (id === 'channel-order-mapping-search') {
+      const query = event.target.value.normalize('NFKC').trim();
+      const profileId = document.getElementById('channel-order-profile-id')?.value;
+      window.clearTimeout(channelOrderSearchTimer);
+      channelOrderSearchTimer = window.setTimeout(function () { loadChannelOrderCatalog(profileId, query); }, 250);
+      return;
+    }
+    if (id === 'channel-product-search') {
+      const query = event.target.value.trim();
+      window.clearTimeout(channelProductSearchTimer);
+      channelProductSearchTimer = window.setTimeout(function () { loadChannelProductOptions(query, ''); }, 180);
+      return;
+    }
     if (id === 'product-search') {
       searchTerms.products = event.target.value;
       const query = searchTerms.products;
@@ -5687,6 +6163,19 @@
   });
 
   document.addEventListener('change', function (event) {
+    if (event.target.id === 'channel-order-profile-id') {
+      const search = document.getElementById('channel-order-mapping-search');
+      if (search) search.value = '';
+      channelOrderMappingOptions = [];
+      loadChannelOrderCatalog(event.target.value, '');
+      return;
+    }
+    if (event.target.matches('[data-channel-order-mapping]')) {
+      const price = event.target.closest('[data-channel-order-line]')?.querySelector('[data-channel-order-price]');
+      if (price) price.value = event.target.selectedOptions[0]?.dataset.price || '0';
+      updateChannelOrderTotal(event.target.form);
+      return;
+    }
     if (event.target.matches('[data-member-role]')) {
       const scope = document.querySelector(`[data-member-scope='${event.target.dataset.memberRole}']`);
       if (scope) scope.hidden = event.target.value !== 'stockkeeper';
@@ -5972,7 +6461,22 @@
     const authForm = event.target.closest('form[data-auth-form]');
     if (authForm) { event.preventDefault(); submitAuth(authForm); return; }
     const form = event.target.closest('form[data-form]'); if (!form) return; event.preventDefault(); const type = form.dataset.form;
-    if (type === 'product') saveProduct(form);
+    if (type === 'channel-filter') {
+      channelState.query = String(new FormData(form).get('q') || '').trim().slice(0, 120);
+      loadChannelCatalog(0);
+    }
+    else if (type === 'channel-order-filter') {
+      const data = new FormData(form);
+      channelState.orderQuery = String(data.get('q') || '').trim().slice(0, 120);
+      channelState.orderStatus = String(data.get('status') || '');
+      loadChannelOrders(0);
+    }
+    else if (type === 'channel-profile') saveChannelProfile(form);
+    else if (type === 'channel-mapping') saveChannelMapping(form);
+    else if (type === 'channel-archive') saveChannelArchive(form);
+    else if (type === 'channel-order-create') createChannelOrder(form);
+    else if (type === 'channel-order-status') saveChannelOrderStatus(form);
+    else if (type === 'product') saveProduct(form);
     else if (type === 'product-variants') saveProductVariantGroup(form);
     else if (type === 'product-variant-add') saveProductVariantAdd(form);
     else if (type === 'promotion-create') savePromotion(form);

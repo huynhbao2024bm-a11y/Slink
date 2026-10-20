@@ -49,7 +49,7 @@
 
 **Mục đích:** Kết nối Slink với các kênh và đối tác bằng luồng có trạng thái, có thể đối soát.
 
-**Phạm vi:** Chuẩn hóa mô hình kênh/đơn ngoài, nhật ký đồng bộ, retry, lỗi, mapping SKU, mức tồn dự phòng và COD; sau đó triển khai từng connector được chọn.
+**Phạm vi:** Chuẩn hóa hồ sơ kênh và mapping SKU; tiếp nhận thủ công đơn đã thấy trên sàn, giữ tồn, cập nhật đóng gói/gửi/giao/hủy và lưu lịch sử; sau đó thêm nhật ký đồng bộ, retry/lỗi và từng connector được chọn. Tình trạng thanh toán nhập tay chưa phải đối soát/COD ledger.
 
 **Phụ thuộc:** Tài khoản developer/merchant, quyền API, sandbox/credentials, điều khoản và người chịu trách nhiệm vận hành từng nhà cung cấp.
 
@@ -87,8 +87,8 @@
 
 ## Việc kế tiếp
 
-1. **Đã triển khai trong source:** tạo nhóm biến thể, thêm SKU, sửa thuộc tính, CSV có xem trước/nhập nguyên tử và CSV cũ vẫn đọc được. Full Node/PGlite suite đạt 32/32. PostgreSQL native, trình duyệt sau migration và điện thoại còn mở.
-2. **Cần cập nhật schema cục bộ:** preflight chỉ đọc từ phiên này nhận `EACCES` với socket PostgreSQL của Windows, nên chưa tuyên bố schema đã cập nhật. Trong PowerShell cùng Windows user đang chạy PostgreSQL, chạy `Set-Location D:\Slink` rồi `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\postgres-backup-prepare-local.ps1 -ApplyMigrations`. Script tự tạo/xác minh backup mã hóa trước, áp migrations còn thiếu và chạy kiểm tra role; sau đó API cần được khởi động lại trước nghiệm thu trình duyệt.
-3. Tiếp tục mô hình đa kênh độc lập với nhà cung cấp: mapping SKU, đơn ngoài, trạng thái đồng bộ, lỗi và retry. Connector chỉ sau khi có đối tác, sandbox và quyền API.
+1. **Đã triển khai trong source:** tạo nhóm biến thể, thêm SKU, sửa thuộc tính, CSV có xem trước/nhập nguyên tử và CSV cũ vẫn đọc được. Full Node/PGlite suite đạt 32/32 theo lần chạy đã ghi nhận. PostgreSQL native, trình duyệt sau migration và điện thoại còn mở.
+2. **Migration và role gate PostgreSQL thật đã qua theo xác nhận người dùng:** các bước trước đó 0018–0020 đã được áp dụng; người dùng báo toàn bộ các bước gần nhất PASS. Ghi nhận là bằng chứng do người dùng xác nhận vì chưa có đầu ra chi tiết/manifest của lượt mới để đối chiếu. Migration 0021–0022 hiện là phần mới; chưa khẳng định đã áp vào cơ sở dữ liệu cửa hàng. `start-native-local.ps1` cũng tự kiểm tra role trước khi khởi chạy API.
+3. **Đã triển khai trong source:** hồ sơ gian hàng/SKU mapping và ghi nhận thủ công đơn ngoài. Đơn khóa tồn khả dụng khi tạo; đóng gói chỉ đổi trạng thái; đánh dấu gửi trừ tồn và ghi thẻ kho; hủy trước khi gửi giải phóng tồn. Chống mã đơn trùng và gửi lặp, dùng khóa phiên bản, lưu lịch sử chỉ ghi thêm và lọc đầu vào. Trạng thái thanh toán chỉ là ảnh chụp nhân viên nhập, không tạo doanh thu/thanh toán/công nợ/sổ quỹ. Giao diện nói rõ chưa kết nối API sàn. Bộ Node/PGlite API hiện tại đạt 23/23, gồm luồng OMS; bộ nghiệm thu PostgreSQL cô lập đã được cập nhật nhưng chưa chạy lại. Trước khi dùng UI trên DB thật, cần backup-gated migration 0021–0022, chạy nghiệm thu PostgreSQL cô lập và khởi động API mới. Connector chỉ làm sau khi có ứng dụng đối tác, sandbox và quyền API.
 4. Trước pilot, hoàn tất hosting/HTTPS, diễn tập phục hồi, kiểm tra bảo mật cần thiết, rồi để người bán thử giao diện và thiết bị thật.
 5. Không tạo thêm pitch/video vì người dùng cho biết đã có tài liệu riêng; quay lại chỉ khi được yêu cầu review hoặc chỉnh sửa.

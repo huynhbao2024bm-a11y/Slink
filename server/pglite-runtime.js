@@ -193,9 +193,17 @@ async function applyMigrations(db, migrationsDirectory) {
   await db.exec(`
     GRANT USAGE ON SCHEMA public TO slink_app;
     GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO slink_app;
+    REVOKE UPDATE, DELETE, TRUNCATE ON public.promotions, public.promotion_redemptions FROM slink_app;
+    GRANT SELECT, INSERT, UPDATE ON public.promotions TO slink_app;
+    GRANT SELECT, INSERT ON public.promotion_redemptions TO slink_app;
     REVOKE UPDATE, DELETE ON public.user_security_events FROM slink_app;
     REVOKE ALL ON public.schema_migrations FROM slink_app;
     GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO slink_app;
+    REVOKE ALL ON public.sales_channel_profiles, public.channel_product_mappings FROM slink_app;
+    GRANT SELECT, INSERT, UPDATE ON public.sales_channel_profiles, public.channel_product_mappings TO slink_app;
+      REVOKE ALL ON public.channel_orders, public.channel_order_lines, public.channel_order_events FROM slink_app;
+      GRANT SELECT, INSERT ON public.channel_orders, public.channel_order_lines, public.channel_order_events TO slink_app;
+      GRANT UPDATE (fulfillment_status, version, updated_by, updated_at, packed_at, shipped_at, delivered_at, cancelled_at) ON public.channel_orders TO slink_app;
   `);
 }
 

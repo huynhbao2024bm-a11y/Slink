@@ -78,6 +78,9 @@ async function main() {
       GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO slink_app;
       GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO slink_app;
       REVOKE ALL ON public.schema_migrations FROM slink_app;
+      REVOKE UPDATE, DELETE, TRUNCATE ON public.promotions, public.promotion_redemptions FROM slink_app;
+      GRANT SELECT, INSERT, UPDATE ON public.promotions TO slink_app;
+      GRANT SELECT, INSERT ON public.promotion_redemptions TO slink_app;
       REVOKE UPDATE, DELETE, TRUNCATE ON public.user_security_events FROM slink_app;
       GRANT SELECT, INSERT ON public.user_security_events TO slink_app;
       REVOKE UPDATE, DELETE, TRUNCATE ON public.order_internal_notes, public.order_tag_events FROM slink_app;
@@ -90,6 +93,11 @@ async function main() {
       GRANT SELECT, INSERT ON public.product_sale_price_history TO slink_app;
       REVOKE UPDATE ON SEQUENCE public.product_sale_price_history_id_seq FROM slink_app;
       GRANT USAGE, SELECT ON SEQUENCE public.product_sale_price_history_id_seq TO slink_app;
+      REVOKE ALL ON public.sales_channel_profiles, public.channel_product_mappings FROM slink_app;
+      GRANT SELECT, INSERT, UPDATE ON public.sales_channel_profiles, public.channel_product_mappings TO slink_app;
+      REVOKE ALL ON public.channel_orders, public.channel_order_lines, public.channel_order_events FROM slink_app;
+      GRANT SELECT, INSERT ON public.channel_orders, public.channel_order_lines, public.channel_order_events TO slink_app;
+      GRANT UPDATE (fulfillment_status, version, updated_by, updated_at, packed_at, shipped_at, delivered_at, cancelled_at) ON public.channel_orders TO slink_app;
     `);
   } finally {
     if (locked) await client.query('SELECT pg_advisory_unlock($1)', [741293847]);

@@ -35,9 +35,14 @@ async function main() {
         to_regclass('public.customer_saved_segments') AS customer_saved_segments_table,
         to_regclass('public.promotions') AS promotions_table,
         to_regclass('public.promotion_redemptions') AS promotion_redemptions_table,
-        to_regclass('public.product_sale_price_history') AS product_sale_price_history_table
+        to_regclass('public.product_sale_price_history') AS product_sale_price_history_table,
+        to_regclass('public.sales_channel_profiles') AS sales_channel_profiles_table,
+        to_regclass('public.channel_product_mappings') AS channel_product_mappings_table,
+        to_regclass('public.channel_orders') AS channel_orders_table,
+        to_regclass('public.channel_order_lines') AS channel_order_lines_table,
+        to_regclass('public.channel_order_events') AS channel_order_events_table
     `);
-    if (!tables.rows[0].migration_table || !tables.rows[0].security_table || !tables.rows[0].customer_tag_table || !tables.rows[0].customer_saved_segments_table || !tables.rows[0].promotions_table || !tables.rows[0].promotion_redemptions_table || !tables.rows[0].product_sale_price_history_table) {
+    if (!tables.rows[0].migration_table || !tables.rows[0].security_table || !tables.rows[0].customer_tag_table || !tables.rows[0].customer_saved_segments_table || !tables.rows[0].promotions_table || !tables.rows[0].promotion_redemptions_table || !tables.rows[0].product_sale_price_history_table || !tables.rows[0].sales_channel_profiles_table || !tables.rows[0].channel_product_mappings_table || !tables.rows[0].channel_orders_table || !tables.rows[0].channel_order_lines_table || !tables.rows[0].channel_order_events_table) {
       throw new Error('Expected migration or account-security table is missing. Apply database migrations first.');
     }
 
@@ -175,6 +180,53 @@ async function main() {
 
     const row = result.rows[0];
     const migration = migrationRole.rows[0];
+    const channelTables = await pool.query(`
+      SELECT
+        has_table_privilege('slink_app', 'public.sales_channel_profiles', 'SELECT') AS profiles_select,
+        has_table_privilege('slink_app', 'public.sales_channel_profiles', 'INSERT') AS profiles_insert,
+        has_table_privilege('slink_app', 'public.sales_channel_profiles', 'UPDATE') AS profiles_update,
+        has_table_privilege('slink_app', 'public.sales_channel_profiles', 'DELETE') AS profiles_delete,
+        has_table_privilege('slink_app', 'public.sales_channel_profiles', 'TRUNCATE') AS profiles_truncate,
+        has_table_privilege('slink_app', 'public.channel_product_mappings', 'SELECT') AS mappings_select,
+        has_table_privilege('slink_app', 'public.channel_product_mappings', 'INSERT') AS mappings_insert,
+        has_table_privilege('slink_app', 'public.channel_product_mappings', 'UPDATE') AS mappings_update,
+        has_table_privilege('slink_app', 'public.channel_product_mappings', 'DELETE') AS mappings_delete,
+        has_table_privilege('slink_app', 'public.channel_product_mappings', 'TRUNCATE') AS mappings_truncate,
+        (SELECT relrowsecurity AND relforcerowsecurity FROM pg_class WHERE oid = 'public.sales_channel_profiles'::regclass) AS profiles_forced_rls,
+        (SELECT relrowsecurity AND relforcerowsecurity FROM pg_class WHERE oid = 'public.channel_product_mappings'::regclass) AS mappings_forced_rls,
+        (SELECT relowner <> 'slink_app'::regrole FROM pg_class WHERE oid = 'public.sales_channel_profiles'::regclass) AS profiles_not_owned,
+        (SELECT relowner <> 'slink_app'::regrole FROM pg_class WHERE oid = 'public.channel_product_mappings'::regclass) AS mappings_not_owned,
+        EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'sales_channel_profiles' AND policyname = 'tenant_scope' AND cmd = 'ALL' AND position('app.store_id' IN coalesce(qual, '')) > 0 AND position('app.store_id' IN coalesce(with_check, '')) > 0) AS profiles_tenant_policy,
+        EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'channel_product_mappings' AND policyname = 'tenant_scope' AND cmd = 'ALL' AND position('app.store_id' IN coalesce(qual, '')) > 0 AND position('app.store_id' IN coalesce(with_check, '')) > 0) AS mappings_tenant_policy,
+        has_table_privilege('slink_app', 'public.channel_orders', 'SELECT') AS orders_select,
+        has_table_privilege('slink_app', 'public.channel_orders', 'INSERT') AS orders_insert,
+        has_table_privilege('slink_app', 'public.channel_orders', 'UPDATE') AS orders_table_update,
+        has_column_privilege('slink_app', 'public.channel_orders', 'fulfillment_status', 'UPDATE') AS orders_status_update,
+        has_column_privilege('slink_app', 'public.channel_orders', 'version', 'UPDATE') AS orders_version_update,
+        has_column_privilege('slink_app', 'public.channel_orders', 'total_vnd', 'UPDATE') AS orders_total_update,
+        has_table_privilege('slink_app', 'public.channel_orders', 'DELETE') AS orders_delete,
+        has_table_privilege('slink_app', 'public.channel_orders', 'TRUNCATE') AS orders_truncate,
+        has_table_privilege('slink_app', 'public.channel_order_lines', 'SELECT') AS lines_select,
+        has_table_privilege('slink_app', 'public.channel_order_lines', 'INSERT') AS lines_insert,
+        has_table_privilege('slink_app', 'public.channel_order_lines', 'UPDATE') AS lines_update,
+        has_table_privilege('slink_app', 'public.channel_order_lines', 'DELETE') AS lines_delete,
+        has_table_privilege('slink_app', 'public.channel_order_lines', 'TRUNCATE') AS lines_truncate,
+        has_table_privilege('slink_app', 'public.channel_order_events', 'SELECT') AS order_events_select,
+        has_table_privilege('slink_app', 'public.channel_order_events', 'INSERT') AS order_events_insert,
+        has_table_privilege('slink_app', 'public.channel_order_events', 'UPDATE') AS order_events_update,
+        has_table_privilege('slink_app', 'public.channel_order_events', 'DELETE') AS order_events_delete,
+        has_table_privilege('slink_app', 'public.channel_order_events', 'TRUNCATE') AS order_events_truncate,
+        (SELECT relrowsecurity AND relforcerowsecurity FROM pg_class WHERE oid = 'public.channel_orders'::regclass) AS orders_forced_rls,
+        (SELECT relrowsecurity AND relforcerowsecurity FROM pg_class WHERE oid = 'public.channel_order_lines'::regclass) AS lines_forced_rls,
+        (SELECT relrowsecurity AND relforcerowsecurity FROM pg_class WHERE oid = 'public.channel_order_events'::regclass) AS order_events_forced_rls,
+        (SELECT relowner <> 'slink_app'::regrole FROM pg_class WHERE oid = 'public.channel_orders'::regclass) AS orders_not_owned,
+        (SELECT relowner <> 'slink_app'::regrole FROM pg_class WHERE oid = 'public.channel_order_lines'::regclass) AS lines_not_owned,
+        (SELECT relowner <> 'slink_app'::regrole FROM pg_class WHERE oid = 'public.channel_order_events'::regclass) AS order_events_not_owned,
+        EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'channel_orders' AND policyname = 'tenant_scope' AND cmd = 'ALL' AND position('app.store_id' IN coalesce(qual, '')) > 0 AND position('app.store_id' IN coalesce(with_check, '')) > 0) AS orders_tenant_policy,
+        EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'channel_order_lines' AND policyname = 'tenant_scope' AND cmd = 'ALL' AND position('app.store_id' IN coalesce(qual, '')) > 0 AND position('app.store_id' IN coalesce(with_check, '')) > 0) AS lines_tenant_policy,
+        EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'channel_order_events' AND policyname = 'tenant_scope' AND cmd = 'ALL' AND position('app.store_id' IN coalesce(qual, '')) > 0 AND position('app.store_id' IN coalesce(with_check, '')) > 0) AS order_events_tenant_policy
+    `);
+    const channel = channelTables.rows[0];
     const checks = [
       ['connected as slink_migrator', migration.role_name === 'slink_migrator'],
       ['migration role is not a superuser', !migration.rolsuper],
@@ -204,10 +256,13 @@ async function main() {
       ['cannot truncate saved customer segments', !row.customer_segments_truncate],
       ['can read promotions', row.promotions_select],
       ['can create and update promotions', row.promotions_insert && row.promotions_update],
-      ['cannot delete or truncate promotions', !row.promotions_delete && !row.promotions_truncate],
+      ['cannot delete promotions', !row.promotions_delete],
+      ['cannot truncate promotions', !row.promotions_truncate],
       ['can read promotion redemption history', row.promotion_redemptions_select],
       ['can insert promotion redemption history', row.promotion_redemptions_insert],
-      ['cannot update, delete or truncate promotion redemption history', !row.promotion_redemptions_update && !row.promotion_redemptions_delete && !row.promotion_redemptions_truncate],
+      ['cannot update promotion redemption history', !row.promotion_redemptions_update],
+      ['cannot delete promotion redemption history', !row.promotion_redemptions_delete],
+      ['cannot truncate promotion redemption history', !row.promotion_redemptions_truncate],
       ['can read and append sale-price history', row.sale_prices_select && row.sale_prices_insert],
       ['cannot update, delete or truncate sale-price history', !row.sale_prices_update && !row.sale_prices_delete && !row.sale_prices_truncate],
       ['can allocate sale-price history IDs without changing the sequence', row.sale_prices_sequence_usage && row.sale_prices_sequence_select && !row.sale_prices_sequence_update],
@@ -230,6 +285,24 @@ async function main() {
       ['promotion-redemption policy scopes reads and writes by store', row.promotion_redemptions_policy_is_tenant_scoped],
       ['sale-price history RLS is enabled and forced', row.sale_prices_rls_enabled && row.sale_prices_rls_forced],
       ['sale-price history policy scopes reads and writes by store', row.sale_prices_policy_is_tenant_scoped],
+      ['can read and create channel profiles', channel.profiles_select && channel.profiles_insert],
+      ['can update channel profiles', channel.profiles_update],
+      ['cannot delete or truncate channel profiles', !channel.profiles_delete && !channel.profiles_truncate],
+      ['can read, create and update channel SKU mappings', channel.mappings_select && channel.mappings_insert && channel.mappings_update],
+      ['cannot delete or truncate channel SKU mappings', !channel.mappings_delete && !channel.mappings_truncate],
+      ['does not own channel tables', channel.profiles_not_owned && channel.mappings_not_owned],
+      ['channel profile and SKU mapping RLS is enabled and forced', channel.profiles_forced_rls && channel.mappings_forced_rls],
+      ['channel profile and SKU mapping policies scope access by store', channel.profiles_tenant_policy && channel.mappings_tenant_policy],
+      ['can read and create channel orders', channel.orders_select && channel.orders_insert],
+      ['can update only fulfillment status fields on channel orders', !channel.orders_table_update && channel.orders_status_update && channel.orders_version_update && !channel.orders_total_update],
+      ['cannot delete or truncate channel orders', !channel.orders_delete && !channel.orders_truncate],
+      ['can read and create channel-order lines', channel.lines_select && channel.lines_insert],
+      ['cannot update, delete or truncate channel-order lines', !channel.lines_update && !channel.lines_delete && !channel.lines_truncate],
+      ['can read and append channel-order history', channel.order_events_select && channel.order_events_insert],
+      ['cannot update, delete or truncate channel-order history', !channel.order_events_update && !channel.order_events_delete && !channel.order_events_truncate],
+      ['channel-order tables are not owned by the application role', channel.orders_not_owned && channel.lines_not_owned && channel.order_events_not_owned],
+      ['channel-order RLS is enabled and forced', channel.orders_forced_rls && channel.lines_forced_rls && channel.order_events_forced_rls],
+      ['channel-order policies scope access by store', channel.orders_tenant_policy && channel.lines_tenant_policy && channel.order_events_tenant_policy],
     ];
 
     process.stdout.write(`Database: ${row.database_name}\n`);

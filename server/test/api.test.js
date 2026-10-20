@@ -21,6 +21,9 @@ async function testApp(t) {
     CREATE ROLE slink_app NOLOGIN;
     GRANT USAGE ON SCHEMA public TO slink_app;
     GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO slink_app;
+    REVOKE UPDATE, DELETE, TRUNCATE ON public.promotions, public.promotion_redemptions FROM slink_app;
+    GRANT SELECT, INSERT, UPDATE ON public.promotions TO slink_app;
+    GRANT SELECT, INSERT ON public.promotion_redemptions TO slink_app;
     REVOKE UPDATE, DELETE ON public.user_security_events FROM slink_app;
     REVOKE ALL ON public.order_internal_notes, public.order_tag_events FROM slink_app;
     GRANT SELECT, INSERT ON public.order_internal_notes, public.order_tag_events TO slink_app;
@@ -28,6 +31,11 @@ async function testApp(t) {
     GRANT SELECT, INSERT ON public.customer_tag_events TO slink_app;
     REVOKE ALL ON public.product_sale_price_history FROM slink_app;
     GRANT SELECT, INSERT ON public.product_sale_price_history TO slink_app;
+    REVOKE ALL ON public.sales_channel_profiles, public.channel_product_mappings FROM slink_app;
+    GRANT SELECT, INSERT, UPDATE ON public.sales_channel_profiles, public.channel_product_mappings TO slink_app;
+    REVOKE ALL ON public.channel_orders, public.channel_order_lines, public.channel_order_events FROM slink_app;
+    GRANT SELECT, INSERT ON public.channel_orders, public.channel_order_lines, public.channel_order_events TO slink_app;
+    GRANT UPDATE (fulfillment_status, version, updated_by, updated_at, packed_at, shipped_at, delivered_at, cancelled_at) ON public.channel_orders TO slink_app;
     GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO slink_app;
     REVOKE UPDATE ON SEQUENCE public.customer_tag_events_id_seq FROM slink_app;
     REVOKE UPDATE ON SEQUENCE public.product_sale_price_history_id_seq FROM slink_app;
@@ -2996,11 +3004,6 @@ test('saved customer segments are tenant-scoped, auditable, versioned and idempo
 
 test('promotion preview is read-only and a sale consumes its voucher atomically once', async (t) => {
   const app = await testApp(t);
-  await app.testDb.exec(`
-    REVOKE ALL ON public.promotions, public.promotion_redemptions FROM slink_app;
-    GRANT SELECT, INSERT, UPDATE ON public.promotions TO slink_app;
-    GRANT SELECT, INSERT ON public.promotion_redemptions TO slink_app;
-  `);
   const roleBoundary = await app.testDb.query(`
     SELECT has_table_privilege('slink_app', 'public.promotions', 'SELECT') AS promotions_read,
            has_table_privilege('slink_app', 'public.promotions', 'UPDATE') AS promotions_update,
@@ -3106,4 +3109,333 @@ test('promotion preview is read-only and a sale consumes its voucher atomically 
   assert.deepEqual(usage.rows[0], { usage_count: 1, redemption_count: 1 });
   const inventory = await app.testDb.query('SELECT on_hand::text AS on_hand FROM inventory_balances WHERE store_id = $1 AND product_id = $2', [storeId, productId]);
   assert.equal(inventory.rows[0].on_hand, '4.000', 'replay does not change stock twice');
+});
+
+test('channel profiles and manual SKU mappings are tenant-scoped, auditable, versioned, and never imply synchronization', async (t) => {
+  const app = await testApp(t);
+  const owner = await registerAndLogin(app, {
+    email: 'channel-mapping-owner@example.com', displayName: 'Chủ cửa hàng', storeName: 'Cửa hàng đa kênh',
+  });
+  const storeId = owner.store.id;
+  const headers = { cookie: cookieHeader(owner.cookies), origin, 'x-csrf-token': owner.cookies.slink_csrf };
+  const other = await registerAndLogin(app, {
+    email: 'channel-mapping-other@example.com', displayName: 'Chủ khác', storeName: 'Cửa hàng khác',
+  });
+  const otherHeaders = { cookie: cookieHeader(other.cookies), origin, 'x-csrf-token': other.cookies.slink_csrf };
+
+  const roleBoundary = await app.testDb.query(`
+    SELECT has_table_privilege('slink_app', 'public.sales_channel_profiles', 'SELECT') AS profile_select,
+           has_table_privilege('slink_app', 'public.sales_channel_profiles', 'INSERT') AS profile_insert,
+           has_table_privilege('slink_app', 'public.sales_channel_profiles', 'UPDATE') AS profile_update,
+           has_table_privilege('slink_app', 'public.sales_channel_profiles', 'DELETE') AS profile_delete,
+           has_table_privilege('slink_app', 'public.sales_channel_profiles', 'TRUNCATE') AS profile_truncate,
+           has_table_privilege('slink_app', 'public.channel_product_mappings', 'SELECT') AS mapping_select,
+           has_table_privilege('slink_app', 'public.channel_product_mappings', 'INSERT') AS mapping_insert,
+           has_table_privilege('slink_app', 'public.channel_product_mappings', 'UPDATE') AS mapping_update,
+           has_table_privilege('slink_app', 'public.channel_product_mappings', 'DELETE') AS mapping_delete,
+           has_table_privilege('slink_app', 'public.channel_product_mappings', 'TRUNCATE') AS mapping_truncate,
+           (SELECT relrowsecurity AND relforcerowsecurity FROM pg_class WHERE oid = 'public.sales_channel_profiles'::regclass) AS profile_rls,
+           (SELECT relrowsecurity AND relforcerowsecurity FROM pg_class WHERE oid = 'public.channel_product_mappings'::regclass) AS mapping_rls,
+           (SELECT relowner <> 'slink_app'::regrole FROM pg_class WHERE oid = 'public.sales_channel_profiles'::regclass) AS profile_not_owned,
+           (SELECT relowner <> 'slink_app'::regrole FROM pg_class WHERE oid = 'public.channel_product_mappings'::regclass) AS mapping_not_owned,
+           EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'sales_channel_profiles' AND policyname = 'tenant_scope' AND cmd = 'ALL' AND position('app.store_id' IN coalesce(qual, '')) > 0 AND position('app.store_id' IN coalesce(with_check, '')) > 0) AS profile_policy,
+           EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'channel_product_mappings' AND policyname = 'tenant_scope' AND cmd = 'ALL' AND position('app.store_id' IN coalesce(qual, '')) > 0 AND position('app.store_id' IN coalesce(with_check, '')) > 0) AS mapping_policy
+  `);
+  assert.deepEqual(roleBoundary.rows[0], {
+    profile_select: true, profile_insert: true, profile_update: true, profile_delete: false, profile_truncate: false,
+    mapping_select: true, mapping_insert: true, mapping_update: true, mapping_delete: false, mapping_truncate: false,
+    profile_rls: true, mapping_rls: true, profile_not_owned: true, mapping_not_owned: true, profile_policy: true, mapping_policy: true,
+  });
+
+  const productA = await app.inject({ method: 'POST', url: `/api/stores/${storeId}/products`, headers, payload: { sku: 'CHANNEL-A', name: 'Áo xanh', salePriceVnd: 120000, costVnd: 60000 } });
+  const productB = await app.inject({ method: 'POST', url: `/api/stores/${storeId}/products`, headers, payload: { sku: 'CHANNEL-B', name: 'Áo trắng', salePriceVnd: 125000, costVnd: 62000 } });
+  const productC = await app.inject({ method: 'POST', url: `/api/stores/${storeId}/products`, headers, payload: { sku: 'CHANNEL-C', name: 'Áo đen', salePriceVnd: 130000, costVnd: 65000 } });
+  assert.equal(productA.statusCode, 200, productA.body);
+  assert.equal(productB.statusCode, 200, productB.body);
+  assert.equal(productC.statusCode, 200, productC.body);
+
+  const createProfile = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/channel-profiles`, headers: { ...headers, 'idempotency-key': 'channel-profile-create-001' },
+    payload: { channelCode: 'shopee', shopLabel: 'Slink Official' },
+  });
+  assert.equal(createProfile.statusCode, 201, createProfile.body);
+  assert.equal(createProfile.json().profile.connection_status, 'not_connected');
+  const replayProfile = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/channel-profiles`, headers: { ...headers, 'idempotency-key': 'channel-profile-create-001' },
+    payload: { channelCode: 'shopee', shopLabel: 'Slink Official' },
+  });
+  assert.equal(replayProfile.statusCode, 201, replayProfile.body);
+  assert.equal(replayProfile.headers['idempotent-replayed'], 'true');
+  assert.deepEqual(replayProfile.json(), createProfile.json());
+
+  const secondProfile = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/channel-profiles`, headers: { ...headers, 'idempotency-key': 'channel-profile-create-002' },
+    payload: { channelCode: 'lazada', shopLabel: 'Slink Home' },
+  });
+  assert.equal(secondProfile.statusCode, 201, secondProfile.body);
+  const profile = createProfile.json().profile;
+  const mapA = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/channel-mappings`, headers: { ...headers, 'idempotency-key': 'channel-mapping-create-001' },
+    payload: { channelProfileId: profile.id, productId: productA.json().product.id, externalSku: 'SH-TEE-GREEN', externalProductRef: '99881' },
+  });
+  assert.equal(mapA.statusCode, 201, mapA.body);
+  const mapB = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/channel-mappings`, headers: { ...headers, 'idempotency-key': 'channel-mapping-create-002' },
+    payload: { channelProfileId: profile.id, productId: productB.json().product.id, externalSku: 'SH-TEE-WHITE' },
+  });
+  assert.equal(mapB.statusCode, 201, mapB.body);
+
+  const duplicateSku = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/channel-mappings`, headers: { ...headers, 'idempotency-key': 'channel-mapping-duplicate-001' },
+    payload: { channelProfileId: profile.id, productId: productC.json().product.id, externalSku: 'sh-tee-green' },
+  });
+  assert.equal(duplicateSku.statusCode, 409, duplicateSku.body);
+  assert.equal(duplicateSku.json().error.code, 'channel_sku_exists');
+
+  const catalog = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/channel-catalog?state=active`, headers });
+  assert.equal(catalog.statusCode, 200, catalog.body);
+  assert.equal(catalog.json().total, 2);
+  assert.ok(catalog.json().mappings.every((mapping) => mapping.connection_status === 'not_connected'));
+  const crossStore = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/channel-catalog`, headers: otherHeaders });
+  assert.equal(crossStore.statusCode, 403, crossStore.body);
+  const crossStoreWrite = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/channel-profiles`, headers: { ...otherHeaders, 'idempotency-key': 'channel-cross-store-write-001' },
+    payload: { channelCode: 'tiki', shopLabel: 'Không được phép' },
+  });
+  assert.equal(crossStoreWrite.statusCode, 403, crossStoreWrite.body);
+
+  const staleUpdate = await app.inject({
+    method: 'PUT', url: `/api/stores/${storeId}/channel-mappings/${mapA.json().mapping.id}`,
+    headers: { ...headers, 'idempotency-key': 'channel-mapping-stale-001' },
+    payload: { channelProfileId: profile.id, externalSku: 'NEW-SKU', version: 9 },
+  });
+  assert.equal(staleUpdate.statusCode, 409, staleUpdate.body);
+  const changedChannel = await app.inject({
+    method: 'PUT', url: `/api/stores/${storeId}/channel-profiles/${profile.id}`,
+    headers: { ...headers, 'idempotency-key': 'channel-profile-type-change-001' },
+    payload: { channelCode: 'tiki', shopLabel: 'Slink Official', version: profile.version },
+  });
+  assert.equal(changedChannel.statusCode, 409, changedChannel.body);
+  assert.equal(changedChannel.json().error.code, 'channel_type_immutable');
+
+  const archiveA = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/channel-mappings/${mapA.json().mapping.id}/archive`,
+    headers: { ...headers, 'idempotency-key': 'channel-mapping-archive-shared-001' }, payload: { version: 1 },
+  });
+  assert.equal(archiveA.statusCode, 200, archiveA.body);
+  const archiveKeyReused = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/channel-mappings/${mapB.json().mapping.id}/archive`,
+    headers: { ...headers, 'idempotency-key': 'channel-mapping-archive-shared-001' }, payload: { version: 1 },
+  });
+  assert.equal(archiveKeyReused.statusCode, 409, archiveKeyReused.body);
+  assert.equal(archiveKeyReused.json().error.code, 'idempotency_conflict');
+  const archiveB = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/channel-mappings/${mapB.json().mapping.id}/archive`,
+    headers: { ...headers, 'idempotency-key': 'channel-mapping-archive-002' }, payload: { version: 1 },
+  });
+  assert.equal(archiveB.statusCode, 200, archiveB.body);
+  const archiveProfile = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/channel-profiles/${profile.id}/archive`,
+    headers: { ...headers, 'idempotency-key': 'channel-profile-archive-001' }, payload: { version: 1 },
+  });
+  assert.equal(archiveProfile.statusCode, 200, archiveProfile.body);
+  const archivedCatalog = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/channel-catalog?state=archived`, headers });
+  assert.equal(archivedCatalog.statusCode, 200, archivedCatalog.body);
+  assert.equal(archivedCatalog.json().total, 2);
+  assert.ok(archivedCatalog.json().profiles.some((item) => item.id === profile.id && item.status === 'archived'));
+  const audit = await app.testDb.query("SELECT COUNT(*)::int AS total FROM audit_events WHERE store_id = $1 AND action LIKE 'channel.%'", [storeId]);
+  assert.ok(audit.rows[0].total >= 5);
+  const stock = await app.testDb.query('SELECT on_hand::text FROM inventory_balances WHERE store_id = $1 AND product_id = $2', [storeId, productA.json().product.id]);
+  assert.equal(stock.rows[0].on_hand, '0.000', 'mapping and archive operations do not mutate inventory');
+});
+
+test('manual channel orders reserve, ship, cancel, and audit stock without recording Slink revenue', async (t) => {
+  const app = await testApp(t);
+  const owner = await registerAndLogin(app, {
+    email: 'channel-orders-owner@example.com', displayName: 'Chủ cửa hàng', storeName: 'Cửa hàng đơn kênh',
+  });
+  const storeId = owner.store.id;
+  const headers = { cookie: cookieHeader(owner.cookies), origin, 'x-csrf-token': owner.cookies.slink_csrf };
+  const other = await registerAndLogin(app, {
+    email: 'channel-orders-other@example.com', displayName: 'Chủ khác', storeName: 'Cửa hàng khác',
+  });
+  const otherHeaders = { cookie: cookieHeader(other.cookies), origin, 'x-csrf-token': other.cookies.slink_csrf };
+
+  const roleBoundary = await app.testDb.query(`
+    SELECT has_table_privilege('slink_app', 'public.channel_orders', 'SELECT') AS orders_select,
+           has_table_privilege('slink_app', 'public.channel_orders', 'INSERT') AS orders_insert,
+           has_table_privilege('slink_app', 'public.channel_orders', 'UPDATE') AS orders_table_update,
+           has_column_privilege('slink_app', 'public.channel_orders', 'fulfillment_status', 'UPDATE') AS orders_status_update,
+           has_column_privilege('slink_app', 'public.channel_orders', 'version', 'UPDATE') AS orders_version_update,
+           has_column_privilege('slink_app', 'public.channel_orders', 'total_vnd', 'UPDATE') AS orders_total_update,
+           has_table_privilege('slink_app', 'public.channel_orders', 'DELETE') AS orders_delete,
+           has_table_privilege('slink_app', 'public.channel_orders', 'TRUNCATE') AS orders_truncate,
+           has_table_privilege('slink_app', 'public.channel_order_lines', 'SELECT') AS lines_select,
+           has_table_privilege('slink_app', 'public.channel_order_lines', 'INSERT') AS lines_insert,
+           has_table_privilege('slink_app', 'public.channel_order_lines', 'UPDATE') AS lines_update,
+           has_table_privilege('slink_app', 'public.channel_order_lines', 'DELETE') AS lines_delete,
+           has_table_privilege('slink_app', 'public.channel_order_events', 'SELECT') AS events_select,
+           has_table_privilege('slink_app', 'public.channel_order_events', 'INSERT') AS events_insert,
+           has_table_privilege('slink_app', 'public.channel_order_events', 'UPDATE') AS events_update,
+           has_table_privilege('slink_app', 'public.channel_order_events', 'DELETE') AS events_delete,
+           (SELECT relrowsecurity AND relforcerowsecurity FROM pg_class WHERE oid = 'public.channel_orders'::regclass) AS orders_rls,
+           (SELECT relrowsecurity AND relforcerowsecurity FROM pg_class WHERE oid = 'public.channel_order_lines'::regclass) AS lines_rls,
+           (SELECT relrowsecurity AND relforcerowsecurity FROM pg_class WHERE oid = 'public.channel_order_events'::regclass) AS events_rls
+  `);
+  assert.deepEqual(roleBoundary.rows[0], {
+    orders_select: true, orders_insert: true, orders_table_update: false, orders_status_update: true,
+    orders_version_update: true, orders_total_update: false, orders_delete: false, orders_truncate: false,
+    lines_select: true, lines_insert: true, lines_update: false, lines_delete: false,
+    events_select: true, events_insert: true, events_update: false, events_delete: false,
+    orders_rls: true, lines_rls: true, events_rls: true,
+  });
+
+  const imported = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/products/import`,
+    headers: { ...headers, 'idempotency-key': 'channel-order-products-001' },
+    payload: { items: [{ sku: 'CH-ORD-001', name: 'Áo đơn kênh', salePriceVnd: 25000, costVnd: 12000, openingQuantity: '5' }] },
+  });
+  assert.equal(imported.statusCode, 201, imported.body);
+  const productId = imported.json().products[0].id;
+  const product = await app.testDb.query('SELECT id FROM products WHERE store_id = $1 AND id = $2', [storeId, productId]);
+  assert.equal(product.rowCount, 1);
+  const warehouses = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/warehouses`, headers });
+  assert.equal(warehouses.statusCode, 200, warehouses.body);
+  const warehouseId = warehouses.json().warehouses[0].id;
+  const createdProfile = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/channel-profiles`,
+    headers: { ...headers, 'idempotency-key': 'channel-order-profile-001' },
+    payload: { channelCode: 'shopee', shopLabel: 'Gian hàng Shopee' },
+  });
+  assert.equal(createdProfile.statusCode, 201, createdProfile.body);
+  const profileId = createdProfile.json().profile.id;
+  const createdMapping = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/channel-mappings`,
+    headers: { ...headers, 'idempotency-key': 'channel-order-mapping-001' },
+    payload: { channelProfileId: profileId, productId, externalSku: 'SH-CH-ORD-001' },
+  });
+  assert.equal(createdMapping.statusCode, 201, createdMapping.body);
+  const mappingId = createdMapping.json().mapping.id;
+  const catalog = await app.inject({
+    method: 'GET', url: `/api/stores/${storeId}/channel-order-catalog?profileId=${profileId}`, headers,
+  });
+  assert.equal(catalog.statusCode, 200, catalog.body);
+  assert.equal(catalog.json().mappings.length, 1);
+  assert.equal(catalog.json().mappings[0].mappingId, mappingId);
+
+  const createPayload = {
+    channelProfileId: profileId, warehouseId, externalOrderRef: 'SH-ORDER-1001',
+    paymentStatusSnapshot: 'cod', customerName: 'Người nhận', internalNote: 'Ghi nhận thủ công',
+    items: [{ mappingId, quantity: '2', unitPriceVnd: '23000' }],
+  };
+  const createHeaders = { ...headers, 'idempotency-key': 'channel-order-create-0001' };
+  const createdOrder = await app.inject({ method: 'POST', url: `/api/stores/${storeId}/channel-orders`, headers: createHeaders, payload: createPayload });
+  assert.equal(createdOrder.statusCode, 201, createdOrder.body);
+  const order = createdOrder.json().order;
+  assert.equal(order.fulfillmentStatus, 'reserved');
+  assert.equal(order.paymentStatusSnapshot, 'cod');
+  assert.equal(order.totalVnd, '46000');
+  const createReplay = await app.inject({ method: 'POST', url: `/api/stores/${storeId}/channel-orders`, headers: createHeaders, payload: createPayload });
+  assert.equal(createReplay.statusCode, 201, createReplay.body);
+  assert.equal(createReplay.headers['idempotent-replayed'], 'true');
+  assert.deepEqual(createReplay.json(), createdOrder.json());
+  const duplicateOrderRef = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/channel-orders`,
+    headers: { ...headers, 'idempotency-key': 'channel-order-ref-duplicate-001' },
+    payload: { ...createPayload, externalOrderRef: 'sh-order-1001' },
+  });
+  assert.equal(duplicateOrderRef.statusCode, 409, duplicateOrderRef.body);
+  assert.equal(duplicateOrderRef.json().error.code, 'channel_order_exists');
+  const crossStoreRead = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/channel-orders`, headers: otherHeaders });
+  assert.equal(crossStoreRead.statusCode, 403, crossStoreRead.body);
+  const invalidStatusFilter = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/channel-orders?status=unknown`, headers });
+  assert.equal(invalidStatusFilter.statusCode, 400, invalidStatusFilter.body);
+  const invalidProfileFilter = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/channel-orders?profileId=not-a-uuid`, headers });
+  assert.equal(invalidProfileFilter.statusCode, 400, invalidProfileFilter.body);
+
+  let stock = await app.testDb.query(
+    'SELECT on_hand::text AS on_hand, reserved::text AS reserved FROM inventory_balances WHERE store_id = $1 AND warehouse_id = $2 AND product_id = $3',
+    [storeId, warehouseId, productId]
+  );
+  assert.equal(stock.rows[0].on_hand, '5.000');
+  assert.equal(stock.rows[0].reserved, '2.000');
+
+  const attemptedOversell = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/channel-orders`,
+    headers: { ...headers, 'idempotency-key': 'channel-order-oversell-0001' },
+    payload: { ...createPayload, externalOrderRef: 'SH-ORDER-1002', items: [{ mappingId, quantity: '4', unitPriceVnd: '23000' }] },
+  });
+  assert.equal(attemptedOversell.statusCode, 409, attemptedOversell.body);
+  assert.equal(attemptedOversell.json().error.code, 'insufficient_channel_stock');
+  const countAfterOversell = await app.testDb.query('SELECT COUNT(*)::int AS count FROM channel_orders WHERE store_id = $1', [storeId]);
+  assert.equal(countAfterOversell.rows[0].count, 1, 'failed reservation rolls back the order and idempotency record');
+
+  const packed = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/channel-orders/${order.id}/status`,
+    headers: { ...headers, 'idempotency-key': 'channel-order-packed-0001' }, payload: { status: 'packed', version: 1 },
+  });
+  assert.equal(packed.statusCode, 200, packed.body);
+  const packedReplay = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/channel-orders/${order.id}/status`,
+    headers: { ...headers, 'idempotency-key': 'channel-order-packed-0001' }, payload: { status: 'packed', version: 1 },
+  });
+  assert.equal(packedReplay.headers['idempotent-replayed'], 'true');
+  const stale = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/channel-orders/${order.id}/status`,
+    headers: { ...headers, 'idempotency-key': 'channel-order-stale-0001' }, payload: { status: 'shipped', version: 1 },
+  });
+  assert.equal(stale.statusCode, 409, stale.body);
+  assert.equal(stale.json().error.code, 'stale_version');
+  const shipped = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/channel-orders/${order.id}/status`,
+    headers: { ...headers, 'idempotency-key': 'channel-order-shipped-0001' }, payload: { status: 'shipped', version: 2 },
+  });
+  assert.equal(shipped.statusCode, 200, shipped.body);
+  stock = await app.testDb.query(
+    'SELECT on_hand::text AS on_hand, reserved::text AS reserved FROM inventory_balances WHERE store_id = $1 AND warehouse_id = $2 AND product_id = $3',
+    [storeId, warehouseId, productId]
+  );
+  assert.equal(stock.rows[0].on_hand, '3.000', 'shipping deducts the reserved quantity exactly once');
+  assert.equal(stock.rows[0].reserved, '0.000');
+  const movement = await app.testDb.query(
+    "SELECT COUNT(*)::int AS count FROM inventory_movements WHERE store_id = $1 AND source_type = 'channel_order' AND source_id = $2 AND movement_type = 'sale'",
+    [storeId, order.id]
+  );
+  assert.equal(movement.rows[0].count, 1);
+  const delivered = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/channel-orders/${order.id}/status`,
+    headers: { ...headers, 'idempotency-key': 'channel-order-delivered-0001' }, payload: { status: 'delivered', version: 3 },
+  });
+  assert.equal(delivered.statusCode, 200, delivered.body);
+  const detail = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/channel-orders/${order.id}`, headers });
+  assert.equal(detail.statusCode, 200, detail.body);
+  assert.equal(detail.json().order.fulfillmentStatus, 'delivered');
+  assert.equal(detail.json().lines[0].lineTotalVnd, '46000');
+  assert.deepEqual(detail.json().events.map((event) => event.toStatus), ['reserved', 'packed', 'shipped', 'delivered']);
+
+  const cancelPayload = { ...createPayload, externalOrderRef: 'SH-ORDER-1003', items: [{ mappingId, quantity: '1', unitPriceVnd: '23000' }] };
+  const cancelOrder = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/channel-orders`,
+    headers: { ...headers, 'idempotency-key': 'channel-order-cancel-create-001' }, payload: cancelPayload,
+  });
+  assert.equal(cancelOrder.statusCode, 201, cancelOrder.body);
+  const cancel = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/channel-orders/${cancelOrder.json().order.id}/status`,
+    headers: { ...headers, 'idempotency-key': 'channel-order-cancel-001' }, payload: { status: 'cancelled', version: 1, reason: 'Khách hủy trước khi gửi' },
+  });
+  assert.equal(cancel.statusCode, 200, cancel.body);
+  stock = await app.testDb.query(
+    'SELECT on_hand::text AS on_hand, reserved::text AS reserved FROM inventory_balances WHERE store_id = $1 AND warehouse_id = $2 AND product_id = $3',
+    [storeId, warehouseId, productId]
+  );
+  assert.equal(stock.rows[0].on_hand, '3.000', 'cancel releases the reservation without changing physical stock');
+  assert.equal(stock.rows[0].reserved, '0.000');
+  const financial = await app.testDb.query(`
+    SELECT (SELECT COUNT(*)::int FROM orders WHERE store_id = $1) AS sales_orders,
+           (SELECT COUNT(*)::int FROM payments WHERE store_id = $1) AS payments,
+           (SELECT COUNT(*)::int FROM cash_movements WHERE store_id = $1) AS cash_movements
+  `, [storeId]);
+  assert.deepEqual(financial.rows[0], { sales_orders: 0, payments: 0, cash_movements: 0 }, 'channel payment status is not recorded as Slink revenue');
+  const histories = await app.testDb.query('SELECT COUNT(*)::int AS count FROM channel_order_events WHERE store_id = $1', [storeId]);
+  assert.equal(histories.rows[0].count, 6);
 });

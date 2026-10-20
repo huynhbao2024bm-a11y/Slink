@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { Pool } = require('pg');
 const { randomUUID } = require('node:crypto');
 const { buildServer } = require('../server');
+const { withStore } = require('../server/db');
 
 const ORIGIN = 'http://slink-acceptance.invalid';
 const PASSWORD = 'Native acceptance only 2026!';
@@ -128,7 +129,9 @@ async function run() {
     const cookies = cookiesFrom(login);
     assert.ok(cookies.slink_session && cookies.slink_csrf, 'sign-in sets session and CSRF cookies');
     const store = login.json().stores?.[0];
+    const userId = login.json().user?.id;
     assert.ok(store?.id, 'registration provisions one isolated store');
+    assert.ok(userId, 'sign-in returns the synthetic store owner ID');
     const headers = { cookie: cookieHeader(cookies) };
     const writeHeaders = { ...headers, origin: ORIGIN, 'x-csrf-token': cookies.slink_csrf };
     process.stdout.write('PASS registration, one-time verification, session and store provisioning\n');
@@ -169,6 +172,158 @@ async function run() {
     assert.equal(importedPriceHistory.json().history[0].source_id, imported.json().importId);
     process.stdout.write('PASS catalog import preview, opening inventory and duplicate-submit protection\n');
 
+    const channelItem = {
+      sku: `NATIVE-CHANNEL-${suffix}`,
+      name: 'Hàng đơn kênh nghiệm thu',
+      salePriceVnd: 18000,
+      costVnd: 8000,
+      openingQuantity: '3',
+    };
+    const channelProductResult = await app.inject({
+      method: 'POST', url: `/api/stores/${store.id}/products/import`,
+      headers: { ...writeHeaders, 'idempotency-key': `native-channel-product-${suffix}-01` },
+      payload: { items: [channelItem] },
+    });
+    requireStatus(channelProductResult, 201, 'Channel order acceptance product');
+    const channelProductId = channelProductResult.json().products[0]?.id;
+    assert.ok(channelProductId, 'channel order product was created in the temporary store');
+    const warehousesResult = await app.inject({ method: 'GET', url: `/api/stores/${store.id}/warehouses`, headers });
+    requireStatus(warehousesResult, 200, 'Channel order fulfillment warehouses');
+    const channelWarehouse = warehousesResult.json().warehouses.find((warehouse) => warehouse.is_default && warehouse.status === 'active')
+      || warehousesResult.json().warehouses.find((warehouse) => warehouse.status === 'active');
+    assert.ok(channelWarehouse?.id, 'temporary store has an active fulfillment warehouse');
+    const profileResult = await app.inject({
+      method: 'POST', url: `/api/stores/${store.id}/channel-profiles`,
+      headers: { ...writeHeaders, 'idempotency-key': `native-channel-profile-${suffix}-01` },
+      payload: { channelCode: 'shopee', shopLabel: `Gian hàng nghiệm thu ${suffix}` },
+    });
+    requireStatus(profileResult, 201, 'Manual channel profile');
+    const channelProfileId = profileResult.json().profile?.id;
+    assert.ok(channelProfileId);
+    assert.equal(profileResult.json().profile.connection_status, 'not_connected', 'manual entry does not claim provider connection');
+    const mappingResult = await app.inject({
+      method: 'POST', url: `/api/stores/${store.id}/channel-mappings`,
+      headers: { ...writeHeaders, 'idempotency-key': `native-channel-mapping-${suffix}-01` },
+      payload: { channelProfileId, productId: channelProductId, externalSku: `SH-${suffix}` },
+    });
+    requireStatus(mappingResult, 201, 'Manual channel SKU mapping');
+    const channelMappingId = mappingResult.json().mapping?.id;
+    assert.ok(channelMappingId);
+    const orderCatalog = await app.inject({
+      method: 'GET', url: `/api/stores/${store.id}/channel-order-catalog?profileId=${channelProfileId}`, headers,
+    });
+    requireStatus(orderCatalog, 200, 'Mapped channel order catalog');
+    assert.ok(orderCatalog.json().mappings.some((mapping) => mapping.mappingId === channelMappingId));
+
+    const businessCounts = () => withStore(pool, userId, store.id, async (client) => {
+      const counts = await client.query(`
+        SELECT (SELECT COUNT(*)::int FROM orders WHERE store_id = $1) AS sales_orders,
+               (SELECT COUNT(*)::int FROM payments WHERE store_id = $1) AS payments,
+               (SELECT COUNT(*)::int FROM cash_movements WHERE store_id = $1) AS cash_movements,
+               (SELECT COUNT(*)::int FROM customer_ledger_entries WHERE store_id = $1) AS customer_ledger,
+               (SELECT COUNT(*)::int FROM supplier_ledger_entries WHERE store_id = $1) AS supplier_ledger
+      `, [store.id]);
+      return counts.rows[0];
+    });
+    const financeBeforeChannelOrder = await businessCounts();
+    const channelOrderPayload = {
+      channelProfileId, warehouseId: channelWarehouse.id, externalOrderRef: `SH-NATIVE-${suffix}`,
+      paymentStatusSnapshot: 'cod', customerName: 'Người nhận nghiệm thu',
+      items: [{ mappingId: channelMappingId, quantity: '2', unitPriceVnd: '12500' }],
+    };
+    const channelCreateHeaders = { ...writeHeaders, 'idempotency-key': `native-channel-order-${suffix}-001` };
+    const channelCreated = await app.inject({
+      method: 'POST', url: `/api/stores/${store.id}/channel-orders`, headers: channelCreateHeaders, payload: channelOrderPayload,
+    });
+    requireStatus(channelCreated, 201, 'Manual channel order with inventory reservation');
+    const channelOrder = channelCreated.json().order;
+    assert.equal(channelOrder.fulfillmentStatus, 'reserved');
+    assert.equal(channelOrder.paymentStatusSnapshot, 'cod');
+    assert.equal(channelOrder.totalVnd, '25000');
+    const channelCreateReplay = await app.inject({
+      method: 'POST', url: `/api/stores/${store.id}/channel-orders`, headers: channelCreateHeaders, payload: channelOrderPayload,
+    });
+    requireStatus(channelCreateReplay, 201, 'Idempotent channel-order creation retry');
+    assert.equal(channelCreateReplay.headers['idempotent-replayed'], 'true');
+    assert.equal(channelCreateReplay.json().order.id, channelOrder.id);
+    const duplicateChannelRef = await app.inject({
+      method: 'POST', url: `/api/stores/${store.id}/channel-orders`,
+      headers: { ...writeHeaders, 'idempotency-key': `native-channel-duplicate-${suffix}-1` },
+      payload: { ...channelOrderPayload, externalOrderRef: channelOrderPayload.externalOrderRef.toLowerCase() },
+    });
+    requireStatus(duplicateChannelRef, 409, 'Duplicate external channel order reference');
+    assert.equal(duplicateChannelRef.json().error.code, 'channel_order_exists');
+    const stockAfterReserve = await app.inject({ method: 'GET', url: `/api/stores/${store.id}/products?q=${channelItem.sku}`, headers });
+    requireStatus(stockAfterReserve, 200, 'Channel stock after reservation');
+    assertQuantity(stockAfterReserve.json().products[0]?.on_hand, '3', 'Channel reservation does not change on-hand stock');
+    assertQuantity(stockAfterReserve.json().products[0]?.reserved, '2', 'Channel reservation is durable');
+    const channelOversell = await app.inject({
+      method: 'POST', url: `/api/stores/${store.id}/channel-orders`,
+      headers: { ...writeHeaders, 'idempotency-key': `native-channel-oversell-${suffix}-1` },
+      payload: { ...channelOrderPayload, externalOrderRef: `SH-OVERSELL-${suffix}`, items: [{ mappingId: channelMappingId, quantity: '2', unitPriceVnd: '12500' }] },
+    });
+    requireStatus(channelOversell, 409, 'Channel oversell rejection');
+    assert.equal(channelOversell.json().error.code, 'insufficient_channel_stock');
+    const channelOrdersAfterOversell = await app.inject({ method: 'GET', url: `/api/stores/${store.id}/channel-orders`, headers });
+    requireStatus(channelOrdersAfterOversell, 200, 'Channel order list after rejected oversell');
+    assert.equal(channelOrdersAfterOversell.json().total, 1, 'failed reservation creates no order');
+    const channelPacked = await app.inject({
+      method: 'POST', url: `/api/stores/${store.id}/channel-orders/${channelOrder.id}/status`,
+      headers: { ...writeHeaders, 'idempotency-key': `native-channel-packed-${suffix}-1` },
+      payload: { status: 'packed', version: 1 },
+    });
+    requireStatus(channelPacked, 200, 'Channel order packing');
+    const channelShippedHeaders = { ...writeHeaders, 'idempotency-key': `native-channel-shipped-${suffix}-1` };
+    const channelShippedPayload = { status: 'shipped', version: 2 };
+    const channelShipped = await app.inject({
+      method: 'POST', url: `/api/stores/${store.id}/channel-orders/${channelOrder.id}/status`,
+      headers: channelShippedHeaders, payload: channelShippedPayload,
+    });
+    requireStatus(channelShipped, 200, 'Channel order shipment and stock issue');
+    const channelShippedReplay = await app.inject({
+      method: 'POST', url: `/api/stores/${store.id}/channel-orders/${channelOrder.id}/status`,
+      headers: channelShippedHeaders, payload: channelShippedPayload,
+    });
+    requireStatus(channelShippedReplay, 200, 'Idempotent channel shipment retry');
+    assert.equal(channelShippedReplay.headers['idempotent-replayed'], 'true');
+    const stockAfterShip = await app.inject({ method: 'GET', url: `/api/stores/${store.id}/products?q=${channelItem.sku}`, headers });
+    requireStatus(stockAfterShip, 200, 'Channel stock after shipment');
+    assertQuantity(stockAfterShip.json().products[0]?.on_hand, '1', 'Shipment deducts reserved physical stock exactly once');
+    assertQuantity(stockAfterShip.json().products[0]?.reserved, '0', 'Shipment releases the reservation');
+    const channelMovements = await withStore(pool, userId, store.id, (client) => client.query(
+      "SELECT COUNT(*)::int AS count FROM inventory_movements WHERE store_id = $1 AND source_type = 'channel_order' AND source_id = $2 AND movement_type = 'sale'",
+      [store.id, channelOrder.id]
+    ));
+    assert.equal(channelMovements.rows[0].count, 1, 'shipment writes one durable stock-ledger entry');
+    const channelDelivered = await app.inject({
+      method: 'POST', url: `/api/stores/${store.id}/channel-orders/${channelOrder.id}/status`,
+      headers: { ...writeHeaders, 'idempotency-key': `native-channel-delivered-${suffix}-1` },
+      payload: { status: 'delivered', version: 3 },
+    });
+    requireStatus(channelDelivered, 200, 'Channel order delivery status');
+    const channelDetail = await app.inject({ method: 'GET', url: `/api/stores/${store.id}/channel-orders/${channelOrder.id}`, headers });
+    requireStatus(channelDetail, 200, 'Channel order and immutable status history');
+    assert.deepEqual(channelDetail.json().events.map((event) => event.toStatus), ['reserved', 'packed', 'shipped', 'delivered']);
+
+    const cancelChannelOrder = await app.inject({
+      method: 'POST', url: `/api/stores/${store.id}/channel-orders`,
+      headers: { ...writeHeaders, 'idempotency-key': `native-channel-cancel-create-${suffix}-1` },
+      payload: { ...channelOrderPayload, externalOrderRef: `SH-CANCEL-${suffix}`, items: [{ mappingId: channelMappingId, quantity: '1', unitPriceVnd: '12500' }] },
+    });
+    requireStatus(cancelChannelOrder, 201, 'Second channel order for cancellation');
+    const cancelled = await app.inject({
+      method: 'POST', url: `/api/stores/${store.id}/channel-orders/${cancelChannelOrder.json().order.id}/status`,
+      headers: { ...writeHeaders, 'idempotency-key': `native-channel-cancel-${suffix}-1` },
+      payload: { status: 'cancelled', version: 1, reason: 'Người mua hủy trước khi gửi' },
+    });
+    requireStatus(cancelled, 200, 'Channel cancellation releases reserved stock');
+    const stockAfterCancel = await app.inject({ method: 'GET', url: `/api/stores/${store.id}/products?q=${channelItem.sku}`, headers });
+    requireStatus(stockAfterCancel, 200, 'Channel stock after cancellation');
+    assertQuantity(stockAfterCancel.json().products[0]?.on_hand, '1', 'Cancellation does not change on-hand stock');
+    assertQuantity(stockAfterCancel.json().products[0]?.reserved, '0', 'Cancellation releases held stock');
+    assert.deepEqual(await businessCounts(), financeBeforeChannelOrder, 'manual channel-order payment snapshot creates no Slink revenue, debt, payment, or cash movement');
+    process.stdout.write('PASS native manual channel orders, idempotency, reservation, shipment ledger, cancellation, tenant-safe history and finance isolation\n');
+
     const secondTenant = await registerSyntheticStore(app, {
       email: `native-isolation-${suffix}@slink.invalid`,
       displayName: 'Chủ cửa hàng cách ly',
@@ -185,6 +340,10 @@ async function run() {
       method: 'GET', url: `/api/stores/${store.id}/products`, headers: secondHeaders,
     });
     requireStatus(crossStoreRead, 403, 'Cross-store catalog read');
+    const crossStoreChannelOrders = await app.inject({
+      method: 'GET', url: `/api/stores/${store.id}/channel-orders`, headers: secondHeaders,
+    });
+    requireStatus(crossStoreChannelOrders, 403, 'Cross-store channel-order read');
     const crossStorePriceHistory = await app.inject({
       method: 'GET', url: `/api/stores/${store.id}/products/${product.id}/price-history`, headers: secondHeaders,
     });

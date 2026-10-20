@@ -1,10 +1,12 @@
 ﻿$ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $postgresScript = Join-Path $PSScriptRoot 'postgres-local.ps1'
+$roleCheckScript = Join-Path $PSScriptRoot 'postgres-role-check.js'
 $serverEntry = Join-Path $repoRoot 'server\index.js'
 $baseUrl = 'http://127.0.0.1:3000'
 
 if (-not (Test-Path -LiteralPath $postgresScript)) { throw 'Không tìm thấy bộ quản lý PostgreSQL cục bộ của Slink.' }
+if (-not (Test-Path -LiteralPath $roleCheckScript)) { throw 'Không tìm thấy bộ kiểm tra quyền cơ sở dữ liệu; API chưa được chạy.' }
 if (-not (Test-Path -LiteralPath $serverEntry)) { throw 'Không tìm thấy máy chủ Slink.' }
 
 $nodeCandidates = @()
@@ -30,6 +32,10 @@ if (-not $nodePath) { throw 'Cần Node.js phiên bản 24.11 trở lên trong n
 
 & $postgresScript -Action start
 if ($LASTEXITCODE -ne 0) { throw 'PostgreSQL Slink chưa khởi động được; API chưa được chạy.' }
+
+Write-Output 'Đang xác nhận quyền cơ sở dữ liệu trước khi mở API.'
+& $nodePath $roleCheckScript
+if ($LASTEXITCODE -ne 0) { throw 'Kiểm tra quyền cơ sở dữ liệu chưa đạt; API chưa được chạy.' }
 
 try {
   $ready = Invoke-RestMethod -Uri "$baseUrl/api/ready" -TimeoutSec 3

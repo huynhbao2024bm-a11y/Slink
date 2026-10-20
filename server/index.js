@@ -26,6 +26,8 @@ const { registerCashRegisterRoutes } = require('./cash-register');
 const { registerAuditRoutes } = require('./audit');
 const { registerSecurityRoutes } = require('./security');
 const { registerWarehouseRoutes } = require('./warehouses');
+const { registerChannelMappingRoutes } = require('./channel-mappings');
+const { registerChannelOrderRoutes } = require('./channel-orders');
 
 const APP_ROOT = path.resolve(__dirname, '..');
 const ASSETS = new Map([
@@ -164,6 +166,8 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
     registerAuditRoutes(app, { pool, env });
     registerSecurityRoutes(app, { pool, env });
     registerWarehouseRoutes(app, { pool, env });
+    registerChannelMappingRoutes(app, { pool, env });
+    registerChannelOrderRoutes(app, { pool, env });
   }
 
   for (const [route, fileName] of ASSETS) {
