@@ -136,6 +136,8 @@ function publicOrder(row) {
     paymentStatusSnapshot: row.payment_status_snapshot,
     totalVnd: String(row.total_vnd),
     customerName: row.customer_name_snapshot,
+    customerPhone: row.customer_phone_snapshot,
+    shippingAddress: row.shipping_address_snapshot,
     internalNote: row.internal_note,
     lineCount: Number(row.line_count || 0),
     version: row.version,
@@ -216,7 +218,8 @@ function registerChannelOrderRoutes(app, { pool, env }) {
       const result = await client.query(
         `SELECT o.id, o.channel_profile_id, cp.channel_code, cp.shop_label, o.external_order_ref,
                 o.fulfillment_warehouse_id, w.name AS warehouse_name, o.fulfillment_status,
-                o.payment_status_snapshot, o.total_vnd, o.customer_name_snapshot, o.internal_note,
+                o.payment_status_snapshot, o.total_vnd, o.customer_name_snapshot,
+                o.customer_phone_snapshot, o.shipping_address_snapshot, o.internal_note,
                 o.version, o.created_at, o.updated_at, o.packed_at, o.shipped_at, o.delivered_at, o.cancelled_at,
                 COUNT(l.id)::int AS line_count
          FROM channel_orders o
@@ -226,7 +229,8 @@ function registerChannelOrderRoutes(app, { pool, env }) {
          WHERE o.store_id = $1
            AND ($2 = '' OR o.fulfillment_status = $2)
            AND ($3 = '' OR o.channel_profile_id::text = $3)
-           AND ($4 = '' OR o.external_order_ref ILIKE '%' || $4 || '%' OR o.customer_name_snapshot ILIKE '%' || $4 || '%')
+           AND ($4 = '' OR o.external_order_ref ILIKE '%' || $4 || '%' OR o.customer_name_snapshot ILIKE '%' || $4 || '%'
+                OR o.customer_phone_snapshot ILIKE '%' || $4 || '%')
            AND ($5::boolean = false OR o.fulfillment_warehouse_id = ANY($6::uuid[]))
          GROUP BY o.id, cp.channel_code, cp.shop_label, w.name
          ORDER BY o.created_at DESC, o.id DESC LIMIT $7 OFFSET $8`,
@@ -237,7 +241,8 @@ function registerChannelOrderRoutes(app, { pool, env }) {
         `SELECT COUNT(*)::int AS total FROM channel_orders o
          WHERE o.store_id = $1 AND ($2 = '' OR o.fulfillment_status = $2)
            AND ($3 = '' OR o.channel_profile_id::text = $3)
-           AND ($4 = '' OR o.external_order_ref ILIKE '%' || $4 || '%' OR o.customer_name_snapshot ILIKE '%' || $4 || '%')
+           AND ($4 = '' OR o.external_order_ref ILIKE '%' || $4 || '%' OR o.customer_name_snapshot ILIKE '%' || $4 || '%'
+                OR o.customer_phone_snapshot ILIKE '%' || $4 || '%')
            AND ($5::boolean = false OR o.fulfillment_warehouse_id = ANY($6::uuid[]))`,
         [storeId, status, profileId, query, warehouseIds !== null, warehouseIds || []]
       );
@@ -258,7 +263,8 @@ function registerChannelOrderRoutes(app, { pool, env }) {
       const header = await client.query(
         `SELECT o.id, o.channel_profile_id, cp.channel_code, cp.shop_label, o.external_order_ref,
                 o.fulfillment_warehouse_id, w.name AS warehouse_name, o.fulfillment_status,
-                o.payment_status_snapshot, o.total_vnd, o.customer_name_snapshot, o.internal_note,
+                o.payment_status_snapshot, o.total_vnd, o.customer_name_snapshot,
+                o.customer_phone_snapshot, o.shipping_address_snapshot, o.internal_note,
                 o.version, o.created_at, o.updated_at, o.packed_at, o.shipped_at, o.delivered_at, o.cancelled_at
          FROM channel_orders o JOIN sales_channel_profiles cp ON cp.store_id = o.store_id AND cp.id = o.channel_profile_id
          JOIN warehouses w ON w.store_id = o.store_id AND w.id = o.fulfillment_warehouse_id
@@ -308,12 +314,17 @@ function registerChannelOrderRoutes(app, { pool, env }) {
     const paymentStatus = request.body?.paymentStatusSnapshot ?? 'unknown';
     if (typeof paymentStatus !== 'string' || !PAYMENT_SNAPSHOTS.has(paymentStatus)) throw new ApiError(400, 'validation_error', 'Trạng thái thanh toán của kênh chưa hợp lệ.');
     const customerName = text(request.body?.customerName || '', 'Tên người nhận', 160, { optional: true });
+    const customerPhone = text(request.body?.customerPhone || '', 'Số điện thoại người nhận', 32, { optional: true });
+    if (customerPhone && (!/^[+()\d .-]{7,32}$/.test(customerPhone) || customerPhone.replace(/\D/g, '').length < 7 || customerPhone.replace(/\D/g, '').length > 15)) {
+      throw new ApiError(400, 'validation_error', 'Số điện thoại người nhận cần có từ 7 đến 15 chữ số.');
+    }
+    const shippingAddress = text(request.body?.shippingAddress || '', 'Địa chỉ giao hàng', 500, { optional: true });
     const internalNote = text(request.body?.internalNote || '', 'Ghi chú nội bộ', 500, { optional: true });
     const { items, total } = parseLines(request.body?.items);
     const key = requireKey(request);
     const canonical = {
       operation: 'channel_order_create', channelProfileId: profileId.toLowerCase(), warehouseId: warehouseId.toLowerCase(),
-      externalOrderRef, externalOrderRefNormalized, paymentStatus, customerName, internalNote,
+      externalOrderRef, externalOrderRefNormalized, paymentStatus, customerName, customerPhone, shippingAddress, internalNote,
       items: items.map((item) => ({ mappingId: item.mappingId, quantity: item.quantity, unitPriceVnd: item.unitPrice })),
     };
     let outcome;
@@ -369,12 +380,13 @@ function registerChannelOrderRoutes(app, { pool, env }) {
           `INSERT INTO channel_orders
              (id, store_id, channel_profile_id, fulfillment_warehouse_id, external_order_ref,
               external_order_ref_normalized, fulfillment_status, payment_status_snapshot, total_vnd,
-              customer_name_snapshot, internal_note, created_by, updated_by)
-           VALUES ($1,$2,$3,$4,$5,$6,'reserved',$7,$8,$9,$10,$11,$11)
+              customer_name_snapshot, customer_phone_snapshot, shipping_address_snapshot, internal_note, created_by, updated_by)
+           VALUES ($1,$2,$3,$4,$5,$6,'reserved',$7,$8,$9,$10,$11,$12,$13,$13)
            RETURNING id, channel_profile_id, fulfillment_warehouse_id, external_order_ref, fulfillment_status,
-                     payment_status_snapshot, total_vnd, customer_name_snapshot, internal_note,
+                     payment_status_snapshot, total_vnd, customer_name_snapshot, customer_phone_snapshot,
+                     shipping_address_snapshot, internal_note,
                      version, created_at, updated_at, packed_at, shipped_at, delivered_at, cancelled_at`,
-          [id, storeId, profileId, warehouseId, externalOrderRef, externalOrderRefNormalized, paymentStatus, total, customerName, internalNote, auth.userId]
+          [id, storeId, profileId, warehouseId, externalOrderRef, externalOrderRefNormalized, paymentStatus, total, customerName, customerPhone, shippingAddress, internalNote, auth.userId]
         );
         for (let index = 0; index < items.length; index += 1) {
           const item = items[index];
@@ -439,7 +451,8 @@ function registerChannelOrderRoutes(app, { pool, env }) {
       if (replay.replay) return replay.replay;
       const locked = await client.query(
         `SELECT id, channel_profile_id, fulfillment_warehouse_id, external_order_ref, fulfillment_status,
-                version, total_vnd, payment_status_snapshot, customer_name_snapshot, internal_note,
+                version, total_vnd, payment_status_snapshot, customer_name_snapshot,
+                customer_phone_snapshot, shipping_address_snapshot, internal_note,
                 created_at, updated_at, packed_at, shipped_at, delivered_at, cancelled_at
          FROM channel_orders WHERE store_id = $1 AND id = $2 FOR UPDATE`, [storeId, orderId]
       );
@@ -504,7 +517,8 @@ function registerChannelOrderRoutes(app, { pool, env }) {
           cancelled_at = CASE WHEN $3 = 'cancelled' THEN now() ELSE cancelled_at END
          WHERE store_id = $1 AND id = $2
          RETURNING id, channel_profile_id, fulfillment_warehouse_id, external_order_ref, fulfillment_status,
-                   version, total_vnd, payment_status_snapshot, customer_name_snapshot, internal_note,
+                   version, total_vnd, payment_status_snapshot, customer_name_snapshot,
+                   customer_phone_snapshot, shipping_address_snapshot, internal_note,
                    created_at, updated_at, packed_at, shipped_at, delivered_at, cancelled_at`,
         [storeId, orderId, nextStatus, auth.userId]
       );

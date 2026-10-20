@@ -3298,6 +3298,8 @@ test('manual channel orders reserve, ship, cancel, and audit stock without recor
            has_column_privilege('slink_app', 'public.channel_orders', 'fulfillment_status', 'UPDATE') AS orders_status_update,
            has_column_privilege('slink_app', 'public.channel_orders', 'version', 'UPDATE') AS orders_version_update,
            has_column_privilege('slink_app', 'public.channel_orders', 'total_vnd', 'UPDATE') AS orders_total_update,
+           has_column_privilege('slink_app', 'public.channel_orders', 'customer_phone_snapshot', 'UPDATE') AS orders_phone_update,
+           has_column_privilege('slink_app', 'public.channel_orders', 'shipping_address_snapshot', 'UPDATE') AS orders_address_update,
            has_table_privilege('slink_app', 'public.channel_orders', 'DELETE') AS orders_delete,
            has_table_privilege('slink_app', 'public.channel_orders', 'TRUNCATE') AS orders_truncate,
            has_table_privilege('slink_app', 'public.channel_order_lines', 'SELECT') AS lines_select,
@@ -3314,7 +3316,8 @@ test('manual channel orders reserve, ship, cancel, and audit stock without recor
   `);
   assert.deepEqual(roleBoundary.rows[0], {
     orders_select: true, orders_insert: true, orders_table_update: false, orders_status_update: true,
-    orders_version_update: true, orders_total_update: false, orders_delete: false, orders_truncate: false,
+    orders_version_update: true, orders_total_update: false, orders_phone_update: false, orders_address_update: false,
+    orders_delete: false, orders_truncate: false,
     lines_select: true, lines_insert: true, lines_update: false, lines_delete: false,
     events_select: true, events_insert: true, events_update: false, events_delete: false,
     orders_rls: true, lines_rls: true, events_rls: true,
@@ -3355,7 +3358,8 @@ test('manual channel orders reserve, ship, cancel, and audit stock without recor
 
   const createPayload = {
     channelProfileId: profileId, warehouseId, externalOrderRef: 'SH-ORDER-1001',
-    paymentStatusSnapshot: 'cod', customerName: 'Người nhận', internalNote: 'Ghi nhận thủ công',
+    paymentStatusSnapshot: 'cod', customerName: 'Người nhận', customerPhone: '+84 900 123 456',
+    shippingAddress: '12 Đường Số 1, Quận 1, TP. Hồ Chí Minh', internalNote: 'Ghi nhận thủ công',
     items: [{ mappingId, quantity: '2', unitPriceVnd: '23000' }],
   };
   const createHeaders = { ...headers, 'idempotency-key': 'channel-order-create-0001' };
@@ -3365,6 +3369,11 @@ test('manual channel orders reserve, ship, cancel, and audit stock without recor
   assert.equal(order.fulfillmentStatus, 'reserved');
   assert.equal(order.paymentStatusSnapshot, 'cod');
   assert.equal(order.totalVnd, '46000');
+  assert.equal(order.customerPhone, '+84 900 123 456');
+  assert.equal(order.shippingAddress, '12 Đường Số 1, Quận 1, TP. Hồ Chí Minh');
+  const phoneSearch = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/channel-orders?q=${encodeURIComponent('900 123')}`, headers });
+  assert.equal(phoneSearch.statusCode, 200, phoneSearch.body);
+  assert.equal(phoneSearch.json().orders[0].id, order.id, 'recipient phone search is applied before pagination');
   const createReplay = await app.inject({ method: 'POST', url: `/api/stores/${storeId}/channel-orders`, headers: createHeaders, payload: createPayload });
   assert.equal(createReplay.statusCode, 201, createReplay.body);
   assert.equal(createReplay.headers['idempotent-replayed'], 'true');
@@ -3376,6 +3385,13 @@ test('manual channel orders reserve, ship, cancel, and audit stock without recor
   });
   assert.equal(duplicateOrderRef.statusCode, 409, duplicateOrderRef.body);
   assert.equal(duplicateOrderRef.json().error.code, 'channel_order_exists');
+  const invalidRecipientPhone = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/channel-orders`,
+    headers: { ...headers, 'idempotency-key': 'channel-order-bad-phone-0001' },
+    payload: { ...createPayload, externalOrderRef: 'SH-ORDER-BAD-PHONE', customerPhone: 'not a phone' },
+  });
+  assert.equal(invalidRecipientPhone.statusCode, 400, invalidRecipientPhone.body);
+  assert.equal(invalidRecipientPhone.json().error.code, 'validation_error');
   const crossStoreRead = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/channel-orders`, headers: otherHeaders });
   assert.equal(crossStoreRead.statusCode, 403, crossStoreRead.body);
   const invalidStatusFilter = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/channel-orders?status=unknown`, headers });
@@ -3441,6 +3457,8 @@ test('manual channel orders reserve, ship, cancel, and audit stock without recor
   assert.equal(detail.statusCode, 200, detail.body);
   assert.equal(detail.json().order.fulfillmentStatus, 'delivered');
   assert.equal(detail.json().lines[0].lineTotalVnd, '46000');
+  assert.equal(detail.json().order.customerPhone, '+84 900 123 456');
+  assert.equal(detail.json().order.shippingAddress, '12 Đường Số 1, Quận 1, TP. Hồ Chí Minh');
   assert.deepEqual(detail.json().events.map((event) => event.toStatus), ['reserved', 'packed', 'shipped', 'delivered']);
 
   const cancelPayload = { ...createPayload, externalOrderRef: 'SH-ORDER-1003', items: [{ mappingId, quantity: '1', unitPriceVnd: '23000' }] };
@@ -3478,6 +3496,8 @@ test('manual channel orders reserve, ship, cancel, and audit stock without recor
   assert.ok(channelCsv.body.includes('SH-ORDER-1001'));
   assert.ok(channelCsv.body.includes('SH-ORDER-1003'));
   assert.ok(channelCsv.body.includes('cod'));
+  assert.ok(channelCsv.body.includes('+84 900 123 456'));
+  assert.ok(channelCsv.body.includes('12 Đường Số 1, Quận 1, TP. Hồ Chí Minh'));
   assert.ok(channelCsv.body.includes('23000'));
   assert.ok(!channelCsv.body.includes('SH-ORDER-1002'), 'rejected oversell is absent from the export');
 });

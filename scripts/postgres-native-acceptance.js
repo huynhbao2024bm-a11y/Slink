@@ -228,7 +228,8 @@ async function run() {
     const financeBeforeChannelOrder = await businessCounts();
     const channelOrderPayload = {
       channelProfileId, warehouseId: channelWarehouse.id, externalOrderRef: `SH-NATIVE-${suffix}`,
-      paymentStatusSnapshot: 'cod', customerName: 'Người nhận nghiệm thu',
+      paymentStatusSnapshot: 'cod', customerName: 'Người nhận nghiệm thu', customerPhone: '0900 123 456',
+      shippingAddress: '15 Đường Kho, Quận 1, TP. Hồ Chí Minh', internalNote: 'Gọi trước khi giao',
       items: [{ mappingId: channelMappingId, quantity: '2', unitPriceVnd: '12500' }],
     };
     const channelCreateHeaders = { ...writeHeaders, 'idempotency-key': `native-channel-order-${suffix}-001` };
@@ -240,6 +241,8 @@ async function run() {
     assert.equal(channelOrder.fulfillmentStatus, 'reserved');
     assert.equal(channelOrder.paymentStatusSnapshot, 'cod');
     assert.equal(channelOrder.totalVnd, '25000');
+    assert.equal(channelOrder.customerPhone, '0900 123 456');
+    assert.equal(channelOrder.shippingAddress, '15 Đường Kho, Quận 1, TP. Hồ Chí Minh');
     const channelCreateReplay = await app.inject({
       method: 'POST', url: `/api/stores/${store.id}/channel-orders`, headers: channelCreateHeaders, payload: channelOrderPayload,
     });
@@ -304,6 +307,8 @@ async function run() {
     const channelDetail = await app.inject({ method: 'GET', url: `/api/stores/${store.id}/channel-orders/${channelOrder.id}`, headers });
     requireStatus(channelDetail, 200, 'Channel order and immutable status history');
     assert.deepEqual(channelDetail.json().events.map((event) => event.toStatus), ['reserved', 'packed', 'shipped', 'delivered']);
+    assert.equal(channelDetail.json().order.customerPhone, '0900 123 456');
+    assert.equal(channelDetail.json().order.shippingAddress, '15 Đường Kho, Quận 1, TP. Hồ Chí Minh');
 
     const cancelChannelOrder = await app.inject({
       method: 'POST', url: `/api/stores/${store.id}/channel-orders`,
@@ -330,6 +335,8 @@ async function run() {
     assert.ok(channelCsv.body.includes(channelOrderPayload.externalOrderRef));
     assert.ok(channelCsv.body.includes(`SH-CANCEL-${suffix}`));
     assert.ok(channelCsv.body.includes('cod'));
+    assert.ok(channelCsv.body.includes('0900 123 456'));
+    assert.ok(channelCsv.body.includes('15 Đường Kho, Quận 1, TP. Hồ Chí Minh'));
     assert.deepEqual(await businessCounts(), financeBeforeChannelOrder, 'manual channel-order payment snapshot creates no Slink revenue, debt, payment, or cash movement');
     process.stdout.write('PASS native manual channel orders, idempotency, reservation, shipment ledger, cancellation, scoped CSV export, tenant-safe history and finance isolation\n');
 
