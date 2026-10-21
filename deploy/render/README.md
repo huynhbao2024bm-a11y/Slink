@@ -6,7 +6,7 @@
 
 ## Frontend và backend
 
-Slink đã chạy chung trong một tiến trình Node.js: Fastify phục vụ các tệp giao diện và API từ cùng một origin. Vì vậy Render chỉ cần một Web Service Node, không cần tách static site, cấu hình CORS hoặc URL API riêng. Render cung cấp `PORT`; Blueprint đặt `HOST=0.0.0.0`, tin cậy đúng một hop proxy của Render để Fastify nhận IP client cho rate limit, ghim Node.js 24.22.0 theo yêu cầu dự án và dùng `/api/ready` để xác nhận API kết nối được cơ sở dữ liệu.
+Slink đã chạy chung trong một tiến trình Node.js: Fastify phục vụ các tệp giao diện và API từ cùng một origin. Vì vậy Render chỉ cần một Web Service Node, không cần tách static site, cấu hình CORS hoặc URL API riêng. Render cung cấp `PORT`; ứng dụng nhận biết biến môi trường `RENDER=true` và bind `0.0.0.0` ngay cả khi `HOST` trong Dashboard còn đặt thành `127.0.0.1`. Blueprint cũng đặt `HOST=0.0.0.0`, tin cậy đúng một hop proxy của Render để Fastify nhận IP client cho rate limit, ghim Node.js 24.22.0 theo yêu cầu dự án và dùng `/api/ready` để xác nhận API kết nối được cơ sở dữ liệu.
 
 ## Chặn trước khi tạo cơ sở dữ liệu Render
 

@@ -211,7 +211,11 @@ async function main() {
   const pool = createPool();
   const app = await buildServer({ pool });
   const port = Number(process.env.PORT || 3000);
-  const host = process.env.HOST || '127.0.0.1';
+  // Render's proxy cannot reach a listener bound only to loopback, even if HOST
+  // was set to 127.0.0.1 in the service dashboard.
+  const host = process.env.RENDER === 'true'
+    ? '0.0.0.0'
+    : (process.env.HOST || '127.0.0.1');
   await app.listen({ port, host });
   app.log.info({ address: `http://${host}:${port}` }, 'Slink API listening');
   const shutdown = async () => {
