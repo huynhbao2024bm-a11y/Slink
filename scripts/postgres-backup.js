@@ -238,6 +238,15 @@ async function verifyManifest(manifestPath, keyInfo) {
   if (typeof manifest.fileName !== 'string' || path.basename(manifest.fileName) !== manifest.fileName) {
     fail('Backup manifest contains an invalid archive filename.');
   }
+  if (manifest.extensions !== undefined && (!Array.isArray(manifest.extensions)
+      || manifest.extensions.length > 256
+      || manifest.extensions.some((extension) => !extension || typeof extension.name !== 'string'
+        || !/^[A-Za-z0-9_.-]{1,128}$/.test(extension.name)
+        || typeof extension.version !== 'string' || extension.version.length > 128
+        || typeof extension.schema !== 'string' || extension.schema.length > 128)
+      || new Set(manifest.extensions.map((extension) => extension.name)).size !== manifest.extensions.length)) {
+    fail('Backup manifest PostgreSQL extension inventory is invalid.');
+  }
   if (!/^[a-f0-9]{64}$/.test(manifest.archiveSha256 || '') || !Number.isSafeInteger(manifest.archiveBytes)) {
     fail('Backup manifest checksum or size is invalid.');
   }
@@ -271,7 +280,16 @@ async function backupMetadata(connection) {
     if (!role.rowCount) fail('Could not inspect the backup database role.');
     if (role.rows[0].rolsuper) fail('Use a dedicated non-superuser backup role, not a PostgreSQL superuser.');
     if (!role.rows[0].rolbypassrls) fail('The backup role must have BYPASSRLS so the dump cannot silently omit another store’s rows.');
-    return role.rows[0];
+    const extensions = await pool.query(`
+      SELECT ext.extname AS name,
+             ext.extversion AS version,
+             nsp.nspname AS schema
+      FROM pg_catalog.pg_extension ext
+      JOIN pg_catalog.pg_namespace nsp ON nsp.oid = ext.extnamespace
+      WHERE ext.extname <> 'plpgsql'
+      ORDER BY ext.extname
+    `);
+    return { ...role.rows[0], extensions: extensions.rows };
   } finally {
     await pool.end();
   }
@@ -328,6 +346,7 @@ async function createBackup() {
       databaseName: metadata.database_name,
       serverVersion: metadata.server_version,
       serverVersionNum: metadata.server_version_num,
+      extensions: metadata.extensions,
       pgDumpVersion: version.stdout,
     };
     manifest.manifestHmac = manifestSignature(manifest, keyInfo.key);
@@ -372,33 +391,81 @@ async function validateRestoreTarget(connection, manifest) {
                 WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
                   AND n.nspname NOT LIKE 'pg_toast%'
                   AND n.nspname NOT LIKE 'pg_temp_%'
-                  AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')) AS relation_count,
+                  AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')
+                  AND NOT EXISTS (
+                    SELECT 1 FROM pg_catalog.pg_depend dependency
+                    WHERE dependency.classid = 'pg_catalog.pg_class'::regclass
+                      AND dependency.objid = c.oid
+                      AND dependency.refclassid = 'pg_catalog.pg_extension'::regclass
+                      AND dependency.deptype = 'e'
+                  )) AS relation_count,
               (SELECT count(*) FROM pg_catalog.pg_proc p
                  JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
                 WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
                   AND n.nspname NOT LIKE 'pg_toast%'
-                  AND n.nspname NOT LIKE 'pg_temp_%') AS routine_count,
+                  AND n.nspname NOT LIKE 'pg_temp_%'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM pg_catalog.pg_depend dependency
+                    WHERE dependency.classid = 'pg_catalog.pg_proc'::regclass
+                      AND dependency.objid = p.oid
+                      AND dependency.refclassid = 'pg_catalog.pg_extension'::regclass
+                      AND dependency.deptype = 'e'
+                  )) AS routine_count,
               (SELECT count(*) FROM pg_catalog.pg_type t
                  JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
                 WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
                   AND n.nspname NOT LIKE 'pg_toast%'
                   AND n.nspname NOT LIKE 'pg_temp_%'
-                  AND t.typtype <> 'p') AS type_count,
+                  AND t.typtype <> 'p'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM pg_catalog.pg_depend dependency
+                    WHERE dependency.classid = 'pg_catalog.pg_type'::regclass
+                      AND dependency.objid = t.oid
+                      AND dependency.refclassid = 'pg_catalog.pg_extension'::regclass
+                      AND dependency.deptype = 'e'
+                  )) AS type_count,
               (SELECT count(*) FROM pg_catalog.pg_operator o
                  JOIN pg_catalog.pg_namespace n ON n.oid = o.oprnamespace
                 WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
                   AND n.nspname NOT LIKE 'pg_toast%'
-                  AND n.nspname NOT LIKE 'pg_temp_%') AS operator_count,
+                  AND n.nspname NOT LIKE 'pg_temp_%'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM pg_catalog.pg_depend dependency
+                    WHERE dependency.classid = 'pg_catalog.pg_operator'::regclass
+                      AND dependency.objid = o.oid
+                      AND dependency.refclassid = 'pg_catalog.pg_extension'::regclass
+                      AND dependency.deptype = 'e'
+                  )) AS operator_count,
               (SELECT count(*) FROM pg_catalog.pg_collation c
                  JOIN pg_catalog.pg_namespace n ON n.oid = c.collnamespace
                 WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
                   AND n.nspname NOT LIKE 'pg_toast%'
-                  AND n.nspname NOT LIKE 'pg_temp_%') AS collation_count,
+                  AND n.nspname NOT LIKE 'pg_temp_%'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM pg_catalog.pg_depend dependency
+                    WHERE dependency.classid = 'pg_catalog.pg_collation'::regclass
+                      AND dependency.objid = c.oid
+                      AND dependency.refclassid = 'pg_catalog.pg_extension'::regclass
+                      AND dependency.deptype = 'e'
+                  )) AS collation_count,
               (SELECT count(*) FROM pg_catalog.pg_namespace n
                 WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'public')
                   AND n.nspname NOT LIKE 'pg_toast%'
-                  AND n.nspname NOT LIKE 'pg_temp_%') AS custom_schema_count,
-              (SELECT count(*) FROM pg_catalog.pg_extension e WHERE e.extname <> 'plpgsql') AS extension_count`,
+                  AND n.nspname NOT LIKE 'pg_temp_%'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM pg_catalog.pg_depend dependency
+                    WHERE dependency.classid = 'pg_catalog.pg_namespace'::regclass
+                      AND dependency.objid = n.oid
+                      AND dependency.refclassid = 'pg_catalog.pg_extension'::regclass
+                      AND dependency.deptype = 'e'
+                  )) AS custom_schema_count,
+              COALESCE((
+                SELECT json_agg(json_build_object('name', ext.extname, 'version', ext.extversion, 'schema', nsp.nspname)
+                                ORDER BY ext.extname)
+                FROM pg_catalog.pg_extension ext
+                JOIN pg_catalog.pg_namespace nsp ON nsp.oid = ext.extnamespace
+                WHERE ext.extname <> 'plpgsql'
+              ), '[]'::json) AS extensions`,
     );
     const target = state.rows[0];
     if (target.database_name !== connection.databaseName) fail('Connected database name does not match the target URL.');
@@ -409,8 +476,15 @@ async function validateRestoreTarget(connection, manifest) {
     if (target.has_public_schema && !target.can_create_public) fail('The restore role needs CREATE privilege on the existing public schema.');
     if (!target.has_app_role) fail('Create the slink_app role on the target cluster before restoring ACL grants.');
     if (target.relation_count || target.routine_count || target.type_count || target.operator_count
-      || target.collation_count || target.custom_schema_count || target.extension_count) {
-      fail('Restore target contains application objects or extensions; choose a new, empty disposable database.');
+      || target.collation_count || target.custom_schema_count) {
+      fail('Restore target contains objects outside its installed extensions; choose a new, empty disposable database.');
+    }
+    if (manifest.extensions === undefined) {
+      if (target.extensions.length) {
+        fail('This older backup does not record its PostgreSQL extensions. Restore to a target without non-system extensions.');
+      }
+    } else if (canonicalJson(target.extensions) !== canonicalJson(manifest.extensions)) {
+      fail('Restore target PostgreSQL extensions do not match the backup names, versions, and schemas. Prepare a target with matching extensions.');
     }
     if (Math.floor(target.server_version_num / 10000) < Math.floor(manifest.serverVersionNum / 10000)) {
       fail('The target PostgreSQL major version is older than the backup source.');

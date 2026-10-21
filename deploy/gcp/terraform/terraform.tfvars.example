@@ -1,0 +1,9 @@
+project_id         = "replace-with-google-cloud-project-id"
+billing_account_id = "XXXXXX-XXXXXX-XXXXXX"
+github_repository  = "huynhbao2024bm-a11y/Slink"
+operator_email     = "replace-with-your-google-account-email"
+region             = "asia-southeast1"
+zone               = "asia-southeast1-b"
+domain             = "replace-after-you-choose-a-domain"
+machine_type       = "e2-medium"
+monthly_budget_usd = 100

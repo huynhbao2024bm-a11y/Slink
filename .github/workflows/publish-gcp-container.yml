@@ -1,0 +1,84 @@
+name: Publish Slink images to Google Artifact Registry
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Immutable release tag, for example v0.2.1
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: slink-gcp-image-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      IMAGE_VERSION: ${{ inputs.version }}
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_RELEASE_SERVICE_ACCOUNT: ${{ vars.GCP_RELEASE_SERVICE_ACCOUNT }}
+    steps:
+      - name: Validate the manually selected release and cloud settings
+        shell: bash
+        run: |
+          [[ "$IMAGE_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Use an immutable vMAJOR.MINOR.PATCH tag.' >&2; exit 1; }
+          for name in GCP_PROJECT_ID GCP_REGION GCP_WORKLOAD_IDENTITY_PROVIDER GCP_RELEASE_SERVICE_ACCOUNT; do
+            [[ -n "${!name}" ]] || { echo "Missing GitHub Actions variable: $name" >&2; exit 1; }
+          done
+
+      - name: Check out reviewed release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js and pnpm
+        uses: pnpm/setup@a0881977cd8ea73b1ed212236c99ca10dcc80cf4 # v3.1.1
+        with:
+          runtime: node@24.22.0
+          require-lockfile: true
+          cache: true
+
+      - name: Run the data and API acceptance suite
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm test
+
+      - name: Authenticate to Google Cloud with short-lived OIDC credentials
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_RELEASE_SERVICE_ACCOUNT }}
+
+      - name: Configure Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Build and publish versioned API and operations images
+        shell: bash
+        run: |
+          set -euo pipefail
+          registry="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/slink"
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          docker build --pull --target runtime \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --label "org.opencontainers.image.version=$IMAGE_VERSION" \
+            --tag "$registry/slink-api:$IMAGE_VERSION" .
+          docker build --pull --target backup \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --label "org.opencontainers.image.version=$IMAGE_VERSION" \
+            --tag "$registry/slink-ops:$IMAGE_VERSION" .
+          docker push "$registry/slink-api:$IMAGE_VERSION"
+          docker push "$registry/slink-ops:$IMAGE_VERSION"

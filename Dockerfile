@@ -22,4 +22,18 @@ COPY --chown=node:node server ./server
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 CMD ["node", "-e", "fetch('http://127.0.0.1:' + process.env.PORT + '/api/ready').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
-CMD ["node", "server/index.js"]
+CMD ["node", "server/container-start.js", "server/index.js"]
+
+FROM postgres:18.6-bookworm AS backup
+
+WORKDIR /app
+RUN groupadd --gid 1000 slink && useradd --uid 1000 --gid 1000 --create-home --shell /usr/sbin/nologin slink
+COPY --from=runtime --chown=slink:slink /usr/local/bin/node /usr/local/bin/node
+COPY --from=runtime --chown=slink:slink /app/node_modules ./node_modules
+COPY --chown=slink:slink package.json ./package.json
+COPY --chown=slink:slink server ./server
+COPY --chown=slink:slink scripts/postgres-backup.js ./scripts/postgres-backup.js
+COPY --chown=slink:slink scripts/postgres-role-check.js ./scripts/postgres-role-check.js
+USER slink
+ENTRYPOINT ["node", "server/container-start.js"]
+CMD ["scripts/postgres-backup.js", "create"]
