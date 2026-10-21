@@ -19,7 +19,9 @@ services:
       - key: TRUSTED_PROXY_HOPS
         value: "1"
       - key: PG_SSL
-        value: "true"
+        value: ca-file
+      - key: PG_SSL_CA_FILE
+        value: /opt/render/project/src/deploy/render/supabase-ca.crt
       - key: LOG_LEVEL
         value: info
       - key: PUBLIC_ORIGIN
