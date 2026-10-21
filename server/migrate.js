@@ -4,22 +4,19 @@ const { existsSync } = require('node:fs');
 const { createHash } = require('node:crypto');
 const { Pool } = require('pg');
 const { assertMigrationRole } = require('./migration-role');
+const { databaseTransportOptions } = require('./database-transport');
 
 const envFile = path.resolve(__dirname, '..', '.env');
 if (existsSync(envFile)) process.loadEnvFile(envFile);
-
-if (process.env.NODE_ENV === 'production' && process.env.PG_SSL !== 'true') {
-  throw new Error('Production database migrations require verified TLS. Set PG_SSL=true.');
-}
 
 const connectionString = process.env.MIGRATION_DATABASE_URL;
 if (!connectionString) throw new Error('MIGRATION_DATABASE_URL is required.');
 
 const pool = new Pool({
   connectionString,
+  ...databaseTransportOptions(process.env, connectionString, 'MIGRATION_DATABASE_URL'),
   max: 1,
   connectionTimeoutMillis: 10000,
-  ssl: process.env.PG_SSL === 'true' ? { rejectUnauthorized: true } : undefined,
 });
 
 async function main() {

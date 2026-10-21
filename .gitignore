@@ -10,3 +10,8 @@ coverage/
 *.db
 *.db-shm
 *.db-wal
+**/.terraform/
+**/terraform.tfstate
+**/terraform.tfstate.*
+**/terraform.tfvars
+!**/terraform.tfvars.example

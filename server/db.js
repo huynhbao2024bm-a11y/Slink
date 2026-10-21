@@ -1,4 +1,5 @@
 const { Pool } = require('pg');
+const { databaseTransportOptions } = require('./database-transport');
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -14,10 +15,10 @@ function createPool(env = process.env) {
   if (!env.APP_DATABASE_URL) throw new Error('APP_DATABASE_URL is required for the application runtime.');
   return new Pool({
     connectionString: env.APP_DATABASE_URL,
+    ...databaseTransportOptions(env, env.APP_DATABASE_URL, 'APP_DATABASE_URL'),
     max: Number(env.DB_POOL_MAX || 10),
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000,
-    ssl: env.PG_SSL === 'true' ? { rejectUnauthorized: true } : undefined,
     application_name: 'slink-api',
   });
 }

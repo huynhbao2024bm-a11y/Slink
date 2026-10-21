@@ -1,0 +1,9 @@
+[Unit]
+Description=Slink encrypted PostgreSQL backup to Google Cloud Storage
+Requires=docker.service
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/slink/backup.sh
+TimeoutStartSec=30min

@@ -8,6 +8,7 @@ const { existsSync } = require('node:fs');
 const path = require('node:path');
 const { ApiError, registerAuthRoutes } = require('./auth');
 const { createPool } = require('./db');
+const { databaseTransportOptions } = require('./database-transport');
 const { registerProductRoutes } = require('./products');
 const { registerSalesRoutes } = require('./sales');
 const { registerPromotionRoutes } = require('./promotions');
@@ -54,9 +55,7 @@ function trustedProxies(value) {
 
 function validateProductionConfig(env) {
   if (env.NODE_ENV !== 'production') return;
-  if (env.PG_SSL !== 'true') {
-    throw new Error('Production database connections require verified TLS. Set PG_SSL=true.');
-  }
+  databaseTransportOptions(env, env.APP_DATABASE_URL, 'APP_DATABASE_URL');
   let publicOrigin;
   let deliveryUrl;
   try {
