@@ -72,8 +72,54 @@ async function main() {
 
     await client.query(`
       GRANT USAGE ON SCHEMA public TO slink_app;
-      GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO slink_app;
-      GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO slink_app;
+            DO $$
+      DECLARE
+        app_table record;
+      BEGIN
+        FOR app_table IN
+          SELECT ns.nspname, cls.relname
+          FROM pg_catalog.pg_class AS cls
+          JOIN pg_catalog.pg_namespace AS ns ON ns.oid = cls.relnamespace
+          WHERE ns.nspname = 'public'
+            AND cls.relkind IN ('r', 'p')
+            AND cls.relowner = (
+              SELECT r.oid
+              FROM pg_catalog.pg_roles AS r
+              WHERE r.rolname = current_user
+            )
+        LOOP
+          EXECUTE format(
+            'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE %I.%I TO slink_app',
+            app_table.nspname,
+            app_table.relname
+          );
+        END LOOP;
+      END;
+      $$;
+      DO $$
+      DECLARE
+        app_sequence record;
+      BEGIN
+        FOR app_sequence IN
+          SELECT ns.nspname, cls.relname
+          FROM pg_catalog.pg_class AS cls
+          JOIN pg_catalog.pg_namespace AS ns ON ns.oid = cls.relnamespace
+          WHERE ns.nspname = 'public'
+            AND cls.relkind = 'S'
+            AND cls.relowner = (
+              SELECT r.oid
+              FROM pg_catalog.pg_roles AS r
+              WHERE r.rolname = current_user
+            )
+        LOOP
+          EXECUTE format(
+            'GRANT USAGE, SELECT, UPDATE ON SEQUENCE %I.%I TO slink_app',
+            app_sequence.nspname,
+            app_sequence.relname
+          );
+        END LOOP;
+      END;
+      $$;
       REVOKE ALL ON public.schema_migrations FROM slink_app;
       REVOKE UPDATE, DELETE, TRUNCATE ON public.promotions, public.promotion_redemptions FROM slink_app;
       GRANT SELECT, INSERT, UPDATE ON public.promotions TO slink_app;
