@@ -10,6 +10,7 @@ Slink là ứng dụng bán lẻ ưu tiên điện thoại, giao diện tiếng 
 - Tìm mặt hàng theo tên, SKU hoặc mã vạch; bán hàng với tối đa năm phương thức thanh toán, tính tiền thối và cập nhật tồn kho/công nợ trong một giao dịch.
 - Danh sách đơn hàng, xem chi tiết, hủy đơn chưa thu tiền có lý do, trả hàng một phần, quản lý khách, thu nợ và hồ sơ cửa hàng.
 - Kiểm kê, nhập hàng, giá vốn, công nợ nhà cung cấp, thanh toán nhà cung cấp, sổ thu chi, báo cáo và xuất CSV có phân quyền từ máy chủ.
+- Mã voucher giảm cố định hoặc theo phần trăm đã có trong source; migration 0018 cần được áp dụng sau backup trước khi dùng trên CSDL local.
 - Giao diện responsive và vỏ PWA có thể thêm vào màn hình chính khi được phục vụ qua HTTPS.
 
 Các luồng này cần kiểm tra nghiệp vụ, dữ liệu và quyền truy cập trước khi dùng thật. Thanh toán QR, chuyển khoản và thẻ hiện do nhân viên xác nhận; chưa có kết nối ngân hàng. Hóa đơn điện tử, nhân viên, nhập dữ liệu an toàn, sao lưu/khôi phục, hoạt động khi mất mạng và hỗ trợ vận hành vẫn đang thiếu.
@@ -25,6 +26,10 @@ PGlite là runtime phát triển trên một máy, không phải database produc
 `node tools/serve.js` chỉ mở bản xem giao diện tại `http://127.0.0.1:4173`; bản xem này **không** có API hay lưu giao dịch. Không dùng nó làm máy chủ cho cửa hàng.
 
 Chi tiết thiết lập vai trò và dịch vụ email xem tại [`docs/BACKEND_SETUP.md`](docs/BACKEND_SETUP.md). Quy trình tạo ảnh container và cổng triển khai ghi tại [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md); trạng thái tích hợp thương mại xem tại [`docs/COMMERCIAL_READINESS.md`](docs/COMMERCIAL_READINESS.md). Không đưa bí mật vào mã nguồn hoặc commit tệp `.env`.
+
+## Hồ sơ giới thiệu sản phẩm
+
+Pitch deck tiếng Việt 9 trang: [`pitch/Slink_Pitch_Vietnamese_2026-10-20-v2.pptx`](pitch/Slink_Pitch_Vietnamese_2026-10-20-v2.pptx). Deck ghi rõ giả thuyết kinh doanh, bằng chứng hiện có và các cổng còn mở; đây không phải tuyên bố sản phẩm đã sẵn sàng phát hành.
 
 ## iPhone và Android
 

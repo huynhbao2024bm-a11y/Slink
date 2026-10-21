@@ -3,6 +3,7 @@
 const { createHash, randomUUID } = require('node:crypto');
 const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
+const { allowedWarehouseIds } = require('./warehouse-access');
 const { lockActiveCashSession } = require('./cash-register');
 
 const FINANCE_ROLES = new Set(['owner', 'manager', 'accountant']);
@@ -39,8 +40,9 @@ function registerFinanceRoutes(app, { pool, env }) {
       const fullFinanceAccess = FINANCE_ROLES.has(membership.role);
       const cashbookAccess = fullFinanceAccess || membership.role === 'cashier';
       const purchaseAccess = fullFinanceAccess || membership.role === 'stockkeeper';
-      const [cash, suppliers, summary, customerDebtors, purchases] = await Promise.all([
-        cashbookAccess ? client.query(
+      const warehouseIds = allowedWarehouseIds(membership);
+      const queries = [
+        () => cashbookAccess ? client.query(
           `SELECT c.direction, c.category, c.amount_vnd::text AS amount_vnd, c.method, c.source_type, c.source_id,
                   c.cash_session_id, s.opened_at AS cash_session_opened_at,
                   c.note, c.occurred_at, u.display_name AS actor_name, COUNT(*) OVER()::int AS total_count
@@ -55,7 +57,7 @@ function registerFinanceRoutes(app, { pool, env }) {
            ORDER BY c.occurred_at DESC, c.source_id DESC LIMIT 100`,
           [storeId, fullFinanceAccess, auth.userId]
         ) : Promise.resolve({ rows: [] }),
-        fullFinanceAccess ? client.query(
+        () => fullFinanceAccess ? client.query(
           `SELECT s.id, s.name,
                   COALESCE(SUM(l.increases_payable_vnd) - SUM(l.decreases_payable_vnd), 0)::text AS balance_vnd,
                   MAX(l.occurred_at) AS last_activity_at
@@ -67,7 +69,7 @@ function registerFinanceRoutes(app, { pool, env }) {
           `SELECT id, name FROM suppliers WHERE store_id = $1 AND status = 'active' ORDER BY name`,
           [storeId]
         ) : Promise.resolve({ rows: [] }),
-        fullFinanceAccess ? client.query(
+        () => fullFinanceAccess ? client.query(
           `SELECT COALESCE(SUM(amount_vnd) FILTER (WHERE direction = 'in' AND occurred_at >= ((date_trunc('day', now() AT TIME ZONE s.timezone)) AT TIME ZONE s.timezone)), 0)::text AS today_in_vnd,
                   COALESCE(SUM(amount_vnd) FILTER (WHERE direction = 'out' AND occurred_at >= ((date_trunc('day', now() AT TIME ZONE s.timezone)) AT TIME ZONE s.timezone)), 0)::text AS today_out_vnd,
                   COALESCE((SELECT SUM(balance) FROM (
@@ -85,7 +87,7 @@ function registerFinanceRoutes(app, { pool, env }) {
            FROM stores s LEFT JOIN cash_movements c ON c.store_id = s.id WHERE s.id = $1 GROUP BY s.id, s.timezone`,
           [storeId]
         ) : Promise.resolve({ rows: [] }),
-        fullFinanceAccess ? client.query(
+        () => fullFinanceAccess ? client.query(
           `SELECT c.id, c.name, COALESCE(c.phone, '') AS phone,
                   SUM(l.debit_vnd - l.credit_vnd)::text AS balance_vnd
            FROM customers c JOIN customer_ledger_entries l ON l.store_id = c.store_id AND l.customer_id = c.id
@@ -94,9 +96,9 @@ function registerFinanceRoutes(app, { pool, env }) {
            ORDER BY SUM(l.debit_vnd - l.credit_vnd) DESC, c.name LIMIT 10`,
           [storeId]
         ) : Promise.resolve({ rows: [] }),
-        purchaseAccess ? client.query(
+        () => purchaseAccess ? client.query(
           `SELECT p.id, p.purchase_number, p.status, p.note, p.total_vnd::text AS total_vnd,
-                  p.received_at, COALESCE(s.name, '') AS supplier_name,
+                  p.received_at, po.purchase_order_number, COALESCE(s.name, '') AS supplier_name,
                   COALESCE((
                     SELECT json_agg(json_build_object(
                       'productName', l.product_name_snapshot,
@@ -109,16 +111,47 @@ function registerFinanceRoutes(app, { pool, env }) {
                     FROM purchase_lines l WHERE l.store_id = p.store_id AND l.purchase_id = p.id
                   ), '[]'::json) AS lines
            FROM purchases p LEFT JOIN suppliers s ON s.store_id = p.store_id AND s.id = p.supplier_id
-           WHERE p.store_id = $1 ORDER BY p.received_at DESC, p.id DESC LIMIT 50`,
-          [storeId]
+           LEFT JOIN purchase_orders po ON po.store_id = p.store_id AND po.id = p.purchase_order_id
+           WHERE p.store_id = $1 AND ($2::boolean = false OR p.warehouse_id = ANY($3::uuid[]))
+           ORDER BY p.received_at DESC, p.id DESC LIMIT 50`,
+          [storeId, warehouseIds !== null, warehouseIds || []]
         ) : Promise.resolve({ rows: [] }),
-      ]);
+        () => purchaseAccess ? client.query(
+          `SELECT po.id, po.purchase_order_number, po.status, po.note, po.version, po.warehouse_id,
+                  po.total_vnd::text AS total_vnd, po.created_at, po.ordered_at, po.completed_at, po.cancelled_at,
+                  s.id AS supplier_id, s.name AS supplier_name, w.name AS warehouse_name,
+                  COALESCE((
+                    SELECT json_agg(json_build_object(
+                      'id', l.id,
+                      'productId', l.product_id,
+                      'productName', l.product_name_snapshot,
+                      'sku', l.sku_snapshot,
+                      'unit', l.unit_snapshot,
+                      'quantityOrdered', l.quantity_ordered::text,
+                      'quantityReceived', l.quantity_received::text,
+                      'unitCostVnd', l.unit_cost_vnd::text,
+                      'totalVnd', l.line_total_vnd::text
+                    ) ORDER BY l.id)
+                    FROM purchase_order_lines l WHERE l.store_id = po.store_id AND l.purchase_order_id = po.id
+                  ), '[]'::json) AS lines
+           FROM purchase_orders po JOIN suppliers s ON s.store_id = po.store_id AND s.id = po.supplier_id
+           JOIN warehouses w ON w.store_id = po.store_id AND w.id = po.warehouse_id
+           WHERE po.store_id = $1 AND ($2::boolean = false OR po.warehouse_id = ANY($3::uuid[]))
+           ORDER BY po.created_at DESC, po.id DESC LIMIT 100`,
+          [storeId, warehouseIds !== null, warehouseIds || []]
+        ) : Promise.resolve({ rows: [] }),
+      ];
+      // These statements share the transaction-bound client; do not overlap client.query calls.
+      const results = [];
+      for (const query of queries) results.push(await query());
+      const [cash, suppliers, summary, customerDebtors, purchases, purchaseOrders] = results;
       return {
         movements: cash.rows,
         movementTotal: Number(cash.rows[0]?.total_count || 0),
         suppliers: suppliers.rows,
         customerDebtors: fullFinanceAccess ? customerDebtors.rows : [],
         purchases: purchaseAccess ? purchases.rows : [],
+        purchaseOrders: purchaseAccess ? purchaseOrders.rows : [],
         financeAccess: { full: fullFinanceAccess, cashbook: cashbookAccess, purchases: purchaseAccess },
         summary: fullFinanceAccess ? {
           todayInVnd: summary.rows[0]?.today_in_vnd || '0',

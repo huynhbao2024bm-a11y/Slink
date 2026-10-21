@@ -200,7 +200,12 @@ function registerStaffRoutes(app, { pool, env }) {
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
       assertOwner(membership);
       const members = await client.query(
-        `SELECT m.user_id, u.display_name, u.email, m.role, m.status, m.joined_at
+        `SELECT m.user_id, u.display_name, u.email, m.role, m.status, m.joined_at,
+                m.warehouse_scope_mode,
+                COALESCE((SELECT json_agg(mws.warehouse_id ORDER BY mws.warehouse_id)
+                          FROM membership_warehouse_scopes mws
+                          JOIN warehouses w ON w.store_id = mws.store_id AND w.id = mws.warehouse_id AND w.status = 'active'
+                          WHERE mws.store_id = m.store_id AND mws.user_id = m.user_id), '[]'::json) AS warehouse_scope_ids
          FROM memberships m JOIN users u ON u.id = m.user_id
          WHERE m.store_id = $1 AND m.role <> 'owner' ORDER BY m.created_at, u.display_name LIMIT 200`, [storeId]
       );
@@ -209,7 +214,11 @@ function registerStaffRoutes(app, { pool, env }) {
            CASE WHEN accepted_at IS NOT NULL THEN 'accepted' WHEN revoked_at IS NOT NULL THEN 'revoked' WHEN expires_at <= now() THEN 'expired' ELSE 'pending' END AS status
          FROM store_invitations WHERE store_id = $1 ORDER BY created_at DESC LIMIT 100`, [storeId]
       );
-      return { members: members.rows, invitations: invitations.rows };
+      const warehouses = await client.query(
+        `SELECT id, code, name, is_default FROM warehouses WHERE store_id = $1 AND status = 'active'
+         ORDER BY is_default DESC, name, id`, [storeId]
+      );
+      return { members: members.rows, invitations: invitations.rows, warehouses: warehouses.rows };
     });
   });
 
@@ -276,23 +285,78 @@ function registerStaffRoutes(app, { pool, env }) {
     const { storeId, userId } = request.params;
     const role = request.body?.role;
     const status = request.body?.status;
+    const requestedScopeMode = request.body?.warehouseScopeMode;
+    const requestedWarehouseIds = request.body?.warehouseIds;
     if (!UUID_PATTERN.test(storeId) || !UUID_PATTERN.test(userId) || !STAFF_ROLES.has(role) || !STAFF_STATUSES.has(status)) {
       throw new ApiError(400, 'validation_error', 'Vai trò hoặc trạng thái nhân viên không hợp lệ.');
+    }
+    if (requestedScopeMode !== undefined && !['all', 'selected'].includes(requestedScopeMode)) {
+      throw new ApiError(400, 'validation_error', 'Phạm vi kho không hợp lệ.');
+    }
+    if (role !== 'stockkeeper' && requestedScopeMode === 'selected') {
+      throw new ApiError(400, 'validation_error', 'Chỉ nhân viên kho mới có thể được giới hạn theo kho.');
+    }
+    if (requestedWarehouseIds !== undefined && (!Array.isArray(requestedWarehouseIds) || requestedWarehouseIds.length > 500 || requestedWarehouseIds.some((id) => typeof id !== 'string' || !UUID_PATTERN.test(id)))) {
+      throw new ApiError(400, 'validation_error', 'Danh sách kho được chọn không hợp lệ.');
     }
     if (userId === auth.userId) throw new ApiError(409, 'self_change_forbidden', 'Chủ cửa hàng không thể tự thay đổi quyền của mình tại đây.');
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
       assertOwner(membership);
       const found = await client.query(
-        `SELECT m.user_id, m.role, m.status, u.email FROM memberships m JOIN users u ON u.id = m.user_id
+        `SELECT m.user_id, m.role, m.status, m.warehouse_scope_mode, u.email FROM memberships m JOIN users u ON u.id = m.user_id
          WHERE m.store_id = $1 AND m.user_id = $2 FOR UPDATE OF m`, [storeId, userId]
       );
       if (!found.rowCount) throw new ApiError(404, 'not_found', 'Không tìm thấy nhân viên.');
       if (found.rows[0].role === 'owner') throw new ApiError(409, 'owner_protected', 'Quyền chủ cửa hàng không thể thay đổi bằng màn hình nhân viên.');
-      await client.query('UPDATE memberships SET role = $3, status = $4 WHERE store_id = $1 AND user_id = $2', [storeId, userId, role, status]);
+      const current = found.rows[0];
+      const scopeMode = role === 'stockkeeper'
+        ? (requestedScopeMode ?? (current.role === 'stockkeeper' ? current.warehouse_scope_mode : 'all'))
+        : 'all';
+      let warehouseIds = [];
+      if (scopeMode === 'selected') {
+        if (requestedWarehouseIds !== undefined) {
+          warehouseIds = [...new Set(requestedWarehouseIds.map((id) => id.toLowerCase()))];
+        } else if (current.role === 'stockkeeper' && current.warehouse_scope_mode === 'selected') {
+          const existingScopes = await client.query(
+            `SELECT mws.warehouse_id FROM membership_warehouse_scopes mws
+             JOIN warehouses w ON w.store_id = mws.store_id AND w.id = mws.warehouse_id AND w.status = 'active'
+             WHERE mws.store_id = $1 AND mws.user_id = $2 ORDER BY mws.warehouse_id`, [storeId, userId]
+          );
+          warehouseIds = existingScopes.rows.map((row) => row.warehouse_id);
+        }
+        if (warehouseIds.length < 1) throw new ApiError(400, 'warehouse_scope_required', 'Hãy chọn ít nhất một kho đang hoạt động cho nhân viên kho.');
+        const validWarehouses = await client.query(
+          `SELECT id FROM warehouses WHERE store_id = $1 AND status = 'active' AND id = ANY($2::uuid[])`,
+          [storeId, warehouseIds]
+        );
+        if (validWarehouses.rowCount !== warehouseIds.length) throw new ApiError(400, 'warehouse_scope_invalid', 'Danh sách có kho không tồn tại hoặc đã lưu trữ. Tải lại danh sách kho rồi thử lại.');
+      }
+      await client.query(
+        'UPDATE memberships SET role = $3, status = $4, warehouse_scope_mode = $5 WHERE store_id = $1 AND user_id = $2',
+        [storeId, userId, role, status, scopeMode]
+      );
+      await client.query('DELETE FROM membership_warehouse_scopes WHERE store_id = $1 AND user_id = $2', [storeId, userId]);
+      if (scopeMode === 'selected') {
+        for (const warehouseId of warehouseIds) {
+          await client.query(
+            `INSERT INTO membership_warehouse_scopes (store_id, user_id, warehouse_id) VALUES ($1, $2, $3)`,
+            [storeId, userId, warehouseId]
+          );
+        }
+      }
       await client.query(
         `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, metadata)
          VALUES ($1, $2, 'staff.access_changed', 'membership', $3, $4::jsonb)`,
-        [storeId, auth.userId, userId, JSON.stringify({ email: found.rows[0].email, previousRole: found.rows[0].role, previousStatus: found.rows[0].status, role, status })]
+        [storeId, auth.userId, userId, JSON.stringify({
+          email: current.email,
+          previousRole: current.role,
+          previousStatus: current.status,
+          previousWarehouseScopeMode: current.warehouse_scope_mode,
+          role,
+          status,
+          warehouseScopeMode: scopeMode,
+          warehouseIds,
+        })]
       );
       return { status: 'updated' };
     });

@@ -12,8 +12,8 @@ function registerAnalyticsRoutes(app, { pool }) {
     const days = request.query?.days === '30' ? 30 : 7;
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
       if (!ANALYTICS_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền xem báo cáo tài chính.');
-      const [summary, daily, topProducts] = await Promise.all([
-        client.query(
+      const queries = [
+        () => client.query(
           `WITH bounds AS (
              SELECT timezone, (now() AT TIME ZONE timezone)::date AS end_date,
                     ((now() AT TIME ZONE timezone)::date - ($2::int - 1)) AS start_date
@@ -45,14 +45,14 @@ function registerAnalyticsRoutes(app, { pool }) {
                   COALESCE(SUM(total_vnd), 0)::text AS gross_sales_vnd,
                   COALESCE(SUM(paid_vnd - refunded_vnd), 0)::text AS collected_vnd,
                   COALESCE(SUM(GREATEST(total_vnd - returned_vnd - paid_vnd + refunded_vnd, 0)), 0)::text AS receivable_vnd,
-                  COALESCE(AVG(total_vnd - returned_vnd), 0)::numeric(20,2)::text AS average_ticket_vnd,
+                  COALESCE(ROUND(AVG(total_vnd - returned_vnd)), 0)::bigint::text AS average_ticket_vnd,
                   (SELECT gross_profit_vnd FROM margin) AS gross_profit_vnd,
                   (SELECT start_date::text FROM bounds) AS start_date,
                   (SELECT end_date::text FROM bounds) AS end_date
            FROM scoped`,
           [storeId, days]
         ),
-        client.query(
+        () => client.query(
           `WITH bounds AS (
              SELECT timezone, (now() AT TIME ZONE timezone)::date AS end_date,
                     ((now() AT TIME ZONE timezone)::date - ($2::int - 1)) AS start_date
@@ -74,7 +74,7 @@ function registerAnalyticsRoutes(app, { pool }) {
            GROUP BY d.day ORDER BY d.day`,
           [storeId, days]
         ),
-        client.query(
+        () => client.query(
           `SELECT p.id, p.name, p.sku, p.unit,
                   COALESCE(SUM(ol.quantity - COALESCE(returns.returned_quantity, 0)), 0)::text AS quantity_sold,
                   COALESCE(SUM(ol.line_total_vnd - COALESCE(returns.returned_vnd, 0)), 0)::text AS net_sales_vnd
@@ -94,7 +94,11 @@ function registerAnalyticsRoutes(app, { pool }) {
            ORDER BY SUM(ol.line_total_vnd - COALESCE(returns.returned_vnd, 0)) DESC, p.name LIMIT 10`,
           [storeId, days]
         ),
-      ]);
+      ];
+      // These statements share the transaction-bound client; do not overlap client.query calls.
+      const results = [];
+      for (const query of queries) results.push(await query());
+      const [summary, daily, topProducts] = results;
       const row = summary.rows[0];
       return {
         range: { from: row.start_date, to: row.end_date, days },

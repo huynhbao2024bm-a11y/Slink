@@ -4,6 +4,7 @@ const { createHash } = require('node:crypto');
 const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
 const { lockActiveCashSession } = require('./cash-register');
+const { calculatePromotion, consumePromotion, promotionCode } = require('./promotions');
 
 const MAX_BIGINT = 9223372036854775807n;
 const SELL_ROLES = new Set(['owner', 'manager', 'cashier']);
@@ -61,6 +62,9 @@ function normalizeSale(body) {
     }
   }
   const discountVnd = amount(body.discountVnd ?? 0, 'Khoản giảm giá');
+  const appliedPromotionCode = body.promotionCode === undefined || body.promotionCode === null || body.promotionCode === ''
+    ? null
+    : promotionCode(body.promotionCode);
   const rawTenders = body.tenders === undefined
     ? [{ method: body.method || 'cash', amountReceivedVnd: body.amountReceivedVnd }]
     : body.tenders;
@@ -90,7 +94,9 @@ function normalizeSale(body) {
   }
   const note = typeof body.note === 'string' ? body.note.trim() : '';
   if (note.length > 500) throw new ApiError(400, 'validation_error', 'Ghi chú tối đa 500 ký tự.');
-  return { items, discountVnd, amountReceivedVnd, method, tenders, customerId, note };
+  const warehouseId = body.warehouseId || null;
+  if (warehouseId !== null && (typeof warehouseId !== 'string' || !UUID_PATTERN.test(warehouseId))) throw new ApiError(400, 'validation_error', 'Kho bán hàng không hợp lệ.');
+  return { items, discountVnd, appliedPromotionCode, amountReceivedVnd, method, tenders, customerId, note, warehouseId: warehouseId?.toLowerCase() || null };
 }
 
 function distributeDiscount(lines, discount, subtotal) {
@@ -128,6 +134,8 @@ function registerSalesRoutes(app, { pool, env }) {
       customerId: sale.customerId,
       note: sale.note,
     };
+    if (sale.appliedPromotionCode) canonicalSale.promotionCode = sale.appliedPromotionCode;
+    if (sale.warehouseId) canonicalSale.warehouseId = sale.warehouseId;
     // Keep the original single-tender request hash stable so a pending sale
     // can still be safely retried by a client upgraded to this version.
     if (sale.tenders.length > 1) canonicalSale.tenders = sale.tenders;
@@ -163,6 +171,12 @@ function registerSalesRoutes(app, { pool, env }) {
         if (!customer.rowCount) throw new ApiError(404, 'customer_not_found', 'Không tìm thấy khách hàng đang hoạt động.');
       }
 
+      const warehouseResult = sale.warehouseId
+        ? await client.query(`SELECT id FROM warehouses WHERE store_id = $1 AND id = $2 AND status = 'active' FOR UPDATE`, [storeId, sale.warehouseId])
+        : await client.query(`SELECT id FROM warehouses WHERE store_id = $1 AND is_default AND status = 'active' FOR UPDATE`, [storeId]);
+      if (!warehouseResult.rowCount) throw new ApiError(404, 'warehouse_not_found', 'Không tìm thấy kho bán hàng đang hoạt động.');
+      const warehouseId = warehouseResult.rows[0].id;
+
       const productIds = sale.items.map((line) => line.productId).sort();
       const productResult = await client.query(
         `SELECT id, sku, name, unit, sale_price_vnd::text AS sale_price_vnd,
@@ -180,8 +194,9 @@ function registerSalesRoutes(app, { pool, env }) {
         if (!product.inventory_tracked) continue;
         const balance = await client.query(
           `SELECT on_hand::text AS on_hand, reserved::text AS reserved
-           FROM inventory_balances WHERE store_id = $1 AND product_id = $2 FOR UPDATE`,
-          [storeId, productId]
+           FROM inventory_balances WHERE store_id = $1 AND product_id = $2 AND warehouse_id = $3
+           FOR UPDATE`,
+          [storeId, productId, warehouseId]
         );
         if (!balance.rowCount) throw new ApiError(409, 'inventory_unavailable', 'Chưa có số dư tồn kho cho một sản phẩm. Hãy cập nhật danh mục.');
         const line = sale.items.find((item) => item.productId === productId);
@@ -201,10 +216,17 @@ function registerSalesRoutes(app, { pool, env }) {
         return { ...line, product, price, cost, grossVnd };
       });
       const subtotal = lines.reduce((sum, line) => sum + line.grossVnd, 0n);
-      if (subtotal > MAX_BIGINT || sale.discountVnd > subtotal) {
+      const appliedPromotion = sale.appliedPromotionCode
+        ? await calculatePromotion(client, {
+          storeId, code: sale.appliedPromotionCode, customerId: sale.customerId, subtotalVnd: subtotal, lock: true,
+        })
+        : null;
+      const promotionDiscountVnd = appliedPromotion?.discountVnd || 0n;
+      const totalDiscountVnd = sale.discountVnd + promotionDiscountVnd;
+      if (subtotal > MAX_BIGINT || totalDiscountVnd > subtotal) {
         throw new ApiError(400, 'validation_error', 'Khoản giảm giá không được vượt quá tiền hàng.');
       }
-      const total = subtotal - sale.discountVnd;
+      const total = subtotal - totalDiscountVnd;
       const nonCashReceived = sale.tenders.filter((tender) => tender.method !== 'cash')
         .reduce((sum, tender) => sum + tender.amountReceivedVnd, 0n);
       const cashTender = sale.tenders.find((tender) => tender.method === 'cash');
@@ -222,7 +244,9 @@ function registerSalesRoutes(app, { pool, env }) {
         amountVnd: tender.method === 'cash' ? cashApplied : tender.amountReceivedVnd,
         amountReceivedVnd: tender.amountReceivedVnd,
       })).filter((tender) => tender.amountVnd > 0n);
-      const allocatedDiscount = distributeDiscount(lines, sale.discountVnd, subtotal || 1n);
+      const allocatedDiscount = distributeDiscount(lines, totalDiscountVnd, subtotal || 1n);
+
+      if (appliedPromotion) await consumePromotion(client, { storeId, promotionId: appliedPromotion.id });
 
       const sequenceResult = await client.query(
         `UPDATE store_sequences SET next_order_number = next_order_number + 1
@@ -232,16 +256,23 @@ function registerSalesRoutes(app, { pool, env }) {
       if (!sequenceResult.rowCount) throw new Error('Store order sequence is missing.');
       const orderNumber = `SL-${sequenceResult.rows[0].order_number}`;
       const orderResult = await client.query(
-        `INSERT INTO orders (store_id, order_number, customer_id, cashier_id, status, subtotal_vnd,
+        `INSERT INTO orders (store_id, order_number, customer_id, cashier_id, warehouse_id, status, subtotal_vnd,
                              discount_vnd, tax_vnd, total_vnd, cash_received_vnd, cash_change_vnd, note)
-         VALUES ($1, $2, $3, $4, 'completed', $5, $6, 0, $7, $8, $9, $10)
+         VALUES ($1, $2, $3, $4, $5, 'completed', $6, $7, 0, $8, $9, $10, $11)
          RETURNING id, order_number, status, subtotal_vnd::text AS subtotal_vnd,
                    discount_vnd::text AS discount_vnd, total_vnd::text AS total_vnd,
                    cash_received_vnd::text AS cash_received_vnd, cash_change_vnd::text AS cash_change_vnd, occurred_at`,
-        [storeId, orderNumber, sale.customerId, auth.userId, subtotal.toString(), sale.discountVnd.toString(),
+        [storeId, orderNumber, sale.customerId, auth.userId, warehouseId, subtotal.toString(), totalDiscountVnd.toString(),
           total.toString(), cashReceived.toString(), change.toString(), sale.note]
       );
       const order = orderResult.rows[0];
+      if (appliedPromotion) {
+        await client.query(
+          `INSERT INTO promotion_redemptions (store_id, promotion_id, order_id, customer_id, cashier_id, code_snapshot, discount_vnd)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [storeId, appliedPromotion.id, order.id, sale.customerId, auth.userId, appliedPromotion.code, promotionDiscountVnd.toString()]
+        );
+      }
       for (let index = 0; index < lines.length; index += 1) {
         const line = lines[index];
         const lineTotal = line.grossVnd - allocatedDiscount[index];
@@ -255,18 +286,19 @@ function registerSalesRoutes(app, { pool, env }) {
         if (line.product.inventory_tracked) {
           await client.query(
             `UPDATE inventory_balances SET on_hand = on_hand - $3::numeric, version = version + 1, updated_at = now()
-             WHERE store_id = $1 AND product_id = $2`,
-            [storeId, line.product.id, quantityText(line.quantityMilli)]
+             WHERE store_id = $1 AND product_id = $2 AND warehouse_id = $4`,
+            [storeId, line.product.id, quantityText(line.quantityMilli), warehouseId]
           );
           const after = await client.query(
-            'SELECT on_hand::text AS on_hand FROM inventory_balances WHERE store_id = $1 AND product_id = $2',
-            [storeId, line.product.id]
+            `SELECT on_hand::text AS on_hand FROM inventory_balances WHERE store_id = $1 AND product_id = $2
+             AND warehouse_id = $3`,
+            [storeId, line.product.id, warehouseId]
           );
           await client.query(
-            `INSERT INTO inventory_movements (store_id, product_id, movement_type, quantity_delta, quantity_after,
+            `INSERT INTO inventory_movements (store_id, warehouse_id, product_id, movement_type, quantity_delta, quantity_after,
                                                reason, source_type, source_id, actor_user_id)
-             VALUES ($1, $2, 'sale', -$3::numeric, $4::numeric, $5, 'order', $6, $7)`,
-            [storeId, line.product.id, quantityText(line.quantityMilli), after.rows[0].on_hand,
+             VALUES ($1, $2, $3, 'sale', -$4::numeric, $5::numeric, $6, 'order', $7, $8)`,
+            [storeId, warehouseId, line.product.id, quantityText(line.quantityMilli), after.rows[0].on_hand,
               `Bán hàng ${orderNumber}`, order.id, auth.userId]
           );
         }
@@ -318,6 +350,7 @@ function registerSalesRoutes(app, { pool, env }) {
           receivedVnd: sale.amountReceivedVnd.toString(),
           cashReceivedVnd: cashReceived.toString(),
           cashChangeVnd: change.toString(),
+          promotion: appliedPromotion ? { code: appliedPromotion.code, discountVnd: promotionDiscountVnd.toString() } : null,
           payments: appliedTenders.map((tender) => ({ method: tender.method, amountVnd: tender.amountVnd.toString() })),
         })]
       );
@@ -328,6 +361,7 @@ function registerSalesRoutes(app, { pool, env }) {
           status: order.status,
           subtotalVnd: order.subtotal_vnd,
           discountVnd: order.discount_vnd,
+          promotion: appliedPromotion ? { code: appliedPromotion.code, name: appliedPromotion.name, discountVnd: promotionDiscountVnd.toString() } : null,
           totalVnd: order.total_vnd,
           paidVnd: paid.toString(),
           dueVnd: (total - paid).toString(),
