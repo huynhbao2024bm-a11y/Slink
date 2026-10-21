@@ -40,7 +40,15 @@ function normalizeReturn(body) {
   if (!RESTOCK_POLICIES.has(restockPolicy)) throw new ApiError(400, 'validation_error', 'Cách xử lý hàng trả không hợp lệ.');
   const refundMethod = body.refundMethod || 'cash';
   if (!REFUND_METHODS.has(refundMethod)) throw new ApiError(400, 'validation_error', 'Phương thức hoàn tiền không hợp lệ.');
-  return { items, reason, restockPolicy, refundMethod };
+  let restockWarehouseId = null;
+  if (body.restockWarehouseId != null && body.restockWarehouseId !== '') {
+    if (typeof body.restockWarehouseId !== 'string' || !UUID_PATTERN.test(body.restockWarehouseId)) {
+      throw new ApiError(400, 'validation_error', 'Kho nhận hàng hoàn không hợp lệ.');
+    }
+    restockWarehouseId = body.restockWarehouseId.toLowerCase();
+  }
+  if (restockPolicy !== 'restock') restockWarehouseId = null;
+  return { items, reason, restockPolicy, refundMethod, restockWarehouseId: restockPolicy === 'restock' ? restockWarehouseId : null };
 }
 
 function registerReturnRoutes(app, { pool, env }) {
@@ -76,14 +84,37 @@ function registerReturnRoutes(app, { pool, env }) {
         return { status: record.response_status, body: record.response_body, replayed: true };
       }
 
+      const linkedOrder = await client.query(
+        'SELECT customer_id FROM orders WHERE store_id = $1 AND id = $2',
+        [storeId, orderId]
+      );
+      if (!linkedOrder.rowCount) throw new ApiError(404, 'order_not_found', 'Không tìm thấy đơn hàng có thể trả.');
+      if (linkedOrder.rows[0].customer_id) {
+        await client.query(
+          'SELECT id FROM customers WHERE store_id = $1 AND id = $2 FOR UPDATE',
+          [storeId, linkedOrder.rows[0].customer_id]
+        );
+      }
       const orderResult = await client.query(
-        `SELECT id, order_number, customer_id, status, total_vnd::text AS total_vnd FROM orders
+        `SELECT id, order_number, customer_id, warehouse_id, status, total_vnd::text AS total_vnd FROM orders
          WHERE store_id = $1 AND id = $2 FOR UPDATE`,
         [storeId, orderId]
       );
       if (!orderResult.rowCount || orderResult.rows[0].status === 'voided') throw new ApiError(404, 'order_not_found', 'Không tìm thấy đơn hàng có thể trả.');
       const order = orderResult.rows[0];
       if (order.status === 'returned') throw new ApiError(409, 'already_returned', 'Đơn hàng đã được trả toàn bộ.');
+
+      let restockWarehouse = null;
+      if (value.restockPolicy === 'restock') {
+        const targetWarehouseId = value.restockWarehouseId || order.warehouse_id;
+        const target = await client.query(
+          `SELECT id, name, status FROM warehouses WHERE store_id = $1 AND id = $2 FOR UPDATE`,
+          [storeId, targetWarehouseId]
+        );
+        if (!target.rowCount) throw new ApiError(404, 'warehouse_not_found', 'Không tìm thấy kho nhận hàng hoàn.');
+        if (target.rows[0].status !== 'active') throw new ApiError(409, 'warehouse_inactive', 'Kho nhận hàng hoàn đã lưu trữ. Hãy chọn một kho đang hoạt động.');
+        restockWarehouse = target.rows[0];
+      }
 
       const linesResult = await client.query(
         `SELECT ol.id, ol.product_id, ol.product_name_snapshot, ol.quantity::text AS quantity,
@@ -149,9 +180,9 @@ function registerReturnRoutes(app, { pool, env }) {
       if (!sequence.rowCount) throw new Error('Store return sequence is missing.');
       const returnNumber = `RT-${sequence.rows[0].return_number}`;
       await client.query(
-        `INSERT INTO returns (id, store_id, order_id, return_number, status, reason, refund_total_vnd, restock_policy, created_by)
-         VALUES ($1, $2, $3, $4, 'completed', $5, $6, $7, $8)`,
-        [returnId, storeId, orderId, returnNumber, value.reason, refundTotal.toString(), value.restockPolicy, auth.userId]
+        `INSERT INTO returns (id, store_id, order_id, return_number, status, reason, refund_total_vnd, restock_policy, restock_warehouse_id, created_by)
+         VALUES ($1, $2, $3, $4, 'completed', $5, $6, $7, $8, $9)`,
+        [returnId, storeId, orderId, returnNumber, value.reason, refundTotal.toString(), value.restockPolicy, restockWarehouse?.id || null, auth.userId]
       );
       for (const item of requestedLines) {
         const restockedMilli = value.restockPolicy === 'restock' && item.line.inventory_tracked ? item.requested.quantityMilli : 0;
@@ -161,20 +192,20 @@ function registerReturnRoutes(app, { pool, env }) {
           [storeId, returnId, orderId, item.line.id, quantityText(item.requested.quantityMilli), item.refundVnd.toString(), quantityText(restockedMilli)]
         );
         if (restockedMilli > 0) {
-          await client.query(
-            `UPDATE inventory_balances SET on_hand = on_hand + $3::numeric, version = version + 1, updated_at = now()
-             WHERE store_id = $1 AND product_id = $2`,
-            [storeId, item.line.product_id, quantityText(restockedMilli)]
-          );
           const balance = await client.query(
-            'SELECT on_hand::text AS on_hand FROM inventory_balances WHERE store_id = $1 AND product_id = $2',
-            [storeId, item.line.product_id]
+            `INSERT INTO inventory_balances (store_id, warehouse_id, product_id, on_hand, reserved)
+             VALUES ($1, $2, $3, $4::numeric, 0)
+             ON CONFLICT (store_id, warehouse_id, product_id) DO UPDATE
+               SET on_hand = inventory_balances.on_hand + EXCLUDED.on_hand,
+                   version = inventory_balances.version + 1, updated_at = now()
+             RETURNING on_hand::text AS on_hand`,
+            [storeId, restockWarehouse.id, item.line.product_id, quantityText(restockedMilli)]
           );
           await client.query(
-            `INSERT INTO inventory_movements (store_id, product_id, movement_type, quantity_delta, quantity_after,
+            `INSERT INTO inventory_movements (store_id, warehouse_id, product_id, movement_type, quantity_delta, quantity_after,
                                                reason, source_type, source_id, actor_user_id)
-             VALUES ($1, $2, 'return', $3::numeric, $4::numeric, $5, 'return', $6, $7)`,
-            [storeId, item.line.product_id, quantityText(restockedMilli), balance.rows[0].on_hand,
+             VALUES ($1, $2, $3, 'return', $4::numeric, $5::numeric, $6, 'return', $7, $8)`,
+            [storeId, restockWarehouse.id, item.line.product_id, quantityText(restockedMilli), balance.rows[0].on_hand,
               `Trả hàng ${returnNumber}`, returnId, auth.userId]
           );
         }
@@ -218,8 +249,10 @@ function registerReturnRoutes(app, { pool, env }) {
       await client.query('UPDATE orders SET status = $3, updated_at = now() WHERE store_id = $1 AND id = $2', [storeId, orderId, nextStatus]);
       await client.query(
         `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, reason, metadata)
-         VALUES ($1, $2, 'return.created', 'return', $3, $4, jsonb_build_object('returnNumber', $5::text, 'refundVnd', $6::text))`,
-        [storeId, auth.userId, returnId, value.reason, returnNumber, refundTotal.toString()]
+         VALUES ($1, $2, 'return.created', 'return', $3, $4,
+                 jsonb_build_object('returnNumber', $5::text, 'refundVnd', $6::text,
+                                    'restockWarehouseId', $7::text, 'restockWarehouseName', $8::text))`,
+        [storeId, auth.userId, returnId, value.reason, returnNumber, refundTotal.toString(), restockWarehouse?.id || null, restockWarehouse?.name || null]
       );
       const body = {
         return: {
@@ -231,6 +264,8 @@ function registerReturnRoutes(app, { pool, env }) {
           refundedVnd: refundPayment.toString(),
           customerCreditVnd: customerCredit.toString(),
           restockPolicy: value.restockPolicy,
+          restockWarehouseId: restockWarehouse?.id || null,
+          restockWarehouseName: restockWarehouse?.name || null,
           orderStatus: nextStatus,
         },
       };

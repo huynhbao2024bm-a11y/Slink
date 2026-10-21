@@ -1,6 +1,8 @@
 .git
 .github
 .nvmrc
+.vscode
+.codex
 .env*
 .local-data
 node_modules
@@ -10,8 +12,14 @@ coverage
 *.db
 *.db-shm
 *.db-wal
+doctor-*.json
+pitch
 docs
 scripts
+!scripts/
+scripts/*
+!scripts/postgres-backup.js
+!scripts/postgres-role-check.js
 tools
 server/test
 server/dev.js

@@ -21,6 +21,12 @@ Help a Vietnamese small retailer run the daily business in one place:
 
 The initial target is a small independent retail shop in Vietnam. The owner/manager controls the store; cashiers and stock staff have only the access their role needs. VND, Vietnamese language, local dates, and Vietnamese retail workflows are defaults.
 
+## User-requested product expansion (2026-10-15)
+
+The user has expanded Slink's target scope to include omnichannel commerce operations: multi-marketplace and website connections; product information and channel listings; a shared order workflow; multi-warehouse inventory; carrier fulfillment and COD reconciliation; marketplace finance; CRM, analytics, automation, third-party integrations, security administration, and employee/task utilities. The exact source is [`USER_FEATURE_INVENTORY.md`](USER_FEATURE_INVENTORY.md); the gap comparison and phased scope are in [`MULTICHANNEL_SCOPE.md`](MULTICHANNEL_SCOPE.md).
+
+This expansion is a staged product roadmap, not evidence that these modules exist or a reason to weaken the current retail release gates. Each connector requires a real partner app, granted scopes, credentials, webhook/TLS configuration, and end-to-end reconciliation. Prioritize a reliable core and deliver one marketplace/carrier vertical slice at a time; never show a connection or sync as successful without provider confirmation.
+
 ## Non-negotiable product rules
 
 1. **Persist real business data.** Durable storage, restore, migration, and cross-device access must be designed for customer records. Browser `localStorage` is not the system of record.
@@ -39,6 +45,7 @@ The initial target is a small independent retail shop in Vietnam. The owner/mana
 ### Store setup and access
 
 - Secure registration, sign-in, session lifecycle, password recovery, store creation, staff invitation, role/permission assignment, and account/store separation.
+- A store-scoped, searchable business activity journal for authorized owners/managers; security login/session events remain a separate required control.
 - Safe onboarding/import of products, opening inventory, customers, suppliers, and balances. Clearly distinguish demo/sample data from the customer’s records.
 
 ### Sales and money

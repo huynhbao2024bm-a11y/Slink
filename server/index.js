@@ -8,19 +8,27 @@ const { existsSync } = require('node:fs');
 const path = require('node:path');
 const { ApiError, registerAuthRoutes } = require('./auth');
 const { createPool } = require('./db');
+const { databaseTransportOptions } = require('./database-transport');
 const { registerProductRoutes } = require('./products');
 const { registerSalesRoutes } = require('./sales');
+const { registerPromotionRoutes } = require('./promotions');
 const { registerReturnRoutes } = require('./returns');
 const { registerRecordRoutes } = require('./records');
 const { registerStockRoutes } = require('./stock');
 const { registerPaymentRoutes } = require('./payments');
 const { registerPurchaseRoutes } = require('./purchases');
+const { registerPurchaseOrderRoutes } = require('./purchase-orders');
 const { registerFinanceRoutes } = require('./finance');
 const { registerAnalyticsRoutes } = require('./analytics');
 const { registerStoreSettingsRoutes } = require('./settings');
 const { registerExportRoutes } = require('./exports');
 const { registerStaffRoutes } = require('./staff');
 const { registerCashRegisterRoutes } = require('./cash-register');
+const { registerAuditRoutes } = require('./audit');
+const { registerSecurityRoutes } = require('./security');
+const { registerWarehouseRoutes } = require('./warehouses');
+const { registerChannelMappingRoutes } = require('./channel-mappings');
+const { registerChannelOrderRoutes } = require('./channel-orders');
 
 const APP_ROOT = path.resolve(__dirname, '..');
 const ASSETS = new Map([
@@ -47,9 +55,7 @@ function trustedProxies(value) {
 
 function validateProductionConfig(env) {
   if (env.NODE_ENV !== 'production') return;
-  if (env.PG_SSL !== 'true') {
-    throw new Error('Production database connections require verified TLS. Set PG_SSL=true.');
-  }
+  databaseTransportOptions(env, env.APP_DATABASE_URL, 'APP_DATABASE_URL');
   let publicOrigin;
   let deliveryUrl;
   try {
@@ -102,7 +108,7 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
   await app.register(cookie);
   await app.register(rateLimit, {
     global: true,
-    max: 120,
+    max: env.NODE_ENV === 'test' ? 1000 : 120,
     timeWindow: '1 minute',
     errorResponseBuilder: () => ({ error: { code: 'rate_limit', message: 'Quá nhiều yêu cầu. Vui lòng thử lại sau.' } }),
   });
@@ -143,17 +149,24 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
     registerAuthRoutes(app, { pool, env });
     registerProductRoutes(app, { pool, env });
     registerSalesRoutes(app, { pool, env });
+    registerPromotionRoutes(app, { pool, env });
     registerReturnRoutes(app, { pool, env });
     registerRecordRoutes(app, { pool, env });
     registerStockRoutes(app, { pool, env });
     registerPaymentRoutes(app, { pool, env });
     registerPurchaseRoutes(app, { pool, env });
+    registerPurchaseOrderRoutes(app, { pool, env });
     registerFinanceRoutes(app, { pool, env });
     registerAnalyticsRoutes(app, { pool, env });
     registerStoreSettingsRoutes(app, { pool, env });
     registerExportRoutes(app, { pool, env });
     registerStaffRoutes(app, { pool, env });
     registerCashRegisterRoutes(app, { pool, env });
+    registerAuditRoutes(app, { pool, env });
+    registerSecurityRoutes(app, { pool, env });
+    registerWarehouseRoutes(app, { pool, env });
+    registerChannelMappingRoutes(app, { pool, env });
+    registerChannelOrderRoutes(app, { pool, env });
   }
 
   for (const [route, fileName] of ASSETS) {
