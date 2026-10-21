@@ -24,7 +24,7 @@ jobs:
     env:
       NODE_ENV: production
       PG_SSL: ca-file
-      PG_SSL_CA_FILE: ${{ github.workspace }}/deploy/render/supabase-ca.crt
+      PG_SSL_CA_FILE: ${{ github.workspace }}/supabase-ca.crt
       MIGRATION_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
       BACKUP_REFERENCE: ${{ inputs.verified_backup_reference }}
     steps:
