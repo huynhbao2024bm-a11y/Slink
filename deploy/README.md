@@ -1,7 +1,9 @@
 # Chuẩn bị hosting Slink
 
-Hồ sơ đích hiện tại là Google Compute Engine cho bản thử tại cuộc thi. Cấu hình hạ tầng, image và quy trình phát hành được ghi ở [`gcp/README.md`](gcp/README.md). Không có cloud resource hay image nào được tạo trong lần chuẩn bị này.
+Đích hosting hiện tại theo yêu cầu mới nhất là Render.com. Blueprint Node.js và các điều kiện còn thiếu được ghi ở [`render/README.md`](render/README.md). Chưa kết nối GitHub với Render, tạo tài nguyên, nhập secret hoặc deploy.
 
-Mẫu biến production trước đây vẫn dùng cho máy chủ PostgreSQL độc lập có TLS trực tiếp; hồ sơ GCP dùng Docker Compose, PostgreSQL nội bộ, Secret Manager và các file secret được tạo trên VM. Không dùng workflow migration trên GitHub runner cho VM GCP vì database không mở ra Internet.
+Hồ sơ Google Compute Engine cũ vẫn được giữ riêng ở [`gcp/README.md`](gcp/README.md); hồ sơ đó chưa được triển khai và không tự động áp dụng cho Render.
 
-Trước khi khởi tạo hosting thật, cần có project GCP đang bật billing, domain/DNS, tài khoản email gửi xác minh, và người vận hành có quyền quản trị project. Không gửi secret, mật khẩu, private key hoặc token trong chat.
+Slink đã phục vụ frontend và API từ cùng một tiến trình Node.js. Cần giải quyết tương thích vai trò migration/backup với cơ sở dữ liệu được chọn trước khi tạo dịch vụ công khai.
+
+Không gửi secret, mật khẩu, private key hoặc token trong chat. Việc tạo dịch vụ Render cần xem lại chi phí và chỉ thực hiện khi người dùng yêu cầu triển khai.

@@ -48,9 +48,18 @@ const ASSETS = new Map([
   ['/assets/slink-icon-maskable-512.png', 'assets/slink-icon-maskable-512.png'],
 ]);
 
-function trustedProxies(value) {
-  if (!value) return false;
-  return value.split(',').map((item) => item.trim()).filter(Boolean);
+function trustedProxies(addressesValue, hopsValue) {
+  const addresses = (addressesValue || '').split(',').map((item) => item.trim()).filter(Boolean);
+  const hops = (hopsValue || '').trim();
+  if (addresses.length && hops) {
+    throw new Error('Configure either TRUSTED_PROXY_IPS or TRUSTED_PROXY_HOPS, not both.');
+  }
+  if (addresses.length) return addresses;
+  if (!hops) return false;
+  if (!/^[1-5]$/.test(hops)) {
+    throw new Error('TRUSTED_PROXY_HOPS must be an integer from 1 to 5.');
+  }
+  return Number(hops);
 }
 
 function validateProductionConfig(env) {
@@ -85,7 +94,7 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
       },
     } : false,
     bodyLimit: 1024 * 1024,
-    trustProxy: trustedProxies(env.TRUSTED_PROXY_IPS),
+    trustProxy: trustedProxies(env.TRUSTED_PROXY_IPS, env.TRUSTED_PROXY_HOPS),
     routerOptions: { ignoreTrailingSlash: true },
   });
 

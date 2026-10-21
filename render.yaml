@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: slink
+    runtime: node
+    region: singapore
+    plan: 0.5c-512mb
+    branch: main
+    buildCommand: corepack enable && pnpm install --frozen-lockfile
+    startCommand: node server/index.js
+    healthCheckPath: /api/ready
+    autoDeployTrigger: off
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: 24.22.0
+      - key: HOST
+        value: 0.0.0.0
+      - key: TRUSTED_PROXY_HOPS
+        value: "1"
+      - key: PG_SSL
+        value: "true"
+      - key: LOG_LEVEL
+        value: info
+      - key: PUBLIC_ORIGIN
+        sync: false
+      - key: APP_DATABASE_URL
+        sync: false
+      - key: EMAIL_DELIVERY_URL
+        sync: false
+      - key: EMAIL_DELIVERY_TOKEN
+        sync: false
