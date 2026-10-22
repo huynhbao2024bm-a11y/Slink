@@ -32,3 +32,5 @@ services:
         sync: false
       - key: EMAIL_DELIVERY_TOKEN
         sync: false
+      - key: EMAIL_FROM
+        sync: false

@@ -136,7 +136,7 @@ async function deliverEmail(env, email, subject, text, developmentUrl) {
     return { delivered: false, developmentUrl };
   }
   const deliveryUrl = new URL(env.EMAIL_DELIVERY_URL);
-  if (env.NODE_ENV === 'production' && (deliveryUrl.protocol !== 'https:' || !env.EMAIL_DELIVERY_TOKEN)) {
+  if (env.NODE_ENV === 'production' && (deliveryUrl.protocol !== 'https:' || !env.EMAIL_DELIVERY_TOKEN || !env.EMAIL_FROM?.trim())) {
     throw new ApiError(503, 'email_unavailable', 'Dịch vụ gửi thư chưa được cấu hình an toàn.');
   }
   let response;
@@ -149,6 +149,7 @@ async function deliverEmail(env, email, subject, text, developmentUrl) {
         ...(env.EMAIL_DELIVERY_TOKEN ? { authorization: `Bearer ${env.EMAIL_DELIVERY_TOKEN}` } : {}),
       },
       body: JSON.stringify({
+        ...(typeof env.EMAIL_FROM === 'string' && env.EMAIL_FROM.trim() ? { from: env.EMAIL_FROM.trim() } : {}),
         to: email,
         subject,
         text,
@@ -158,7 +159,11 @@ async function deliverEmail(env, email, subject, text, developmentUrl) {
   } catch {
     throw new ApiError(503, 'email_unavailable', 'Chưa thể gửi thư xác nhận. Vui lòng thử lại sau.');
   }
-  if (!response.ok) throw new ApiError(503, 'email_unavailable', 'Chưa thể gửi thư xác nhận. Vui lòng thử lại sau.');
+  if (!response.ok) {
+    const error = new ApiError(503, 'email_unavailable', 'Chưa thể gửi thư xác nhận. Vui lòng thử lại sau.');
+    error.providerStatus = response.status;
+    throw error;
+  }
   return { delivered: true };
 }
 
@@ -308,7 +313,7 @@ function registerAuthRoutes(app, { pool, env }) {
       try {
         delivery = await sendVerification(env, found.rows[0].email, verificationUrl.toString());
       } catch (error) {
-        request.log.warn({ code: error.code || 'email_unavailable' }, 'Verification email delivery failed');
+        request.log.warn({ code: error.code || 'email_unavailable', ...(Number.isInteger(error.providerStatus) ? { providerStatus: error.providerStatus } : {}) }, 'Verification email delivery failed');
       }
     }
     return {
@@ -347,7 +352,7 @@ function registerAuthRoutes(app, { pool, env }) {
       try {
         delivery = await sendPasswordReset(env, found.rows[0].email, resetUrl.toString());
       } catch (error) {
-        request.log.warn({ code: error.code || 'email_unavailable' }, 'Password reset email delivery failed');
+        request.log.warn({ code: error.code || 'email_unavailable', ...(Number.isInteger(error.providerStatus) ? { providerStatus: error.providerStatus } : {}) }, 'Password reset email delivery failed');
       }
     }
     return {
