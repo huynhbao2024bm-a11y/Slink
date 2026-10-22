@@ -93,6 +93,7 @@ PY
 
 cat > /etc/slink/app.env <<EOF
 PUBLIC_ORIGIN=https://${SLINK_DOMAIN}
+EMAIL_FROM="Slink <no-reply@${SLINK_DOMAIN}>"
 EOF
 cat > /etc/slink/operations.env <<'EOF'
 SLINK_BACKUP_DIR=/backups

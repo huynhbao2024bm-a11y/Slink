@@ -27,7 +27,7 @@ Các migration Slink hiện cần `slink_migrator` có `BYPASSRLS` để backfil
 
 1. Project ID GCP mới hoặc project đã chọn, billing account đang hoạt động, quyền tạo Compute Engine, Artifact Registry, Secret Manager, Storage, Workload Identity Federation và budget.
 2. Domain đã mua và quyền sửa DNS; sau khi tạo VM, tạo A record của hostname trỏ đến `public_ip` từ Terraform.
-3. Dịch vụ gửi email có HTTPS endpoint và bearer token để xác minh tài khoản/khôi phục mật khẩu. Endpoint phải nhận `POST application/json` dạng `{ "to": "...", "subject": "...", "text": "..." }`, xác thực Bearer token và trả HTTP 2xx khi đã nhận thư. Endpoint tương thích trực tiếp hoặc một adapter cho nhà cung cấp là bắt buộc; hiện Slink yêu cầu cấu hình này ở production.
+3. Dịch vụ gửi email có HTTPS endpoint và bearer token để xác minh tài khoản/khôi phục mật khẩu. Endpoint nhận `POST application/json` gồm `from`, `to`, `subject` và `text`, xác thực Bearer token và trả HTTP 2xx khi đã nhận thư. Địa chỉ gửi `no-reply@<domain>` được tạo từ domain triển khai; xác minh domain gửi trong dịch vụ email trước khi bật đăng ký production.
 4. Google account email của người vận hành. Terraform chỉ cấp OS Admin Login và IAP Tunnel cho địa chỉ này.
 5. Quyết định chấp nhận VM đơn, chi phí vượt free-trial nếu có, và lịch bảo trì.
 

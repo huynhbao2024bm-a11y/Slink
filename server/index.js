@@ -79,6 +79,9 @@ function validateProductionConfig(env) {
   if (deliveryUrl.protocol !== 'https:' || typeof env.EMAIL_DELIVERY_TOKEN !== 'string' || env.EMAIL_DELIVERY_TOKEN.length < 32) {
     throw new Error('Production requires an HTTPS email delivery endpoint and a token of at least 32 characters.');
   }
+  if (typeof env.EMAIL_FROM !== 'string' || !env.EMAIL_FROM.trim() || env.EMAIL_FROM.length > 320 || /[\r\n]/.test(env.EMAIL_FROM)) {
+    throw new Error('Production requires EMAIL_FROM to be set; its domain must be verified with the email provider.');
+  }
 }
 
 async function buildServer({ pool = null, env = process.env, logger = true } = {}) {
@@ -194,7 +197,11 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
 
   app.setErrorHandler((error, request, reply) => {
     const isRateLimitError = error?.code === 'rate_limit';
-    if (!(error instanceof ApiError) && !isRateLimitError) request.log.error({ route: request.routeOptions.url || '/api/:unmatched', err: error }, 'Request failed');
+    if (error?.code === 'email_unavailable') {
+      request.log.warn({ code: error.code, ...(Number.isInteger(error.providerStatus) ? { providerStatus: error.providerStatus } : {}) }, 'Email delivery failed');
+    } else if (!(error instanceof ApiError) && !isRateLimitError) {
+      request.log.error({ route: request.routeOptions.url || '/api/:unmatched', err: error }, 'Request failed');
+    }
     const safeApiErrorStatus = error instanceof ApiError
       && Number.isInteger(error.statusCode)
       && error.statusCode >= 400

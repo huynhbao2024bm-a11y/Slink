@@ -36,7 +36,7 @@ Chưa chạy migrations trên database production. APP_DATABASE_URL phải thu�
 
 ## Biến production
 
-Giữ PUBLIC_ORIGIN là HTTPS origin thực của Slink. Email xác minh/khôi phục cần EMAIL_DELIVERY_URL và EMAIL_DELIVERY_TOKEN trong Render Environment. MIGRATION_DATABASE_URL chỉ dùng trong quy trình migration được kiểm soát, không đặt vào tiến trình web service.
+Giữ PUBLIC_ORIGIN là HTTPS origin thực của Slink. Email xác minh/khôi phục cần EMAIL_DELIVERY_URL, EMAIL_DELIVERY_TOKEN và EMAIL_FROM trong Render Environment. Với Resend, EMAIL_FROM phải là địa chỉ thuộc domain đã xác minh, ví dụ `Slink <no-reply@your-domain>`. MIGRATION_DATABASE_URL chỉ dùng trong quy trình migration được kiểm soát, không đặt vào tiến trình web service.
 
 ## Còn thiếu trước pilot
 
