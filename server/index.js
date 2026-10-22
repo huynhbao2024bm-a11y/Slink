@@ -119,7 +119,10 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
     global: true,
     max: env.NODE_ENV === 'test' ? 1000 : 120,
     timeWindow: '1 minute',
-    errorResponseBuilder: () => ({ error: { code: 'rate_limit', message: 'Quá nhiều yêu cầu. Vui lòng thử lại sau.' } }),
+    errorResponseBuilder: () => Object.assign(
+      new Error('Quá nhiều yêu cầu. Vui lòng thử lại sau.'),
+      { statusCode: 429, code: 'rate_limit' }
+    ),
   });
   await app.register(staticFiles, { root: APP_ROOT, prefix: '/', serve: false });
 
@@ -190,8 +193,11 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
   });
 
   app.setErrorHandler((error, request, reply) => {
-    if (!(error instanceof ApiError)) request.log.error({ route: request.routeOptions.url || '/api/:unmatched', err: error }, 'Request failed');
-    const statusCode = Number.isInteger(error.statusCode) && error.statusCode >= 400 && error.statusCode < 500 ? error.statusCode : 500;
+    const isRateLimitError = error?.code === 'rate_limit';
+    if (!(error instanceof ApiError) && !isRateLimitError) request.log.error({ route: request.routeOptions.url || '/api/:unmatched', err: error }, 'Request failed');
+    const statusCode = isRateLimitError
+      ? 429
+      : (Number.isInteger(error.statusCode) && error.statusCode >= 400 && error.statusCode < 500 ? error.statusCode : 500);
     return reply.code(statusCode).send({
       error: {
         code: statusCode === 500 ? 'internal_error' : (error.code || 'request_error'),

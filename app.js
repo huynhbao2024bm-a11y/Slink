@@ -5722,7 +5722,12 @@
         renderAuth(result.message, 'success', result.developmentVerificationUrl);
       }
     } catch (error) {
-      renderAuth(error.message, 'error');
+      if (type === 'register' && error.code === 'account_exists') {
+        authMode = 'login';
+        renderAuth('Email này đã được đăng ký. Hãy đăng nhập hoặc chọn “Gửi lại email xác nhận” nếu bạn chưa xác nhận email.', 'error');
+      } else {
+        renderAuth(error.message, 'error');
+      }
     } finally {
       if (submit && submit.isConnected) submit.disabled = false;
     }
