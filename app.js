@@ -1369,6 +1369,48 @@
     return `<section class='panel cart-panel'><div class='cart-heading'><h2>Đơn hàng mới</h2><div class='cart-heading-actions'><span>${number(totals.count)} sản phẩm</span><button class='cart-close mobile-only' data-action='close-cart' aria-label='Đóng giỏ hàng'>×</button></div></div><div class='cart-customer'><button data-action='pick-customer' ${checkoutPendingPayload ? 'disabled' : ''}><span class='avatar' style='width:24px;height:24px;font-size:8px'>${customer ? initials(customer.name) : '+'}</span><span>${customer ? esc(customer.name) : 'Thêm khách hàng'}</span><strong>${customer ? esc(customer.phone) : '＋'}</strong></button></div><div class='cart-add-product mobile-only'><button class='btn btn-secondary' data-action='add-more-products' ${checkoutPendingPayload ? 'disabled' : ''}>＋ Thêm sản phẩm</button></div>${pendingNote}<div class='cart-items'>${rows || `<div class='cart-empty'><div><span>🛍️</span>${checkoutPendingPayload ? 'Đơn đang chờ xác nhận.' : 'Chọn sản phẩm để bắt đầu đơn hàng'}</div></div>`}</div><div class='cart-totals'><div class='cart-total-line'><span>Tạm tính</span><strong>${money(totals.subtotal)}</strong></div><button class='cart-total-line' data-action='discount' ${checkoutPendingPayload ? 'disabled' : ''} style='border:0;background:transparent;padding:0;text-align:left'><span>Giảm giá <span style='color:#4a7b58'>＋</span></span><strong>${totals.discount ? '−' + money(totals.discount) : 'Thêm'}</strong></button><div class='cart-total-line total'><span>Khách cần trả</span><strong>${money(totals.total)}</strong></div></div><div class='cart-footer'><button class='btn btn-primary' data-action='checkout' ${cart.length || checkoutPendingPayload ? '' : 'disabled'}>${checkoutPendingPayload ? 'Kiểm tra đơn đang chờ' : 'Thanh toán'} <span style='margin-left:auto'>${money(checkoutPendingPayload ? checkoutPendingPayload.totalVnd : totals.total)} →</span></button><div class='cart-hint'>${checkoutPendingPayload ? 'Thử lại dùng đúng thông tin đã gửi trước đó.' : 'Có thể thêm khách hàng và giảm giá trước khi thu tiền'}</div></div></section>`;
   }
 
+  function refreshCartPanels(options) {
+    const drawer = document.getElementById('drawer-cart');
+    const drawerWasOpen = Boolean(drawer && drawer.classList.contains('open'));
+    const activeControl = document.activeElement?.closest('#drawer-cart [data-action], .pos-layout > .cart-panel [data-action]');
+    const activeControlIsInDrawer = Boolean(activeControl && activeControl.closest('#drawer-cart'));
+    const activeFocus = activeControl ? {
+      action: activeControl.dataset.action,
+      id: activeControl.dataset.id,
+      delta: activeControl.dataset.delta,
+      inDrawer: activeControlIsInDrawer,
+    } : null;
+    const focusTarget = options && options.focus ? options.focus : activeFocus;
+    const panelMarkup = cartPanel();
+    document.querySelectorAll('.pos-layout > .cart-panel, #drawer-cart > .cart-panel').forEach(function (panel) {
+      panel.outerHTML = panelMarkup;
+    });
+
+    const currentDrawer = document.getElementById('drawer-cart');
+
+    const totals = cartTotals();
+    document.querySelectorAll('[data-action="open-cart"]').forEach(function (button) {
+      button.setAttribute('aria-expanded', String(drawerWasOpen));
+      if (button.classList.contains('pos-cart-top')) button.textContent = `Giỏ hàng · ${number(totals.count)}`;
+      const count = button.querySelector('.mobile-cart-count');
+      if (count) count.textContent = number(totals.count);
+      const label = Array.from(button.querySelectorAll('span')).find(function (span) { return !span.classList.contains('mobile-cart-count'); });
+      if (label) label.textContent = totals.count ? 'Xem giỏ hàng' : 'Giỏ hàng đang trống';
+      const amount = button.querySelector('strong');
+      if (amount) amount.textContent = `${money(totals.total)}　→`;
+    });
+
+    if (focusTarget) window.requestAnimationFrame(function () {
+      const focusContainer = focusTarget.inDrawer || drawerWasOpen ? currentDrawer : document.querySelector('.pos-layout > .cart-panel');
+      if (!focusContainer) return;
+      const controls = Array.from(focusContainer.querySelectorAll('[data-action]'));
+      const target = controls.find(function (control) {
+        return control.dataset.action === focusTarget.action && control.dataset.id === focusTarget.id && control.dataset.delta === focusTarget.delta;
+      }) || focusContainer.querySelector('[data-action="cart-qty"]') || focusContainer.querySelector('[data-action="add-more-products"]') || focusContainer.querySelector('[data-action="close-cart"]') || focusContainer.querySelector('[data-action="checkout"]');
+      if (target) target.focus({ preventScroll: true });
+    });
+  }
+
   function renderPOS() {
     const query = document.getElementById('pos-search') ? document.getElementById('pos-search').value : '';
     const sourceProducts = posSearchTerm ? posProducts : store.products;
@@ -4504,7 +4546,7 @@
     item.qty += Number(delta);
     if (item.qty <= 0) cart = cart.filter(function (x) { return x.id !== id; });
     else if (p && p.inventoryTracked && item.qty > p.stock) { item.qty = p.stock; toast('Đã đạt số lượng tồn', 'Kho hiện còn ' + p.stock + ' ' + p.unit + '.', 'error'); }
-    render();
+    refreshCartPanels();
   }
 
   function editCartQuantity(id) {
@@ -4528,7 +4570,8 @@
     if (product.inventoryTracked && quantity > product.stock) return toast('Không đủ hàng trong kho', `Hiện còn ${number(product.stock)} ${product.unit}.`, 'error');
     item.qty = quantity;
     closeModal();
-    render();
+    if (page === 'pos') refreshCartPanels({ focus: { action: 'cart-qty-edit', id: id } });
+    else render();
   }
 
   async function createSale(form) {
