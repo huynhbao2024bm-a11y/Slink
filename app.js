@@ -5725,6 +5725,9 @@
       if (type === 'register' && error.code === 'account_exists') {
         authMode = 'login';
         renderAuth('Email này đã được đăng ký. Hãy đăng nhập hoặc chọn “Gửi lại email xác nhận” nếu bạn chưa xác nhận email.', 'error');
+      } else if (type === 'register' && error.code === 'email_unavailable') {
+        authMode = 'login';
+        renderAuth('Tài khoản đã được tạo nhưng email xác nhận chưa gửi được. Hãy chọn “Gửi lại email xác nhận” sau khi dịch vụ gửi thư hoạt động; không cần tạo lại tài khoản.', 'error');
       } else {
         renderAuth(error.message, 'error');
       }

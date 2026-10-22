@@ -195,13 +195,22 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
   app.setErrorHandler((error, request, reply) => {
     const isRateLimitError = error?.code === 'rate_limit';
     if (!(error instanceof ApiError) && !isRateLimitError) request.log.error({ route: request.routeOptions.url || '/api/:unmatched', err: error }, 'Request failed');
+    const safeApiErrorStatus = error instanceof ApiError
+      && Number.isInteger(error.statusCode)
+      && error.statusCode >= 400
+      && error.statusCode < 600
+      && error.statusCode !== 500;
+    const safeClientStatus = Number.isInteger(error.statusCode)
+      && error.statusCode >= 400
+      && error.statusCode < 500;
     const statusCode = isRateLimitError
       ? 429
-      : (Number.isInteger(error.statusCode) && error.statusCode >= 400 && error.statusCode < 500 ? error.statusCode : 500);
+      : (safeApiErrorStatus ? error.statusCode : (safeClientStatus ? error.statusCode : 500));
+    const internalFailure = statusCode >= 500 && !safeApiErrorStatus;
     return reply.code(statusCode).send({
       error: {
-        code: statusCode === 500 ? 'internal_error' : (error.code || 'request_error'),
-        message: statusCode === 500 ? 'Đã xảy ra lỗi. Vui lòng thử lại.' : error.message,
+        code: internalFailure ? 'internal_error' : (error.code || 'request_error'),
+        message: internalFailure ? 'Đã xảy ra lỗi. Vui lòng thử lại.' : error.message,
       },
     });
   });
