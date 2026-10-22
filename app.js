@@ -1328,6 +1328,36 @@
     return { subtotal: subtotal, discount: discount, total: subtotal - discount, count: cart.reduce(function (sum, item) { return sum + item.qty; }, 0) };
   }
 
+  function setCartDrawerOpen(open) {
+    const drawer = document.getElementById('drawer-cart');
+    if (!drawer) return;
+    drawer.classList.toggle('open', open);
+    drawer.setAttribute('aria-hidden', String(!open));
+    document.querySelectorAll('[data-action="open-cart"]').forEach(function (button) { button.setAttribute('aria-expanded', String(open)); });
+    if (open) window.requestAnimationFrame(function () {
+      const closeButton = drawer.querySelector('[data-action="close-cart"]');
+      if (closeButton) closeButton.focus({ preventScroll: true });
+    });
+    else window.requestAnimationFrame(function () {
+      const cartButton = document.querySelector('.pos-cart-top');
+      if (cartButton && cartButton.getClientRects().length) cartButton.focus({ preventScroll: true });
+    });
+  }
+
+  function addMoreProducts() {
+    if (checkoutPendingPayload) return;
+    setCartDrawerOpen(false);
+    const productList = document.getElementById('pos-products');
+    if (productList) {
+      productList.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      window.requestAnimationFrame(function () {
+        const firstProduct = productList.querySelector('[data-action="add-cart"]');
+        if (firstProduct) firstProduct.focus({ preventScroll: true });
+        else document.getElementById('pos-search')?.focus({ preventScroll: true });
+      });
+    }
+  }
+
   function cartPanel() {
     const totals = cartTotals();
     const customer = customerById(cartCustomerId);
@@ -1336,7 +1366,7 @@
       const product = productById(item.id); if (!product) return '';
       return `<div class='cart-row'><div><div class='cart-item-name'>${esc(product.name)}</div><div class='cart-item-price'>${money(product.price)} / ${esc(product.unit)}</div></div><div class='qty-control'><button data-action='cart-qty' data-id='${product.id}' data-delta='-1' ${checkoutPendingPayload ? 'disabled' : ''} aria-label='Giảm'>−</button><button data-action='cart-qty-edit' data-id='${product.id}' ${checkoutPendingPayload ? 'disabled' : ''} aria-label='Sửa số lượng'>${number(item.qty)}</button><button data-action='cart-qty' data-id='${product.id}' data-delta='1' ${checkoutPendingPayload || (product.inventoryTracked && item.qty >= product.stock) ? 'disabled' : ''} aria-label='Tăng'>＋</button></div></div>`;
     }).join('');
-    return `<section class='panel cart-panel'><div class='cart-heading'><h2>Đơn hàng mới</h2><span>${number(totals.count)} sản phẩm</span></div><div class='cart-customer'><button data-action='pick-customer' ${checkoutPendingPayload ? 'disabled' : ''}><span class='avatar' style='width:24px;height:24px;font-size:8px'>${customer ? initials(customer.name) : '+'}</span><span>${customer ? esc(customer.name) : 'Thêm khách hàng'}</span><strong>${customer ? esc(customer.phone) : '＋'}</strong></button></div>${pendingNote}<div class='cart-items'>${rows || `<div class='cart-empty'><div><span>🛍️</span>${checkoutPendingPayload ? 'Đơn đang chờ xác nhận.' : 'Chọn sản phẩm để bắt đầu đơn hàng'}</div></div>`}</div><div class='cart-totals'><div class='cart-total-line'><span>Tạm tính</span><strong>${money(totals.subtotal)}</strong></div><button class='cart-total-line' data-action='discount' ${checkoutPendingPayload ? 'disabled' : ''} style='border:0;background:transparent;padding:0;text-align:left'><span>Giảm giá <span style='color:#4a7b58'>＋</span></span><strong>${totals.discount ? '−' + money(totals.discount) : 'Thêm'}</strong></button><div class='cart-total-line total'><span>Khách cần trả</span><strong>${money(totals.total)}</strong></div></div><div class='cart-footer'><button class='btn btn-primary' data-action='checkout' ${cart.length || checkoutPendingPayload ? '' : 'disabled'}>${checkoutPendingPayload ? 'Kiểm tra đơn đang chờ' : 'Thanh toán'} <span style='margin-left:auto'>${money(checkoutPendingPayload ? checkoutPendingPayload.totalVnd : totals.total)} →</span></button><div class='cart-hint'>${checkoutPendingPayload ? 'Thử lại dùng đúng thông tin đã gửi trước đó.' : 'Có thể thêm khách hàng và giảm giá trước khi thu tiền'}</div></div></section>`;
+    return `<section class='panel cart-panel'><div class='cart-heading'><h2>Đơn hàng mới</h2><div class='cart-heading-actions'><span>${number(totals.count)} sản phẩm</span><button class='cart-close mobile-only' data-action='close-cart' aria-label='Đóng giỏ hàng'>×</button></div></div><div class='cart-customer'><button data-action='pick-customer' ${checkoutPendingPayload ? 'disabled' : ''}><span class='avatar' style='width:24px;height:24px;font-size:8px'>${customer ? initials(customer.name) : '+'}</span><span>${customer ? esc(customer.name) : 'Thêm khách hàng'}</span><strong>${customer ? esc(customer.phone) : '＋'}</strong></button></div><div class='cart-add-product mobile-only'><button class='btn btn-secondary' data-action='add-more-products' ${checkoutPendingPayload ? 'disabled' : ''}>＋ Thêm sản phẩm</button></div>${pendingNote}<div class='cart-items'>${rows || `<div class='cart-empty'><div><span>🛍️</span>${checkoutPendingPayload ? 'Đơn đang chờ xác nhận.' : 'Chọn sản phẩm để bắt đầu đơn hàng'}</div></div>`}</div><div class='cart-totals'><div class='cart-total-line'><span>Tạm tính</span><strong>${money(totals.subtotal)}</strong></div><button class='cart-total-line' data-action='discount' ${checkoutPendingPayload ? 'disabled' : ''} style='border:0;background:transparent;padding:0;text-align:left'><span>Giảm giá <span style='color:#4a7b58'>＋</span></span><strong>${totals.discount ? '−' + money(totals.discount) : 'Thêm'}</strong></button><div class='cart-total-line total'><span>Khách cần trả</span><strong>${money(totals.total)}</strong></div></div><div class='cart-footer'><button class='btn btn-primary' data-action='checkout' ${cart.length || checkoutPendingPayload ? '' : 'disabled'}>${checkoutPendingPayload ? 'Kiểm tra đơn đang chờ' : 'Thanh toán'} <span style='margin-left:auto'>${money(checkoutPendingPayload ? checkoutPendingPayload.totalVnd : totals.total)} →</span></button><div class='cart-hint'>${checkoutPendingPayload ? 'Thử lại dùng đúng thông tin đã gửi trước đó.' : 'Có thể thêm khách hàng và giảm giá trước khi thu tiền'}</div></div></section>`;
   }
 
   function renderPOS() {
@@ -1346,8 +1376,8 @@
     const categories = ['Tất cả'].concat(Array.from(new Set(store.products.map(function (product) { return product.category; }))));
     const totals = cartTotals();
     const posWarehousePicker = warehouses.length > 1 ? `<label class='pos-warehouse-picker'><span>Xuất từ kho</span><div class='select-wrap'><select class='input' id='pos-warehouse' ${cart.length || checkoutPendingPayload ? 'disabled' : ''}>${warehouses.map(function (warehouse) { return `<option value='${esc(warehouse.id)}' ${warehouse.id === selectedWarehouseId ? 'selected' : ''}>${esc(warehouse.name)}</option>`; }).join('')}</select></div></label>` : '';
-    return pageHeading('Bán hàng', 'Chọn sản phẩm, thêm vào đơn và thu tiền ngay tại quầy.', `${['owner', 'manager'].includes(store.role) ? `<button class='btn btn-secondary' data-action='manage-promotions'>Mã khuyến mãi</button>` : ''}<button class='btn btn-secondary' data-action='scan'>${icon('scan', 14)} Nhập mã</button><button class='btn btn-secondary hide-on-mobile' data-route='orders'>Đơn gần đây</button>`) +
-      `<div class='pos-layout'><div><div class='pos-tools'><div class='search-wrap pos-search'><span class='search-symbol'>⌕</span><input class='input' id='pos-search' type='search' placeholder='Tìm sản phẩm hoặc SKU…' value='${esc(query)}' aria-label='Tìm sản phẩm'></div>${posWarehousePicker}<button class='btn btn-secondary' data-action='scan' aria-label='Nhập mã'>${icon('scan', 15)}</button></div><div class='category-scroll'>${categories.map(function (category) { return `<button class='pos-category ${categoryFilter === category ? 'active' : ''}' data-action='category' data-category='${esc(category)}'>${esc(category)}</button>`; }).join('')}</div><div class='pos-product-grid' id='pos-products'>${products.map(function (product) { return `<button class='pos-product' data-action='add-cart' data-id='${product.id}'><span class='product-thumb ${product.tone || 'product-sage'}'>${esc(product.emoji || '📦')}</span><span class='pos-stock'>${product.inventoryTracked ? `Còn ${number(product.stock)}` : 'Không theo dõi tồn'}</span><strong>${esc(product.name)}</strong><small>${esc(product.sku)}</small><span class='pos-price'>${money(product.price)}</span></button>`; }).join('') || `<div class='panel empty-state' style='grid-column:1/-1'><strong>Chưa có sản phẩm để bán</strong><span>Thêm sản phẩm hoặc nhập kho mặt hàng có theo dõi tồn.</span></div>`}</div></div>${cartPanel()}</div><div class='pos-mobile-cart'><button class='btn' data-action='open-cart'><span class='mobile-cart-count'>${number(totals.count)}</span><span>${totals.count ? 'Xem giỏ hàng' : 'Giỏ hàng đang trống'}</span><strong>${money(totals.total)}　→</strong></button></div><div class='drawer-cart' id='drawer-cart'>${cartPanel()}</div>`;
+    return pageHeading('Bán hàng', 'Chọn sản phẩm, thêm vào đơn và thu tiền ngay tại quầy.', `${['owner', 'manager'].includes(store.role) ? `<button class='btn btn-secondary' data-action='manage-promotions'>Mã khuyến mãi</button>` : ''}<button class='btn btn-secondary hide-on-mobile' data-action='scan'>${icon('scan', 14)} Nhập mã</button><button class='btn btn-secondary hide-on-mobile' data-route='orders'>Đơn gần đây</button><button class='btn btn-primary pos-cart-top' data-action='open-cart' aria-controls='drawer-cart' aria-expanded='false'>Giỏ hàng · ${number(totals.count)}</button>`) +
+      `<div class='pos-layout'><div><div class='pos-tools ${warehouses.length > 1 ? 'has-warehouse' : ''}'><div class='pos-search-group'><div class='search-wrap pos-search'><span class='search-symbol'>⌕</span><input class='input' id='pos-search' type='search' placeholder='Tìm sản phẩm hoặc SKU…' value='${esc(query)}' aria-label='Tìm sản phẩm'></div><button class='btn btn-secondary' data-action='scan' aria-label='Nhập mã' title='Nhập mã sản phẩm'>${icon('scan', 15)}</button></div>${posWarehousePicker}</div><div class='category-scroll'>${categories.map(function (category) { return `<button class='pos-category ${categoryFilter === category ? 'active' : ''}' data-action='category' data-category='${esc(category)}'>${esc(category)}</button>`; }).join('')}</div><div class='pos-product-grid' id='pos-products'>${products.map(function (product) { return `<button class='pos-product' data-action='add-cart' data-id='${product.id}'><span class='product-thumb ${product.tone || 'product-sage'}'>${esc(product.emoji || '📦')}</span><span class='pos-stock'>${product.inventoryTracked ? `Còn ${number(product.stock)}` : 'Không theo dõi tồn'}</span><strong>${esc(product.name)}</strong><small>${esc(product.sku)}</small><span class='pos-price'>${money(product.price)}</span></button>`; }).join('') || `<div class='panel empty-state' style='grid-column:1/-1'><strong>Chưa có sản phẩm để bán</strong><span>Thêm sản phẩm hoặc nhập kho mặt hàng có theo dõi tồn.</span></div>`}</div></div>${cartPanel()}</div><div class='pos-mobile-cart'><button class='btn' data-action='open-cart' aria-controls='drawer-cart' aria-expanded='false'><span class='mobile-cart-count'>${number(totals.count)}</span><span>${totals.count ? 'Xem giỏ hàng' : 'Giỏ hàng đang trống'}</span><strong>${money(totals.total)}　→</strong></button></div><div class='drawer-cart' id='drawer-cart' role='dialog' aria-modal='true' aria-label='Giỏ hàng' aria-hidden='true'>${cartPanel()}</div>`;
   }
 
   function orderRows(orders) {
@@ -4465,7 +4495,7 @@
   }
 
   function addToCart(id) {
-    addProductToCart(productById(id));
+    return addProductToCart(productById(id));
   }
 
   function setCartQty(id, delta) {
@@ -5959,7 +5989,10 @@
     else if (action === 'share-order') shareOrder(id);
     else if (action === 'download-reports-csv') downloadReportsCsv();
     else if (action === 'print-reports-pdf') printReportsPdf();
-    else if (action === 'add-cart') addToCart(id);
+    else if (action === 'add-cart') {
+      const added = addToCart(id);
+      if (added && window.matchMedia('(max-width: 700px)').matches) window.requestAnimationFrame(function () { setCartDrawerOpen(true); });
+    }
     else if (action === 'cart-qty') setCartQty(id, Number(button.dataset.delta));
     else if (action === 'cart-qty-edit') editCartQuantity(id);
     else if (action === 'checkout') openCheckout();
@@ -5990,7 +6023,9 @@
     else if (action === 'select-customer') { if (checkoutPendingPayload) return toast('Đang chờ xác nhận đơn', 'Hãy kiểm tra đơn đang chờ trước khi đổi khách hàng.', 'error'); cartCustomerId = id || ''; closeModal(); page = 'pos'; render(); }
     else if (action === 'retry-pending-sale') openCheckout();
     else if (action === 'new-customer-from-pos') { closeModal(); openCustomer(''); }
-    else if (action === 'open-cart') { const drawer = document.getElementById('drawer-cart'); if (drawer) drawer.classList.add('open'); }
+    else if (action === 'open-cart') setCartDrawerOpen(true);
+    else if (action === 'close-cart') setCartDrawerOpen(false);
+    else if (action === 'add-more-products') addMoreProducts();
     else if (action === 'category') { categoryFilter = button.dataset.category; render(); }
     else if (action === 'chart-range') { chartRange = button.dataset.range; loadAnalytics(chartRange === '30 ngày' ? 30 : 7); }
     else if (action === 'order-filter') {
@@ -6594,9 +6629,9 @@
   backdrop.addEventListener('click', closeModal);
   document.addEventListener('keydown', function (event) {
     keepModalFocus(event);
-    if (event.key === 'Escape') { closeModal(); const drawer = document.getElementById('drawer-cart'); if (drawer) drawer.classList.remove('open'); }
+    if (event.key === 'Escape') { closeModal(); setCartDrawerOpen(false); }
   });
-  document.addEventListener('click', function (event) { const drawer = document.getElementById('drawer-cart'); if (drawer && event.target === drawer) drawer.classList.remove('open'); });
+  document.addEventListener('click', function (event) { const drawer = document.getElementById('drawer-cart'); if (drawer && event.target === drawer) setCartDrawerOpen(false); });
   window.addEventListener('online', renderShell); window.addEventListener('offline', renderShell);
   document.addEventListener('visibilitychange', function () { if (document.hidden) stopScanCamera(); });
   window.addEventListener('pagehide', stopScanCamera);
