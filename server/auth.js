@@ -36,6 +36,10 @@ function newToken() {
   return randomBytes(32).toString('base64url');
 }
 
+function emailVerificationDisabled(env) {
+  return env.DEMO_DISABLE_EMAIL_VERIFICATION === 'true';
+}
+
 async function hashPassword(password) {
   const salt = randomBytes(16);
   const derived = await scrypt(password, salt, 64, PASSWORD_OPTIONS);
@@ -95,8 +99,8 @@ async function authenticate(pool, request) {
     `SELECT s.user_id, s.csrf_digest, u.email, u.display_name
      FROM sessions s JOIN users u ON u.id = s.user_id
      WHERE s.token_digest = $1 AND s.revoked_at IS NULL AND s.expires_at > now()
-       AND u.status = 'active' AND u.email_verified_at IS NOT NULL`,
-    [tokenDigest]
+       AND u.status = 'active' AND (u.email_verified_at IS NOT NULL OR $2::boolean)`,
+    [tokenDigest, Boolean(request.server?.slinkEmailVerificationDisabled)]
   );
   if (!result.rowCount) throw new ApiError(401, 'unauthorized', 'Vui lòng đăng nhập để tiếp tục.');
   request.auth = {
@@ -186,6 +190,46 @@ async function recordVerificationToken(client, userId) {
   return token;
 }
 
+async function createUserSession(pool, userId, reply, env, { activatePendingOwner = false } = {}) {
+  const demoBypass = emailVerificationDisabled(env);
+  const sessionToken = newToken();
+  const csrfToken = newToken();
+  const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
+  const user = await withUser(pool, userId, async (client) => {
+    const found = await client.query(
+      'SELECT id, email, display_name, status, email_verified_at FROM users WHERE id = $1 FOR UPDATE',
+      [userId]
+    );
+    if (!found.rowCount) throw new ApiError(401, 'invalid_credentials', 'Email hoặc mật khẩu không đúng.');
+    let accountStatus = found.rows[0].status;
+    if (accountStatus === 'pending' && activatePendingOwner && demoBypass && !found.rows[0].email_verified_at) {
+      const ownerMembership = await client.query(
+        "SELECT 1 FROM memberships WHERE user_id = $1 AND role = 'owner' AND status = 'active' LIMIT 1",
+        [userId]
+      );
+      if (!ownerMembership.rowCount) throw new ApiError(401, 'invalid_credentials', 'Email hoặc mật khẩu không đúng.');
+      await client.query("UPDATE users SET status = 'active', updated_at = now() WHERE id = $1", [userId]);
+      await client.query(
+        'UPDATE email_verification_tokens SET consumed_at = now() WHERE user_id = $1 AND consumed_at IS NULL',
+        [userId]
+      );
+      accountStatus = 'active';
+    }
+    if (accountStatus !== 'active' || (!found.rows[0].email_verified_at && !demoBypass)) {
+      throw new ApiError(401, 'invalid_credentials', 'Email hoặc mật khẩu không đúng.');
+    }
+    const session = await client.query(
+      'INSERT INTO sessions (user_id, token_digest, csrf_digest, expires_at) VALUES ($1, $2, $3, $4) RETURNING id',
+      [userId, digest(sessionToken), digest(csrfToken), expiresAt]
+    );
+    await recordSecurityEvent(client, userId, 'login_succeeded', session.rows[0].id);
+    return found.rows[0];
+  });
+  const stores = await listStores(pool, userId);
+  setSessionCookies(reply, env, sessionToken, csrfToken);
+  return { user: { id: user.id, email: user.email, displayName: user.display_name }, stores };
+}
+
 function registerAuthRoutes(app, { pool, env }) {
   app.post('/api/auth/register', {
     config: { rateLimit: { max: 5, timeWindow: '1 hour' } },
@@ -204,14 +248,15 @@ function registerAuthRoutes(app, { pool, env }) {
     const userId = randomUUID();
     const storeId = randomUUID();
     const passwordHash = await hashPassword(password);
+    const demoBypass = emailVerificationDisabled(env);
     let verificationToken;
     try {
       verificationToken = await withUser(pool, userId, async (client) => {
         await client.query("SELECT set_config('app.store_id', $1, true)", [storeId]);
         await client.query(
           `INSERT INTO users (id, email, email_normalized, display_name, password_hash, status)
-           VALUES ($1, $2, $3, $4, $5, 'pending')`,
-          [userId, email, emailNormalized, displayName, passwordHash]
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [userId, email, emailNormalized, displayName, passwordHash, demoBypass ? 'active' : 'pending']
         );
         await client.query('INSERT INTO stores (id, name) VALUES ($1, $2)', [storeId, storeName]);
         await client.query(
@@ -220,11 +265,20 @@ function registerAuthRoutes(app, { pool, env }) {
           [storeId, userId]
         );
         await client.query('INSERT INTO store_sequences (store_id) VALUES ($1)', [storeId]);
-        return recordVerificationToken(client, userId);
+        return demoBypass ? null : recordVerificationToken(client, userId);
       });
     } catch (error) {
       if (error.code === '23505') throw new ApiError(409, 'account_exists', 'Email này đã được sử dụng.');
       throw error;
+    }
+    if (demoBypass) {
+      const session = await createUserSession(pool, userId, reply, env);
+      reply.code(201);
+      return {
+        ...session,
+        status: 'created_without_email_verification',
+        message: 'Đã tạo cửa hàng và đăng nhập. Chế độ dùng thử hiện không yêu cầu xác minh email.',
+      };
     }
     const publicOrigin = env.PUBLIC_ORIGIN || 'http://127.0.0.1:3000';
     const verificationUrl = new URL('/verify', publicOrigin);
@@ -255,7 +309,7 @@ function registerAuthRoutes(app, { pool, env }) {
       await client.query("SELECT set_config('app.user_id', $1, true)", [found.rows[0].user_id]);
       await client.query('UPDATE email_verification_tokens SET consumed_at = now() WHERE id = $1', [found.rows[0].id]);
       const activated = await client.query(
-        "UPDATE users SET email_verified_at = now(), status = 'active', updated_at = now() WHERE id = $1 AND status = 'pending' RETURNING id",
+        "UPDATE users SET email_verified_at = now(), status = 'active', updated_at = now() WHERE id = $1 AND status IN ('pending', 'active') AND email_verified_at IS NULL RETURNING id",
         [found.rows[0].user_id]
       );
       if (!activated.rowCount) throw new ApiError(409, 'account_not_pending', 'Tài khoản không còn chờ xác nhận email. Hãy đăng nhập hoặc liên hệ hỗ trợ.');
@@ -299,10 +353,16 @@ function registerAuthRoutes(app, { pool, env }) {
     config: { rateLimit: { max: 3, timeWindow: '1 hour' } },
   }, async (request) => {
     assertSameOrigin(request, env);
+    if (emailVerificationDisabled(env)) {
+      return {
+        status: 'verification_not_required',
+        message: 'Chế độ dùng thử đang tắt xác minh email. Hãy đăng nhập bằng email và mật khẩu đã đăng ký.',
+      };
+    }
     const email = typeof request.body?.email === 'string' ? request.body.email.trim().toLowerCase() : '';
     if (!email || email.length > 254) throw new ApiError(400, 'validation_error', 'Email không hợp lệ.');
     const found = await pool.query(
-      `SELECT id, email FROM users WHERE email_normalized = $1 AND status = 'pending' AND email_verified_at IS NULL`,
+      `SELECT id, email FROM users WHERE email_normalized = $1 AND status IN ('pending', 'active') AND email_verified_at IS NULL`,
       [email]
     );
     let delivery;
@@ -414,10 +474,14 @@ function registerAuthRoutes(app, { pool, env }) {
     const email = typeof request.body?.email === 'string' ? request.body.email.trim().toLowerCase() : '';
     const password = typeof request.body?.password === 'string' ? request.body.password : '';
     if (!email || email.length > 254 || !password || password.length > 128) throw new ApiError(401, 'invalid_credentials', 'Email hoặc mật khẩu không đúng.');
+    const demoBypass = emailVerificationDisabled(env);
     const found = await pool.query(
-      `SELECT id, email, display_name, password_hash FROM users
-       WHERE email_normalized = $1 AND status = 'active' AND email_verified_at IS NOT NULL`,
-      [email]
+      `SELECT id, email, display_name, password_hash, status, email_verified_at FROM users
+       WHERE email_normalized = $1 AND (
+         (status = 'active' AND (email_verified_at IS NOT NULL OR $2::boolean))
+         OR ($2::boolean AND status = 'pending' AND email_verified_at IS NULL)
+       )`,
+      [email, demoBypass]
     );
     const encoded = found.rowCount ? found.rows[0].password_hash : DUMMY_PASSWORD_HASH;
     const passwordMatches = await verifyPassword(password, encoded);
@@ -428,19 +492,7 @@ function registerAuthRoutes(app, { pool, env }) {
       throw new ApiError(401, 'invalid_credentials', 'Email hoặc mật khẩu không đúng.');
     }
     const user = found.rows[0];
-    const sessionToken = newToken();
-    const csrfToken = newToken();
-    const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
-    await withUser(pool, user.id, async (client) => {
-      const session = await client.query(
-        'INSERT INTO sessions (user_id, token_digest, csrf_digest, expires_at) VALUES ($1, $2, $3, $4) RETURNING id',
-        [user.id, digest(sessionToken), digest(csrfToken), expiresAt]
-      );
-      await recordSecurityEvent(client, user.id, 'login_succeeded', session.rows[0].id);
-    });
-    const stores = await listStores(pool, user.id);
-    setSessionCookies(reply, env, sessionToken, csrfToken);
-    return { user: { id: user.id, email: user.email, displayName: user.display_name }, stores };
+    return createUserSession(pool, user.id, reply, env, { activatePendingOwner: demoBypass && user.status === 'pending' });
   });
 
   app.get('/api/auth/me', async (request) => {
@@ -475,6 +527,7 @@ module.exports = {
   assertSameOrigin,
   digest,
   deliverEmail,
+  emailVerificationDisabled,
   hashPassword,
   newToken,
   registerAuthRoutes,
