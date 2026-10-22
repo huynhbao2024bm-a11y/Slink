@@ -49,3 +49,9 @@ Sau khi readiness kết nối thành công, vẫn cần xác nhận schema/migra
 - [Supabase database connections](https://supabase.com/docs/guides/database/connecting-to-postgres)
 - [Supabase IPv4 support](https://supabase.com/docs/guides/platform/ipv4-address)
 - [Supabase SSL configuration](https://supabase.com/docs/guides/platform/ssl-enforcement)
+
+## Chế độ demo bỏ qua xác minh email
+
+Để trình diễn khi chưa có dịch vụ gửi thư, đặt `DEMO_DISABLE_EMAIL_VERIFICATION=true` trong Render rồi deploy lại mã mới. Giá trị mặc định là `false`. Khi bật, chủ cửa hàng có thể đăng ký và đăng nhập ngay; tài khoản chủ đang chờ xác minh cũng có thể đăng nhập bằng đúng email và mật khẩu đã đăng ký.
+
+Chế độ này chỉ bỏ xác minh email cho đăng ký chủ cửa hàng. Email vẫn không được ghi nhận là đã xác minh; lời mời nhân viên và đặt lại mật khẩu vẫn cần email. Tài khoản và cửa hàng vẫn được lưu trong Supabase, nên chỉ dùng email/dữ liệu demo. Tắt cờ này khi không còn trình diễn; tài khoản chưa xác minh cần xác minh email trước khi đăng nhập lại.

@@ -6,7 +6,7 @@ const rateLimit = require('@fastify/rate-limit');
 const staticFiles = require('@fastify/static');
 const { existsSync } = require('node:fs');
 const path = require('node:path');
-const { ApiError, registerAuthRoutes } = require('./auth');
+const { ApiError, emailVerificationDisabled, registerAuthRoutes } = require('./auth');
 const { createPool } = require('./db');
 const { databaseTransportOptions } = require('./database-transport');
 const { registerProductRoutes } = require('./products');
@@ -63,23 +63,29 @@ function trustedProxies(addressesValue, hopsValue) {
 }
 
 function validateProductionConfig(env) {
+  if (env.DEMO_DISABLE_EMAIL_VERIFICATION && !['true', 'false'].includes(env.DEMO_DISABLE_EMAIL_VERIFICATION)) {
+    throw new Error('DEMO_DISABLE_EMAIL_VERIFICATION must be either true or false.');
+  }
   if (env.NODE_ENV !== 'production') return;
   databaseTransportOptions(env, env.APP_DATABASE_URL, 'APP_DATABASE_URL');
+  const demoBypass = emailVerificationDisabled(env);
   let publicOrigin;
   let deliveryUrl;
   try {
     publicOrigin = new URL(env.PUBLIC_ORIGIN);
-    deliveryUrl = new URL(env.EMAIL_DELIVERY_URL);
+    if (!demoBypass) deliveryUrl = new URL(env.EMAIL_DELIVERY_URL);
   } catch {
-    throw new Error('Production requires valid PUBLIC_ORIGIN and EMAIL_DELIVERY_URL values.');
+    throw new Error(demoBypass
+      ? 'Production demo mode still requires a valid PUBLIC_ORIGIN.'
+      : 'Production requires valid PUBLIC_ORIGIN and EMAIL_DELIVERY_URL values.');
   }
   if (publicOrigin.protocol !== 'https:' || publicOrigin.pathname !== '/' || publicOrigin.search || publicOrigin.hash || publicOrigin.username || publicOrigin.password) {
     throw new Error('Production PUBLIC_ORIGIN must be an HTTPS origin without a path or credentials.');
   }
-  if (deliveryUrl.protocol !== 'https:' || typeof env.EMAIL_DELIVERY_TOKEN !== 'string' || env.EMAIL_DELIVERY_TOKEN.length < 32) {
+  if (!demoBypass && (deliveryUrl.protocol !== 'https:' || typeof env.EMAIL_DELIVERY_TOKEN !== 'string' || env.EMAIL_DELIVERY_TOKEN.length < 32)) {
     throw new Error('Production requires an HTTPS email delivery endpoint and a token of at least 32 characters.');
   }
-  if (typeof env.EMAIL_FROM !== 'string' || !env.EMAIL_FROM.trim() || env.EMAIL_FROM.length > 320 || /[\r\n]/.test(env.EMAIL_FROM)) {
+  if (!demoBypass && (typeof env.EMAIL_FROM !== 'string' || !env.EMAIL_FROM.trim() || env.EMAIL_FROM.length > 320 || /[\r\n]/.test(env.EMAIL_FROM))) {
     throw new Error('Production requires EMAIL_FROM to be set; its domain must be verified with the email provider.');
   }
 }
@@ -100,6 +106,7 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
     trustProxy: trustedProxies(env.TRUSTED_PROXY_IPS, env.TRUSTED_PROXY_HOPS),
     routerOptions: { ignoreTrailingSlash: true },
   });
+  app.decorate('slinkEmailVerificationDisabled', emailVerificationDisabled(env));
 
   await app.register(helmet, {
     contentSecurityPolicy: {
@@ -232,6 +239,9 @@ async function main() {
   validateProductionConfig(process.env);
   const pool = createPool();
   const app = await buildServer({ pool });
+  if (emailVerificationDisabled(process.env)) {
+    app.log.warn('Demo mode is enabled: store-owner sign-up skips email verification. Turn it off after the demonstration.');
+  }
   const port = Number(process.env.PORT || 3000);
   // Render's proxy cannot reach a listener bound only to loopback, even if HOST
   // was set to 127.0.0.1 in the service dashboard.

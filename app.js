@@ -5691,8 +5691,13 @@
             password: String(data.get('password') || ''),
           },
         });
-        authMode = 'login';
-        renderAuth(result.message, 'success', result.developmentVerificationUrl);
+        if (result.user && Array.isArray(result.stores)) {
+          await enterStore(result);
+          toast('Đã tạo cửa hàng', 'Chế độ dùng thử: email chưa cần xác minh.', 'success');
+        } else {
+          authMode = 'login';
+          renderAuth(result.message, 'success', result.developmentVerificationUrl);
+        }
       } else if (type === 'resend') {
         const result = await apiRequest('/api/auth/resend-verification', {
           method: 'POST', body: { email: String(data.get('email') || '').trim() },

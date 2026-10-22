@@ -26,6 +26,8 @@ services:
         value: info
       - key: PUBLIC_ORIGIN
         sync: false
+      - key: DEMO_DISABLE_EMAIL_VERIFICATION
+        value: "false"
       - key: APP_DATABASE_URL
         sync: false
       - key: EMAIL_DELIVERY_URL
