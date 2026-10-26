@@ -789,17 +789,17 @@
   }
 
   const businessProfileOptions = [
-    { value: 'retail', label: 'Bán tại cửa hàng', detail: 'Ưu tiên bán hàng, sản phẩm, đơn và tồn kho.' },
-    { value: 'online', label: 'Bán hàng online', detail: 'Dễ mở phần ghi nhận đơn online; đơn hiện vẫn cần nhập thủ công.' },
-    { value: 'warehouse', label: 'Quản lý kho hoặc nhiều điểm bán', detail: 'Đưa kho, mặt hàng và điều chuyển lên trước.' },
-    { value: 'large_business', label: 'Cửa hàng lớn hoặc nhiều nhân viên', detail: 'Ưu tiên nhân viên, báo cáo và hoạt động nhiều kho.' },
-    { value: 'unsure', label: 'Tôi chưa rõ, hướng dẫn tôi bắt đầu', detail: 'Bắt đầu với những việc cơ bản; có thể đổi lựa chọn sau.' },
+    { value: 'retail', label: 'Bán tại cửa hàng', detail: 'Hiện bán hàng, mặt hàng, đơn, kho và khách hàng.' },
+    { value: 'online', label: 'Bán hàng online', detail: 'Hiện kênh bán, đơn hàng, mặt hàng và tồn kho.' },
+    { value: 'warehouse', label: 'Quản lý kho hoặc nhiều điểm bán', detail: 'Hiện quản lý kho, mặt hàng, đơn và điều phối.' },
+    { value: 'large_business', label: 'Cửa hàng lớn hoặc nhiều nhân viên', detail: 'Hiện nhân viên, báo cáo, kho và vận hành bán hàng.' },
+    { value: 'unsure', label: 'Tôi chưa rõ, hướng dẫn tôi bắt đầu', detail: 'Hiện những mục cơ bản; có thể đổi cách dùng sau.' },
   ];
   const businessProfileNavigation = {
     retail: ['dashboard', 'pos', 'products', 'orders', 'inventory', 'customers'],
-    online: ['dashboard', 'pos', 'channels', 'orders', 'products', 'customers'],
+    online: ['dashboard', 'pos', 'channels', 'orders', 'products', 'customers', 'inventory'],
     warehouse: ['dashboard', 'inventory', 'products', 'orders', 'channels'],
-    large_business: ['dashboard', 'reports', 'staff', 'inventory', 'pos', 'orders'],
+    large_business: ['dashboard', 'reports', 'staff', 'inventory', 'pos', 'orders', 'products', 'customers'],
     unsure: ['dashboard', 'pos', 'products', 'orders', 'inventory'],
   };
   const businessProfileMobileNavigation = {
@@ -809,6 +809,11 @@
     large_business: ['dashboard', 'pos', 'inventory', 'reports'],
     unsure: ['dashboard', 'pos', 'products', 'orders'],
   };
+
+  function isProfileRouteEnabled(routeId) {
+    const profileRoutes = businessProfileNavigation[store.businessProfile] || businessProfileNavigation.unsure;
+    return profileRoutes.includes(routeId) || ['finance', 'settings'].includes(routeId);
+  }
 
   function businessProfileLabel(value) {
     const option = businessProfileOptions.find(function (item) { return item.value === value; });
@@ -949,8 +954,8 @@
   }
 
   function openBusinessProfileOnboarding() {
-    const body = `<form id='business-profile-onboarding' data-form='business-profile'><div class='business-profile-choices'>${renderBusinessProfileChoices(store.businessProfile)}</div><p class='install-hint'>Lựa chọn này chỉ giúp sắp xếp lối vào cho dễ tìm. Nó không thay đổi quyền, dữ liệu hay số liệu cửa hàng.</p><div class='auth-message error' data-profile-error role='alert' hidden></div></form>`;
-    showModal('Bạn muốn bắt đầu theo cách nào?', 'Chọn một mục gần với cách cửa hàng đang hoạt động. Bạn có thể đổi lại trong Cài đặt.', body, `<button class='btn btn-secondary' type='button' data-action='business-profile-later'>Để sau</button><button class='btn btn-primary' type='submit' form='business-profile-onboarding'>Tiếp tục</button>`, true);
+    const body = `<form id='business-profile-onboarding' data-form='business-profile'><div class='business-profile-choices'>${renderBusinessProfileChoices(store.businessProfile)}</div><p class='install-hint'>Menu chỉ hiện những mục phù hợp với lựa chọn. Các mục khác được ẩn, không bị xóa; quyền truy cập và dữ liệu vẫn giữ nguyên. Bạn có thể đổi lựa chọn trong Cài đặt.</p><div class='auth-message error' data-profile-error role='alert' hidden></div></form>`;
+    showModal('Bạn muốn bắt đầu theo cách nào?', 'Chọn cách cửa hàng đang hoạt động. Slink chỉ hỏi lần đầu; chủ cửa hàng có thể đổi lựa chọn sau trong Cài đặt.', body, `<button class='btn btn-secondary' type='button' data-action='business-profile-later'>Để sau</button><button class='btn btn-primary' type='submit' form='business-profile-onboarding'>Tiếp tục</button>`, true);
   }
 
   async function loadProductsPage(query, offset) {
@@ -1303,7 +1308,7 @@
     const preferredNavIds = businessProfileNavigation[store.businessProfile] || businessProfileNavigation.unsure;
     const desktopNavIds = Array.from(new Set(preferredNavIds.concat(['finance', 'settings'])));
     const visibleNav = desktopNavIds.map(function (id) { return navItems.find(function (item) { return item.id === id; }); }).filter(function (item) { return item && canAccessRoute(item.id); });
-    document.getElementById('primary-nav').innerHTML = visibleNav.map(function (n) { return navHtml(n, false); }).join('') + `<button class='nav-link' type='button' data-action='more-menu' aria-label='Tất cả chức năng' title='Tất cả chức năng'><span class='nav-icon'>${icon('more', 18)}</span><span class='nav-label'>Tất cả chức năng</span></button>`;
+    document.getElementById('primary-nav').innerHTML = visibleNav.map(function (n) { return navHtml(n, false); }).join('');
     const mobileIds = (businessProfileMobileNavigation[store.businessProfile] || businessProfileMobileNavigation.unsure).filter(canAccessRoute).slice(0, 4);
     const moreActive = !mobileIds.includes(page) || ['product-detail', 'order-detail'].includes(page);
     document.getElementById('mobile-nav').innerHTML = mobileIds.map(function (id) { return navHtml(navItems.find(function (n) { return n.id === id; }), true); }).join('') + `<button class='mobile-nav-link ${moreActive ? 'active' : ''}' data-action='more-menu' ${moreActive ? "aria-current='page'" : ''}><span class='nav-icon'>${icon('more', 18)}</span><span>Khác</span></button>`;
@@ -2179,7 +2184,7 @@
 
   function renderBusinessProfileSettings(canEdit) {
     const options = `<option value='' disabled ${store.businessProfile ? '' : 'selected'}>Chọn cách sắp xếp</option>` + businessProfileOptions.map(function (item) { return `<option value='${item.value}' ${store.businessProfile === item.value ? 'selected' : ''}>${esc(item.label)}</option>`; }).join('');
-    return `<section class='panel settings-panel'><h2>Cách bạn dùng cửa hàng</h2><p>Để các lối vào thường dùng hiện trước. Cài đặt này không đổi quyền nhân viên, chức năng hay số liệu.</p><form data-form='business-profile'><div class='form-field'><label class='input-label' for='store-business-profile'>Cách hoạt động gần nhất</label><div class='select-wrap'><select class='input' id='store-business-profile' name='businessProfile' required ${canEdit ? '' : 'disabled'}>${options}</select></div></div>${canEdit ? `<div class='modal-footer' style='padding:17px 0 0;margin-top:12px'><button class='btn btn-primary' type='submit'>Lưu cách sắp xếp</button></div>` : `<div class='install-hint'>Chỉ chủ cửa hàng hoặc quản lý mới có thể đổi lựa chọn này.</div>`}</form><div class='install-hint' style='margin-top:14px'>Đơn hàng online được ghi nhận thủ công nếu chưa kết nối nhà cung cấp. Các mục khác luôn có trong “Tất cả chức năng”.</div></section>`;
+    return `<section class='panel settings-panel'><h2>Cách bạn dùng cửa hàng</h2><p>Lựa chọn này quyết định những khu vực hiện trong menu. Các khu vực khác được ẩn, không xóa dữ liệu hoặc thay quyền truy cập. Thu chi và Cài đặt vẫn có để bạn theo dõi tiền và quản lý tài khoản.</p><form data-form='business-profile'><div class='form-field'><label class='input-label' for='store-business-profile'>Cách hoạt động gần nhất</label><div class='select-wrap'><select class='input' id='store-business-profile' name='businessProfile' required ${canEdit ? '' : 'disabled'}>${options}</select></div></div>${canEdit ? `<div class='modal-footer' style='padding:17px 0 0;margin-top:12px'><button class='btn btn-primary' type='submit'>Lưu cách sắp xếp</button></div>` : `<div class='install-hint'>Chỉ chủ cửa hàng hoặc quản lý mới có thể đổi lựa chọn này.</div>`}</form><div class='install-hint' style='margin-top:14px'>Đơn từ kênh online hiện được nhập thủ công nếu chưa kết nối nhà cung cấp. Đổi lựa chọn sẽ làm mới các mục trong menu, không ảnh hưởng đơn hàng, mặt hàng hay số liệu.</div></section>`;
   }
 
   function renderChangePasswordForm() {
@@ -4397,9 +4402,12 @@
   }
 
   function showMoreMenu() {
-    const links = navItems.filter(function (n) { return !['dashboard', 'pos', 'orders'].includes(n.id) && canAccessRoute(n.id); });
+    const profileIds = businessProfileNavigation[store.businessProfile] || businessProfileNavigation.unsure;
+    const mobileIds = (businessProfileMobileNavigation[store.businessProfile] || businessProfileMobileNavigation.unsure).filter(canAccessRoute).slice(0, 4);
+    const allowedIds = Array.from(new Set(profileIds.concat(['finance', 'settings'])));
+    const links = allowedIds.filter(function (id) { return !mobileIds.includes(id) && isProfileRouteEnabled(id) && canAccessRoute(id); }).map(function (id) { return navItems.find(function (item) { return item.id === id; }); }).filter(Boolean);
     const body = `<div class='notice-list'>${links.map(function (n) { return `<button class='notice-item' data-route='${n.id}' style='width:100%;text-align:left;background:#fff;cursor:pointer'><span class='activity-mark'>${icon(n.icon, 15)}</span><span><strong>${n.label}</strong><small>Mở khu vực ${n.label.toLowerCase()}</small></span></button>`; }).join('')}</div>`;
-    showModal('Tất cả chức năng', 'Chọn khu vực bạn muốn mở.', body, `<button class='btn btn-secondary' data-action='close-modal'>Đóng</button>`, true);
+    showModal('Các mục khác của cửa hàng', 'Chỉ hiển thị những mục phù hợp với cách cửa hàng đang hoạt động.', body, `<button class='btn btn-secondary' data-action='close-modal'>Đóng</button>`, true);
   }
 
   function showAccountMenu() {
@@ -5715,9 +5723,9 @@
     if (!canViewReports) {
       const lowProducts = lowStockProducts().slice(0, 4);
       const operationalActions = store.role === 'cashier'
-        ? `<button class='quick-action' data-route='pos'><span class='quick-icon'>＋</span><span class='quick-copy'><strong>Tạo đơn hàng</strong><small>Bán hàng tại quầy</small></span></button><button class='quick-action' data-route='orders'><span class='quick-icon'>▤</span><span class='quick-copy'><strong>Đơn hàng</strong><small>Tìm giao dịch gần đây</small></span></button>`
+        ? `${isProfileRouteEnabled('pos') ? `<button class='quick-action' data-route='pos'><span class='quick-icon'>＋</span><span class='quick-copy'><strong>Tạo đơn hàng</strong><small>Bán hàng tại quầy</small></span></button>` : ''}<button class='quick-action' data-route='orders'><span class='quick-icon'>▤</span><span class='quick-copy'><strong>Đơn hàng</strong><small>Tìm giao dịch gần đây</small></span></button>`
         : `<button class='quick-action' data-action='receive-stock'><span class='quick-icon'>↙</span><span class='quick-copy'><strong>Nhập hàng</strong><small>Cập nhật tồn kho</small></span></button><button class='quick-action' data-route='inventory'><span class='quick-icon'>▦</span><span class='quick-copy'><strong>Kiểm kê tồn</strong><small>Xem số lượng hiện tại</small></span></button>`;
-      return pageHeading('Tổng quan', `Tình hình hoạt động của ${store.settings.storeName}.`, store.role === 'cashier' ? `<button class='btn btn-primary' data-route='pos'>＋ Tạo đơn mới</button>` : `<button class='btn btn-primary' data-action='receive-stock'>＋ Nhập hàng</button>`) +
+      return pageHeading('Tổng quan', `Tình hình hoạt động của ${store.settings.storeName}.`, store.role === 'cashier' ? (isProfileRouteEnabled('pos') ? `<button class='btn btn-primary' data-route='pos'>＋ Tạo đơn mới</button>` : '') : `<button class='btn btn-primary' data-action='receive-stock'>＋ Nhập hàng</button>`) +
         `<section class='dashboard-welcome'><div class='welcome-copy'><span class='welcome-overline'>Cửa hàng đang hoạt động</span><h2>Theo dõi hàng hóa<br/>và công việc hôm nay.</h2><p>Các mục hiển thị phù hợp với quyền ${esc(staffRoleName(store.role).toLowerCase())} của bạn.</p><button class='btn' data-route='inventory'>Mở kho hàng ${icon('arrow', 14)}</button></div></section>` +
         `<div class='stat-grid'><article class='stat-card'><div class='stat-label'>Mặt hàng đang quản lý</div><div class='stat-value'>${number(inventorySummary.total)}</div><div class='stat-foot'>Sản phẩm trong cửa hàng</div></article><article class='stat-card'><div class='stat-label'>Sắp hết hàng</div><div class='stat-value'>${number(inventorySummary.low)}</div><div class='stat-foot'>Bằng hoặc dưới mức cảnh báo</div></article><article class='stat-card'><div class='stat-label'>Hết hàng</div><div class='stat-value'>${number(inventorySummary.out)}</div><div class='stat-foot'>Cần bổ sung trước khi bán</div></article><article class='stat-card'><div class='stat-label'>${store.role === 'stockkeeper' ? 'Phiếu nhập gần đây' : 'Đơn hàng gần đây'}</div><div class='stat-value'>${number(store.role === 'stockkeeper' ? purchaseHistory.length : orderTotal)}</div><div class='stat-foot'>${store.role === 'stockkeeper' ? 'Phiếu mới nhất trong kho' : 'Tổng số đơn trong cửa hàng'}</div></article></div>` +
         `<div class='lower-grid operational-dashboard-grid'><section class='panel quick-panel'><div class='section-title'><h2>Thao tác nhanh</h2><p>Công việc thường ngày</p></div><div class='quick-grid'>${operationalActions}</div></section><section class='panel alert-panel'><div class='alert-title'><span class='alert-icon'>${icon('alert', 15)}</span><div><strong>${number(inventorySummary.low)} mặt hàng cần chú ý</strong><small>Kiểm tra số lượng và nhập bổ sung</small></div></div><div class='alert-list'>${lowProducts.map(function (product) { return `<div class='alert-row'><strong>${esc(product.name)}</strong><span class='alert-qty'>${product.stock === 0 ? 'Hết hàng' : `Còn ${number(product.stock)} ${esc(product.unit)}`}</span></div>`; }).join('') || `<div class='alert-row'><strong>Tồn kho đang ổn định</strong><span class='alert-qty'>Tốt</span></div>`}</div><button class='link-button' data-route='inventory'>Mở danh sách kho →</button></section></div>`;
@@ -5729,7 +5737,7 @@
     const recent = store.orders.slice(0, 5);
     const tops = topProducts();
     const lowCount = Number(inventorySummary.low) || 0;
-    const actions = `${canViewReports ? `<button class='btn btn-secondary hide-on-mobile' data-route='reports'>Xem báo cáo</button>` : ''}<button class='btn btn-primary' data-route='pos'><span class='btn-icon'>＋</span> Tạo đơn mới</button>`;
+    const actions = `${canViewReports && isProfileRouteEnabled('reports') ? `<button class='btn btn-secondary hide-on-mobile' data-route='reports'>Xem báo cáo</button>` : ''}${isProfileRouteEnabled('pos') ? `<button class='btn btn-primary' data-route='pos'><span class='btn-icon'>＋</span> Tạo đơn mới</button>` : ''}`;
     const welcomePanel = canViewReports
       ? `<section class='dashboard-welcome'><div class='welcome-copy'><span class='welcome-overline'>Cửa hàng đang hoạt động</span><h2>Bán hàng và theo dõi<br/>cửa hàng của bạn.</h2><p>Doanh thu được tính sau khi trừ các khoản trả hàng. Lãi gộp tính theo giá vốn sản phẩm.</p><button class='btn' data-route='orders'>Mở đơn hàng ${icon('arrow', 14)}</button></div><div class='welcome-total'><div><small>Doanh thu hôm nay</small><strong>${moneyVndText(todaySales)}</strong></div><span class='total-change'>${number(todayOrderCount)} đơn · ${analyticsData ? `7 ngày đến ${esc(analyticsData.range.to)}` : 'Đang tải dữ liệu'}</span></div></section>`
       : `<section class='dashboard-welcome'><div class='welcome-copy'><span class='welcome-overline'>Cửa hàng đang hoạt động</span><h2>Theo dõi hàng hóa<br/>và đơn đang xử lý.</h2><p>Chọn thao tác phù hợp với công việc của bạn để tiếp tục vận hành cửa hàng.</p><button class='btn' data-route='inventory'>Mở kho hàng ${icon('arrow', 14)}</button></div></section>`;
