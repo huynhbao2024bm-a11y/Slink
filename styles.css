@@ -315,3 +315,9 @@ body{min-height:100vh;min-height:100dvh;overflow-x:hidden}
  .business-profile-choice strong{font-size:13px}
  .business-profile-choice small{font-size:12px}
 }
+
+/* Keep simplified dashboard panels balanced across screen sizes. */
+.dashboard-main-grid-compact{grid-template-columns:minmax(0,1fr)}
+.dashboard-main-grid-compact .side-stack{grid-template-columns:repeat(2,minmax(0,1fr))}
+.dashboard-recent-grid{grid-template-columns:minmax(0,1fr)}
+@media(max-width:700px){.dashboard-main-grid-compact .side-stack{grid-template-columns:1fr}}
