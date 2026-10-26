@@ -467,6 +467,42 @@ function registerAuthRoutes(app, { pool, env }) {
     }
   });
 
+  app.post('/api/auth/change-password', {
+    config: { rateLimit: { max: 5, timeWindow: '15 minutes' } },
+  }, async (request) => {
+    const auth = await authenticate(pool, request);
+    requireCsrf(request, env);
+    const currentPassword = typeof request.body?.currentPassword === 'string' ? request.body.currentPassword : '';
+    const newPassword = typeof request.body?.newPassword === 'string' ? request.body.newPassword : '';
+    if (!currentPassword || currentPassword.length > 128) throw new ApiError(400, 'validation_error', 'Hãy nhập mật khẩu hiện tại.');
+    if (newPassword.length < 12 || newPassword.length > 128) throw new ApiError(400, 'validation_error', 'Mật khẩu mới cần từ 12 đến 128 ký tự.');
+    await withUser(pool, auth.userId, async (client) => {
+      const user = await client.query('SELECT password_hash, status FROM users WHERE id = $1 FOR UPDATE', [auth.userId]);
+      if (!user.rowCount || user.rows[0].status !== 'active') throw new ApiError(401, 'unauthorized', 'Phiên đăng nhập không còn hợp lệ. Hãy đăng nhập lại.');
+      if (!await verifyPassword(currentPassword, user.rows[0].password_hash)) {
+        throw new ApiError(400, 'current_password_invalid', 'Mật khẩu hiện tại chưa đúng.');
+      }
+      if (await verifyPassword(newPassword, user.rows[0].password_hash)) {
+        throw new ApiError(400, 'validation_error', 'Mật khẩu mới cần khác mật khẩu hiện tại.');
+      }
+      const passwordHash = await hashPassword(newPassword);
+      await client.query(
+        'UPDATE users SET password_hash = $2, password_changed_at = now(), updated_at = now() WHERE id = $1',
+        [auth.userId, passwordHash]
+      );
+      await client.query(
+        'UPDATE password_reset_tokens SET consumed_at = now() WHERE user_id = $1 AND consumed_at IS NULL',
+        [auth.userId]
+      );
+      await client.query(
+        'UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND token_digest <> $2 AND revoked_at IS NULL',
+        [auth.userId, auth.tokenDigest]
+      );
+      await recordSecurityEvent(client, auth.userId, 'password_changed');
+    });
+    return { status: 'password_changed', message: 'Đã đổi mật khẩu. Các thiết bị khác cần đăng nhập lại.' };
+  });
+
   app.post('/api/auth/login', {
     config: { rateLimit: { max: 10, timeWindow: '15 minutes' } },
   }, async (request, reply) => {

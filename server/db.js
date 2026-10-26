@@ -73,7 +73,9 @@ async function listStores(pool, userId) {
     for (const member of memberships.rows) {
       await client.query("SELECT set_config('app.store_id', $1, true)", [member.store_id]);
       const store = await client.query(
-        `SELECT id, name, phone, address, receipt_footer, version, timezone, currency FROM stores WHERE id = $1 AND status = 'active'`,
+        `SELECT id, name, phone, address, receipt_footer, version, timezone, currency,
+                business_profile, onboarding_completed_at
+         FROM stores WHERE id = $1 AND status = 'active'`,
         [member.store_id]
       );
       if (store.rowCount) stores.push({ ...store.rows[0], role: member.role });

@@ -179,6 +179,8 @@
 
   function emptyStore() {
     return {
+      businessProfile: '',
+      onboardingCompletedAt: null,
       settings: { storeName: 'Slink', ownerName: '', phone: '', address: '', receiptFooter: '', version: 1 },
       products: [], customers: [], orders: [], cashbook: [], movements: [], suppliers: [], sequence: 1001,
     };
@@ -771,6 +773,54 @@
     authRoot.hidden = false;
   }
 
+  function authPasswordField(id, name, label, autocomplete, confirmationFor) {
+    const confirmationAttribute = confirmationFor ? ` data-password-confirm-for='${esc(confirmationFor)}'` : '';
+    return `<div class='form-field'><label class='input-label' for='${esc(id)}'>${esc(label)}</label><div class='auth-password-control'><input class='input auth-password-input' id='${esc(id)}' name='${esc(name)}' type='password' autocomplete='${esc(autocomplete)}' required minlength='${name === 'password' || name === 'newPassword' ? '12' : '1'}' maxlength='128'${confirmationAttribute}/><button class='auth-password-toggle' type='button' data-action='toggle-password' data-target='${esc(id)}' aria-label='Hiện mật khẩu' aria-pressed='false' title='Hiện mật khẩu'><svg viewBox='0 0 24 24' aria-hidden='true'><path d='M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z'/><circle cx='12' cy='12' r='2.7'/></svg></button></div></div>`;
+  }
+
+  function updatePasswordConfirmation(form) {
+    if (!form) return true;
+    const confirmation = form.querySelector('[data-password-confirm-for]');
+    if (!confirmation) return true;
+    const password = document.getElementById(confirmation.dataset.passwordConfirmFor);
+    const matches = Boolean(password && confirmation.value === password.value);
+    confirmation.setCustomValidity(matches ? '' : 'Hai lần nhập mật khẩu chưa khớp.');
+    return matches;
+  }
+
+  const businessProfileOptions = [
+    { value: 'retail', label: 'Bán tại cửa hàng', detail: 'Ưu tiên bán hàng, sản phẩm, đơn và tồn kho.' },
+    { value: 'online', label: 'Bán hàng online', detail: 'Dễ mở phần ghi nhận đơn online; đơn hiện vẫn cần nhập thủ công.' },
+    { value: 'warehouse', label: 'Quản lý kho hoặc nhiều điểm bán', detail: 'Đưa kho, mặt hàng và điều chuyển lên trước.' },
+    { value: 'large_business', label: 'Cửa hàng lớn hoặc nhiều nhân viên', detail: 'Ưu tiên nhân viên, báo cáo và hoạt động nhiều kho.' },
+    { value: 'unsure', label: 'Tôi chưa rõ, hướng dẫn tôi bắt đầu', detail: 'Bắt đầu với những việc cơ bản; có thể đổi lựa chọn sau.' },
+  ];
+  const businessProfileNavigation = {
+    retail: ['dashboard', 'pos', 'products', 'orders', 'inventory', 'customers'],
+    online: ['dashboard', 'pos', 'channels', 'orders', 'products', 'customers'],
+    warehouse: ['dashboard', 'inventory', 'products', 'orders', 'channels'],
+    large_business: ['dashboard', 'reports', 'staff', 'inventory', 'pos', 'orders'],
+    unsure: ['dashboard', 'pos', 'products', 'orders', 'inventory'],
+  };
+  const businessProfileMobileNavigation = {
+    retail: ['dashboard', 'pos', 'orders', 'inventory'],
+    online: ['dashboard', 'pos', 'channels', 'orders'],
+    warehouse: ['dashboard', 'inventory', 'products', 'orders'],
+    large_business: ['dashboard', 'pos', 'inventory', 'reports'],
+    unsure: ['dashboard', 'pos', 'products', 'orders'],
+  };
+
+  function businessProfileLabel(value) {
+    const option = businessProfileOptions.find(function (item) { return item.value === value; });
+    return option ? option.label : 'Chưa chọn';
+  }
+
+  function renderBusinessProfileChoices(selected) {
+    return businessProfileOptions.map(function (option) {
+      return `<label class='business-profile-choice'><input type='radio' name='businessProfile' value='${option.value}' required ${selected === option.value ? 'checked' : ''}/><span><strong>${esc(option.label)}</strong><small>${esc(option.detail)}</small></span></label>`;
+    }).join('');
+  }
+
   function renderAuth(message, tone, verificationUrl) {
     let title = 'Đăng nhập Slink';
     let subtitle = 'Quản lý cửa hàng của bạn trên mọi thiết bị.';
@@ -778,11 +828,11 @@
     if (authMode === 'invite-register') {
       title = 'Tham gia cửa hàng';
       subtitle = invitationInfo ? `Bạn được mời tham gia ${invitationInfo.storeName} với vai trò ${staffRoleName(invitationInfo.role)}.` : 'Hoàn tất đăng ký từ lời mời của cửa hàng.';
-      body = `<form class='auth-form' data-auth-form='invite-register'><div class='form-field'><label class='input-label' for='auth-name'>Tên của bạn</label><input class='input' id='auth-name' name='displayName' autocomplete='name' required minlength='2' maxlength='120'/></div><div class='form-field'><label class='input-label' for='auth-email'>Email được mời</label><input class='input' id='auth-email' name='email' type='email' value='${esc(invitationInfo ? invitationInfo.email : '')}' readonly/></div><div class='form-field'><label class='input-label' for='auth-password'>Mật khẩu (tối thiểu 12 ký tự)</label><input class='input' id='auth-password' name='password' type='password' autocomplete='new-password' required minlength='12' maxlength='128'/></div><button class='btn btn-primary auth-submit' type='submit'>Tạo tài khoản và tham gia</button></form><button class='auth-switch' type='button' data-action='auth-mode' data-mode='invite-login'>Đã có tài khoản? Đăng nhập</button>`;
+      body = `<form class='auth-form' data-auth-form='invite-register'><div class='form-field'><label class='input-label' for='auth-name'>Tên của bạn</label><input class='input' id='auth-name' name='displayName' autocomplete='name' required minlength='2' maxlength='120'/></div><div class='form-field'><label class='input-label' for='auth-email'>Email được mời</label><input class='input' id='auth-email' name='email' type='email' value='${esc(invitationInfo ? invitationInfo.email : '')}' readonly/></div>${authPasswordField('auth-password', 'password', 'Mật khẩu (tối thiểu 12 ký tự)', 'new-password')}${authPasswordField('auth-password-confirm', 'passwordConfirm', 'Nhập lại mật khẩu', 'new-password', 'auth-password')}<button class='btn btn-primary auth-submit' type='submit'>Tạo tài khoản và tham gia</button></form><button class='auth-switch' type='button' data-action='auth-mode' data-mode='invite-login'>Đã có tài khoản? Đăng nhập</button>`;
     } else if (authMode === 'register') {
       title = 'Tạo tài khoản cửa hàng';
       subtitle = 'Bắt đầu bằng email của bạn và thông tin cửa hàng.';
-      body = `<form class='auth-form' data-auth-form='register'><div class='form-field'><label class='input-label' for='auth-name'>Tên của bạn</label><input class='input' id='auth-name' name='displayName' autocomplete='name' required minlength='2' maxlength='120'/></div><div class='form-field'><label class='input-label' for='auth-store'>Tên cửa hàng</label><input class='input' id='auth-store' name='storeName' autocomplete='organization' required minlength='2' maxlength='160'/></div><div class='form-field'><label class='input-label' for='auth-email'>Email</label><input class='input' id='auth-email' name='email' type='email' autocomplete='email' required maxlength='254'/></div><div class='form-field'><label class='input-label' for='auth-password'>Mật khẩu (tối thiểu 12 ký tự)</label><input class='input' id='auth-password' name='password' type='password' autocomplete='new-password' required minlength='12' maxlength='128'/></div><button class='btn btn-primary auth-submit' type='submit'>Tạo tài khoản</button></form><button class='auth-switch' type='button' data-action='auth-mode' data-mode='login'>Đã có tài khoản? Đăng nhập</button>`;
+      body = `<form class='auth-form' data-auth-form='register'><div class='form-field'><label class='input-label' for='auth-name'>Tên của bạn</label><input class='input' id='auth-name' name='displayName' autocomplete='name' required minlength='2' maxlength='120'/></div><div class='form-field'><label class='input-label' for='auth-store'>Tên cửa hàng</label><input class='input' id='auth-store' name='storeName' autocomplete='organization' required minlength='2' maxlength='160'/></div><div class='form-field'><label class='input-label' for='auth-email'>Email</label><input class='input' id='auth-email' name='email' type='email' autocomplete='email' required maxlength='254'/></div>${authPasswordField('auth-password', 'password', 'Mật khẩu (tối thiểu 12 ký tự)', 'new-password')}${authPasswordField('auth-password-confirm', 'passwordConfirm', 'Nhập lại mật khẩu', 'new-password', 'auth-password')}<button class='btn btn-primary auth-submit' type='submit'>Tạo tài khoản</button></form><button class='auth-switch' type='button' data-action='auth-mode' data-mode='login'>Đã có tài khoản? Đăng nhập</button>`;
     } else if (authMode === 'resend') {
       title = 'Gửi lại email xác nhận';
       subtitle = 'Nhập email đã dùng khi đăng ký Slink.';
@@ -795,12 +845,12 @@
       title = 'Tạo mật khẩu mới';
       subtitle = 'Liên kết có hiệu lực trong một giờ và chỉ dùng một lần.';
       const resetToken = new URLSearchParams(window.location.hash.slice(1)).get('reset') || '';
-      body = resetToken ? `<form class='auth-form' data-auth-form='reset-complete'><input type='hidden' name='token' value='${esc(resetToken)}'/><div class='form-field'><label class='input-label' for='auth-password'>Mật khẩu mới (tối thiểu 12 ký tự)</label><input class='input' id='auth-password' name='password' type='password' autocomplete='new-password' required minlength='12' maxlength='128'/></div><div class='form-field'><label class='input-label' for='auth-password-confirm'>Nhập lại mật khẩu</label><input class='input' id='auth-password-confirm' name='passwordConfirm' type='password' autocomplete='new-password' required minlength='12' maxlength='128'/></div><button class='btn btn-primary auth-submit' type='submit'>Cập nhật mật khẩu</button></form>` : `<div class='auth-message error'>Liên kết đặt lại mật khẩu không hợp lệ hoặc đã hết hạn.</div>`;
+      body = resetToken ? `<form class='auth-form' data-auth-form='reset-complete'><input type='hidden' name='token' value='${esc(resetToken)}'/>${authPasswordField('auth-password', 'password', 'Mật khẩu mới (tối thiểu 12 ký tự)', 'new-password')}${authPasswordField('auth-password-confirm', 'passwordConfirm', 'Nhập lại mật khẩu', 'new-password', 'auth-password')}<button class='btn btn-primary auth-submit' type='submit'>Cập nhật mật khẩu</button></form>` : `<div class='auth-message error'>Liên kết đặt lại mật khẩu không hợp lệ hoặc đã hết hạn.</div>`;
       body += `<button class='auth-switch' type='button' data-action='auth-mode' data-mode='login'>Quay lại đăng nhập</button>`;
     } else {
       const invited = authMode === 'invite-login' && invitationInfo;
       if (invited) { title = 'Đăng nhập để tham gia'; subtitle = `Lời mời vào ${invitationInfo.storeName} · ${staffRoleName(invitationInfo.role)}.`; }
-      body = `<form class='auth-form' data-auth-form='login'><div class='form-field'><label class='input-label' for='auth-email'>Email</label><input class='input' id='auth-email' name='email' type='email' autocomplete='username' value='${esc(invited ? invitationInfo.email : '')}' required maxlength='254'/></div><div class='form-field'><label class='input-label' for='auth-password'>Mật khẩu</label><input class='input' id='auth-password' name='password' type='password' autocomplete='current-password' required maxlength='128'/></div><button class='btn btn-primary auth-submit' type='submit'>${invited ? 'Đăng nhập và tham gia' : 'Đăng nhập'}</button></form>${invited ? `<button class='auth-switch' type='button' data-action='auth-mode' data-mode='invite-register'>Tạo tài khoản mới bằng lời mời</button><button class='auth-switch' type='button' data-action='auth-mode' data-mode='resend'>Gửi lại email xác nhận</button>` : `<button class='auth-switch' type='button' data-action='auth-mode' data-mode='reset'>Quên mật khẩu?</button><button class='auth-switch' type='button' data-action='auth-mode' data-mode='register'>Tạo tài khoản và cửa hàng</button><button class='auth-switch' type='button' data-action='auth-mode' data-mode='resend'>Gửi lại email xác nhận</button>`}`;
+      body = `<form class='auth-form' data-auth-form='login'><div class='form-field'><label class='input-label' for='auth-email'>Email</label><input class='input' id='auth-email' name='email' type='email' autocomplete='username' value='${esc(invited ? invitationInfo.email : '')}' required maxlength='254'/></div>${authPasswordField('auth-password', 'password', 'Mật khẩu', 'current-password')}<button class='btn btn-primary auth-submit' type='submit'>${invited ? 'Đăng nhập và tham gia' : 'Đăng nhập'}</button></form>${invited ? `<button class='auth-switch' type='button' data-action='auth-mode' data-mode='invite-register'>Tạo tài khoản mới bằng lời mời</button><button class='auth-switch' type='button' data-action='auth-mode' data-mode='resend'>Gửi lại email xác nhận</button>` : `<button class='auth-switch' type='button' data-action='auth-mode' data-mode='reset'>Quên mật khẩu?</button><button class='auth-switch' type='button' data-action='auth-mode' data-mode='register'>Tạo tài khoản và cửa hàng</button><button class='auth-switch' type='button' data-action='auth-mode' data-mode='resend'>Gửi lại email xác nhận</button>`}`;
     }
     let htmlMessage = message ? esc(message) : '';
     if (verificationUrl) htmlMessage += `<br/><a href='${esc(verificationUrl)}'>${authMode === 'reset' ? 'Mở liên kết đặt lại mật khẩu' : 'Xác nhận email và kích hoạt cửa hàng'}</a>`;
@@ -865,6 +915,8 @@
     store = emptyStore();
     store.id = activeStore.id;
     store.role = activeStore.role;
+    store.businessProfile = activeStore.business_profile || '';
+    store.onboardingCompletedAt = activeStore.onboarding_completed_at || null;
     updatePendingCompatibilityWarning(store.id);
     const pendingSale = loadPendingSale();
     if (pendingSale && pendingSale.storeId === store.id) {
@@ -893,6 +945,12 @@
       cart.discount = checkoutPendingPayload.discountVnd || 0;
     }
     if (authSession) render();
+    if (store.role === 'owner' && !store.onboardingCompletedAt) openBusinessProfileOnboarding();
+  }
+
+  function openBusinessProfileOnboarding() {
+    const body = `<form id='business-profile-onboarding' data-form='business-profile'><div class='business-profile-choices'>${renderBusinessProfileChoices(store.businessProfile)}</div><p class='install-hint'>Lựa chọn này chỉ giúp sắp xếp lối vào cho dễ tìm. Nó không thay đổi quyền, dữ liệu hay số liệu cửa hàng.</p><div class='auth-message error' data-profile-error role='alert' hidden></div></form>`;
+    showModal('Bạn muốn bắt đầu theo cách nào?', 'Chọn một mục gần với cách cửa hàng đang hoạt động. Bạn có thể đổi lại trong Cài đặt.', body, `<button class='btn btn-secondary' type='button' data-action='business-profile-later'>Để sau</button><button class='btn btn-primary' type='submit' form='business-profile-onboarding'>Tiếp tục</button>`, true);
   }
 
   async function loadProductsPage(query, offset) {
@@ -1210,7 +1268,11 @@
 
   function navHtml(item, mobile) {
     const active = page === item.id || (item.id === 'products' && page === 'product-detail') || (item.id === 'orders' && page === 'order-detail');
-    if (mobile) return `<button class='mobile-nav-link ${active ? 'active' : ''}' data-route='${item.id}' aria-label='${item.label}' ${active ? "aria-current='page'" : ''}><span class='nav-icon'>${icon(item.icon, 18)}</span><span>${item.id === 'dashboard' ? 'Tổng quan' : item.id === 'pos' ? 'Bán hàng' : item.id === 'orders' ? 'Đơn hàng' : 'Kho hàng'}</span></button>`;
+    if (mobile) {
+      const mobileLabels = { dashboard: 'Tổng quan', pos: 'Bán hàng', products: 'Sản phẩm', orders: 'Đơn hàng', inventory: 'Kho hàng', channels: 'Đơn online', reports: 'Báo cáo', staff: 'Nhân viên', finance: 'Thu chi', customers: 'Khách hàng', settings: 'Cài đặt' };
+      const label = mobileLabels[item.id] || item.label;
+      return `<button class='mobile-nav-link ${active ? 'active' : ''}' data-route='${item.id}' aria-label='${esc(item.label)}' ${active ? "aria-current='page'" : ''}><span class='nav-icon'>${icon(item.icon, 18)}</span><span>${esc(label)}</span></button>`;
+    }
     return `<button class='nav-link ${active ? 'active' : ''}' data-route='${item.id}' aria-label='${esc(item.label)}' title='${esc(item.label)}' ${active ? "aria-current='page'" : ''}><span class='nav-icon'>${icon(item.icon, 18)}</span><span class='nav-label'>${esc(item.label)}</span>${item.id === 'inventory' && lowStockProducts().length ? `<span class='nav-count'>${lowStockProducts().length}</span>` : ''}</button>`;
   }
 
@@ -1238,10 +1300,13 @@
     const topbarAvatar = document.querySelector('.topbar-avatar');
     if (profileAvatar) profileAvatar.textContent = initials(userName);
     if (topbarAvatar) topbarAvatar.textContent = initials(userName);
-    const visibleNav = navItems.filter(function (item) { return canAccessRoute(item.id); });
-    document.getElementById('primary-nav').innerHTML = visibleNav.map(function (n) { return navHtml(n, false); }).join('');
-    const moreActive = ['customers', 'finance', 'reports', 'settings', 'products', 'channels', 'staff', 'audit', 'product-detail'].includes(page);
-    document.getElementById('mobile-nav').innerHTML = ['dashboard', 'pos', 'orders', 'inventory'].filter(canAccessRoute).map(function (id) { return navHtml(navItems.find(function (n) { return n.id === id; }), true); }).join('') + `<button class='mobile-nav-link ${moreActive ? 'active' : ''}' data-action='more-menu' ${moreActive ? "aria-current='page'" : ''}><span class='nav-icon'>${icon('more', 18)}</span><span>Khác</span></button>`;
+    const preferredNavIds = businessProfileNavigation[store.businessProfile] || businessProfileNavigation.unsure;
+    const desktopNavIds = Array.from(new Set(preferredNavIds.concat(['finance', 'settings'])));
+    const visibleNav = desktopNavIds.map(function (id) { return navItems.find(function (item) { return item.id === id; }); }).filter(function (item) { return item && canAccessRoute(item.id); });
+    document.getElementById('primary-nav').innerHTML = visibleNav.map(function (n) { return navHtml(n, false); }).join('') + `<button class='nav-link' type='button' data-action='more-menu' aria-label='Tất cả chức năng' title='Tất cả chức năng'><span class='nav-icon'>${icon('more', 18)}</span><span class='nav-label'>Tất cả chức năng</span></button>`;
+    const mobileIds = (businessProfileMobileNavigation[store.businessProfile] || businessProfileMobileNavigation.unsure).filter(canAccessRoute).slice(0, 4);
+    const moreActive = !mobileIds.includes(page) || ['product-detail', 'order-detail'].includes(page);
+    document.getElementById('mobile-nav').innerHTML = mobileIds.map(function (id) { return navHtml(navItems.find(function (n) { return n.id === id; }), true); }).join('') + `<button class='mobile-nav-link ${moreActive ? 'active' : ''}' data-action='more-menu' ${moreActive ? "aria-current='page'" : ''}><span class='nav-icon'>${icon('more', 18)}</span><span>Khác</span></button>`;
     const names = { dashboard: ['Tổng quan', 'Hôm nay'], pos: ['Bán hàng', 'Tạo đơn'], products: ['Hàng hóa', 'Sản phẩm'], orders: ['Vận hành', 'Đơn hàng'], customers: ['Khách hàng', 'Danh sách'], inventory: ['Kho hàng', 'Tồn kho'], finance: ['Tài chính', 'Thu chi & công nợ'], reports: ['Phân tích', 'Báo cáo'], settings: ['Cửa hàng', 'Cài đặt'], channels: ['Bán hàng đa kênh', 'Kênh bán'], staff: ['Cửa hàng', 'Nhân viên'], audit: ['Quản trị', 'Nhật ký hoạt động'], 'order-detail': ['Đơn hàng', 'Chi tiết đơn'], 'product-detail': ['Hàng hóa', 'Chi tiết sản phẩm'] };
     const meta = names[page] || ['Slink', 'Cửa hàng'];
     document.getElementById('crumb').textContent = meta[0];
@@ -2109,7 +2174,16 @@
     const canEdit = ['owner', 'manager'].includes(store.role);
     const disabled = canEdit ? '' : 'disabled';
     return pageHeading('Cài đặt cửa hàng', 'Thông tin này xuất hiện trên khu vực quản lý và biên nhận bán hàng.', '') +
-      `<section class='panel settings-panel'><h2>Thông tin cửa hàng</h2><p>Tên cửa hàng, số điện thoại, địa chỉ và lời chào trên biên nhận.</p><form id='entity-form' data-form='settings' data-version='${store.settings.version || 1}'><div class='form-grid'><div class='form-field full'><label class='input-label' for='setting-store-name'>Tên cửa hàng *</label><input class='input' id='setting-store-name' name='storeName' value='${esc(store.settings.storeName)}' required minlength='2' maxlength='160' ${disabled}/></div><div class='form-field'><label class='input-label' for='setting-phone'>Số điện thoại</label><input class='input' id='setting-phone' name='phone' value='${esc(store.settings.phone)}' inputmode='tel' maxlength='40' ${disabled}/></div><div class='form-field full'><label class='input-label' for='setting-address'>Địa chỉ</label><input class='input' id='setting-address' name='address' value='${esc(store.settings.address)}' maxlength='300' ${disabled}/></div><div class='form-field full'><label class='input-label' for='setting-footer'>Lời chào cuối biên nhận</label><input class='input' id='setting-footer' name='receiptFooter' value='${esc(store.settings.receiptFooter)}' maxlength='240' placeholder='Cảm ơn quý khách' ${disabled}/></div></div>${canEdit ? `<div class='modal-footer' style='padding:17px 0 0;margin-top:12px'><button class='btn btn-primary' type='submit'>Lưu thay đổi</button></div>` : `<div class='install-hint'>Chỉ chủ cửa hàng và quản lý mới được sửa thông tin.</div>`}</form><div class='install-hint' style='margin-top:18px'>Cài đặt này được lưu cùng dữ liệu cửa hàng và dùng trên các thiết bị đã đăng nhập. Sao lưu và khôi phục cần quy trình máy chủ riêng.</div></section>${renderAccountSecurity()}${canAccessRoute('audit') ? `<section class='panel settings-panel'><div class='panel-header'><div><h2>Nhật ký hoạt động</h2><p>Xem các thao tác nghiệp vụ đã được ghi nhận, người thực hiện và lý do.</p></div><button class='btn btn-secondary' data-route='audit'>Mở nhật ký</button></div></section>` : ''}`;
+      `<section class='panel settings-panel'><h2>Thông tin cửa hàng</h2><p>Tên cửa hàng, số điện thoại, địa chỉ và lời chào trên biên nhận.</p><form id='entity-form' data-form='settings' data-version='${store.settings.version || 1}'><div class='form-grid'><div class='form-field full'><label class='input-label' for='setting-store-name'>Tên cửa hàng *</label><input class='input' id='setting-store-name' name='storeName' value='${esc(store.settings.storeName)}' required minlength='2' maxlength='160' ${disabled}/></div><div class='form-field'><label class='input-label' for='setting-phone'>Số điện thoại</label><input class='input' id='setting-phone' name='phone' value='${esc(store.settings.phone)}' inputmode='tel' maxlength='40' ${disabled}/></div><div class='form-field full'><label class='input-label' for='setting-address'>Địa chỉ</label><input class='input' id='setting-address' name='address' value='${esc(store.settings.address)}' maxlength='300' ${disabled}/></div><div class='form-field full'><label class='input-label' for='setting-footer'>Lời chào cuối biên nhận</label><input class='input' id='setting-footer' name='receiptFooter' value='${esc(store.settings.receiptFooter)}' maxlength='240' placeholder='Cảm ơn quý khách' ${disabled}/></div></div>${canEdit ? `<div class='modal-footer' style='padding:17px 0 0;margin-top:12px'><button class='btn btn-primary' type='submit'>Lưu thay đổi</button></div>` : `<div class='install-hint'>Chỉ chủ cửa hàng và quản lý mới được sửa thông tin.</div>`}</form><div class='install-hint' style='margin-top:18px'>Cài đặt này được lưu cùng dữ liệu cửa hàng và dùng trên các thiết bị đã đăng nhập. Sao lưu và khôi phục cần quy trình máy chủ riêng.</div></section>${renderBusinessProfileSettings(canEdit)}${renderChangePasswordForm()}${renderAccountSecurity()}${canAccessRoute('audit') ? `<section class='panel settings-panel'><div class='panel-header'><div><h2>Nhật ký hoạt động</h2><p>Xem các thao tác nghiệp vụ đã được ghi nhận, người thực hiện và lý do.</p></div><button class='btn btn-secondary' data-route='audit'>Mở nhật ký</button></div></section>` : ''}`;
+  }
+
+  function renderBusinessProfileSettings(canEdit) {
+    const options = `<option value='' disabled ${store.businessProfile ? '' : 'selected'}>Chọn cách sắp xếp</option>` + businessProfileOptions.map(function (item) { return `<option value='${item.value}' ${store.businessProfile === item.value ? 'selected' : ''}>${esc(item.label)}</option>`; }).join('');
+    return `<section class='panel settings-panel'><h2>Cách bạn dùng cửa hàng</h2><p>Để các lối vào thường dùng hiện trước. Cài đặt này không đổi quyền nhân viên, chức năng hay số liệu.</p><form data-form='business-profile'><div class='form-field'><label class='input-label' for='store-business-profile'>Cách hoạt động gần nhất</label><div class='select-wrap'><select class='input' id='store-business-profile' name='businessProfile' required ${canEdit ? '' : 'disabled'}>${options}</select></div></div>${canEdit ? `<div class='modal-footer' style='padding:17px 0 0;margin-top:12px'><button class='btn btn-primary' type='submit'>Lưu cách sắp xếp</button></div>` : `<div class='install-hint'>Chỉ chủ cửa hàng hoặc quản lý mới có thể đổi lựa chọn này.</div>`}</form><div class='install-hint' style='margin-top:14px'>Đơn hàng online được ghi nhận thủ công nếu chưa kết nối nhà cung cấp. Các mục khác luôn có trong “Tất cả chức năng”.</div></section>`;
+  }
+
+  function renderChangePasswordForm() {
+    return `<section class='panel settings-panel'><h2>Đổi mật khẩu</h2><p>Nhập mật khẩu hiện tại để xác nhận, sau đó tạo mật khẩu mới từ 12 ký tự.</p><form class='auth-form account-password-form' data-form='change-password'>${authPasswordField('settings-current-password', 'currentPassword', 'Mật khẩu hiện tại', 'current-password')}${authPasswordField('settings-new-password', 'newPassword', 'Mật khẩu mới', 'new-password')}${authPasswordField('settings-confirm-password', 'confirmPassword', 'Nhập lại mật khẩu mới', 'new-password', 'settings-new-password')}<div class='auth-message error' data-password-feedback role='alert' hidden></div><button class='btn btn-primary auth-submit' type='submit'>Đổi mật khẩu</button></form><div class='install-hint' style='margin-top:14px'>Thiết bị hiện tại vẫn đăng nhập. Các thiết bị khác sẽ cần đăng nhập lại bằng mật khẩu mới.</div></section>`;
   }
 
   function securityEventLabel(type) {
@@ -2631,7 +2705,11 @@
     const first = modal.querySelector('input:not([type=hidden]),select,button'); if (first) window.setTimeout(function () { first.focus(); }, 40);
   }
 
-  function closeModal() {
+  function closeModal(force) {
+    if (!force && modal.querySelector('#business-profile-onboarding') && store.role === 'owner' && !store.onboardingCompletedAt) {
+      saveBusinessProfile('unsure');
+      return;
+    }
     const wasOpen = !modal.hidden;
     stopScanCamera();
     modal.hidden = true;
@@ -5288,6 +5366,74 @@
     }
   }
 
+  async function saveBusinessProfile(profile, form) {
+    const feedback = form ? form.querySelector('[data-profile-error]') : modal.querySelector('[data-profile-error]');
+    if (!businessProfileOptions.some(function (item) { return item.value === profile; })) {
+      if (feedback) { feedback.hidden = false; feedback.textContent = 'Hãy chọn một cách sử dụng cửa hàng.'; }
+      return;
+    }
+    const submitButton = form ? form.querySelector('[type="submit"]') : modal.querySelector('[data-action="business-profile-later"]');
+    if (submitButton) submitButton.disabled = true;
+    try {
+      const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/business-profile`, {
+        method: 'PUT', body: { businessProfile: profile },
+      });
+      store.businessProfile = result.businessProfile;
+      store.onboardingCompletedAt = result.onboardingCompletedAt;
+      authSession.stores = authSession.stores.map(function (item) {
+        return item.id === store.id ? Object.assign({}, item, { business_profile: result.businessProfile, onboarding_completed_at: result.onboardingCompletedAt }) : item;
+      });
+      closeModal(true);
+      if (page === 'settings') render();
+      else renderShell();
+      toast('Đã lưu cách sắp xếp cửa hàng', businessProfileLabel(profile));
+    } catch (error) {
+      if (error.status === 401) showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
+      else if (feedback) { feedback.hidden = false; feedback.textContent = error.message; }
+      else toast('Chưa lưu được lựa chọn', error.message, 'error');
+      if (submitButton && submitButton.isConnected) submitButton.disabled = false;
+    }
+  }
+
+  async function saveAccountPassword(form) {
+    if (!updatePasswordConfirmation(form)) {
+      const confirmation = form.querySelector('[data-password-confirm-for]');
+      if (confirmation) confirmation.reportValidity();
+      return;
+    }
+    const data = new FormData(form);
+    const submitButton = form.querySelector('[type="submit"]');
+    const feedback = form.querySelector('[data-password-feedback]');
+    if (submitButton) submitButton.disabled = true;
+    if (feedback) feedback.hidden = true;
+    try {
+      const result = await apiRequest('/api/auth/change-password', {
+        method: 'POST',
+        body: {
+          currentPassword: String(data.get('currentPassword') || ''),
+          newPassword: String(data.get('newPassword') || ''),
+        },
+      });
+      form.reset();
+      form.querySelectorAll('[data-action="toggle-password"]').forEach(function (button) {
+        const input = document.getElementById(button.dataset.target);
+        if (input) input.type = 'password';
+        button.setAttribute('aria-label', 'Hiện mật khẩu');
+        button.setAttribute('aria-pressed', 'false');
+        button.title = 'Hiện mật khẩu';
+        button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.7"/></svg>';
+      });
+      await loadAccountSecurity();
+      toast(result.message, 'Mật khẩu mới đã có hiệu lực.');
+    } catch (error) {
+      if (error.status === 401 && error.code === 'unauthorized') showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
+      else if (feedback) { feedback.hidden = false; feedback.textContent = error.message; }
+      else toast('Chưa đổi được mật khẩu', error.message, 'error');
+    } finally {
+      if (submitButton && submitButton.isConnected) submitButton.disabled = false;
+    }
+  }
+
   function openStaffInvite() {
     if (store.role !== 'owner') return toast('Không đủ quyền', 'Chỉ chủ cửa hàng mới có thể mời nhân viên.', 'error');
     const form = `<form id='entity-form' data-form='staff-invite'><div class='form-grid'><div class='form-field full'><label class='input-label' for='staff-invite-email'>Email nhân viên *</label><input class='input' id='staff-invite-email' name='email' type='email' autocomplete='email' required maxlength='254' placeholder='nhanvien@example.com'/></div><div class='form-field full'><label class='input-label' for='staff-invite-role'>Vai trò *</label><div class='select-wrap'><select class='input' id='staff-invite-role' name='role' required><option value='cashier'>Thu ngân</option><option value='stockkeeper'>Nhân viên kho</option><option value='accountant'>Kế toán</option><option value='manager'>Quản lý</option></select></div><small class='staff-role-help'>${staffRoleDescription('cashier')}</small></div></div><div class='modal-note'>Lời mời có hiệu lực 7 ngày. Nhân viên cần dùng đúng email này và xác minh email trước khi được cấp quyền.</div></form>`;
@@ -5888,12 +6034,32 @@
     }
   }
 
+  document.addEventListener('input', function (event) {
+    const form = event.target.closest('form');
+    if (!form || !form.querySelector('[data-password-confirm-for]')) return;
+    const confirmation = form.querySelector('[data-password-confirm-for]');
+    if (event.target === confirmation || event.target.id === confirmation.dataset.passwordConfirmFor) updatePasswordConfirmation(form);
+  });
+
   document.addEventListener('click', function (event) {
     const route = event.target.closest('[data-route]');
     if (route) { routeTo(route.dataset.route); return; }
     const button = event.target.closest('[data-action]'); if (!button) return;
     const action = button.dataset.action; const id = button.dataset.id;
-    if (action === 'auth-mode') { authMode = button.dataset.mode || 'login'; renderAuth(); }
+    if (action === 'toggle-password') {
+      const input = document.getElementById(button.dataset.target);
+      if (!input) return;
+      const show = input.type === 'password';
+      input.type = show ? 'text' : 'password';
+      button.setAttribute('aria-label', show ? 'Ẩn mật khẩu' : 'Hiện mật khẩu');
+      button.setAttribute('aria-pressed', show ? 'true' : 'false');
+      button.title = show ? 'Ẩn mật khẩu' : 'Hiện mật khẩu';
+      button.innerHTML = show
+        ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.7"/><path d="m4 4 16 16"/></svg>'
+        : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.7"/></svg>';
+    }
+    else if (action === 'business-profile-later') saveBusinessProfile('unsure');
+    else if (action === 'auth-mode') { authMode = button.dataset.mode || 'login'; renderAuth(); }
     else if (action === 'logout') { closeModal(); signOut(); }
     else if (action === 'account-menu') showAccountMenu();
     else if (action === 'account-settings') { closeModal(); routeTo('settings'); }
@@ -6605,8 +6771,19 @@
 
   document.addEventListener('submit', function (event) {
     const authForm = event.target.closest('form[data-auth-form]');
-    if (authForm) { event.preventDefault(); submitAuth(authForm); return; }
+    if (authForm) {
+      event.preventDefault();
+      if (!updatePasswordConfirmation(authForm)) {
+        const confirmation = authForm.querySelector('[data-password-confirm-for]');
+        if (confirmation) confirmation.reportValidity();
+        return;
+      }
+      submitAuth(authForm);
+      return;
+    }
     const form = event.target.closest('form[data-form]'); if (!form) return; event.preventDefault(); const type = form.dataset.form;
+    if (type === 'business-profile') { saveBusinessProfile(String(new FormData(form).get('businessProfile') || ''), form); return; }
+    if (type === 'change-password') { saveAccountPassword(form); return; }
     if (type === 'channel-filter') {
       channelState.query = String(new FormData(form).get('q') || '').trim().slice(0, 120);
       loadChannelCatalog(0);

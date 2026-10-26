@@ -292,3 +292,26 @@ body{min-height:100vh;min-height:100dvh;overflow-x:hidden}
  .drawer-cart .cart-items{max-height:18vh}
  .modal{max-height:96dvh}
 }
+
+/* Accessible password visibility and first-run store profile selection. */
+.auth-password-control{position:relative;display:flex;align-items:center}
+.auth-password-control .auth-password-input{width:100%;padding-right:58px!important}
+.auth-password-toggle{position:absolute;right:5px;top:50%;transform:translateY(-50%);display:inline-grid;place-items:center;width:44px;height:44px;border:0;border-radius:10px;background:transparent;color:#557467;cursor:pointer}
+.auth-password-toggle:hover,.auth-password-toggle:focus-visible{background:#edf4ef;color:#173f34}
+.auth-password-toggle:focus-visible{outline:2px solid #43805c;outline-offset:1px}
+.auth-password-toggle svg{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.account-password-form{max-width:540px;margin-top:14px}
+.business-profile-choices{display:grid;gap:10px}
+.business-profile-choice{display:flex;align-items:flex-start;gap:12px;padding:14px;border:1px solid #e2e9e3;border-radius:13px;background:#fff;cursor:pointer}
+.business-profile-choice:has(input:checked){border-color:#7da88e;background:#f4f8f4;box-shadow:0 0 0 2px rgba(67,128,92,.08)}
+.business-profile-choice input{flex:none;width:18px;height:18px;margin:2px 0 0;accent-color:#286147}
+.business-profile-choice span{display:grid;gap:4px}
+.business-profile-choice strong{color:#243b31;font-size:14px}
+.business-profile-choice small{color:#708078;font-size:12px;line-height:1.5}
+.modal-body .business-profile-choices{max-width:760px}
+.settings-panel .auth-message{margin:0}
+@media(max-width:600px){
+ .business-profile-choice{padding:12px}
+ .business-profile-choice strong{font-size:13px}
+ .business-profile-choice small{font-size:12px}
+}
