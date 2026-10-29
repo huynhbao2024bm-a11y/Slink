@@ -168,6 +168,7 @@
   let scanCameraStream = null;
   let scanCameraDetector = null;
   let scanCameraTimer = 0;
+  let scanPhotoFallbackTimer = 0;
   let scanCameraRunning = false;
   let scanCameraStarting = false;
   let pendingCompatibilityStoreId = '';
@@ -824,6 +825,88 @@
     return businessProfileOptions.map(function (option) {
       return `<label class='business-profile-choice'><input type='radio' name='businessProfile' value='${option.value}' required ${selected === option.value ? 'checked' : ''}/><span><strong>${esc(option.label)}</strong><small>${esc(option.detail)}</small></span></label>`;
     }).join('');
+  }
+
+  function starterGuideSteps() {
+    if (store.role === 'cashier') return {
+      title: 'Bán hàng',
+      intro: inventorySummary.total > 0 ? 'Tìm hoặc quét mã hàng, kiểm tra giỏ rồi thanh toán.' : 'Chưa có mặt hàng để bán. Báo chủ cửa hàng thêm hàng trước nhé.',
+      steps: inventorySummary.total > 0 ? [
+        { title: 'Tìm hoặc quét mã hàng', detail: 'Chạm vào hàng để thêm vào đơn.', route: 'pos' },
+        { title: 'Kiểm tra giỏ hàng', detail: 'Xem số lượng và số tiền cần thu.', route: 'pos' },
+        { title: 'Thanh toán', detail: 'Chọn cách khách trả tiền rồi xác nhận.', route: 'pos' },
+      ] : [{ title: 'Mở màn hình bán hàng', detail: 'Sau khi có mặt hàng, bạn có thể bắt đầu ngay.', route: 'pos' }],
+    };
+    if (store.role === 'stockkeeper') return {
+      title: 'Bắt đầu với kho hàng',
+      intro: inventorySummary.total > 0 ? 'Kho chính được chọn sẵn; chỉ đổi kho khi cần.' : 'Chủ cửa hàng cần thêm danh sách mặt hàng trước.',
+      steps: inventorySummary.total > 0 ? [
+        { title: 'Nhập hàng đã nhận', detail: 'Ghi số lượng thực nhận vào kho đang chọn.', action: 'receive-stock' },
+        { title: 'Kiểm tra số lượng', detail: 'Tìm mặt hàng và xem số đang có.', route: 'inventory' },
+      ] : [{ title: 'Mở kho hàng', detail: 'Xem các mặt hàng sau khi chủ cửa hàng thêm vào.', route: 'inventory' }],
+    };
+    if (store.role === 'accountant') return {
+      title: 'Xem sổ và báo cáo',
+      intro: 'Các số liệu sẽ hiện sau khi cửa hàng ghi nhận giao dịch.',
+      steps: [
+        { title: 'Xem thu chi', detail: 'Kiểm tra tiền đã ghi trong sổ.', route: 'finance' },
+        { title: 'Xem báo cáo', detail: 'Theo dõi doanh thu và công nợ.', route: 'reports' },
+      ],
+    };
+
+    const guides = {
+      retail: {
+        title: 'Bán tại cửa hàng', intro: 'Thêm hàng, nhập số lượng đang có rồi bắt đầu bán.', steps: [
+          { title: 'Thêm mặt hàng', detail: 'Ghi tên và giá bán.', action: 'new-product', route: 'products' },
+          { title: 'Ghi số lượng đang có', detail: 'Kho chính được chọn sẵn.', action: 'receive-stock', route: 'inventory' },
+          { title: 'Bán hàng', detail: 'Quét mã hoặc chạm vào mặt hàng.', route: 'pos' },
+        ],
+      },
+      online: {
+        title: 'Bán hàng online', intro: 'Ghi đơn online cùng danh sách hàng của cửa hàng.', note: 'Đơn online hiện chưa tự lấy từ sàn; cần ghi nhận thủ công.', steps: [
+          { title: 'Thêm mặt hàng', detail: 'Ghi tên, giá và mã hàng nếu có.', action: 'new-product', route: 'products' },
+          { title: 'Khai báo gian hàng', detail: 'Nối mã hàng trên kênh với hàng trong Slink.', route: 'channels' },
+          { title: 'Ghi nhận đơn online', detail: 'Kho chính được chọn sẵn; đổi kho khi cần.', route: 'channels' },
+        ],
+      },
+      warehouse: {
+        title: 'Quản lý nhiều kho', intro: 'Ghi mặt hàng và nhận hàng vào đúng nơi.', steps: [
+          { title: 'Thêm mặt hàng', detail: 'Ghi tên và giá bán.', action: 'new-product', route: 'products' },
+          { title: 'Nhập hàng', detail: 'Kho chính được chọn sẵn; đổi kho nếu chuyến hàng về nơi khác.', action: 'receive-stock', route: 'inventory' },
+          { title: 'Xem hàng từng kho', detail: 'Chuyển hàng giữa các kho khi cần.', route: 'inventory' },
+        ],
+      },
+      large_business: {
+        title: 'Cửa hàng có nhiều nhân viên', intro: 'Chia quyền theo công việc; mỗi người dùng tài khoản riêng.', steps: [
+          { title: 'Thêm mặt hàng', detail: 'Ghi tên, giá và số lượng ban đầu.', action: 'new-product', route: 'products' },
+          { title: 'Mời nhân viên', detail: 'Chọn quyền phù hợp với công việc.', route: 'staff' },
+          { title: 'Xem báo cáo', detail: 'Kiểm tra doanh thu và công nợ.', route: 'reports' },
+        ],
+      },
+      unsure: {
+        title: 'Bắt đầu với những việc cơ bản', intro: 'Bạn có thể bắt đầu ngay; lựa chọn này đổi được trong Cài đặt.', steps: [
+          { title: 'Thêm mặt hàng', detail: 'Ghi tên và giá bán.', action: 'new-product', route: 'products' },
+          { title: 'Ghi số lượng đang có', detail: 'Kho chính được chọn sẵn.', action: 'receive-stock', route: 'inventory' },
+          { title: 'Bán hàng', detail: 'Quét mã hoặc chạm vào mặt hàng.', route: 'pos' },
+        ],
+      },
+    };
+    return guides[store.businessProfile] || guides.unsure;
+  }
+
+  function renderStarterGuide(always) {
+    if (!always && (productLoading || productError || inventorySummary.total > 0 || orderTotal > 0)) return '';
+    const guide = starterGuideSteps();
+    const visibleSteps = guide.steps.filter(function (step) {
+      return (!step.route || canAccessRoute(step.route)) && (!step.action || canAccessRoute(step.route || 'dashboard'));
+    });
+    const stepsHtml = visibleSteps.map(function (step, index) {
+      const tag = step.action ? 'button' : step.route ? 'button' : 'div';
+      const target = step.action ? `type='button' data-action='${step.action}'` : step.route ? `type='button' data-route='${step.route}'` : '';
+      return `<li><${tag} class='starter-guide-step' ${target}><span class='starter-guide-number'>${number(index + 1)}</span><span class='starter-guide-copy'><strong>${esc(step.title)}</strong><small>${esc(step.detail)}</small></span>${target ? `<span class='starter-guide-arrow' aria-hidden='true'>›</span>` : ''}</${tag}></li>`;
+    }).join('');
+    const headingId = `starter-guide-title-${always ? 'modal' : 'home'}`;
+    return `<section class='starter-guide${always ? ' starter-guide-in-modal' : ''}' aria-labelledby='${headingId}'><div class='starter-guide-heading'><div><h2 id='${headingId}'>${always ? 'Hướng dẫn nhanh' : 'Bắt đầu nhanh'}</h2><p>${esc(guide.intro)}</p></div></div><ol>${stepsHtml}</ol>${guide.note ? `<p class='starter-guide-note'>${esc(guide.note)}</p>` : ''}</section>`;
   }
 
   function renderAuth(message, tone, verificationUrl) {
@@ -1489,6 +1572,7 @@
     const totals = cartTotals();
     const posWarehousePicker = warehouses.length > 1 ? `<label class='pos-warehouse-picker'><span>Xuất từ kho</span><div class='select-wrap'><select class='input' id='pos-warehouse' ${cart.length || checkoutPendingPayload ? 'disabled' : ''}>${warehouses.map(function (warehouse) { return `<option value='${esc(warehouse.id)}' ${warehouse.id === selectedWarehouseId ? 'selected' : ''}>${esc(warehouse.name)}</option>`; }).join('')}</select></div></label>` : '';
     return pageHeading('Bán hàng', 'Chọn sản phẩm, thêm vào đơn và thu tiền ngay tại quầy.', `${['owner', 'manager'].includes(store.role) ? `<button class='btn btn-secondary' data-action='manage-promotions'>Mã khuyến mãi</button>` : ''}<button class='btn btn-secondary hide-on-mobile' data-action='scan'>${icon('scan', 14)} Nhập mã</button><button class='btn btn-secondary hide-on-mobile' data-route='orders'>Đơn gần đây</button><button class='btn btn-primary pos-cart-top' data-action='open-cart' aria-controls='drawer-cart' aria-expanded='false'>Giỏ hàng · ${number(totals.count)}</button>`) +
+      renderStarterGuide(false) +
       `<div class='pos-layout'><div><div class='pos-tools ${warehouses.length > 1 ? 'has-warehouse' : ''}'><div class='pos-search-group'><div class='search-wrap pos-search'><span class='search-symbol'>⌕</span><input class='input' id='pos-search' type='search' placeholder='Tìm sản phẩm hoặc SKU…' value='${esc(query)}' aria-label='Tìm sản phẩm'></div><button class='btn btn-secondary' data-action='scan' aria-label='Nhập mã' title='Nhập mã sản phẩm'>${icon('scan', 15)}</button></div>${posWarehousePicker}</div><div class='category-scroll'>${categories.map(function (category) { return `<button class='pos-category ${categoryFilter === category ? 'active' : ''}' data-action='category' data-category='${esc(category)}'>${esc(category)}</button>`; }).join('')}</div><div class='pos-product-grid' id='pos-products'>${products.map(function (product) { return `<button class='pos-product' data-action='add-cart' data-id='${product.id}'><span class='product-thumb ${product.tone || 'product-sage'}'>${esc(product.emoji || '📦')}</span><span class='pos-stock'>${product.inventoryTracked ? `Còn ${number(product.stock)}` : 'Không theo dõi tồn'}</span><strong>${esc(product.name)}</strong><small>${esc(product.sku)}</small><span class='pos-price'>${money(product.price)}</span></button>`; }).join('') || `<div class='panel empty-state' style='grid-column:1/-1'><strong>Chưa có sản phẩm để bán</strong><span>Thêm sản phẩm hoặc nhập kho mặt hàng có theo dõi tồn.</span></div>`}</div></div>${cartPanel()}</div><div class='pos-mobile-cart'><button class='btn' data-action='open-cart' aria-controls='drawer-cart' aria-expanded='false'><span class='mobile-cart-count'>${number(totals.count)}</span><span>${totals.count ? 'Xem giỏ hàng' : 'Giỏ hàng đang trống'}</span><strong>${money(totals.total)}　→</strong></button></div><div class='drawer-cart' id='drawer-cart' role='dialog' aria-modal='true' aria-label='Giỏ hàng' aria-hidden='true'>${cartPanel()}</div>`;
   }
 
@@ -2387,7 +2471,7 @@
     const profiles = channelState.profiles.filter((item) => item.status === 'active');
     if (!profiles.length) return toast('Chưa có gian hàng', 'Hãy khai báo gian hàng trước khi ghi nhận đơn.', 'error');
     const profileOptions = profiles.map((profile) => `<option value='${esc(profile.id)}'>${esc(channelProfileLabel(profile))}</option>`).join('');
-    showModal('Ghi nhận đơn từ kênh', 'Nhập đơn đã thấy trên gian hàng. Việc này không kết nối hoặc đồng bộ với sàn.', `<form id='entity-form' data-form='channel-order-create' data-idempotency-key='${newIdempotencyKey()}'><div class='form-grid'><label class='form-field'><span class='input-label'>Gian hàng *</span><select class='input' id='channel-order-profile-id' name='channelProfileId' required>${profileOptions}</select></label><label class='form-field'><span class='input-label'>Kho giao *</span><select class='input' id='channel-order-warehouse-id' name='warehouseId' required><option value=''>Đang tải kho…</option></select></label><label class='form-field'><span class='input-label'>Mã đơn trên kênh *</span><input class='input' name='externalOrderRef' required maxlength='120' autocomplete='off' placeholder='Ví dụ: 240801ABCDEF'/></label><label class='form-field'><span class='input-label'>Thanh toán hiển thị ở kênh</span><select class='input' name='paymentStatusSnapshot'><option value='unknown'>Chưa rõ</option><option value='unpaid'>Chưa thanh toán</option><option value='paid'>Đã thanh toán</option><option value='cod'>Thu hộ COD</option></select></label><label class='form-field'><span class='input-label'>Tên người nhận</span><input class='input' name='customerName' maxlength='160' autocomplete='name'/></label><label class='form-field'><span class='input-label'>Điện thoại người nhận</span><input class='input' name='customerPhone' type='tel' inputmode='tel' maxlength='32' autocomplete='tel'/></label><label class='form-field full'><span class='input-label'>Địa chỉ giao hàng</span><textarea class='input' name='shippingAddress' rows='2' maxlength='500' autocomplete='shipping street-address'></textarea></label><label class='form-field full'><span class='input-label'>Ghi chú đóng gói nội bộ</span><textarea class='input' name='internalNote' rows='2' maxlength='500'></textarea></label></div><div class='channel-order-catalog-search'><label class='form-field'><span class='input-label'>Tìm SKU đã ánh xạ</span><input class='input' id='channel-order-mapping-search' type='search' maxlength='100' placeholder='Tên, SKU Slink hoặc SKU trên kênh'/></label><small id='channel-order-catalog-note'>Đang tải SKU đã ánh xạ…</small></div><div id='channel-order-lines'>${channelOrderLineRow(0)}</div><button class='btn btn-secondary' type='button' data-action='add-channel-order-line'>Thêm mặt hàng</button><div class='channel-order-total'><span>Tổng mặt hàng theo giá kênh</span><strong data-channel-order-total>—</strong></div><div class='notice-item channel-modal-note'><span>${icon('alert', 16)}</span><span><strong>Xác nhận sẽ giữ số lượng tại kho giao</strong><small>Thông tin người nhận là bản chụp từ gian hàng. Đánh dấu “Đã gửi” sẽ trừ tồn và ghi thẻ kho; Slink chưa tạo giao dịch thu tiền, doanh thu hay công nợ.</small></span></div></form>`, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Hủy</button><button class='btn btn-primary' type='submit' form='entity-form'>Giữ tồn và ghi đơn</button>`, true);
+    showModal('Ghi nhận đơn từ kênh', 'Nhập đơn đã thấy trên gian hàng. Việc này không kết nối hoặc đồng bộ với sàn.', `<form id='entity-form' data-form='channel-order-create' data-idempotency-key='${newIdempotencyKey()}'><div class='form-grid'><label class='form-field'><span class='input-label'>Gian hàng *</span><select class='input' id='channel-order-profile-id' name='channelProfileId' required>${profileOptions}</select></label><label class='form-field'><span class='input-label'>Kho giao *</span><select class='input' id='channel-order-warehouse-id' name='warehouseId' required><option value=''>Đang tải kho…</option></select></label><div class='form-field full channel-order-ref-field'><label class='input-label' for='channel-order-external-ref'>Mã đơn trên kênh *</label><input class='input' id='channel-order-external-ref' name='externalOrderRef' required maxlength='120' autocomplete='off' placeholder='Ví dụ: 240801ABCDEF'/><button class='btn btn-secondary' type='button' data-action='scan-channel-order'>Quét mã đơn</button><div class='scan-camera-panel channel-order-scan-panel' data-scan-surface data-scan-mode='order' data-scan-target='channel-order-external-ref' hidden><ol class='scan-steps'><li>Đưa mã đơn vào giữa khung camera, nơi đủ sáng.</li><li>Chọn Cho phép nếu điện thoại hỏi quyền camera.</li><li>Nếu sau 10 giây chưa đọc được, Slink chụp ảnh để bạn xem và tự nhập mã.</li></ol><video id='scan-camera-video' class='scan-camera-video' playsinline muted hidden aria-label='Khung camera để quét mã đơn'></video><img id='scan-photo-preview' class='scan-photo-preview' alt='Ảnh mã đơn chụp để xem lại' hidden/><button class='btn btn-secondary' type='button' data-action='start-camera-scan'>Mở camera để quét</button><p id='scan-camera-status' class='scan-camera-status' role='status' aria-live='polite'>Mã đơn sẽ điền vào ô phía trên. Hãy kiểm tra lại và nhập các thông tin còn lại trước khi lưu.</p><small class='scan-privacy-note'>Ảnh chỉ hiện tạm thời trên thiết bị này. Slink chưa đọc chữ trong ảnh và không lưu ảnh vào đơn. Bạn có thể nhập hoặc dán mã nếu chỉ có một điện thoại.</small></div></div><label class='form-field'><span class='input-label'>Thanh toán hiển thị ở kênh</span><select class='input' name='paymentStatusSnapshot'><option value='unknown'>Chưa rõ</option><option value='unpaid'>Chưa thanh toán</option><option value='paid'>Đã thanh toán</option><option value='cod'>Thu hộ COD</option></select></label><label class='form-field'><span class='input-label'>Tên người nhận</span><input class='input' name='customerName' maxlength='160' autocomplete='name'/></label><label class='form-field'><span class='input-label'>Điện thoại người nhận</span><input class='input' name='customerPhone' type='tel' inputmode='tel' maxlength='32' autocomplete='tel'/></label><label class='form-field full'><span class='input-label'>Địa chỉ giao hàng</span><textarea class='input' name='shippingAddress' rows='2' maxlength='500' autocomplete='shipping street-address'></textarea></label><label class='form-field full'><span class='input-label'>Ghi chú đóng gói nội bộ</span><textarea class='input' name='internalNote' rows='2' maxlength='500'></textarea></label></div><div class='channel-order-catalog-search'><label class='form-field'><span class='input-label'>Tìm SKU đã ánh xạ</span><input class='input' id='channel-order-mapping-search' type='search' maxlength='100' placeholder='Tên, SKU Slink hoặc SKU trên kênh'/></label><small id='channel-order-catalog-note'>Đang tải SKU đã ánh xạ…</small></div><div id='channel-order-lines'>${channelOrderLineRow(0)}</div><button class='btn btn-secondary' type='button' data-action='add-channel-order-line'>Thêm mặt hàng</button><div class='channel-order-total'><span>Tổng mặt hàng theo giá kênh</span><strong data-channel-order-total>—</strong></div><div class='notice-item channel-modal-note'><span>${icon('alert', 16)}</span><span><strong>Xác nhận sẽ giữ số lượng tại kho giao</strong><small>Thông tin người nhận là bản chụp từ gian hàng. Đánh dấu “Đã gửi” sẽ trừ tồn và ghi thẻ kho; Slink chưa tạo giao dịch thu tiền, doanh thu hay công nợ.</small></span></div></form>`, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Hủy</button><button class='btn btn-primary' type='submit' form='entity-form'>Giữ tồn và ghi đơn</button>`, true);
     try {
       const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/warehouses`);
       if (modal.hidden) return;
@@ -4421,16 +4505,82 @@
     showModal('Tài khoản', 'Quản lý phiên đăng nhập và thông tin cửa hàng.', body, footer);
   }
 
-  function showScan() {
-    const body = `<form id='entity-form' data-form='scan'><div class='scan-camera-panel'><video id='scan-camera-video' class='scan-camera-video' playsinline muted hidden aria-label='Xem hình ảnh camera khi quét mã'></video><button class='btn btn-secondary' type='button' data-action='start-camera-scan'>Mở camera để quét</button><p id='scan-camera-status' class='scan-camera-status' role='status'>Trên trình duyệt hỗ trợ, bạn có thể quét mã vạch hoặc QR. Nếu camera không dùng được, hãy nhập mã bên dưới.</p></div><div class='form-field'><label class='input-label' for='scan-code'>Mã SKU, mã vạch hoặc QR</label><input id='scan-code' class='input' name='code' autofocus placeholder='Nhập hoặc dán mã sản phẩm…' autocomplete='off' inputmode='text'/></div></form>`;
-    showModal('Tìm sản phẩm nhanh', 'Quét bằng camera hoặc nhập mã SKU, mã vạch trên sản phẩm.', body, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Hủy</button><button class='btn btn-primary' type='submit' form='entity-form'>Tìm sản phẩm</button>`);
-  }
 
+
+  function showChannelOrderScanner() {
+    const surface = modal.querySelector('[data-scan-surface][data-scan-mode="order"]');
+    if (!surface) return;
+    surface.hidden = false;
+    const button = surface.querySelector('[data-action="start-camera-scan"]');
+    if (button) button.focus();
+  }
+  function showScan() {
+    const body = `<form id='entity-form' data-form='scan'><div class='scan-camera-panel' data-scan-surface data-scan-mode='product' data-scan-target='scan-code'><ol class='scan-steps'><li>Chọn Cho phép khi điện thoại hỏi quyền camera.</li><li>Đưa mã vào giữa khung, giữ yên và đủ sáng.</li><li>Nếu chưa đọc được sau 10 giây, ảnh sẽ tự chụp để bạn xem lại.</li></ol><video id='scan-camera-video' class='scan-camera-video' playsinline muted hidden aria-label='Khung camera để quét mã'></video><img id='scan-photo-preview' class='scan-photo-preview' alt='Ảnh chụp mã để xem lại' hidden/><button class='btn btn-secondary' type='button' data-action='start-camera-scan'>Mở camera để quét</button><p id='scan-camera-status' class='scan-camera-status' role='status' aria-live='polite'>Slink sẽ tự đọc mã. Nếu camera hoặc mã không dùng được, bạn có thể nhập mã bên dưới.</p><small class='scan-privacy-note'>Ảnh chụp chỉ dùng trên màn hình này; không gửi lên máy chủ.</small></div><div class='form-field'><label class='input-label' for='scan-code'>Mã mặt hàng</label><input id='scan-code' class='input' name='code' placeholder='Nhập hoặc dán mã sản phẩm…' autocomplete='off' inputmode='text'/></div></form>`;
+    showModal('Quét mã mặt hàng', 'Đưa mã vạch hoặc QR vào giữa khung camera.', body, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button><button class='btn btn-primary' type='submit' form='entity-form'>Tìm mặt hàng</button>`);
+  }
   function setScanCameraStatus(message, isError) {
     const status = modal.querySelector('#scan-camera-status');
     if (!status) return;
     status.textContent = message;
     status.classList.toggle('error', Boolean(isError));
+  }
+
+  function scanCodeInput(surface) {
+    const targetId = surface?.dataset.scanTarget;
+    return targetId ? document.getElementById(targetId) : null;
+  }
+
+  async function captureScanPhoto() {
+    if (!scanCameraRunning || !scanCameraStream) return;
+    const surface = modal.querySelector('[data-scan-surface]');
+    const video = surface?.querySelector('#scan-camera-video');
+    const image = surface?.querySelector('#scan-photo-preview');
+    const codeInput = scanCodeInput(surface);
+    const form = modal.querySelector('form[data-form="scan"]');
+    const detector = scanCameraDetector;
+    if (!surface || !video || !image || !video.videoWidth || !video.videoHeight) {
+      stopScanCamera();
+      setScanCameraStatus('Chưa chụp được ảnh. Hãy thử mở camera lại hoặc nhập mã bên dưới.', true);
+      return;
+    }
+    const canvas = document.createElement('canvas');
+    const scale = Math.min(1, 1600 / video.videoWidth);
+    canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+    canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+    const context = canvas.getContext('2d');
+    if (!context) {
+      stopScanCamera();
+      setScanCameraStatus('Chưa chụp được ảnh. Hãy nhập mã bên dưới hoặc thử lại.', true);
+      return;
+    }
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const localPhoto = canvas.toDataURL('image/jpeg', 0.78);
+    stopScanCamera();
+    image.src = localPhoto;
+    image.hidden = false;
+    if (!detector) {
+      setScanCameraStatus(surface.dataset.scanMode === 'order' ? 'Ảnh đã chụp để bạn nhìn lại. Trình duyệt chưa tự đọc được mã; nhập mã đơn vào ô phía trên.' : 'Ảnh đã chụp để bạn xem lại. Trình duyệt chưa tự đọc được mã; hãy nhập mã vào ô bên dưới.');
+      return;
+    }
+    setScanCameraStatus('Mình đã chụp ảnh và đang thử đọc mã lần nữa…');
+    try {
+      const codes = await detector.detect(canvas);
+      const detected = codes.find(function (code) { return typeof code.rawValue === 'string' && code.rawValue.trim(); });
+      if (detected && codeInput) {
+        codeInput.value = detected.rawValue.trim();
+        if (surface.dataset.scanMode === 'order') {
+          setScanCameraStatus('Đã điền mã đơn. Kiểm tra lại mã, mặt hàng và thông tin giao trước khi lưu.');
+        } else if (form) {
+          setScanCameraStatus('Đã đọc được mã trong ảnh. Đang tìm mặt hàng…');
+          await addByCode(form);
+        }
+        if (!modal.hidden) codeInput.focus();
+        return;
+      }
+      setScanCameraStatus(surface.dataset.scanMode === 'order' ? 'Ảnh chưa đọc được mã. Hãy đưa mã gần hơn, tránh lóa sáng rồi quét lại, hoặc nhìn ảnh và nhập mã đơn vào ô phía trên.' : 'Ảnh chưa đọc được mã. Hãy đưa mã gần hơn, tránh lóa sáng rồi quét lại, hoặc nhìn ảnh và nhập mã vào ô bên dưới.');
+    } catch (_error) {
+      setScanCameraStatus(surface.dataset.scanMode === 'order' ? 'Ảnh đã chụp nhưng chưa đọc được mã. Hãy thử gần hơn, đủ sáng, hoặc nhập mã đơn vào ô phía trên.' : 'Ảnh đã chụp nhưng chưa đọc được mã. Hãy thử gần hơn, đủ sáng, hoặc nhập mã bên dưới.');
+    }
   }
 
   function stopScanCamera() {
@@ -4440,57 +4590,58 @@
     scanCameraDetector = null;
     if (scanCameraTimer) window.clearTimeout(scanCameraTimer);
     scanCameraTimer = 0;
+    if (scanPhotoFallbackTimer) window.clearTimeout(scanPhotoFallbackTimer);
+    scanPhotoFallbackTimer = 0;
     if (scanCameraStream) scanCameraStream.getTracks().forEach(function (track) { track.stop(); });
     scanCameraStream = null;
-    const video = modal.querySelector('#scan-camera-video');
+    const video = modal.querySelector('[data-scan-surface] #scan-camera-video');
     if (video) {
       video.pause();
       video.srcObject = null;
       video.hidden = true;
     }
-    const button = modal.querySelector('[data-action="start-camera-scan"]');
+    const button = modal.querySelector('[data-scan-surface] [data-action="start-camera-scan"]');
     if (button && button.dataset.unsupported !== 'true') {
       button.disabled = false;
-      button.textContent = 'Mở camera để quét';
+      button.textContent = 'Quét lại';
     }
   }
-
   async function startScanCamera(button) {
     if (scanCameraRunning || scanCameraStarting) return;
     const requestGeneration = ++scanCameraGeneration;
-    const video = modal.querySelector('#scan-camera-video');
-    const codeInput = modal.querySelector('#scan-code');
+    const surface = button?.closest('[data-scan-surface]') || modal.querySelector('[data-scan-surface]');
+    const video = surface?.querySelector('#scan-camera-video');
+    const codeInput = scanCodeInput(surface);
+    const image = surface?.querySelector('#scan-photo-preview');
     const form = modal.querySelector('form[data-form="scan"]');
-    if (!video || !codeInput || !form) return;
+    if (!surface || !video || !codeInput || (surface.dataset.scanMode !== 'order' && !form)) return;
     if (!window.isSecureContext || !navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
       setScanCameraStatus('Camera cần kết nối HTTPS và trình duyệt cho phép sử dụng camera. Bạn vẫn có thể nhập mã thủ công.', true);
       return;
     }
     const Detector = window.BarcodeDetector;
-    if (typeof Detector !== 'function') {
-      if (button) { button.disabled = true; button.dataset.unsupported = 'true'; }
-      setScanCameraStatus('Trình duyệt này chưa hỗ trợ nhận dạng mã bằng camera. Hãy nhập hoặc dán mã sản phẩm bên dưới.', true);
-      return;
-    }
     scanCameraStarting = true;
     const requestedFormats = ['qr_code', 'ean_13', 'ean_8', 'code_128', 'code_39', 'upc_a', 'upc_e', 'itf'];
     try {
-      let supportedFormats = [];
-      if (typeof Detector.getSupportedFormats === 'function') supportedFormats = await Detector.getSupportedFormats();
-      if (requestGeneration !== scanCameraGeneration || modal.hidden) return;
-      const formats = supportedFormats.length ? requestedFormats.filter(function (format) { return supportedFormats.includes(format); }) : requestedFormats;
-      if (!formats.length) throw new Error('Trình duyệt không hỗ trợ định dạng mã này.');
-      scanCameraDetector = new Detector({ formats });
+      if (typeof Detector !== 'function') {
+        scanCameraDetector = null;
+      } else {
+        let supportedFormats = [];
+        if (typeof Detector.getSupportedFormats === 'function') supportedFormats = await Detector.getSupportedFormats();
+        if (requestGeneration !== scanCameraGeneration || modal.hidden) return;
+        const formats = supportedFormats.length ? requestedFormats.filter(function (format) { return supportedFormats.includes(format); }) : requestedFormats;
+        if (!formats.length) throw new Error('Trình duyệt không hỗ trợ định dạng mã này.');
+        scanCameraDetector = new Detector({ formats });
+      }
     } catch (error) {
       if (requestGeneration !== scanCameraGeneration) return;
-      scanCameraStarting = false;
-      if (button) { button.disabled = true; button.dataset.unsupported = 'true'; }
-      setScanCameraStatus('Không thể khởi tạo bộ đọc mã trên trình duyệt này. Hãy nhập hoặc dán mã sản phẩm.', true);
-      return;
+      scanCameraDetector = null;
+      setScanCameraStatus('Không thể tự đọc mã trên trình duyệt này. Mình sẽ mở camera để chụp ảnh mã cho bạn xem.');
     }
     if (requestGeneration !== scanCameraGeneration || modal.hidden) return;
     if (button) { button.disabled = true; button.textContent = 'Đang mở camera…'; }
-    setScanCameraStatus('Đang mở camera. Chỉ cần cho phép camera để quét mã; bạn cũng có thể hủy và nhập mã thủ công.');
+    if (image) { image.hidden = true; image.removeAttribute('src'); }
+    setScanCameraStatus('Đang mở camera. Cho phép truy cập camera, rồi đưa mã vào giữa khung.');
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
       if (requestGeneration !== scanCameraGeneration || modal.hidden) {
@@ -4511,7 +4662,12 @@
       scanCameraRunning = true;
       scanCameraStarting = false;
       if (button) button.textContent = 'Đang quét…';
-      setScanCameraStatus('Đưa mã vào khung camera. Khi nhận dạng thành công, Slink sẽ tìm sản phẩm và thêm một sản phẩm vào giỏ.');
+      setScanCameraStatus(scanCameraDetector
+        ? `Đưa mã ${surface.dataset.scanMode === 'order' ? 'đơn' : 'mặt hàng'} vào giữa khung và giữ yên. Slink tự đọc mã; nếu chưa đọc được sau 10 giây, Slink sẽ chụp ảnh để bạn xem lại.`
+        : 'Đưa mã vào giữa khung và giữ yên. Trình duyệt này chưa tự đọc mã; sau 10 giây Slink sẽ chụp ảnh để bạn xem và nhập mã.');
+      scanPhotoFallbackTimer = window.setTimeout(function () {
+        if (scanCameraRunning && requestGeneration === scanCameraGeneration && !modal.hidden) captureScanPhoto();
+      }, 10000);
       const detectFrame = async function () {
         if (!scanCameraRunning || requestGeneration !== scanCameraGeneration || modal.hidden) return;
         if (video.readyState >= 2) {
@@ -4522,22 +4678,26 @@
             const rawValue = detected ? detected.rawValue.trim() : '';
             if (rawValue) {
               stopScanCamera();
-              setScanCameraStatus('Đã đọc mã. Đang tìm sản phẩm trong cửa hàng…');
               codeInput.value = rawValue;
-              await addByCode(form);
+              if (surface.dataset.scanMode === 'order') {
+                setScanCameraStatus('Đã điền mã đơn. Kiểm tra lại mã, mặt hàng và thông tin giao trước khi lưu.');
+              } else {
+                setScanCameraStatus('Đã đọc mã. Đang tìm sản phẩm trong cửa hàng…');
+                await addByCode(form);
+              }
               if (!modal.hidden) codeInput.focus();
               return;
             }
           } catch (error) {
             if (requestGeneration !== scanCameraGeneration) return;
-            stopScanCamera();
-            setScanCameraStatus('Camera đang mở nhưng chưa đọc được mã. Hãy thử ánh sáng tốt hơn hoặc nhập mã bên dưới.', true);
+            setScanCameraStatus('Chưa đọc được mã. Mình sẽ chụp ảnh để bạn xem lại…');
+            await captureScanPhoto();
             return;
           }
         }
         if (scanCameraRunning && requestGeneration === scanCameraGeneration) scanCameraTimer = window.setTimeout(detectFrame, 160);
       };
-      detectFrame();
+      if (scanCameraDetector) detectFrame();
     } catch (error) {
       if (requestGeneration !== scanCameraGeneration) return;
       stopScanCamera();
@@ -4552,7 +4712,6 @@
       scanCameraStarting = false;
     }
   }
-
   function showDiscount() {
     const current = cart.discount || 0;
     const form = `<form id='entity-form' data-form='discount'><div class='form-field'><label class='input-label'>Giảm giá đơn hàng (VND)</label><input class='input' name='discount' type='number' min='0' max='${cartTotals().subtotal}' step='1000' value='${current}' required/><small class='muted' style='display:block;margin-top:6px;font-size:9px'>Tạm tính hiện tại: ${money(cartTotals().subtotal)}</small></div></form>`;
@@ -5726,6 +5885,7 @@
         ? `${isProfileRouteEnabled('pos') ? `<button class='quick-action' data-route='pos'><span class='quick-icon'>＋</span><span class='quick-copy'><strong>Tạo đơn hàng</strong><small>Bán hàng tại quầy</small></span></button>` : ''}<button class='quick-action' data-route='orders'><span class='quick-icon'>▤</span><span class='quick-copy'><strong>Đơn hàng</strong><small>Tìm giao dịch gần đây</small></span></button>`
         : `<button class='quick-action' data-action='receive-stock'><span class='quick-icon'>↙</span><span class='quick-copy'><strong>Nhập hàng</strong><small>Cập nhật tồn kho</small></span></button><button class='quick-action' data-route='inventory'><span class='quick-icon'>▦</span><span class='quick-copy'><strong>Kiểm kê tồn</strong><small>Xem số lượng hiện tại</small></span></button>`;
       return pageHeading('Tổng quan', `Tình hình hoạt động của ${store.settings.storeName}.`, store.role === 'cashier' ? (isProfileRouteEnabled('pos') ? `<button class='btn btn-primary' data-route='pos'>＋ Tạo đơn mới</button>` : '') : `<button class='btn btn-primary' data-action='receive-stock'>＋ Nhập hàng</button>`) +
+        renderStarterGuide(false) +
         `<section class='dashboard-welcome'><div class='welcome-copy'><span class='welcome-overline'>Cửa hàng đang hoạt động</span><h2>Theo dõi hàng hóa<br/>và công việc hôm nay.</h2><p>Các mục hiển thị phù hợp với quyền ${esc(staffRoleName(store.role).toLowerCase())} của bạn.</p><button class='btn' data-route='inventory'>Mở kho hàng ${icon('arrow', 14)}</button></div></section>` +
         `<div class='stat-grid'><article class='stat-card'><div class='stat-label'>Mặt hàng đang quản lý</div><div class='stat-value'>${number(inventorySummary.total)}</div><div class='stat-foot'>Sản phẩm trong cửa hàng</div></article><article class='stat-card'><div class='stat-label'>Sắp hết hàng</div><div class='stat-value'>${number(inventorySummary.low)}</div><div class='stat-foot'>Bằng hoặc dưới mức cảnh báo</div></article><article class='stat-card'><div class='stat-label'>Hết hàng</div><div class='stat-value'>${number(inventorySummary.out)}</div><div class='stat-foot'>Cần bổ sung trước khi bán</div></article><article class='stat-card'><div class='stat-label'>${store.role === 'stockkeeper' ? 'Phiếu nhập gần đây' : 'Đơn hàng gần đây'}</div><div class='stat-value'>${number(store.role === 'stockkeeper' ? purchaseHistory.length : orderTotal)}</div><div class='stat-foot'>${store.role === 'stockkeeper' ? 'Phiếu mới nhất trong kho' : 'Tổng số đơn trong cửa hàng'}</div></article></div>` +
         `<div class='lower-grid operational-dashboard-grid'><section class='panel quick-panel'><div class='section-title'><h2>Thao tác nhanh</h2><p>Công việc thường ngày</p></div><div class='quick-grid'>${operationalActions}</div></section><section class='panel alert-panel'><div class='alert-title'><span class='alert-icon'>${icon('alert', 15)}</span><div><strong>${number(inventorySummary.low)} mặt hàng cần chú ý</strong><small>Kiểm tra số lượng và nhập bổ sung</small></div></div><div class='alert-list'>${lowProducts.map(function (product) { return `<div class='alert-row'><strong>${esc(product.name)}</strong><span class='alert-qty'>${product.stock === 0 ? 'Hết hàng' : `Còn ${number(product.stock)} ${esc(product.unit)}`}</span></div>`; }).join('') || `<div class='alert-row'><strong>Tồn kho đang ổn định</strong><span class='alert-qty'>Tốt</span></div>`}</div><button class='link-button' data-route='inventory'>Mở danh sách kho →</button></section></div>`;
@@ -5745,6 +5905,7 @@
       ? `<div class='stat-grid'><article class='stat-card'><div class='stat-top'><span class='stat-label'>Lãi gộp trong kỳ</span><span class='stat-icon'>${icon('chart', 16)}</span></div><div class='stat-value'>${moneyVndText(summary.grossProfitVnd)}</div><div class='stat-foot'>Sau giá vốn và hàng trả · trước chi phí vận hành</div></article><article class='stat-card'><div class='stat-top'><span class='stat-label'>Khách còn nợ</span><span class='stat-icon'>${icon('users', 16)}</span></div><div class='stat-value'>${moneyVndText(financeSummary.customerDebtVnd)}</div><div class='stat-foot'>${number(financeSummary.customerDebtCount)} khách hàng</div></article><article class='stat-card'><div class='stat-top'><span class='stat-label'>Sắp hết hàng</span><span class='stat-icon'>${icon('alert', 16)}</span></div><div class='stat-value'>${number(lowCount)}</div><div class='stat-foot'>Mặt hàng bằng hoặc dưới mức cảnh báo</div></article><article class='stat-card'><div class='stat-top'><span class='stat-label'>Giá trị tồn kho</span><span class='stat-icon'>${icon('box', 16)}</span></div><div class='stat-value'>${money(inventorySummary.stockValueVnd)}</div><div class='stat-foot'>Ước tính theo giá vốn hiện tại</div></article></div>`
       : `<div class='stat-grid'><article class='stat-card'><div class='stat-label'>Mặt hàng đang quản lý</div><div class='stat-value'>${number(inventorySummary.total)}</div><div class='stat-foot'>Sản phẩm trong cửa hàng</div></article><article class='stat-card'><div class='stat-label'>Sắp hết hàng</div><div class='stat-value'>${number(lowCount)}</div><div class='stat-foot'>Bằng hoặc dưới mức cảnh báo</div></article><article class='stat-card'><div class='stat-label'>Đơn hàng gần đây</div><div class='stat-value'>${number(recent.length)}</div><div class='stat-foot'>Các giao dịch mới nhất</div></article><article class='stat-card'><div class='stat-label'>Vai trò của bạn</div><div class='stat-value' style='font-size:16px'>${staffRoleName(store.role)}</div><div class='stat-foot'>Quyền truy cập theo nhiệm vụ</div></article></div>`;
     return pageHeading('Tổng quan', `Tình hình hoạt động của ${store.settings.storeName}.`, actions) +
+      renderStarterGuide(false) +
       `${analyticsError ? `<div class='notice-item'><span>⚠️</span><span><strong>Chưa tải được báo cáo</strong><small>${esc(analyticsError)}</small></span></div>` : ''}<section class='dashboard-welcome'><div class='welcome-copy'><span class='welcome-overline'>Cửa hàng đang hoạt động</span><h2>Bán hàng và theo dõi<br/>cửa hàng của bạn.</h2><p>Doanh thu được tính sau khi trừ các khoản trả hàng. Lãi gộp tính theo giá vốn sản phẩm.</p><button class='btn' data-route='orders'>Mở đơn hàng ${icon('arrow', 14)}</button></div><div class='welcome-total'><div><small>Doanh thu hôm nay</small><strong>${money(todaySales)}</strong></div><span class='total-change'>${number(todayOrderCount)} đơn · ${analyticsData ? `7 ngày đến ${esc(analyticsData.range.to)}` : 'Đang tải dữ liệu'}</span></div></section>` +
       `<div class='stat-grid'><article class='stat-card'><div class='stat-top'><span class='stat-label'>Lãi gộp trong kỳ</span><span class='stat-icon'>${icon('chart', 16)}</span></div><div class='stat-value'>${moneyVndText(summary.grossProfitVnd)}</div><div class='stat-foot'>Sau giá vốn và hàng trả · trước chi phí vận hành</div></article><article class='stat-card'><div class='stat-top'><span class='stat-label'>Khách còn nợ</span><span class='stat-icon'>${icon('users', 16)}</span></div><div class='stat-value'>${money(financeSummary.customerDebtVnd)}</div><div class='stat-foot'>${number(financeSummary.customerDebtCount)} khách hàng</div></article><article class='stat-card'><div class='stat-top'><span class='stat-label'>Sắp hết hàng</span><span class='stat-icon'>${icon('alert', 16)}</span></div><div class='stat-value'>${number(lowCount)}</div><div class='stat-foot'>Mặt hàng bằng hoặc dưới mức cảnh báo</div></article><article class='stat-card'><div class='stat-top'><span class='stat-label'>Giá trị tồn kho</span><span class='stat-icon'>${icon('box', 16)}</span></div><div class='stat-value'>${money(inventorySummary.stockValueVnd)}</div><div class='stat-foot'>Ước tính theo giá vốn hiện tại</div></article></div>` +
       `<div class='dashboard-main-grid dashboard-main-grid-compact'><div class='side-stack'><section class='panel quick-panel'><div class='section-title'><h2>Thao tác nhanh</h2><p>Quản lý giao dịch thường ngày</p></div><div class='quick-grid'><button class='quick-action' data-route='pos'><span class='quick-icon'>＋</span><span class='quick-copy'><strong>Tạo đơn hàng</strong><small>Thanh toán tại quầy</small></span></button><button class='quick-action' data-action='new-product'><span class='quick-icon'>⌕</span><span class='quick-copy'><strong>Thêm sản phẩm</strong><small>Tạo mã hàng mới</small></span></button>${['owner', 'manager', 'stockkeeper', 'accountant'].includes(store.role) ? `<button class='quick-action' data-action='receive-stock'><span class='quick-icon'>↙</span><span class='quick-copy'><strong>Nhập hàng</strong><small>Cập nhật tồn và giá vốn</small></span></button>` : ''}${['owner', 'manager', 'accountant'].includes(store.role) ? `<button class='quick-action' data-action='new-expense'><span class='quick-icon'>↗</span><span class='quick-copy'><strong>Ghi khoản thu / chi</strong><small>Đối soát sổ quỹ</small></span></button>` : ''}</div></section><section class='panel alert-panel'><div class='alert-title'><span class='alert-icon'>${icon('alert', 15)}</span><div><strong>${number(lowCount)} mặt hàng cần chú ý</strong><small>Kiểm tra số lượng và nhập bổ sung</small></div></div><div class='alert-list'>${lowStockProducts().slice(0, 3).map(function (p) { return `<div class='alert-row'><strong>${esc(p.name)}</strong><span class='alert-qty'>${p.stock === 0 ? 'Hết hàng' : `Còn ${number(p.stock)} ${esc(p.unit)}`}</span></div>`; }).join('') || `<div class='alert-row'><strong>${lowCount ? 'Mở kho để xem mặt hàng cần chú ý' : 'Tồn kho đang ổn định'}</strong><span class='alert-qty'>${lowCount ? 'Kho hàng' : 'Tốt'}</span></div>`}</div><button class='link-button' data-route='inventory'>Mở danh sách kho →</button></section></div></div>` +
@@ -6270,6 +6431,7 @@
     else if (action === 'inventory-low') { searchTerms.inventory = ''; render(); const first = lowStockProducts()[0]; if (first) openStockAdjust(first.id); }
     else if (action === 'discount') showDiscount();
     else if (action === 'scan') showScan();
+    else if (action === 'scan-channel-order') showChannelOrderScanner();
     else if (action === 'start-camera-scan') startScanCamera(button);
     else if (action === 'open-export') openExportDialog();
     else if (action === 'export-dataset') {

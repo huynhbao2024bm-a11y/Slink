@@ -321,3 +321,34 @@ body{min-height:100vh;min-height:100dvh;overflow-x:hidden}
 .dashboard-main-grid-compact .side-stack{grid-template-columns:repeat(2,minmax(0,1fr))}
 .dashboard-recent-grid{grid-template-columns:minmax(0,1fr)}
 @media(max-width:700px){.dashboard-main-grid-compact .side-stack{grid-template-columns:1fr}}
+
+/* First-use guidance and clear camera fallback on scan screens. */
+.starter-guide{margin:0 0 16px;padding:18px 20px;border:1px solid #dfeae1;border-radius:16px;background:#fff;box-shadow:0 4px 16px rgba(30,65,48,.035)}
+.starter-guide-heading h2{margin:0;color:#203b2e;font-family:var(--display);font-size:18px;line-height:1.35}
+.starter-guide-heading p{margin:4px 0 0;color:#63736a;font-size:14px;line-height:1.55}
+.starter-guide ol{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin:14px 0 0;padding:0;list-style:none}
+.starter-guide li{min-width:0}
+.starter-guide-step{width:100%;height:100%;min-height:72px;display:grid;grid-template-columns:28px minmax(0,1fr) 16px;align-items:center;gap:9px;padding:11px 12px;border:1px solid #e5ece6;border-radius:12px;background:#fbfcfb;color:#264333;text-align:left;text-decoration:none}
+.starter-guide-step:hover{border-color:#b9d1bf;background:#f3f8f3}
+.starter-guide-number{width:26px;height:26px;display:grid;place-items:center;border-radius:50%;background:#e7f2e8;color:#28543e;font-size:13px;font-weight:700}
+.starter-guide-copy{display:grid;gap:3px;min-width:0}
+.starter-guide-copy strong{font-size:14px;line-height:1.4}
+.starter-guide-copy small{color:#65756a;font-size:13px;line-height:1.45}
+.starter-guide-arrow{color:#427359;font-size:21px;line-height:1}
+.starter-guide-note{margin:11px 0 0;padding:9px 11px;border-radius:9px;background:#fff8e7;color:#68531e;font-size:13px;line-height:1.5}
+.starter-guide-in-modal{margin:0;border:0;box-shadow:none;padding:0}
+.starter-guide-in-modal ol{grid-template-columns:1fr}
+.scan-camera-panel{display:grid;gap:10px}
+.scan-camera-panel[hidden]{display:none}
+.scan-steps{display:grid;gap:5px;margin:0 0 4px;padding:0;list-style:none;counter-reset:scanstep}
+.scan-steps li{display:flex;align-items:center;gap:9px;color:#3f5447;font-size:14px;line-height:1.5;counter-increment:scanstep}
+.scan-steps li:before{content:counter(scanstep);width:23px;height:23px;flex:none;display:grid;place-items:center;border-radius:50%;background:#e8f2e8;color:#28543e;font-size:12px;font-weight:700}
+.scan-camera-panel .btn{width:100%;min-height:46px}
+.scan-camera-panel .scan-camera-status{margin:0;padding:10px 12px;border-radius:10px;background:#f2f6f1;color:#475a4c;font-size:14px;line-height:1.55}
+.scan-camera-panel .scan-camera-status.error{background:#fff1ed;color:#8d493b}
+.scan-camera-panel .scan-privacy-note{color:#78847b;font-size:12px;line-height:1.5}
+.scan-photo-preview{width:100%;max-height:220px;object-fit:contain;border:1px solid #dfe8e0;border-radius:12px;background:#f3f5f2}
+.channel-order-ref-field{display:grid;gap:8px;min-width:0}
+.channel-order-ref-field>[data-action="scan-channel-order"]{min-height:46px;width:100%}
+.channel-order-scan-panel{margin:4px 0 0;padding:12px}
+@media(max-width:760px){.starter-guide ol{grid-template-columns:1fr}.starter-guide-step{min-height:64px}}

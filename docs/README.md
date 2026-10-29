@@ -12,6 +12,7 @@ Mục đích của thư mục này là giữ hướng sản phẩm, quyết đ�
 6. [`DEPLOYMENT.md`](DEPLOYMENT.md) — đóng gói container, chạy migration và các cổng vận hành production.
 7. [`COMMERCIAL_READINESS.md`](COMMERCIAL_READINESS.md) — trạng thái, tiêu chí chọn và phụ thuộc của tích hợp thương mại.
 8. [`decisions/`](decisions/) — lý do của các quyết định kiến trúc đã ghi nhận.
+9. [`OPERATIONAL_REVIEW_KIOTVIET.md`](OPERATIONAL_REVIEW_KIOTVIET.md) — so sánh các quy trình vận hành Slink với hướng dẫn công khai của KiotViet, không so sánh quy mô.
 
 ## Mỗi tài liệu tồn tại để làm gì
 
@@ -25,5 +26,6 @@ Mục đích của thư mục này là giữ hướng sản phẩm, quyết đ�
 | `DEPLOYMENT.md` | Quy trình tạo ảnh, migration, health check, secret, backup và rollback | Khi chốt nhà cung cấp hoặc thay đổi release/operations |
 | `COMMERCIAL_READINESS.md` | Hiện trạng và phụ thuộc của nhà cung cấp thương mại | Khi lựa chọn hoặc nghiệm thu tích hợp, giá, hợp đồng hoặc cách hỗ trợ |
 | `decisions/*.md` | Lưu lựa chọn kiến trúc, căn cứ, đánh đổi và điều kiện xem xét lại | Khi một quyết định quan trọng được chốt hoặc cần thay thế |
+| `OPERATIONAL_REVIEW_KIOTVIET.md` | Đánh giá nghiệp vụ hằng ngày và các khoảng trống cần nghiệm thu | Khi có bằng chứng mới về vận hành hoặc nguồn so sánh |
 
 Tài liệu trong thư mục này hỗ trợ công việc; bằng chứng thực tế trong mã nguồn, môi trường chạy, thiết bị và hồ sơ nghiệm thu mới quyết định trạng thái.
