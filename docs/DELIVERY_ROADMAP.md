@@ -10,6 +10,7 @@ Status labels: **Not started**, **In progress**, **Blocked by external dependenc
 - **Migration production:** workflow run `40259264564` hoàn tất các bước “Apply database migrations” và “Verify application and migration role boundaries”. Đây là xác nhận của workflow trên database nó dùng; chưa xác định được SHA Render đang chạy. Backup mã hóa ngày 2026-10-26 đã verify và ở máy người dùng; chưa có diễn tập restore.
 - **Hướng dẫn cho người mới và quét/chụp mã:** phần hướng dẫn theo hồ sơ/role, thao tác nhanh cho cửa hàng trống, hướng dẫn quét, chụp tạm thời sau 10 giây và nhập mã đơn được bổ sung trong đợt cập nhật này. Ảnh chỉ xem trên thiết bị, không được lưu hoặc tự chuyển thành đơn; chưa kiểm tra trên điện thoại thật.
 - **Bằng chứng còn mở:** không có nghiệm thu giao dịch với cửa hàng thật, chưa xác nhận commit trên Render, chưa diễn tập khôi phục backup, và chưa thử camera/giao diện trên iOS/Android.
+
 ## Verified baseline (2026-10-15)
 
 | Area | Current evidence | Status / consequence |
