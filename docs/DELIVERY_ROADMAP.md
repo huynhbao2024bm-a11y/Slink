@@ -4,6 +4,12 @@
 
 Status labels: **Not started**, **In progress**, **Blocked by external dependency**, **Evidence passed**. “Evidence passed” applies only to the named milestone, never to the whole product by implication.
 
+## Cập nhật bằng chứng 2026-10-29
+
+- **Điểm xuất phát trước phần cập nhật này:** GitHub `main` ở commit `3afd17bd1500e80e8fc1dce4eb9ca729dedd87f5` đã có hồ sơ vận hành/onboarding và lọc menu theo hồ sơ, dashboard gọn hơn, cùng cách cập nhật giỏ hàng không dựng lại toàn trang. PR #21 đang mở có các dòng thay đổi đã xuất hiện đầy đủ trên `main`; GitHub từ chối merge do xung đột, nên không gộp lại lần nữa.
+- **Migration production:** workflow run `40259264564` hoàn tất các bước “Apply database migrations” và “Verify application and migration role boundaries”. Đây là xác nhận của workflow trên database nó dùng; chưa xác định được SHA Render đang chạy. Backup mã hóa ngày 2026-10-26 đã verify và ở máy người dùng; chưa có diễn tập restore.
+- **Hướng dẫn cho người mới và quét/chụp mã:** phần hướng dẫn theo hồ sơ/role, thao tác nhanh cho cửa hàng trống, hướng dẫn quét, chụp tạm thời sau 10 giây và nhập mã đơn được bổ sung trong đợt cập nhật này. Ảnh chỉ xem trên thiết bị, không được lưu hoặc tự chuyển thành đơn; chưa kiểm tra trên điện thoại thật.
+- **Bằng chứng còn mở:** không có nghiệm thu giao dịch với cửa hàng thật, chưa xác nhận commit trên Render, chưa diễn tập khôi phục backup, và chưa thử camera/giao diện trên iOS/Android.
 ## Verified baseline (2026-10-15)
 
 | Area | Current evidence | Status / consequence |
