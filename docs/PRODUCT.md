@@ -44,6 +44,8 @@ Trợ lý vận hành cho cửa hàng bán lẻ nhỏ: bán nhanh, biết chính
 
 - Mobile first; thanh điều hướng dưới cùng chỉ giữ các khu vực dùng thường xuyên.
 - Nút thao tác chính lớn, có nhãn; trạng thái kho/công nợ dùng chữ đi kèm màu.
+- Trên điện thoại, trang chính ưu tiên doanh thu hôm nay, nút xem chi tiết, một hàng việc thường dùng và một nút chính; cảnh báo nằm ngay bên dưới. Các số liệu chi tiết vẫn có ở trang phù hợp.
+- Người mới được hướng dẫn bằng từng điểm được làm nổi bật, câu ngắn và nút “Đã rõ, tiếp tục”. Tự mở sau lần đăng nhập/thiết lập đầu tiên; dấu hỏi cho phép xem lại. Trạng thái hoàn tất hiện được ghi nhớ riêng trên trình duyệt và thiết bị này.
 - Không tạo đơn khi giỏ trống; xác nhận rõ số tiền thu và phần còn nợ.
 - Giá luôn hiển thị theo VND; lãi gộp được ghi là ước tính từ giá vốn đã nhập.
 - Cửa hàng khách bắt đầu với danh mục rỗng trên máy chủ; không dùng dữ liệu mẫu để khởi tạo tài khoản đã kết nối. Không còn luồng tạo dữ liệu mẫu hoặc khôi phục JSON cục bộ trong ứng dụng.
