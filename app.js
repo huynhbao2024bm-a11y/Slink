@@ -57,7 +57,8 @@
     help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 4.5 1.5c-1.1 1.1-2 1.3-2 3m0 3h.01"/>'
   };
 
-  let page = 'products';
+  let page = 'pos';
+  let taskFocusRoute = '';
   let store = emptyStore();
   let authSession = null;
   let authMode = 'login';
@@ -108,6 +109,7 @@
   let analyticsError = '';
   let analyticsRequestNumber = 0;
   let customerTotal = 0;
+  let customerListLoaded = false;
   let customerOffset = 0;
   let customerNextOffset = null;
   let customerRequestNumber = 0;
@@ -701,6 +703,7 @@
       customerTotal = 0;
       customerOffset = 0;
       customerNextOffset = null;
+      customerListLoaded = true;
       return;
     }
     const requestNumber = ++customerRequestNumber;
@@ -714,6 +717,7 @@
       customerTotal = result.total;
       customerOffset = offset || 0;
       customerNextOffset = result.nextOffset;
+      customerListLoaded = true;
       if (page === 'customers' && customerSavedSegmentsStoreId !== store.id) await loadCustomerSavedSegments();
     } catch (error) {
       if (requestNumber !== customerRequestNumber) return;
@@ -831,6 +835,68 @@
     }).join('');
   }
 
+  function taskFocusStorageKey() {
+    const userId = authSession && authSession.user && authSession.user.id;
+    return userId && store.id ? `slink-task-focus-v1:${encodeURIComponent(userId)}:${encodeURIComponent(store.id)}` : '';
+  }
+
+  function taskFocusOptions() {
+    const candidates = [];
+    if (['owner', 'manager'].includes(store.role)) candidates.push({ route: 'dashboard', label: store.role === 'owner' ? 'Chủ cửa hàng' : 'Quản lý cửa hàng', detail: 'Xem việc cần làm và tình hình hôm nay.' });
+    if (['owner', 'manager', 'cashier'].includes(store.role)) candidates.push({ route: 'pos', label: 'Người bán hàng', detail: 'Chọn mặt hàng, thu tiền và xem đơn.' });
+    if (['owner', 'manager', 'stockkeeper'].includes(store.role)) candidates.push({ route: 'inventory', label: 'Phụ trách hàng hóa và kho', detail: 'Nhận hàng, kiểm tra số lượng và mặt hàng.' });
+    if (['owner', 'manager', 'accountant'].includes(store.role)) candidates.push({ route: 'finance', label: 'Theo dõi thu chi', detail: 'Ghi nhận tiền và xem các khoản còn lại.' });
+    return candidates.filter(function (option) { return canAccessRoute(option.route) && isProfileRouteEnabled(option.route); });
+  }
+
+  function defaultTaskFocusRoute() {
+    const preferred = store.role === 'stockkeeper' ? 'inventory' : store.role === 'accountant' ? 'finance' : 'pos';
+    if (canAccessRoute(preferred) && isProfileRouteEnabled(preferred)) return preferred;
+    const options = taskFocusOptions();
+    return options.length ? options[0].route : '';
+  }
+
+  function readTaskFocusRoute() {
+    const key = taskFocusStorageKey();
+    if (!key) return '';
+    try {
+      const saved = window.localStorage.getItem(key) || '';
+      return taskFocusOptions().some(function (option) { return option.route === saved; }) ? saved : '';
+    } catch (_error) { return ''; }
+  }
+
+  function saveTaskFocusRoute(route) {
+    if (!taskFocusOptions().some(function (option) { return option.route === route; })) return false;
+    taskFocusRoute = route;
+    const key = taskFocusStorageKey();
+    try { if (key) window.localStorage.setItem(key, route); } catch (_error) { /* Keep the preference for this session if storage is unavailable. */ }
+    return true;
+  }
+
+  function renderTaskFocusChoices(selected) {
+    const options = taskFocusOptions();
+    const choice = selected || taskFocusRoute || defaultTaskFocusRoute();
+    return options.map(function (option) {
+      return `<label class='business-profile-choice task-focus-choice'><input type='radio' name='taskFocusRoute' value='${option.route}' required ${choice === option.route ? 'checked' : ''}/><span><strong>${esc(option.label)}</strong><small>${esc(option.detail)}</small></span></label>`;
+    }).join('');
+  }
+
+  function openTaskFocusOnboarding() {
+    const options = taskFocusOptions();
+    if (!options.length) return scheduleInitialGuidedTour();
+    const body = `<form id='task-focus-onboarding' data-form='task-focus'><div class='task-focus-role'>Tài khoản hiện có quyền: <strong>${esc(staffRoleName(store.role))}</strong></div><div class='task-focus-choices'>${renderTaskFocusChoices(taskFocusRoute)}</div><p class='install-hint'>Lựa chọn này chỉ sắp xếp màn hình mở đầu và lối tắt trên thiết bị này; không thay đổi quyền tài khoản.</p></form>`;
+    showModal('Bạn là ai trong cửa hàng?', 'Quyền tài khoản được chủ cửa hàng cấp. Chọn việc bạn thường làm để Slink đưa đúng màn hình lên trước.', body, `<button class='btn btn-primary' type='submit' form='task-focus-onboarding'>Tiếp tục</button>`, true);
+  }
+
+  function saveTaskFocusSelection(form) {
+    const route = String(new FormData(form).get('taskFocusRoute') || '');
+    if (!saveTaskFocusRoute(route)) return toast('Hãy chọn công việc', 'Chọn vai trò phù hợp với quyền tài khoản của bạn.', 'error');
+    closeModal(true);
+    renderShell();
+    routeTo(route);
+    scheduleInitialGuidedTour();
+  }
+
   function starterGuideSteps() {
     if (store.role === 'cashier') return {
       title: 'Bán hàng',
@@ -901,11 +967,17 @@
   function guidedTourSteps() {
     const canViewReports = ['owner', 'manager', 'accountant'].includes(store.role);
     const steps = [];
-    if (canViewReports) steps.push({ route: 'dashboard', target: 'dashboard-revenue', title: 'Doanh thu hôm nay', detail: 'Đây là doanh thu của hôm nay. Sau hướng dẫn, chạm “Xem chi tiết” để xem báo cáo.' });
-    steps.push({ route: 'dashboard', target: 'dashboard-actions', title: 'Việc thường dùng', detail: 'Các việc nhanh nằm ở đây. Nút tạo đơn mới ở ngay bên dưới.' });
+    if (canViewReports) steps.push({ route: 'dashboard', target: 'dashboard-revenue', title: 'Doanh thu hôm nay', detail: 'Đây là doanh thu hôm nay. Chạm “Xem chi tiết” nếu muốn xem thêm.' });
+    steps.push({ route: 'dashboard', target: 'dashboard-actions', title: 'Việc thường dùng', detail: 'Các việc hay dùng nằm ở đây. Nút tạo đơn mới ở ngay bên dưới.' });
 
     const guide = starterGuideSteps();
     const seenTargets = new Set();
+    const addStep = function (step) {
+      if (!step.target || seenTargets.has(step.target) || !canAccessRoute(step.route || 'pos')) return;
+      if (step.route && !isProfileRouteEnabled(step.route)) return;
+      seenTargets.add(step.target);
+      steps.push(step);
+    };
     guide.steps.forEach(function (item) {
       let target = '';
       let title = item.title;
@@ -914,8 +986,8 @@
       else if (item.action === 'receive-stock') target = 'inventory-receive';
       else if (item.route === 'pos') {
         target = /giỏ|thanh toán/i.test(item.title) ? 'pos-cart' : 'pos-search';
-        if (target === 'pos-cart') { title = 'Xem giỏ và thanh toán'; detail = 'Mở giỏ để xem số lượng, số tiền cần thu và tiếp tục thanh toán.'; }
-        else detail = 'Tìm tên hàng, nhập mã hoặc quét mã để thêm hàng vào đơn.';
+        if (target === 'pos-cart') { title = 'Thanh toán đơn'; detail = 'Chạm mặt hàng để thêm. Bấm Thanh toán; tiền mặt đã điền sẵn. Kiểm tra số tiền rồi xác nhận.'; }
+        else detail = 'Tìm tên hàng hoặc chạm sản phẩm để thêm vào đơn.';
       } else if (item.route === 'inventory') {
         target = /từng kho|địa điểm/i.test(item.title) ? 'inventory-warehouse' : 'inventory-search';
       } else if (item.route === 'finance') target = 'finance-register';
@@ -924,11 +996,15 @@
         target = /khai báo gian hàng/i.test(item.title) ? 'channels-profiles' : 'channels-orders';
         if (target === 'channels-orders') detail = 'Ghi lại đơn đã có trên gian hàng. Slink hiện chưa tự đồng bộ đơn.';
       } else if (item.route === 'staff') target = 'staff-invite';
-      if (!target || seenTargets.has(target) || !canAccessRoute(item.route || 'dashboard')) return;
-      if (item.route && !isProfileRouteEnabled(item.route)) return;
-      seenTargets.add(target);
-      steps.push({ route: item.route || 'dashboard', target, title, detail, view: target === 'channels-orders' ? 'orders' : undefined });
+      if (!target) return;
+      addStep({ route: item.route || 'pos', target, title, detail, view: target === 'channels-orders' ? 'orders' : undefined });
+      if (target === 'pos-search') addStep({ route: 'pos', target: 'pos-scan', title: 'Quét mã mặt hàng', detail: 'Đưa mã vào khung. Slink tự đọc; bạn có thể chụp ngay hoặc đợi 10 giây. Mã đã có và còn hàng sẽ tự thêm vào đơn. Mã mới hoặc không đọc được sẽ mở phần nhập thông tin hàng.' });
     });
+    if (canAccessRoute('pos') && isProfileRouteEnabled('pos')) {
+      addStep({ route: 'pos', target: 'pos-search', title: 'Chọn mặt hàng', detail: 'Tìm tên hàng hoặc chạm sản phẩm để thêm vào đơn.' });
+      addStep({ route: 'pos', target: 'pos-scan', title: 'Quét mã mặt hàng', detail: 'Đưa mã vào khung. Slink tự đọc; bạn có thể chụp ngay hoặc đợi 10 giây. Mã đã có và còn hàng sẽ tự thêm vào đơn. Mã mới hoặc không đọc được sẽ mở phần nhập thông tin hàng.' });
+      addStep({ route: 'pos', target: 'pos-cart', title: 'Thanh toán đơn', detail: 'Chạm mặt hàng để thêm. Bấm Thanh toán; tiền mặt đã điền sẵn. Kiểm tra số tiền rồi xác nhận.' });
+    }
     return steps;
   }
 
@@ -1126,6 +1202,7 @@
 
   function showSignedOut(message, tone) {
     closeModal();
+    taskFocusRoute = '';
     channelState.requestNumber += 1;
     channelState = { profiles: [], mappings: [], total: 0, nextOffset: null, offset: 0, query: '', state: 'active', view: 'mappings', orders: [], orderTotal: 0, orderOffset: 0, orderNextOffset: null, orderStatus: '', orderQuery: '', orderLoading: false, orderError: '', orderRequestNumber: channelState.orderRequestNumber, loading: false, error: '', requestNumber: channelState.requestNumber };
     channelProductRequestNumber += 1;
@@ -1135,6 +1212,7 @@
     customerSavedSegments = [];
     customerSavedSegmentsStoreId = '';
     selectedCustomerSavedSegmentId = '';
+    customerListLoaded = false;
     orderNoteHistoryCache.clear();
     orderNoteHistoryCursor.clear();
     orderNoteHistoryLoading.clear();
@@ -1163,6 +1241,7 @@
     customerSavedSegments = [];
     customerSavedSegmentsStoreId = '';
     selectedCustomerSavedSegmentId = '';
+    customerListLoaded = false;
     orderNoteHistoryCache.clear();
     orderNoteHistoryCursor.clear();
     orderNoteHistoryLoading.clear();
@@ -1196,8 +1275,9 @@
     store.role = activeStore.role;
     store.businessProfile = activeStore.business_profile || '';
     store.onboardingCompletedAt = activeStore.onboarding_completed_at || null;
+    taskFocusRoute = readTaskFocusRoute();
     updatePendingCompatibilityWarning(store.id);
-    const pendingSale = loadPendingSale();
+    const pendingSale = canAccessRoute('pos') ? loadPendingSale() : null;
     if (pendingSale && pendingSale.storeId === store.id) {
       checkoutIdempotencyKey = pendingSale.key;
       checkoutPendingPayload = pendingSale.payload;
@@ -1212,31 +1292,41 @@
     warehouseTransfers = [];
     selectedWarehouseId = '';
     warehouseError = '';
-    page = checkoutPendingPayload ? 'pos' : 'dashboard';
+    page = taskFocusRoute || defaultTaskFocusRoute() || (store.role === 'accountant' ? 'finance' : 'inventory');
     authRoot.hidden = true;
     appShell.hidden = false;
-    productLoading = true;
+    productLoading = page === 'pos';
     render();
-    await Promise.all([loadProductsPage('', 0), loadCustomersPage('', 0), loadOrdersPage('', 0), loadWarehouses()]);
-    if (page === 'dashboard' && !checkoutPendingPayload) {
-      const dashboardLoads = [loadInventoryPage('', 0)];
-      if (['owner', 'manager', 'accountant'].includes(store.role)) dashboardLoads.push(loadAnalytics(chartRange === '30 ngày' ? 30 : 7), loadFinancePage());
+    if (page === 'pos') {
+      await loadWarehouses({ includeTransfers: false });
+      await loadProductsPage('', 0);
+    } else if (page === 'inventory') {
+      await loadWarehouses({ includeTransfers: false });
+      await loadInventoryPage('', 0);
+    } else if (page === 'finance') {
+      await loadFinancePage();
+    } else if (page === 'dashboard') {
+      const dashboardLoads = [loadWarehouses({ includeTransfers: false }), loadInventoryPage('', 0)];
+      if (['owner', 'manager', 'accountant'].includes(store.role)) dashboardLoads.push(loadAnalytics(chartRange === '30 ngày' ? 30 : 7), loadOrdersPage('', 0), loadFinancePage());
+      else if (store.role === 'cashier') dashboardLoads.push(loadOrdersPage('', 0));
       else if (store.role === 'stockkeeper') dashboardLoads.push(loadFinancePage());
       await Promise.all(dashboardLoads);
     }
-    if (checkoutPendingPayload) {
+    if (page === 'pos' && checkoutPendingPayload) {
       cart = checkoutPendingPayload.items.map(function (item) { return { id: item.productId, qty: item.quantity }; });
       cartCustomerId = checkoutPendingPayload.customerId || '';
       cart.discount = checkoutPendingPayload.discountVnd || 0;
+      if (cartCustomerId) await loadCustomersPage('', 0);
     }
     if (authSession) render();
     if (store.role === 'owner' && !store.onboardingCompletedAt) openBusinessProfileOnboarding();
+    else if (!taskFocusRoute) openTaskFocusOnboarding();
     else scheduleInitialGuidedTour();
   }
 
   function openBusinessProfileOnboarding() {
-    const body = `<form id='business-profile-onboarding' data-form='business-profile'><div class='business-profile-choices'>${renderBusinessProfileChoices(store.businessProfile)}</div><p class='install-hint'>Menu chỉ hiện những mục phù hợp với lựa chọn. Các mục khác được ẩn, không bị xóa; quyền truy cập và dữ liệu vẫn giữ nguyên. Bạn có thể đổi lựa chọn trong Cài đặt.</p><div class='auth-message error' data-profile-error role='alert' hidden></div></form>`;
-    showModal('Bạn muốn bắt đầu theo cách nào?', 'Chọn cách cửa hàng đang hoạt động. Slink chỉ hỏi lần đầu; chủ cửa hàng có thể đổi lựa chọn sau trong Cài đặt.', body, `<button class='btn btn-secondary' type='button' data-action='business-profile-later'>Để sau</button><button class='btn btn-primary' type='submit' form='business-profile-onboarding'>Tiếp tục</button>`, true);
+    const body = `<form id='business-profile-onboarding' data-form='business-profile'><section class='onboarding-question'><h3>1. Bạn là ai trong cửa hàng?</h3><p>Quyền hiện tại: <strong>${esc(staffRoleName(store.role))}</strong>. Chọn việc bạn thường phụ trách.</p><div class='task-focus-choices'>${renderTaskFocusChoices(defaultTaskFocusRoute())}</div></section><section class='onboarding-question'><h3>2. Cửa hàng hoạt động như thế nào?</h3><div class='business-profile-choices'>${renderBusinessProfileChoices(store.businessProfile)}</div><p class='install-hint'>Lựa chọn này chỉ sắp xếp menu; không xóa mục, dữ liệu hoặc thay đổi quyền. Có thể đổi trong Cài đặt.</p></section><div class='auth-message error' data-profile-error role='alert' hidden></div></form>`;
+    showModal('Bắt đầu với cách dùng phù hợp', 'Trả lời hai câu ngắn để Slink đưa đúng việc lên trước.', body, `<button class='btn btn-secondary' type='button' data-action='business-profile-later'>Để sau</button><button class='btn btn-primary' type='submit' form='business-profile-onboarding'>Tiếp tục</button>`, true);
   }
 
   async function loadProductsPage(query, offset) {
@@ -1299,7 +1389,7 @@
     }
   }
 
-  async function loadWarehouses() {
+  async function loadWarehouses(options) {
     if (!authSession || !store.id) return;
     warehouseLoading = true;
     warehouseError = '';
@@ -1315,7 +1405,7 @@
       if (!warehouses.some(function (warehouse) { return warehouse.id === selectedWarehouseId; })) {
         selectedWarehouseId = (warehouses.find(function (warehouse) { return warehouse.is_default; }) || warehouses[0] || {}).id || '';
       }
-      if (store.role === 'cashier') warehouseTransfers = [];
+      if (store.role === 'cashier' || (options && options.includeTransfers === false)) warehouseTransfers = [];
       else {
         const transfers = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/warehouse-transfers?limit=100`);
         warehouseTransfers = transfers.transfers || [];
@@ -1589,11 +1679,14 @@
     const topbarAvatar = document.querySelector('.topbar-avatar');
     if (profileAvatar) profileAvatar.textContent = initials(userName);
     if (topbarAvatar) topbarAvatar.textContent = initials(userName);
-    const preferredNavIds = businessProfileNavigation[store.businessProfile] || businessProfileNavigation.unsure;
+    const focusRoute = taskFocusOptions().some(function (option) { return option.route === taskFocusRoute; }) ? taskFocusRoute : '';
+    const profileNavIds = businessProfileNavigation[store.businessProfile] || businessProfileNavigation.unsure;
+    const preferredNavIds = focusRoute ? [focusRoute].concat(profileNavIds.filter(function (id) { return id !== focusRoute; })) : profileNavIds;
     const desktopNavIds = Array.from(new Set(preferredNavIds.concat(['finance', 'settings'])));
     const visibleNav = desktopNavIds.map(function (id) { return navItems.find(function (item) { return item.id === id; }); }).filter(function (item) { return item && canAccessRoute(item.id); });
     document.getElementById('primary-nav').innerHTML = visibleNav.map(function (n) { return navHtml(n, false); }).join('');
-    const mobileIds = (businessProfileMobileNavigation[store.businessProfile] || businessProfileMobileNavigation.unsure).filter(canAccessRoute).slice(0, 4);
+    const profileMobileIds = (businessProfileMobileNavigation[store.businessProfile] || businessProfileMobileNavigation.unsure).filter(canAccessRoute);
+    const mobileIds = Array.from(new Set((focusRoute ? [focusRoute].concat(profileMobileIds) : profileMobileIds).filter(canAccessRoute))).slice(0, 4);
     const moreActive = !mobileIds.includes(page) || ['product-detail', 'order-detail'].includes(page);
     document.getElementById('mobile-nav').innerHTML = mobileIds.map(function (id) { return navHtml(navItems.find(function (n) { return n.id === id; }), true); }).join('') + `<button class='mobile-nav-link ${moreActive ? 'active' : ''}' data-action='more-menu' ${moreActive ? "aria-current='page'" : ''}><span class='nav-icon'>${icon('more', 18)}</span><span>Khác</span></button>`;
     const names = { dashboard: ['Trang chính', 'Hôm nay'], pos: ['Bán hàng', 'Tạo đơn'], products: ['Hàng hóa', 'Sản phẩm'], orders: ['Vận hành', 'Đơn hàng'], customers: ['Khách hàng', 'Danh sách'], inventory: ['Kho hàng', 'Tồn kho'], finance: ['Tài chính', 'Thu chi & công nợ'], reports: ['Phân tích', 'Báo cáo'], settings: ['Cửa hàng', 'Cài đặt'], channels: ['Bán hàng đa kênh', 'Kênh bán'], staff: ['Cửa hàng', 'Nhân viên'], audit: ['Quản trị', 'Nhật ký hoạt động'], 'order-detail': ['Đơn hàng', 'Chi tiết đơn'], 'product-detail': ['Hàng hóa', 'Chi tiết sản phẩm'] };
@@ -1749,10 +1842,16 @@
       const count = button.querySelector('.mobile-cart-count');
       if (count) count.textContent = number(totals.count);
       const label = Array.from(button.querySelectorAll('span')).find(function (span) { return !span.classList.contains('mobile-cart-count'); });
-      if (label) label.textContent = totals.count ? 'Xem giỏ hàng' : 'Giỏ hàng đang trống';
-      const amount = button.querySelector('strong');
-      if (amount) amount.textContent = `${money(totals.total)}　→`;
+      if (label) label.textContent = 'Giỏ';
     });
+    const checkoutButton = document.querySelector('.pos-mobile-checkout');
+    if (checkoutButton) {
+      checkoutButton.disabled = !cart.length && !checkoutPendingPayload;
+      const label = checkoutButton.querySelector('span');
+      const amount = checkoutButton.querySelector('strong');
+      if (label) label.textContent = checkoutPendingPayload ? 'Kiểm tra đơn chờ' : cart.length ? 'Thanh toán' : 'Chọn mặt hàng';
+      if (amount) amount.textContent = `${money(checkoutPendingPayload ? checkoutPendingPayload.totalVnd : totals.total)} →`;
+    }
 
     if (focusTarget) window.requestAnimationFrame(function () {
       const focusContainer = focusTarget.inDrawer || drawerWasOpen ? currentDrawer : document.querySelector('.pos-layout > .cart-panel');
@@ -1773,7 +1872,7 @@
     const totals = cartTotals();
     const posWarehousePicker = warehouses.length > 1 ? `<label class='pos-warehouse-picker'><span>Xuất từ kho</span><div class='select-wrap'><select class='input' id='pos-warehouse' ${cart.length || checkoutPendingPayload ? 'disabled' : ''}>${warehouses.map(function (warehouse) { return `<option value='${esc(warehouse.id)}' ${warehouse.id === selectedWarehouseId ? 'selected' : ''}>${esc(warehouse.name)}</option>`; }).join('')}</select></div></label>` : '';
     return pageHeading('Bán hàng', 'Chọn sản phẩm, thêm vào đơn và thu tiền ngay tại quầy.', `${['owner', 'manager'].includes(store.role) ? `<button class='btn btn-secondary' data-action='manage-promotions'>Mã khuyến mãi</button>` : ''}<button class='btn btn-secondary hide-on-mobile' data-action='scan'>${icon('scan', 14)} Nhập mã</button><button class='btn btn-secondary hide-on-mobile' data-route='orders'>Đơn gần đây</button><button class='btn btn-primary pos-cart-top' data-action='open-cart' data-tour-target='pos-cart-desktop' aria-controls='drawer-cart' aria-expanded='false'>Giỏ hàng · ${number(totals.count)}</button>`) +
-      `<div class='pos-layout'><div><div class='pos-tools ${warehouses.length > 1 ? 'has-warehouse' : ''}'><div class='pos-search-group'><div class='search-wrap pos-search' data-tour-target='pos-search'><span class='search-symbol'>⌕</span><input class='input' id='pos-search' type='search' placeholder='Tìm sản phẩm hoặc SKU…' value='${esc(query)}' aria-label='Tìm sản phẩm'></div><button class='btn btn-secondary' data-action='scan' aria-label='Nhập mã' title='Nhập mã sản phẩm'>${icon('scan', 15)}</button></div>${posWarehousePicker}</div><div class='category-scroll'>${categories.map(function (category) { return `<button class='pos-category ${categoryFilter === category ? 'active' : ''}' data-action='category' data-category='${esc(category)}'>${esc(category)}</button>`; }).join('')}</div><div class='pos-product-grid' id='pos-products'>${products.map(function (product) { return `<button class='pos-product' data-action='add-cart' data-id='${product.id}'><span class='product-thumb ${product.tone || 'product-sage'}'>${esc(product.emoji || '📦')}</span><span class='pos-stock'>${product.inventoryTracked ? `Còn ${number(product.stock)}` : 'Không theo dõi tồn'}</span><strong>${esc(product.name)}</strong><small>${esc(product.sku)}</small><span class='pos-price'>${money(product.price)}</span></button>`; }).join('') || `<div class='panel empty-state' style='grid-column:1/-1'><strong>Chưa có sản phẩm để bán</strong><span>Thêm sản phẩm hoặc nhập kho mặt hàng có theo dõi tồn.</span></div>`}</div></div>${cartPanel()}</div><div class='pos-mobile-cart'><button class='btn' data-action='open-cart' data-tour-target='pos-cart-mobile' aria-controls='drawer-cart' aria-expanded='false'><span class='mobile-cart-count'>${number(totals.count)}</span><span>${totals.count ? 'Xem giỏ hàng' : 'Giỏ hàng đang trống'}</span><strong>${money(totals.total)}　→</strong></button></div><div class='drawer-cart' id='drawer-cart' role='dialog' aria-modal='true' aria-label='Giỏ hàng' aria-hidden='true'>${cartPanel()}</div>`;
+      `<div class='pos-layout'><div><div class='pos-tools ${warehouses.length > 1 ? 'has-warehouse' : ''}'><div class='pos-search-group'><div class='search-wrap pos-search' data-tour-target='pos-search'><span class='search-symbol'>⌕</span><input class='input' id='pos-search' type='search' placeholder='Tìm sản phẩm hoặc SKU…' value='${esc(query)}' aria-label='Tìm sản phẩm'></div><button class='btn btn-secondary' data-action='scan' data-tour-target='pos-scan' aria-label='Quét mã mặt hàng' title='Quét mã mặt hàng'>${icon('scan', 15)}</button></div>${posWarehousePicker}</div><div class='category-scroll'>${categories.map(function (category) { return `<button class='pos-category ${categoryFilter === category ? 'active' : ''}' data-action='category' data-category='${esc(category)}'>${esc(category)}</button>`; }).join('')}</div><div class='pos-product-grid' id='pos-products'>${products.map(function (product) { return `<button class='pos-product' data-action='add-cart' data-id='${product.id}'><span class='product-thumb ${product.tone || 'product-sage'}'>${esc(product.emoji || '📦')}</span><span class='pos-stock'>${product.inventoryTracked ? `Còn ${number(product.stock)}` : 'Không theo dõi tồn'}</span><strong>${esc(product.name)}</strong><small>${esc(product.sku)}</small><span class='pos-price'>${money(product.price)}</span></button>`; }).join('') || `<div class='panel empty-state' style='grid-column:1/-1'><strong>Chưa có sản phẩm để bán</strong><span>Thêm sản phẩm hoặc nhập kho mặt hàng có theo dõi tồn.</span></div>`}</div></div>${cartPanel()}</div><div class='pos-mobile-cart'><button class='btn pos-mobile-cart-edit' data-action='open-cart' aria-controls='drawer-cart' aria-expanded='false'><span class='mobile-cart-count'>${number(totals.count)}</span><span>Giỏ</span></button><button class='btn btn-primary pos-mobile-checkout' data-action='checkout' data-tour-target='pos-cart-mobile' ${cart.length || checkoutPendingPayload ? '' : 'disabled'}><span>${checkoutPendingPayload ? 'Kiểm tra đơn chờ' : 'Thanh toán'}</span><strong>${money(checkoutPendingPayload ? checkoutPendingPayload.totalVnd : totals.total)} →</strong></button></div><div class='drawer-cart' id='drawer-cart' role='dialog' aria-modal='true' aria-label='Giỏ hàng' aria-hidden='true'>${cartPanel()}</div>`;
   }
 
   function orderRows(orders) {
@@ -3607,15 +3706,25 @@
     download('slink-mau-nhap-san-pham.csv', csv, 'text/csv;charset=utf-8');
   }
 
-  function openProduct(id) {
+  function openProduct(id, initial) {
     const p = id ? productById(id) : null;
+    const scanned = !p && initial && initial.fromScan ? initial : null;
+    const rawBarcode = p ? p.barcode : (scanned && scanned.barcode ? scanned.barcode : '');
+    const barcode = rawBarcode.length <= 80 ? rawBarcode : '';
+    const suggestedSku = scanned
+      ? (scanned.sku || (barcode && /^[A-Za-z0-9._-]+$/.test(barcode) ? barcode : `MH-${Date.now().toString(36).toUpperCase()}`))
+      : '';
     const grouped = Boolean(p?.variantGroupId);
     const displayedName = grouped
       ? `<div class='form-field full'><label class='input-label'>Tên biến thể *</label><input class='input' name='name' value='${esc(p.name)}' required maxlength='240' readonly/><small>Tên được ghép từ nhóm “${esc(p.variantGroupName)}” và thuộc tính bên dưới.</small></div>`
       : `<div class='form-field full'><label class='input-label'>Tên sản phẩm *</label><input class='input' name='name' value='${esc(p ? p.name : '')}' placeholder='Ví dụ: Cà phê rang xay' required maxlength='240'/></div>`;
     const variantAttributes = grouped
       ? `<div class='form-field full'><label class='input-label' for='product-variant-attributes'>Thuộc tính biến thể *</label><input class='input' id='product-variant-attributes' name='variantAttributesText' value='${esc(Object.entries(p.variantAttributes || {}).map(function (entry) { return `${entry[0]}=${entry[1]}`; }).join('; '))}' placeholder='Màu=Đỏ; Kích cỡ=M' required/><small>Giữ nguyên tên thuộc tính của nhóm; bạn có thể sửa giá trị. Thuộc tính không làm thay đổi tồn kho.</small></div>` : '';
-    const form = `<form id='entity-form' data-form='product' data-id='${p ? p.id : ''}' data-version='${p ? p.version : ''}'><div class='form-grid'>${displayedName}${variantAttributes}<div class='form-field'><label class='input-label'>Mã SKU *</label><input class='input' name='sku' value='${esc(p ? p.sku : '')}' placeholder='VD: CF-250' required maxlength='80'/></div><div class='form-field'><label class='input-label'>Mã vạch</label><input class='input' name='barcode' value='${esc(p ? p.barcode : '')}' placeholder='Nhập mã vạch nếu có' maxlength='80'/></div><div class='form-field'><label class='input-label'>Danh mục</label><input class='input' name='category' list='categories' value='${esc(p ? p.category : '')}' placeholder='Chọn hoặc nhập mới' ${grouped ? 'readonly' : ''}/><datalist id='categories'>${Array.from(new Set(store.products.map(function (x) { return x.category; }))).map(function (x) { return `<option value='${esc(x)}'></option>`; }).join('')}</datalist></div><div class='form-field'><label class='input-label'>Đơn vị tính</label><input class='input' name='unit' value='${esc(p ? p.unit : 'cái')}' placeholder='cái, hộp, kg' maxlength='40' ${grouped ? 'readonly' : ''}/></div><div class='form-field'><label class='input-label'>Giá bán (VND) *</label><input class='input' name='price' type='number' min='0' step='1' value='${p ? p.price : ''}' placeholder='0' required/></div><div class='form-field'><label class='input-label'>Giá vốn (VND)</label><input class='input' name='cost' type='number' min='0' step='1' value='${p ? p.cost : ''}' placeholder='0'/></div><div class='form-field'><label class='input-label'>Nhắc khi còn</label><input class='input' name='minStock' type='number' min='0' step='0.001' value='${p ? p.minStock : '5'}'/></div>${p ? `<div class='form-field'><label class='input-label'>Tồn kho hiện tại</label><div class='input' aria-readonly='true'>${number(p.stock)} ${esc(p.unit)}</div></div>` : `<div class='form-field full'><div class='modal-note'>Sản phẩm mới bắt đầu với tồn kho bằng 0. Số lượng chỉ thay đổi qua nghiệp vụ kho.</div></div>`}</div><label class='install-hint' style='display:flex;align-items:flex-start;gap:9px;grid-column:1/-1'><input type='checkbox' name='inventoryTracked' ${!p || p.inventoryTracked ? 'checked' : ''} style='margin-top:2px;flex:none'/><span><strong>Theo dõi tồn kho</strong><small style='display:block;margin-top:4px'>Tắt cho dịch vụ hoặc mặt hàng không quản lý số lượng. Trước khi tắt, cần điều chỉnh tồn và lượng đang giữ về 0.</small></span></label></div></form>`;
+    const scanPhoto = scanned && scanned.photo ? `<img class='scan-photo-preview product-scan-reference' src='${esc(scanned.photo)}' alt='Ảnh vừa chụp để đối chiếu khi nhập sản phẩm'/>` : '';
+    const scanNote = scanned
+      ? `<div class='notice-item product-scan-note' role='status'><span>${scanned.barcode ? '✓' : 'i'}</span><span><strong>${scanned.barcode ? 'Chưa có mã này trong danh mục' : 'Chưa đọc được mã'}</strong><small>${scanned.barcode ? 'Mã vạch đã điền sẵn; mã SKU được điền theo mã nếu phù hợp, nếu không Slink tạo mã tạm. Hãy kiểm tra, nhập tên và giá.' : 'Nhập tên và giá bán. Mã SKU tạm đã tạo và có thể sửa; ảnh chỉ để xem lúc này, chưa được lưu vào sản phẩm.'} Thông tin khác không tự tra cứu. Tồn mới bắt đầu từ 0; cần ghi nhận số lượng trong kho trước khi bán.</small></span></div>`
+      : '';
+    const form = `<form id='entity-form' data-form='product' data-from-scan='${scanned ? 'true' : 'false'}' data-id='${p ? p.id : ''}' data-version='${p ? p.version : ''}'>${scanPhoto}${scanNote}<div class='form-grid'>${displayedName}${variantAttributes}<div class='form-field'><label class='input-label'>Mã SKU *</label><input class='input' name='sku' value='${esc(p ? p.sku : suggestedSku)}' placeholder='VD: CF-250' required maxlength='80'/></div><div class='form-field'><label class='input-label'>Mã vạch</label><input class='input' name='barcode' value='${esc(barcode)}' placeholder='Nhập mã vạch nếu có' maxlength='80'/></div><div class='form-field'><label class='input-label'>Danh mục</label><input class='input' name='category' list='categories' value='${esc(p ? p.category : scanned ? 'Chưa phân loại' : '')}' placeholder='Chọn hoặc nhập mới' ${grouped ? 'readonly' : ''}/><datalist id='categories'>${Array.from(new Set(store.products.map(function (x) { return x.category; }))).map(function (x) { return `<option value='${esc(x)}'></option>`; }).join('')}</datalist></div><div class='form-field'><label class='input-label'>Đơn vị tính</label><input class='input' name='unit' value='${esc(p ? p.unit : 'cái')}' placeholder='cái, hộp, kg' maxlength='40' ${grouped ? 'readonly' : ''}/></div><div class='form-field'><label class='input-label'>Giá bán (VND) *</label><input class='input' name='price' type='number' min='0' step='1' value='${p ? p.price : ''}' placeholder='0' required/></div><div class='form-field'><label class='input-label'>Giá vốn (VND)</label><input class='input' name='cost' type='number' min='0' step='1' value='${p ? p.cost : ''}' placeholder='0'/></div><div class='form-field'><label class='input-label'>Nhắc khi còn</label><input class='input' name='minStock' type='number' min='0' step='0.001' value='${p ? p.minStock : '5'}'/></div>${p ? `<div class='form-field'><label class='input-label'>Tồn kho hiện tại</label><div class='input' aria-readonly='true'>${number(p.stock)} ${esc(p.unit)}</div></div>` : `<div class='form-field full'><div class='modal-note'>Sản phẩm mới bắt đầu với tồn kho bằng 0. Số lượng chỉ thay đổi qua nghiệp vụ kho.</div></div>`}</div><label class='install-hint' style='display:flex;align-items:flex-start;gap:9px;grid-column:1/-1'><input type='checkbox' name='inventoryTracked' ${!p || p.inventoryTracked ? 'checked' : ''} style='margin-top:2px;flex:none'/><span><strong>Theo dõi tồn kho</strong><small style='display:block;margin-top:4px'>Tắt cho dịch vụ hoặc mặt hàng không quản lý số lượng. Trước khi tắt, cần điều chỉnh tồn và lượng đang giữ về 0.</small></span></label></div></form>`;
     const footer = `<button class='btn btn-secondary' type='button' data-action='close-modal'>Hủy</button>${grouped ? `<button class='btn btn-secondary' type='button' data-action='add-product-to-existing-variant-group' data-id='${p.id}'>Thêm SKU vào nhóm</button>` : ''}${p && ['owner', 'manager', 'stockkeeper'].includes(store.role) ? `<button class='btn btn-secondary' type='button' data-action='adjust-stock' data-id='${p.id}'>Kiểm kê tồn</button>` : ''}${p && ['owner', 'manager', 'stockkeeper', 'accountant'].includes(store.role) ? `<button class='btn btn-secondary' type='button' data-action='product-price-history' data-id='${p.id}'>Lịch sử giá</button>` : ''}${p ? `<button class='btn btn-danger' type='button' data-action='archive-product' data-id='${p.id}'>Lưu trữ</button>` : ''}<button class='btn btn-primary' type='submit' form='entity-form'>${p ? 'Lưu thay đổi' : 'Thêm sản phẩm'}</button>`;
     showModal(p ? 'Cập nhật sản phẩm' : 'Thêm sản phẩm mới', p ? 'Chỉnh sửa thông tin sản phẩm. Tồn kho được theo dõi riêng.' : 'Thêm một mặt hàng vào danh mục cửa hàng.', form, footer, true);
   }
@@ -3831,7 +3940,7 @@
 
   function checkoutTenderRow(tender, index, count, disabled) {
     const options = checkoutMethods.map(function (method) { return `<option value='${method[0]}' ${tender.method === method[0] ? 'selected' : ''}>${method[1]}</option>`; }).join('');
-    return `<div class='checkout-tender-row' data-tender-row><div class='form-field'><label class='input-label' for='tender-method-${index}'>Phương thức ${index + 1}</label><div class='select-wrap'><select class='input' id='tender-method-${index}' data-tender-method ${disabled}>${options}</select></div></div><div class='form-field'><label class='input-label' for='tender-amount-${index}'>Số tiền (VND)</label><input class='input' id='tender-amount-${index}' data-tender-amount type='number' inputmode='numeric' min='0' step='1' value='${esc(tender.amountReceivedVnd)}' required ${disabled}/></div>${count > 1 ? `<button class='row-action checkout-tender-remove' type='button' data-action='remove-tender' data-index='${index}' aria-label='Xóa khoản thanh toán ${index + 1}' ${disabled}>×</button>` : ''}</div>`;
+    return `<div class='checkout-tender-row' data-tender-row><div class='form-field'><label class='input-label' for='tender-method-${index}'>Cách thanh toán</label><div class='select-wrap'><select class='input' id='tender-method-${index}' data-tender-method ${disabled}>${options}</select></div></div><div class='form-field'><label class='input-label' for='tender-amount-${index}'>Số tiền nhận (VND)</label><input class='input' id='tender-amount-${index}' data-tender-amount type='number' inputmode='numeric' min='0' step='1' value='${esc(tender.amountReceivedVnd)}' required ${disabled}/></div>${count > 1 ? `<button class='row-action checkout-tender-remove' type='button' data-action='remove-tender' data-index='${index}' aria-label='Xóa khoản thanh toán ${index + 1}' ${disabled}>×</button>` : ''}</div>`;
   }
 
   function checkoutTenderValues(form) {
@@ -3952,6 +4061,14 @@
     const promotionDiscount = pending ? Number(pending.promotionDiscountVnd || 0) : Number(checkoutPromotion?.discountVnd || 0);
     const totals = { ...baseTotals, total: pending ? baseTotals.total : Math.max(0, baseTotals.total - promotionDiscount) };
     const selectedCustomer = pending ? pending.customerId || '' : cartCustomerId;
+    const checkoutItems = pending
+      ? pending.items.map(function (item) { return { product: productById(item.productId), quantity: Number(item.quantity) }; })
+      : cart.map(function (item) { return { product: productById(item.id), quantity: Number(item.qty) }; });
+    const itemSummary = checkoutItems.map(function (item) {
+      const product = item.product;
+      const lineAmount = product ? `<strong>${money(product.price * item.quantity)}</strong>` : `<span class='muted'>Đang tải giá</span>`;
+      return `<div class='checkout-item'><span>${esc(product ? product.name : 'Mặt hàng')} <small>× ${number(item.quantity)}</small></span>${lineAmount}</div>`;
+    }).join('');
     const selectedTenders = pending
       ? (Array.isArray(pending.tenders) && pending.tenders.length ? pending.tenders : [{ method: pending.method || 'cash', amountReceivedVnd: pending.amountReceivedVnd || 0 }])
       : [{ method: 'cash', amountReceivedVnd: totals.total }];
@@ -3959,8 +4076,9 @@
     const disabled = pending ? 'disabled' : '';
     const customers = `<option value=''>Khách lẻ</option>` + store.customers.map(function (c) { return `<option value='${c.id}' ${selectedCustomer === c.id ? 'selected' : ''}>${esc(c.name)} · ${esc(c.phone)}</option>`; }).join('');
     if (!checkoutIdempotencyKey) checkoutIdempotencyKey = newIdempotencyKey();
-    const body = `<form id='entity-form' data-form='checkout' data-base-total-vnd='${baseTotals.total}' data-promotion-discount-vnd='${promotionDiscount}' data-total-vnd='${totals.total}'><div class='checkout-total'><span>Khách cần thanh toán</span><strong id='checkout-due'>${money(totals.total)}</strong></div><div class='form-grid'><div class='form-field full'><label class='input-label'>Khách hàng</label><div class='select-wrap'><select class='input' name='customerId' ${disabled}>${customers}</select></div></div>${pending ? '' : `<div class='form-field full'><label class='input-label' for='checkout-promotion-code'>Mã khuyến mãi</label><div class='form-field-inline'><input class='input' id='checkout-promotion-code' name='promotionCode' maxlength='32' autocomplete='off' placeholder='Nhập mã của khách'/><button class='btn btn-secondary' type='button' data-action='apply-promotion'>Kiểm tra</button></div><small id='checkout-promotion-status' class='muted' aria-live='polite'>Mã được xác nhận lại trong lúc lưu đơn.</small></div>`}<div class='form-field full'><span class='input-label'>Các khoản thanh toán</span><div id='checkout-tenders'>${selectedTenders.map(function (tender, index) { return checkoutTenderRow(tender, index, selectedTenders.length, disabled); }).join('')}</div>${pending ? '' : `<button class='link-button' type='button' data-action='add-tender'>＋ Thêm phương thức thanh toán</button>`}<div id='checkout-tender-summary' class='checkout-tender-summary' aria-live='polite'></div></div><div class='form-field full'><label class='input-label'>Ghi chú đơn hàng</label><input class='input' name='note' value='${esc(pending ? pending.note : '')}' placeholder='Ghi chú không bắt buộc' ${disabled}/></div></div><div class='modal-note'>${pending ? 'Slink chưa nhận được xác nhận hoàn tất từ lần gửi trước. Hãy thử lại đúng yêu cầu đã gửi; hệ thống sẽ không tạo đơn trùng.' : 'Có thể chia số tiền giữa nhiều phương thức. Khoản không tiền mặt không được vượt tổng đơn; tiền mặt nhận dư sẽ được tính phần thối. Chuyển khoản, QR và thẻ hiện được nhân viên xác nhận thủ công.'}</div></form>`;
-    showModal(pending ? 'Kiểm tra đơn hàng đang chờ' : 'Xác nhận thanh toán', `${totals.count} sản phẩm trong đơn · ${money(totals.total)}`, body, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Để sau</button><button class='btn btn-primary' type='submit' form='entity-form'>${pending ? 'Thử lại đơn hàng' : 'Hoàn tất đơn hàng'}</button>`);
+    const optionalFields = `<details class='checkout-more' ${selectedCustomer ? 'open' : ''}><summary>Thêm thông tin nếu cần</summary><div class='form-grid'><div class='form-field full'><label class='input-label'>Khách hàng</label><div class='select-wrap'><select class='input' name='customerId' ${disabled}>${customers}</select></div></div>${pending ? '' : `<div class='form-field full'><label class='input-label' for='checkout-promotion-code'>Mã giảm giá</label><div class='form-field-inline'><input class='input' id='checkout-promotion-code' name='promotionCode' maxlength='32' autocomplete='off' placeholder='Chỉ nhập khi khách có mã'/><button class='btn btn-secondary' type='button' data-action='apply-promotion'>Kiểm tra</button></div><small id='checkout-promotion-status' class='muted' aria-live='polite'>Mã sẽ được kiểm tra trước khi lưu đơn.</small></div>`}<div class='form-field full'><label class='input-label'>Ghi chú</label><input class='input' name='note' value='${esc(selectedNote)}' placeholder='Không bắt buộc' ${disabled}/></div></div></details>`;
+    const body = `<form id='entity-form' data-form='checkout' data-base-total-vnd='${baseTotals.total}' data-promotion-discount-vnd='${promotionDiscount}' data-total-vnd='${totals.total}'><div class='checkout-total'><span>${pending ? 'Đơn đang chờ · kiểm tra số tiền' : 'Khách cần thanh toán'}</span><strong id='checkout-due'>${money(totals.total)}</strong></div><div class='checkout-items' aria-label='Mặt hàng trong đơn'>${itemSummary}</div><div class='checkout-payment'><span class='input-label'>Khách trả bằng</span><div id='checkout-tenders'>${selectedTenders.map(function (tender, index) { return checkoutTenderRow(tender, index, selectedTenders.length, disabled); }).join('')}</div>${pending ? '' : `<button class='link-button' type='button' data-action='add-tender'>＋ Chia nhiều cách trả</button>`}<div id='checkout-tender-summary' class='checkout-tender-summary' aria-live='polite'></div></div>${optionalFields}<div class='modal-note'>${pending ? 'Gửi lại cùng yêu cầu để tránh tạo đơn trùng.' : 'Mặc định là tiền mặt và số tiền đã điền sẵn. Chuyển khoản, QR và thẻ cần được kiểm tra thủ công.'}</div></form>`;
+    showModal(pending ? 'Kiểm tra đơn đang chờ' : 'Xác nhận thanh toán', `${totals.count} sản phẩm`, body, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Để sau</button><button class='btn btn-primary' type='submit' form='entity-form'>${pending ? 'Thử lại đơn hàng' : 'Xác nhận và lưu đơn'}</button>`);
     updateCheckoutTenderSummary(modal.querySelector('[data-form="checkout"]'));
   }
 
@@ -4681,7 +4799,16 @@
     return sendPendingCustomerTag(customerId);
   }
 
-  function pickCustomer() {
+  async function pickCustomer() {
+    if (!customerListLoaded) {
+      showModal('Chọn khách hàng', 'Đang lấy danh sách khách hàng…', `<div class='empty-state' role='status'>Đang tải…</div>`, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button>`, true);
+      await loadCustomersPage('', 0);
+      if (modal.hidden) return;
+      if (!customerListLoaded) {
+        showModal('Chưa tải được khách hàng', 'Kiểm tra kết nối rồi thử lại, hoặc tiếp tục bán cho khách lẻ.', `<div class='empty-state' role='status'>Danh sách chưa tải được.</div>`, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button><button class='btn btn-primary' type='button' data-action='pick-customer'>Thử lại</button>`, true);
+        return;
+      }
+    }
     const body = `<div class='search-wrap'><span class='search-symbol'>⌕</span><input id='pick-customer-search' class='input' type='search' placeholder='Tìm tên hoặc điện thoại…'/></div><div id='customer-options' class='customer-picker'>${store.customers.map(function (c) { return `<button class='customer-option' data-action='select-customer' data-id='${c.id}'><span class='avatar' style='width:26px;height:26px'>${esc(initials(c.name))}</span><span>${esc(c.name)}</span><small>${esc(c.phone)}</small></button>`; }).join('')}</div><button class='btn btn-secondary' style='margin-top:13px;width:100%' data-action='new-customer-from-pos'>＋ Tạo khách hàng mới</button>`;
     showModal('Chọn khách hàng', 'Gắn đơn hàng với hồ sơ khách hàng.', body, `<button class='btn btn-secondary' data-action='select-customer' data-id=''>Bán cho khách lẻ</button>`, true);
   }
@@ -4716,8 +4843,19 @@
     if (button) button.focus();
   }
   function showScan() {
-    const body = `<form id='entity-form' data-form='scan'><div class='scan-camera-panel' data-scan-surface data-scan-mode='product' data-scan-target='scan-code'><ol class='scan-steps'><li>Chọn Cho phép khi điện thoại hỏi quyền camera.</li><li>Đưa mã vào giữa khung, giữ yên và đủ sáng.</li><li>Nếu chưa đọc được sau 10 giây, ảnh sẽ tự chụp để bạn xem lại.</li></ol><video id='scan-camera-video' class='scan-camera-video' playsinline muted hidden aria-label='Khung camera để quét mã'></video><img id='scan-photo-preview' class='scan-photo-preview' alt='Ảnh chụp mã để xem lại' hidden/><button class='btn btn-secondary' type='button' data-action='start-camera-scan'>Mở camera để quét</button><p id='scan-camera-status' class='scan-camera-status' role='status' aria-live='polite'>Slink sẽ tự đọc mã. Nếu camera hoặc mã không dùng được, bạn có thể nhập mã bên dưới.</p><small class='scan-privacy-note'>Ảnh chụp chỉ dùng trên màn hình này; không gửi lên máy chủ.</small></div><div class='form-field'><label class='input-label' for='scan-code'>Mã mặt hàng</label><input id='scan-code' class='input' name='code' placeholder='Nhập hoặc dán mã sản phẩm…' autocomplete='off' inputmode='text'/></div></form>`;
-    showModal('Quét mã mặt hàng', 'Đưa mã vạch hoặc QR vào giữa khung camera.', body, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button><button class='btn btn-primary' type='submit' form='entity-form'>Tìm mặt hàng</button>`);
+    const body = `<form id='entity-form' data-form='scan'><div class='scan-camera-panel' data-scan-surface data-scan-mode='product' data-scan-target='scan-code'><div class='scan-camera-stage'><div class='scan-camera-prompt' aria-hidden='true'><span>${icon('scan', 28)}</span><strong>Đặt mã vào khung</strong></div><video id='scan-camera-video' class='scan-camera-video' playsinline muted hidden aria-label='Khung camera để quét mã'></video><div class='scan-viewfinder' aria-hidden='true'><i></i><i></i><i></i><i></i></div><img id='scan-photo-preview' class='scan-photo-preview' alt='Ảnh vừa chụp để đối chiếu' hidden/></div><div class='scan-camera-actions'><button class='btn btn-secondary' type='button' data-action='start-camera-scan'>Mở camera</button><button class='btn btn-primary' type='button' data-action='capture-scan-photo' disabled>Chụp ngay</button></div><p id='scan-camera-status' class='scan-camera-status' role='status' aria-live='polite'>Cho phép camera, rồi đưa mã vào khung. Slink sẽ tự đọc; chưa đọc được sau 10 giây thì tự chụp.</p><details class='scan-manual-entry'><summary>Không quét được? Nhập mã</summary><div class='scan-manual-fields'><label class='form-field'><span class='input-label'>Mã vạch hoặc SKU</span><input id='scan-code' class='input' name='code' placeholder='Nhập mã sản phẩm' autocomplete='off' inputmode='text' maxlength='80'/></label><button class='btn btn-secondary' type='submit'>Thêm theo mã</button><button class='link-button' type='button' data-action='create-product-from-scan'>Nhập mặt hàng thủ công</button></div></details><small class='scan-privacy-note'>Ảnh chỉ dùng trên màn hình này, không lưu vào sản phẩm hay gửi lên máy chủ.</small></div></form>`;
+    showModal('Quét mặt hàng', 'Đưa mã vào giữa khung.', body, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button>`);
+    startScanCamera(modal.querySelector('[data-action="start-camera-scan"]'));
+  }
+
+  function openProductFromScan(barcode, photo, sku) {
+    closeModal();
+    if (!['owner', 'manager', 'stockkeeper'].includes(store.role)) {
+      toast('Chưa có mặt hàng này', 'Nhờ chủ cửa hàng hoặc người quản lý danh mục thêm sản phẩm trước khi bán.', 'error');
+      return;
+    }
+    page = 'pos';
+    openProduct('', { fromScan: true, barcode: barcode || '', sku: sku || '', photo: photo || '' });
   }
   function setScanCameraStatus(message, isError) {
     const status = modal.querySelector('#scan-camera-status');
@@ -4739,9 +4877,11 @@
     const codeInput = scanCodeInput(surface);
     const form = modal.querySelector('form[data-form="scan"]');
     const detector = scanCameraDetector;
+    const isProductScan = surface && surface.dataset.scanMode !== 'order';
     if (!surface || !video || !image || !video.videoWidth || !video.videoHeight) {
       stopScanCamera();
-      setScanCameraStatus('Chưa chụp được ảnh. Hãy thử mở camera lại hoặc nhập mã bên dưới.', true);
+      if (isProductScan) openProductFromScan('', '');
+      else setScanCameraStatus('Chưa chụp được ảnh. Hãy thử mở camera lại hoặc nhập mã đơn.', true);
       return;
     }
     const canvas = document.createElement('canvas');
@@ -4751,7 +4891,8 @@
     const context = canvas.getContext('2d');
     if (!context) {
       stopScanCamera();
-      setScanCameraStatus('Chưa chụp được ảnh. Hãy nhập mã bên dưới hoặc thử lại.', true);
+      if (isProductScan) openProductFromScan('', '');
+      else setScanCameraStatus('Chưa chụp được ảnh. Hãy nhập mã đơn hoặc thử lại.', true);
       return;
     }
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -4759,8 +4900,10 @@
     stopScanCamera();
     image.src = localPhoto;
     image.hidden = false;
+    surface.classList.add('has-photo');
     if (!detector) {
-      setScanCameraStatus(surface.dataset.scanMode === 'order' ? 'Ảnh đã chụp để bạn nhìn lại. Trình duyệt chưa tự đọc được mã; nhập mã đơn vào ô phía trên.' : 'Ảnh đã chụp để bạn xem lại. Trình duyệt chưa tự đọc được mã; hãy nhập mã vào ô bên dưới.');
+      if (isProductScan) openProductFromScan('', localPhoto);
+      else setScanCameraStatus('Ảnh đã chụp. Trình duyệt chưa tự đọc mã; hãy nhìn ảnh rồi nhập mã đơn vào ô phía trên.');
       return;
     }
     setScanCameraStatus('Mình đã chụp ảnh và đang thử đọc mã lần nữa…');
@@ -4772,15 +4915,17 @@
         if (surface.dataset.scanMode === 'order') {
           setScanCameraStatus('Đã điền mã đơn. Kiểm tra lại mã, mặt hàng và thông tin giao trước khi lưu.');
         } else if (form) {
-          setScanCameraStatus('Đã đọc được mã trong ảnh. Đang tìm mặt hàng…');
-          await addByCode(form);
+          setScanCameraStatus('Đã đọc được mã. Đang kiểm tra danh mục cửa hàng…');
+          await addByCode(form, { detected: true, photo: localPhoto });
         }
         if (!modal.hidden) codeInput.focus();
         return;
       }
-      setScanCameraStatus(surface.dataset.scanMode === 'order' ? 'Ảnh chưa đọc được mã. Hãy đưa mã gần hơn, tránh lóa sáng rồi quét lại, hoặc nhìn ảnh và nhập mã đơn vào ô phía trên.' : 'Ảnh chưa đọc được mã. Hãy đưa mã gần hơn, tránh lóa sáng rồi quét lại, hoặc nhìn ảnh và nhập mã vào ô bên dưới.');
+      if (isProductScan) openProductFromScan('', localPhoto);
+      else setScanCameraStatus('Ảnh chưa đọc được mã. Hãy đưa mã gần hơn, tránh lóa sáng rồi quét lại, hoặc nhìn ảnh và nhập mã đơn vào ô phía trên.');
     } catch (_error) {
-      setScanCameraStatus(surface.dataset.scanMode === 'order' ? 'Ảnh đã chụp nhưng chưa đọc được mã. Hãy thử gần hơn, đủ sáng, hoặc nhập mã đơn vào ô phía trên.' : 'Ảnh đã chụp nhưng chưa đọc được mã. Hãy thử gần hơn, đủ sáng, hoặc nhập mã bên dưới.');
+      if (isProductScan) openProductFromScan('', localPhoto);
+      else setScanCameraStatus('Ảnh đã chụp nhưng chưa đọc được mã. Hãy thử gần hơn, đủ sáng, hoặc nhập mã đơn vào ô phía trên.');
     }
   }
 
@@ -4800,12 +4945,16 @@
       video.pause();
       video.srcObject = null;
       video.hidden = true;
+      const surface = video.closest('[data-scan-surface]');
+      if (surface) surface.classList.remove('camera-active');
     }
     const button = modal.querySelector('[data-scan-surface] [data-action="start-camera-scan"]');
+    const captureButton = modal.querySelector('[data-scan-surface] [data-action="capture-scan-photo"]');
     if (button && button.dataset.unsupported !== 'true') {
       button.disabled = false;
       button.textContent = 'Quét lại';
     }
+    if (captureButton) captureButton.disabled = true;
   }
   async function startScanCamera(button) {
     if (scanCameraRunning || scanCameraStarting) return;
@@ -4814,6 +4963,7 @@
     const video = surface?.querySelector('#scan-camera-video');
     const codeInput = scanCodeInput(surface);
     const image = surface?.querySelector('#scan-photo-preview');
+    const captureButton = surface?.querySelector('[data-action="capture-scan-photo"]');
     const form = modal.querySelector('form[data-form="scan"]');
     if (!surface || !video || !codeInput || (surface.dataset.scanMode !== 'order' && !form)) return;
     if (!window.isSecureContext || !navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
@@ -4822,7 +4972,9 @@
     }
     const Detector = window.BarcodeDetector;
     scanCameraStarting = true;
-    const requestedFormats = ['qr_code', 'ean_13', 'ean_8', 'code_128', 'code_39', 'upc_a', 'upc_e', 'itf'];
+    const requestedFormats = surface.dataset.scanMode === 'order'
+      ? ['qr_code', 'ean_13', 'ean_8', 'code_128', 'code_39', 'upc_a', 'upc_e', 'itf']
+      : ['ean_13', 'ean_8', 'code_128', 'code_39', 'upc_a', 'upc_e', 'itf'];
     try {
       if (typeof Detector !== 'function') {
         scanCameraDetector = null;
@@ -4852,6 +5004,8 @@
       scanCameraStream = stream;
       video.srcObject = stream;
       video.hidden = false;
+      surface.classList.remove('has-photo');
+      surface.classList.add('camera-active');
       await video.play();
       if (requestGeneration !== scanCameraGeneration || modal.hidden) {
         stream.getTracks().forEach(function (track) { track.stop(); });
@@ -4863,9 +5017,12 @@
       scanCameraRunning = true;
       scanCameraStarting = false;
       if (button) button.textContent = 'Đang quét…';
+      if (captureButton) captureButton.disabled = false;
       setScanCameraStatus(scanCameraDetector
-        ? `Đưa mã ${surface.dataset.scanMode === 'order' ? 'đơn' : 'mặt hàng'} vào giữa khung và giữ yên. Slink tự đọc mã; nếu chưa đọc được sau 10 giây, Slink sẽ chụp ảnh để bạn xem lại.`
-        : 'Đưa mã vào giữa khung và giữ yên. Trình duyệt này chưa tự đọc mã; sau 10 giây Slink sẽ chụp ảnh để bạn xem và nhập mã.');
+        ? `Đưa mã ${surface.dataset.scanMode === 'order' ? 'đơn' : 'mặt hàng'} vào giữa khung và giữ yên. Slink tự đọc mã; nếu chưa đọc được sau 10 giây, Slink sẽ chụp ảnh để tiếp tục.`
+        : surface.dataset.scanMode === 'order'
+          ? 'Trình duyệt này chưa tự đọc mã. Sau 10 giây, Slink chụp ảnh để bạn nhìn lại rồi nhập mã đơn.'
+          : 'Trình duyệt này chưa tự đọc mã. Sau 10 giây, Slink chụp ảnh rồi mở biểu mẫu để bạn nhập thông tin mặt hàng.');
       scanPhotoFallbackTimer = window.setTimeout(function () {
         if (scanCameraRunning && requestGeneration === scanCameraGeneration && !modal.hidden) captureScanPhoto();
       }, 10000);
@@ -4884,7 +5041,7 @@
                 setScanCameraStatus('Đã điền mã đơn. Kiểm tra lại mã, mặt hàng và thông tin giao trước khi lưu.');
               } else {
                 setScanCameraStatus('Đã đọc mã. Đang tìm sản phẩm trong cửa hàng…');
-                await addByCode(form);
+                await addByCode(form, { detected: true });
               }
               if (!modal.hidden) codeInput.focus();
               return;
@@ -4966,7 +5123,8 @@
   }
 
   function showHelp() {
-    showModal('Trợ giúp Slink', 'Chọn xem lại hướng dẫn hoặc đọc thông tin về các chức năng.', `<div class='notice-list'><div class='notice-item'><span>📦</span><span><strong>Sản phẩm và kho</strong><small>Quản lý danh mục, kiểm kê tồn, nhập hàng và xem biến động kho. Mỗi phiếu nhập cập nhật giá vốn và công nợ nhà cung cấp.</small></span></div><div class='notice-item'><span>🧾</span><span><strong>Bán hàng và đơn hàng</strong><small>Đơn bán cập nhật kho, khoản thu và công nợ trong cùng một giao dịch. Từ chi tiết đơn, có thể ghi nhận thu nợ hoặc trả một phần hàng.</small></span></div><div class='notice-item'><span>💳</span><span><strong>Phương thức thanh toán</strong><small>Tiền mặt, chuyển khoản, QR và thẻ hiện được nhân viên xác nhận thủ công. Slink chưa kết nối trực tiếp với ngân hàng hoặc cổng thanh toán.</small></span></div><div class='notice-item'><span>🔐</span><span><strong>Bảo vệ dữ liệu</strong><small>Dữ liệu được lưu theo cửa hàng trên máy chủ. Chỉ thành viên được cấp quyền mới xem hoặc thay đổi được thông tin tương ứng.</small></span></div></div>`, `<button class='btn btn-secondary' data-action='replay-guided-tour'>Xem lại hướng dẫn</button><button class='btn btn-primary' data-action='close-modal'>Đã hiểu</button>`, true);
+    const body = `<div class='notice-list'><div class='notice-item'><span>🧾</span><span><strong>Bán hàng</strong><small>Chạm mặt hàng để thêm, bấm Thanh toán, kiểm tra số tiền rồi xác nhận.</small></span></div><div class='notice-item'><span>📦</span><span><strong>Hàng và kho</strong><small>Thêm mặt hàng, ghi nhận hàng nhận về và xem số lượng còn lại.</small></span></div><div class='notice-item'><span>💳</span><span><strong>Tiền</strong><small>Chuyển khoản, QR và thẻ hiện do nhân viên xác nhận thủ công.</small></span></div></div>`;
+    showModal('Trợ giúp', 'Chọn việc cần làm hoặc xem lại hướng dẫn.', body, `<button class='btn btn-secondary' data-action='change-task-focus'>Đổi việc chính</button><button class='btn btn-secondary' data-action='replay-guided-tour'>Xem lại hướng dẫn</button><button class='btn btn-primary' data-action='close-modal'>Đóng</button>`, true);
   }
 
   function addProductToCart(product) {
@@ -4978,7 +5136,8 @@
     const increment = product.inventoryTracked ? Math.min(1, remaining) : 1;
     if (current) current.qty += increment;
     else cart.push({ id: product.id, qty: increment });
-    render();
+    if (page === 'pos') refreshCartPanels();
+    else render();
     return true;
   }
 
@@ -5751,11 +5910,22 @@
       authSession.stores = authSession.stores.map(function (item) {
         return item.id === store.id ? Object.assign({}, item, { business_profile: result.businessProfile, onboarding_completed_at: result.onboardingCompletedAt }) : item;
       });
+      const focusInput = form && form.querySelector('[name="taskFocusRoute"]');
+      if (focusInput) {
+        const selectedFocus = String(new FormData(form).get('taskFocusRoute') || '');
+        if (!saveTaskFocusRoute(selectedFocus)) saveTaskFocusRoute(defaultTaskFocusRoute());
+      } else if (taskFocusRoute && !taskFocusOptions().some(function (option) { return option.route === taskFocusRoute; })) {
+        saveTaskFocusRoute(defaultTaskFocusRoute());
+      }
       closeModal(true);
       if (page === 'settings') render();
-      else renderShell();
+      else {
+        renderShell();
+        if (taskFocusRoute && taskFocusRoute !== page) routeTo(taskFocusRoute);
+      }
       toast('Đã lưu cách sắp xếp cửa hàng', businessProfileLabel(profile));
-      scheduleInitialGuidedTour();
+      if (!taskFocusRoute && page !== 'settings') openTaskFocusOnboarding();
+      else scheduleInitialGuidedTour();
     } catch (error) {
       if (error.status === 401) showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
       else if (feedback) { feedback.hidden = false; feedback.textContent = error.message; }
@@ -5875,19 +6045,36 @@
     }
   }
 
-  async function addByCode(form) {
+  async function addByCode(form, options) {
     const code = String(new FormData(form).get('code') || '').trim();
     if (!code) return toast('Nhập mã sản phẩm', 'Quét hoặc nhập SKU, mã vạch hoặc tên chính xác.', 'error');
     if (checkoutPendingPayload) return toast('Đang chờ xác nhận đơn', 'Hãy kiểm tra hoặc gửi lại đơn trước khi thay đổi giỏ hàng.', 'error');
+    if (code.length > 120) {
+      openProductFromScan('', options && options.photo, '');
+      return;
+    }
     try {
       const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/products?limit=100&q=${encodeURIComponent(code)}${posWarehouseParam()}`);
-      const products = result.products.map(mapProduct);
+      const products = (result.products || []).map(mapProduct);
       const normalized = code.toLocaleLowerCase('vi');
       const product = products.find(function (item) { return item.sku.toLocaleLowerCase('vi') === normalized || item.barcode === code || item.name.toLocaleLowerCase('vi') === normalized; });
-      if (!product) return toast('Không tìm thấy sản phẩm', 'Kiểm tra lại mã SKU, mã vạch hoặc tên chính xác.', 'error');
+      if (!product) {
+        const canCreate = ['owner', 'manager', 'stockkeeper'].includes(store.role);
+        if (!canCreate) {
+          closeModal();
+          return toast('Chưa có mặt hàng này', 'Nhờ chủ cửa hàng hoặc người quản lý danh mục thêm sản phẩm trước khi bán.', 'error');
+        }
+        const barcode = options && options.detected && code.length <= 80 ? code : '';
+        const safeSku = barcode && /^[A-Za-z0-9._-]+$/.test(barcode) ? barcode : '';
+        openProductFromScan(barcode, options && options.photo, safeSku);
+        return;
+      }
       if (product.inventoryTracked && !(product.stock > 0)) return toast('Sản phẩm đã hết hàng', 'Hãy nhập kho trước khi bán.', 'error');
       const current = cart.find(function (item) { return item.id === product.id; });
       if (product.inventoryTracked && current && current.qty >= product.stock) return toast('Không đủ số lượng tồn', 'Giỏ hàng đã đạt số lượng đang có trong kho.', 'error');
+      const cachedIndex = store.products.findIndex(function (item) { return item.id === product.id; });
+      if (cachedIndex >= 0) store.products[cachedIndex] = product;
+      else store.products.unshift(product);
       closeModal();
       page = 'pos';
       if (!addProductToCart(product)) return;
@@ -6264,7 +6451,7 @@
     else if (page === 'audit') loadAuditEvents(null, 0);
     else if (page === 'customers') loadCustomersPage(searchTerms.customers, 0).then(render);
     else if (page === 'orders') loadOrdersPage(searchTerms.orders, 0).then(render);
-    else if (page === 'pos') { searchTerms.products = ''; searchTerms.customers = ''; posSearchTerm = ''; posProducts = []; Promise.all([loadProductsPage('', 0), loadCustomersPage('', 0)]).then(function () { posProducts = store.products.slice(); render(); }); }
+    else if (page === 'pos') { searchTerms.products = ''; searchTerms.customers = ''; posSearchTerm = ''; posProducts = []; loadProductsPage('', 0).then(function () { posProducts = store.products.slice(); render(); }); }
     else render();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -6596,13 +6783,11 @@
     else if (action === 'share-order') shareOrder(id);
     else if (action === 'download-reports-csv') downloadReportsCsv();
     else if (action === 'print-reports-pdf') printReportsPdf();
-    else if (action === 'add-cart') {
-      const added = addToCart(id);
-      if (added && window.matchMedia('(max-width: 700px)').matches) window.requestAnimationFrame(function () { setCartDrawerOpen(true); });
-    }
+    else if (action === 'add-cart') addToCart(id);
     else if (action === 'cart-qty') setCartQty(id, Number(button.dataset.delta));
     else if (action === 'cart-qty-edit') editCartQuantity(id);
     else if (action === 'checkout') openCheckout();
+    else if (action === 'change-task-focus') openTaskFocusOnboarding();
     else if (action === 'apply-promotion') applyCheckoutPromotion();
     else if (action === 'add-tender') {
       if (checkoutPendingPayload) return toast('Đơn đang chờ xác nhận', 'Không thể đổi các khoản thanh toán của đơn đã gửi.', 'error');
@@ -6662,6 +6847,8 @@
     else if (action === 'scan') showScan();
     else if (action === 'scan-channel-order') showChannelOrderScanner();
     else if (action === 'start-camera-scan') startScanCamera(button);
+    else if (action === 'capture-scan-photo') captureScanPhoto();
+    else if (action === 'create-product-from-scan') openProductFromScan('', '', '');
     else if (action === 'open-export') openExportDialog();
     else if (action === 'export-dataset') {
       const dataset = modal.querySelector('#export-dataset')?.value || '';
@@ -6874,6 +7061,19 @@
   });
 
   document.addEventListener('change', function (event) {
+    if (event.target.name === 'businessProfile' && event.target.closest('#business-profile-onboarding')) {
+      const form = event.target.closest('#business-profile-onboarding');
+      const choices = form.querySelector('.task-focus-choices');
+      if (choices) {
+        const previousProfile = store.businessProfile;
+        const previousFocus = String(form.querySelector('[name="taskFocusRoute"]:checked')?.value || '');
+        store.businessProfile = event.target.value;
+        const available = taskFocusOptions();
+        const nextFocus = available.some(function (option) { return option.route === previousFocus; }) ? previousFocus : defaultTaskFocusRoute();
+        choices.innerHTML = renderTaskFocusChoices(nextFocus);
+        store.businessProfile = previousProfile;
+      }
+    }
     if (event.target.id === 'channel-order-profile-id') {
       const search = document.getElementById('channel-order-mapping-search');
       if (search) search.value = '';
@@ -7182,6 +7382,7 @@
     }
     const form = event.target.closest('form[data-form]'); if (!form) return; event.preventDefault(); const type = form.dataset.form;
     if (type === 'business-profile') { saveBusinessProfile(String(new FormData(form).get('businessProfile') || ''), form); return; }
+    if (type === 'task-focus') { saveTaskFocusSelection(form); return; }
     if (type === 'change-password') { saveAccountPassword(form); return; }
     if (type === 'channel-filter') {
       channelState.query = String(new FormData(form).get('q') || '').trim().slice(0, 120);
