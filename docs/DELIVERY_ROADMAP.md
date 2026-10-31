@@ -4,6 +4,13 @@
 
 Status labels: **Not started**, **In progress**, **Blocked by external dependency**, **Evidence passed**. “Evidence passed” applies only to the named milestone, never to the whole product by implication.
 
+## Ghi nhận hiệu năng tải ban đầu (2026-10-31)
+
+- Log Render trong khoảng 24 giờ trước khi tối ưu kho có mẫu nhỏ: API danh sách kho 3 lượt, trung vị 519 ms và cao nhất 521 ms; API sản phẩm 4 lượt, trung vị 579 ms và cao nhất 594 ms. Đây là thời gian xử lý API trong log, không phải thời gian đầy đủ người dùng nhìn thấy màn hình; cỡ mẫu chưa đủ để suy ra mức thường gặp.
+- Màn Bán hàng chờ tải kho trước rồi mới tải sản phẩm. Thứ tự này giúp sản phẩm lấy đúng tồn của kho đang chọn; không đổi sang tải song song nếu chưa giữ được đúng kho.
+- Sau PR #32, Render ghi nhận build thành công, dịch vụ live và trang chính trả về HTTP 200. Trong cửa sổ log sau deploy chưa có lượt đăng nhập dùng Bán hàng để đo lại hai API trên; chưa có số liệu trước/sau và chưa kết luận hiệu năng đã cải thiện.
+- Tiếp tục đo cùng màn hình và cùng lượt thao tác sau khi có lượt dùng thật. Giữ trạng thái hiệu năng là đang theo dõi cho đến khi log mới xác nhận.
+
 ## Cập nhật bằng chứng 2026-10-30
 
 - **Chọn việc ngay lần đầu:** trang khởi đầu hỏi người dùng đang phụ trách việc gì và cửa hàng hoạt động ra sao. Lựa chọn chỉ ưu tiên màn hình/menu trên thiết bị hiện tại; quyền truy cập vẫn do vai trò máy chủ cấp. Có thể đổi việc chính trong Trợ giúp. Đây là thay đổi đọc tĩnh; chưa kiểm tra luồng nhiều vai trò trên trình duyệt.

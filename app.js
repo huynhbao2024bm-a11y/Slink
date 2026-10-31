@@ -1324,7 +1324,7 @@
     productLoading = page === 'pos';
     render();
     if (page === 'pos') {
-      await loadWarehouses({ includeTransfers: false });
+      await loadWarehouses({ includeTransfers: false, view: 'picker' });
       await loadProductsPage('', 0);
     } else if (page === 'inventory') {
       await loadWarehouses({ includeTransfers: false });
@@ -1420,7 +1420,8 @@
     warehouseLoading = true;
     warehouseError = '';
     try {
-      const list = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/warehouses`);
+      const viewQuery = options && options.view === 'picker' ? '?view=picker' : '';
+      const list = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/warehouses${viewQuery}`);
       const warehouseRows = list.warehouses || [];
       warehouseRows.forEach(function (warehouse) {
         if (warehouse.status === 'archived' && readPendingWarehouseMutation('warehouse-archive', warehouse.id)) {
