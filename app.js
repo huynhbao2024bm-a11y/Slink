@@ -1357,6 +1357,8 @@
 
   async function loadProductsPage(query, offset) {
     if (!authSession || !store.id) return;
+    const requestStoreId = store.id;
+    const requestSession = authSession;
     const requestNumber = ++productRequestNumber;
     productLoading = true;
     productError = '';
@@ -1364,7 +1366,7 @@
     const url = `/api/stores/${encodeURIComponent(store.id)}/products?limit=100&offset=${Math.max(0, offset || 0)}&q=${encodeURIComponent(query || '')}${warehouseQuery}`;
     try {
       const result = await apiRequest(url);
-      if (requestNumber !== productRequestNumber) return;
+      if (requestNumber !== productRequestNumber || store.id !== requestStoreId || authSession !== requestSession) return;
       if (!result.products.length && offset > 0) return loadProductsPage(query, Math.max(0, offset - 100));
       store.products = result.products.map(mapProduct);
       productTotal = result.total;
@@ -1374,7 +1376,7 @@
       productError = '';
       render();
     } catch (error) {
-      if (requestNumber !== productRequestNumber) return;
+      if (requestNumber !== productRequestNumber || store.id !== requestStoreId || authSession !== requestSession) return;
       productLoading = false;
       productError = error.message;
       if (error.status === 401) return showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
@@ -1792,7 +1794,8 @@
     const canEdit = ['owner', 'manager', 'stockkeeper'].includes(store.role);
     const showCost = store.role !== 'cashier';
     const empty = productLoading ? 'Đang tải danh mục…' : productError ? esc(productError) : searchTerms.products ? 'Không tìm thấy sản phẩm phù hợp.' : 'Thêm sản phẩm đầu tiên để bắt đầu quản lý danh mục.';
-    return pageHeading('Sản phẩm', 'Quản lý mặt hàng, giá bán và số lượng hiện có.', (canEdit ? `<button class='btn btn-primary' data-action='new-product' data-tour-target='products-add'><span class='btn-icon'>＋</span> Thêm sản phẩm</button><button class='btn btn-secondary' data-action='new-product-variant-group'>Tạo nhóm biến thể</button><button class='btn btn-secondary' data-action='import-products'>Nhập CSV</button><button class='btn btn-secondary' data-action='bulk-update-products'>Cập nhật CSV</button>` : '') + (canExportData() ? `<button class='btn btn-secondary' data-action='open-export'>Xuất CSV</button>` : '')) +
+    const moreActions = (canEdit ? `<button class='btn btn-secondary' data-action='new-product-variant-group'>Thêm hàng có nhiều màu, cỡ</button><button class='btn btn-secondary' data-action='bulk-update-products'>Cập nhật hàng loạt bằng tệp</button>` : '') + (canExportData() ? `<button class='btn btn-secondary' data-action='open-export'>Xuất danh sách</button>` : '');
+    return pageHeading('Sản phẩm', '', (canEdit ? `<button class='btn btn-primary' data-action='new-product'>＋ Thêm mặt hàng</button><button class='btn btn-secondary' data-action='import-products'>Nhập danh sách</button>` : '') + (moreActions ? `<details class='catalog-more'><summary class='btn btn-secondary'>Thao tác khác</summary><div>${moreActions}</div></details>` : '')) +
       `<div class='toolbar'><div class='toolbar-left'><div class='search-wrap'><span class='search-symbol'>⌕</span><input class='input' id='product-search' type='search' placeholder='Tìm tên hàng hoặc mã SKU…' value='${esc(searchTerms.products)}' aria-label='Tìm sản phẩm'></div><span class='result-count'>${productLoading ? 'Đang tải…' : `${number(productTotal)} sản phẩm`}</span></div></div><section class='panel'><div class='table-wrap desktop-table'><table class='data-table'><thead><tr><th>Sản phẩm</th><th>Danh mục</th><th class='text-right'>Giá bán</th>${showCost ? `<th class='text-right'>Giá vốn</th>` : ''}<th class='text-right'>Tồn kho</th><th>Trạng thái</th><th></th></tr></thead><tbody>${products.map(productRow).join('') || `<tr><td colspan='${showCost ? 7 : 6}'><div class='empty-state'><strong>${esc(empty)}</strong></div></td></tr>`}</tbody></table></div><div class='product-list-mobile'>${products.map(productMobileCard).join('') || `<div class='panel empty-state'><strong>${esc(empty)}</strong></div>`}</div><div class='pagination'><span>Hiển thị ${products.length} trên ${number(productTotal)} sản phẩm</span><span class='pagination-actions'>${productOffset > 0 ? `<button class='page-button' data-action='products-page' data-offset='${Math.max(0, productOffset - 100)}'>‹</button>` : ''}<span class='page-button current'>${Math.floor(productOffset / 100) + 1}</span>${productNextOffset !== null ? `<button class='page-button' data-action='products-page' data-offset='${productNextOffset}'>›</button>` : ''}</span></div></section>`;
   }
 
@@ -1897,9 +1900,29 @@
     const products = filteredProducts(query, categoryFilter, sourceProducts).filter(function (product) { return !product.inventoryTracked || product.stock > 0; });
     const categories = ['Tất cả'].concat(Array.from(new Set(store.products.map(function (product) { return product.category; }))));
     const totals = cartTotals();
-    const posWarehousePicker = warehouses.length > 1 ? `<label class='pos-warehouse-picker'><span>Xuất từ kho</span><div class='select-wrap'><select class='input' id='pos-warehouse' ${cart.length || checkoutPendingPayload ? 'disabled' : ''}>${warehouses.map(function (warehouse) { return `<option value='${esc(warehouse.id)}' ${warehouse.id === selectedWarehouseId ? 'selected' : ''}>${esc(warehouse.name)}</option>`; }).join('')}</select></div></label>` : '';
-    return pageHeading('Bán hàng', 'Chọn sản phẩm, thêm vào đơn và thu tiền ngay tại quầy.', `${['owner', 'manager'].includes(store.role) ? `<button class='btn btn-secondary' data-action='manage-promotions'>Mã khuyến mãi</button>` : ''}<button class='btn btn-secondary hide-on-mobile' data-action='scan'>${icon('scan', 14)} Nhập mã</button><button class='btn btn-secondary hide-on-mobile' data-route='orders'>Đơn gần đây</button><button class='btn btn-primary pos-cart-top' data-action='open-cart' data-tour-target='pos-cart-desktop' aria-controls='drawer-cart' aria-expanded='false'>Giỏ hàng · ${number(totals.count)}</button>`) +
-      `<div class='pos-layout'><div><div class='pos-tools ${warehouses.length > 1 ? 'has-warehouse' : ''}'><div class='pos-search-group'><div class='search-wrap pos-search' data-tour-target='pos-search'><span class='search-symbol'>⌕</span><input class='input' id='pos-search' type='search' placeholder='Tìm sản phẩm hoặc SKU…' value='${esc(query)}' aria-label='Tìm sản phẩm'></div><button class='btn btn-secondary' data-action='scan' data-tour-target='pos-scan' aria-label='Quét mã mặt hàng' title='Quét mã mặt hàng'>${icon('scan', 15)}</button></div>${posWarehousePicker}</div><div class='category-scroll'>${categories.map(function (category) { return `<button class='pos-category ${categoryFilter === category ? 'active' : ''}' data-action='category' data-category='${esc(category)}'>${esc(category)}</button>`; }).join('')}</div><div class='pos-product-grid' id='pos-products'>${products.map(function (product) { return `<button class='pos-product' data-action='add-cart' data-id='${product.id}'><span class='product-thumb ${product.tone || 'product-sage'}'>${esc(product.emoji || '📦')}</span><span class='pos-stock'>${product.inventoryTracked ? `Còn ${number(product.stock)}` : 'Không theo dõi tồn'}</span><strong>${esc(product.name)}</strong><small>${esc(product.sku)}</small><span class='pos-price'>${money(product.price)}</span></button>`; }).join('') || `<div class='panel empty-state' style='grid-column:1/-1'><strong>Chưa có sản phẩm để bán</strong><span>Thêm sản phẩm hoặc nhập kho mặt hàng có theo dõi tồn.</span></div>`}</div></div>${cartPanel()}</div><div class='pos-mobile-cart'><button class='btn pos-mobile-cart-edit' data-action='open-cart' aria-controls='drawer-cart' aria-expanded='false'><span class='mobile-cart-count'>${number(totals.count)}</span><span>Giỏ</span></button><button class='btn btn-primary pos-mobile-checkout' data-action='checkout' data-tour-target='pos-cart-mobile' ${cart.length || checkoutPendingPayload ? '' : 'disabled'}><span>${checkoutPendingPayload ? 'Kiểm tra đơn chờ' : 'Thanh toán'}</span><strong>${money(checkoutPendingPayload ? checkoutPendingPayload.totalVnd : totals.total)} →</strong></button></div><div class='drawer-cart' id='drawer-cart' role='dialog' aria-modal='true' aria-label='Giỏ hàng' aria-hidden='true'>${cartPanel()}</div>`;
+    const canManageProducts = ['owner', 'manager', 'stockkeeper'].includes(store.role);
+    const hasCatalog = productTotal > 0 || store.products.length > 0;
+    let emptyProductState = `<div class='panel empty-state pos-empty-start' style='grid-column:1/-1'><strong>Đang tải mặt hàng…</strong></div>`;
+    if (productError || warehouseError) {
+      emptyProductState = `<div class='panel empty-state pos-empty-start' role='alert' style='grid-column:1/-1'><strong>Chưa tải được hàng để bán</strong><span>${esc(productError || warehouseError)}</span><button class='btn btn-secondary' data-action='retry-pos-catalog'>Thử lại</button></div>`;
+    } else if (!productLoading && (query || categoryFilter !== 'Tất cả')) {
+      emptyProductState = `<div class='panel empty-state pos-empty-start' style='grid-column:1/-1'><strong>Không tìm thấy mặt hàng phù hợp</strong><span>Thử đổi từ khóa hoặc chọn mục “Tất cả”.</span></div>`;
+    } else if (!productLoading && !hasCatalog) {
+      emptyProductState = canManageProducts
+        ? `<section class='panel pos-empty-start' style='grid-column:1/-1'><span class='pos-empty-icon' aria-hidden='true'>＋</span><strong>Thêm vài mặt hàng để bắt đầu bán</strong><span>Nhập tên và giá bán. Số lượng đang có có thể ghi luôn để bán ngay.</span><div class='pos-empty-actions'><button class='btn btn-primary' data-action='new-product'>Thêm mặt hàng đầu tiên</button><button class='btn btn-secondary' data-action='import-products'>Nhập danh sách có sẵn</button></div></section>`
+        : `<div class='panel empty-state pos-empty-start' style='grid-column:1/-1'><strong>Chưa có mặt hàng để bán</strong><span>Nhờ chủ cửa hàng thêm mặt hàng hoặc nhập danh sách có sẵn.</span></div>`;
+    } else if (!productLoading) {
+      emptyProductState = canManageProducts
+        ? `<div class='panel empty-state pos-empty-start' style='grid-column:1/-1'><strong>Chưa có hàng sẵn để bán</strong><span>Kiểm tra số lượng trong kho đang chọn. Bạn có thể ghi số lượng đang có hoặc nhập hàng mới.</span><button class='btn btn-secondary' data-route='inventory'>Kiểm tra kho hàng</button></div>`
+        : `<div class='panel empty-state pos-empty-start' style='grid-column:1/-1'><strong>Chưa có hàng sẵn để bán</strong><span>Nhờ chủ cửa hàng kiểm tra số lượng trong kho.</span></div>`;
+    }
+    if (!productLoading && !warehouseLoading && !productError && !warehouseError && !hasCatalog && !query && categoryFilter === 'Tất cả' && !cart.length && !checkoutPendingPayload) {
+      return pageHeading('Bắt đầu bán hàng', '', '') + emptyProductState;
+    }
+    const activePosWarehouse = warehouses.find(function (warehouse) { return warehouse.id === selectedWarehouseId; }) || warehouses.find(function (warehouse) { return warehouse.is_default; }) || warehouses[0];
+    const posWarehousePicker = warehouses.length > 1 ? `<div class='pos-warehouse-picker'><span>Đang bán từ</span><strong id='pos-warehouse-current'>${esc(activePosWarehouse?.name || 'Kho chính')}${activePosWarehouse?.is_default ? ' · Kho chính' : ''}</strong><details ${cart.length || checkoutPendingPayload ? 'hidden' : ''}><summary>Đổi kho</summary><div class='select-wrap'><select class='input' id='pos-warehouse' aria-label='Chọn kho bán hàng'>${warehouses.map(function (warehouse) { return `<option value='${esc(warehouse.id)}' ${warehouse.id === activePosWarehouse?.id ? 'selected' : ''}>${esc(warehouse.name)}${warehouse.is_default ? ' · Kho chính' : ''}</option>`; }).join('')}</select></div></details>${cart.length || checkoutPendingPayload ? `<small>Hoàn tất đơn này trước khi đổi kho.</small>` : ''}</div>` : '';
+    return pageHeading('Bán hàng', '', `${canManageProducts ? `<button class='btn btn-secondary' data-action='new-product'>＋ Thêm mặt hàng</button>` : ''}${['owner', 'manager'].includes(store.role) ? `<details class='catalog-more'><summary class='btn btn-secondary'>Thao tác khác</summary><div><button class='btn btn-secondary' data-action='manage-promotions'>Mã khuyến mãi</button><button class='btn btn-secondary' data-route='orders'>Đơn gần đây</button></div></details>` : `<button class='btn btn-secondary hide-on-mobile' data-route='orders'>Đơn gần đây</button>`}<button class='btn btn-primary pos-cart-top' data-tour-target='pos-cart-desktop' data-action='open-cart' aria-controls='drawer-cart' aria-expanded='false'>Giỏ hàng · ${number(totals.count)}</button>`) +
+      `<div class='pos-layout'><div><div class='pos-tools ${warehouses.length > 1 ? 'has-warehouse' : ''}'><div class='pos-search-group'><div class='search-wrap pos-search' data-tour-target='pos-search'><span class='search-symbol'>⌕</span><input class='input' id='pos-search' type='search' placeholder='Tìm tên, SKU hoặc mã hàng…' value='${esc(query)}' aria-label='Tìm sản phẩm'></div></div>${posWarehousePicker}</div><div class='category-scroll'>${categories.map(function (category) { return `<button class='pos-category ${categoryFilter === category ? 'active' : ''}' data-action='category' data-category='${esc(category)}'>${esc(category)}</button>`; }).join('')}</div><div class='pos-product-grid' id='pos-products'>${products.map(function (product) { return `<button class='pos-product' data-action='add-cart' data-id='${product.id}'><span class='product-thumb ${product.tone || 'product-sage'}'>${esc(product.emoji || '📦')}</span><span class='pos-stock'>${product.inventoryTracked ? `Còn ${number(product.stock)}` : 'Không theo dõi tồn'}</span><strong>${esc(product.name)}</strong><small>${esc(product.sku)}</small><span class='pos-price'>${money(product.price)}</span></button>`; }).join('') || emptyProductState}</div></div>${cartPanel()}</div><div class='pos-mobile-cart'><button class='btn pos-mobile-cart-edit' data-action='open-cart' aria-controls='drawer-cart' aria-expanded='false'><span class='mobile-cart-count'>${number(totals.count)}</span><span>Giỏ</span></button><button class='btn btn-primary pos-mobile-checkout' data-action='checkout' data-tour-target='pos-cart-mobile' ${cart.length || checkoutPendingPayload ? '' : 'disabled'}><span>${checkoutPendingPayload ? 'Kiểm tra đơn chờ' : 'Thanh toán'}</span><strong>${money(checkoutPendingPayload ? checkoutPendingPayload.totalVnd : totals.total)} →</strong></button></div><div class='drawer-cart' id='drawer-cart' role='dialog' aria-modal='true' aria-label='Giỏ hàng' aria-hidden='true'>${cartPanel()}</div>`;
   }
 
   function orderRows(orders) {
@@ -3722,9 +3745,9 @@
     const warehouseOptions = warehouses.map(function (warehouse) {
       return `<option value='${esc(warehouse.id)}' ${warehouse.id === requestedWarehouseId ? 'selected' : ''}>${esc(warehouse.name)}${warehouse.is_default ? ' · Mặc định' : ''}</option>`;
     }).join('');
-    const body = `<form id='entity-form' data-form='product-import'><div class='form-field full'><label class='input-label' for='product-import-file'>Chọn tệp danh mục CSV</label><input class='input' id='product-import-file' type='file' accept='.csv,text/csv' ${pending ? 'disabled' : ''}/></div><div class='form-field full'><label class='input-label' for='product-import-warehouse'>Kho nhận tồn đầu kỳ</label><select class='input' id='product-import-warehouse' ${pending || !warehouses.length ? 'disabled' : ''}>${warehouseOptions || `<option value=''>Không có kho đang hoạt động</option>`}</select><small>Tồn đầu kỳ trong tệp sẽ được ghi vào kho này; các kho còn lại bắt đầu ở mức 0. Chọn kho khác sẽ kiểm tra lại tệp trước khi nhập.</small></div><div class='modal-note'>Tối đa 200 sản phẩm mỗi lần. Giá bán và giá vốn nhập bằng VND nguyên, không dùng dấu phân cách hàng nghìn. Tồn đầu kỳ hỗ trợ tối đa 3 chữ số thập phân. Hai cột cuối cho phép nhóm ít nhất 2 SKU bằng cùng tên nhóm và thuộc tính; để trống nếu sản phẩm đơn lẻ. Mã trùng sẽ hủy toàn bộ lần nhập.</div><button class='link-button' type='button' data-action='download-product-import-template'>Tải mẫu CSV</button><div id='product-import-preview' class='product-import-preview' aria-live='polite'></div></form>`;
+    const body = `<form id='entity-form' data-form='product-import'><div class='import-start-help'><strong>Có danh sách sẵn? Thêm một lần.</strong><span>Tải tệp mẫu, điền mặt hàng rồi chọn tệp bên dưới. Có thể mở mẫu bằng Excel và lưu lại dạng CSV.</span><button class='btn btn-secondary' type='button' data-action='download-product-import-template'>Tải tệp mẫu</button></div><div class='form-field full'><label class='input-label' for='product-import-file'>Chọn danh sách (.csv)</label><input class='input' id='product-import-file' type='file' accept='.csv,text/csv' ${pending ? 'disabled' : ''}/></div><div class='form-field full'><label class='input-label' for='product-import-warehouse'>Nơi đang giữ hàng</label><select class='input' id='product-import-warehouse' ${pending || !warehouses.length ? 'disabled' : ''}>${warehouseOptions || `<option value=''>Chưa tải được kho</option>`}</select><small>Số lượng đang có sẽ được ghi vào kho này.</small></div><details class='quick-product-details'><summary>Cách điền tệp</summary><p>Tối đa 200 mặt hàng. Điền giá bằng số đồng, không dùng dấu ngăn cách hàng nghìn. Số lượng có tối đa 3 chữ số thập phân.</p><p>Nếu hàng có nhiều màu hoặc cỡ, dùng hai cột cuối để nhóm ít nhất 2 mã hàng. Nếu không, để trống hai cột đó.</p><p>Bạn sẽ được xem lại trước khi lưu. Nếu có mã trùng hoặc dòng sai, Slink chưa nhập dòng nào.</p></details><div id='product-import-preview' class='product-import-preview' aria-live='polite'></div></form>`;
     const footer = `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button><button class='btn btn-primary' type='submit' form='entity-form'>${pending ? 'Gửi lại lần nhập đang chờ' : 'Nhập sản phẩm'}</button>`;
-    showModal(pending ? 'Kiểm tra lần nhập đang chờ' : 'Nhập sản phẩm từ CSV', pending ? 'Gửi lại cùng nội dung để máy chủ xác nhận mà không tạo trùng.' : 'Xem trước tệp. Tồn đầu kỳ và danh mục sẽ được ghi nguyên tử trên máy chủ.', body, footer, true);
+    showModal(pending ? 'Kiểm tra lần nhập đang chờ' : 'Nhập danh sách mặt hàng', pending ? 'Gửi lại để kiểm tra kết quả, không tạo trùng.' : 'Thêm mặt hàng và số lượng đang có cùng lúc.', body, footer, true);
     renderProductImportPreview();
   }
 
@@ -3733,7 +3756,153 @@
     download('slink-mau-nhap-san-pham.csv', csv, 'text/csv;charset=utf-8');
   }
 
+  function openQuickProduct() {
+    const pending = loadPendingProductImport();
+    if (pending) {
+      if (pending.storeId !== store.id) return toast('Còn lần nhập đang chờ', 'Hãy chuyển về đúng cửa hàng trước khi tiếp tục lần nhập đó.', 'error');
+      openProductImport();
+      return;
+    }
+    const idempotencyKey = newIdempotencyKey();
+    const body = `<form id='entity-form' data-form='quick-product' data-idempotency-key='${esc(idempotencyKey)}'>
+      <div class='quick-product-fields'>
+        <div class='form-field full'><label class='input-label' for='quick-product-name'>Tên mặt hàng *</label><input class='input' id='quick-product-name' name='name' required maxlength='240' placeholder='Ví dụ: Áo thun cotton'/></div>
+        <div class='form-field'><label class='input-label' for='quick-product-price'>Giá bán (VND) *</label><input class='input' id='quick-product-price' name='price' type='number' min='0' step='1' required placeholder='0'/></div>
+        <div class='form-field'><label class='input-label' for='quick-product-opening'>Số lượng đang có</label><input class='input' id='quick-product-opening' name='openingQuantity' type='number' min='0' step='0.001' placeholder='Có thể bổ sung sau'/></div>
+      </div>
+      <details class='quick-product-details'><summary>Giá nhập và thông tin khác (tùy chọn)</summary><div class='quick-product-fields'>
+        <div class='form-field'><label class='input-label' for='quick-product-sku'>Mã hàng</label><input class='input' id='quick-product-sku' name='sku' maxlength='80' placeholder='Để trống, Slink tự tạo'/></div>
+        <div class='form-field'><label class='input-label' for='quick-product-barcode'>Mã vạch</label><input class='input' id='quick-product-barcode' name='barcode' maxlength='80' placeholder='Không bắt buộc'/></div>
+        <div class='form-field'><label class='input-label' for='quick-product-category'>Danh mục</label><input class='input' id='quick-product-category' name='category' maxlength='120' placeholder='Chưa phân loại'/></div>
+        <div class='form-field'><label class='input-label' for='quick-product-unit'>Đơn vị</label><input class='input' id='quick-product-unit' name='unit' maxlength='40' placeholder='cái'/></div>
+        <div class='form-field'><label class='input-label' for='quick-product-cost'>Giá nhập mỗi đơn vị (VND)</label><input class='input' id='quick-product-cost' name='cost' type='number' min='0' step='1' placeholder='Bổ sung sau'/><small>Để trống sẽ ghi 0đ. Nhập giá này để tính lãi đúng trước khi bán.</small></div>
+        <div class='form-field'><label class='input-label' for='quick-product-threshold'>Nhắc khi còn</label><input class='input' id='quick-product-threshold' name='minStock' type='number' min='0' step='0.001' value='0'/></div>
+        <label class='quick-product-tracking'><input type='checkbox' name='inventoryTracked' checked/><span><strong>Theo dõi số lượng trong kho</strong><small>Bỏ chọn nếu đây là dịch vụ hoặc mặt hàng không quản lý tồn.</small></span></label>
+      </div></details>
+      <div class='quick-product-note'>Số lượng này là hàng bạn đang có, không phải lần nhập hàng mới.${warehouses.length > 1 ? ` Ghi vào ${esc(warehouses.find(function (warehouse) { return warehouse.id === selectedWarehouseId; })?.name || 'kho chính')}.` : ''} Muốn tính lãi đúng, hãy điền giá nhập trước khi bán.</div>
+      <div class='auth-message error' data-quick-product-error role='alert' hidden></div>
+    </form>`;
+    showModal('Thêm mặt hàng', 'Nhập tên, giá bán và số lượng để bán ngay.', body, `<button class='btn btn-secondary' type='submit' form='entity-form' data-add-another='true'>Lưu và thêm tiếp</button><button class='btn btn-primary' type='submit' form='entity-form'>Lưu mặt hàng</button>`, true);
+  }
+
+  function openCatalogNextStep(readyToSell) {
+    const canSell = canAccessRoute('pos');
+    const nextRoute = readyToSell && canSell ? 'pos' : 'inventory';
+    const nextLabel = readyToSell && canSell ? 'Bắt đầu bán' : 'Xem kho hàng';
+    showModal('Đã lưu mặt hàng', readyToSell ? 'Bạn có thể thêm hàng khác hoặc bắt đầu sử dụng.' : 'Hàng đã được lưu. Bổ sung số lượng trong kho khi sẵn sàng bán.', '', `<button class='btn btn-secondary' data-action='new-product'>Thêm mặt hàng khác</button><button class='btn btn-primary' data-route='${nextRoute}'>${nextLabel}</button>`);
+  }
+
+  function resetCatalogFilters() {
+    searchTerms.products = '';
+    categoryFilter = 'Tất cả';
+    posSearchTerm = '';
+    posProducts = [];
+    ++posSearchRequestNumber;
+    window.clearTimeout(posSearchTimer);
+    const searchInput = document.getElementById('pos-search');
+    if (searchInput) searchInput.value = '';
+  }
+
+  async function saveQuickProduct(form, submitter) {
+    if (form.dataset.saving === 'true') return;
+    const requestStoreId = store.id;
+    const requestSession = authSession;
+    const sameContext = function () { return authSession === requestSession && store.id === requestStoreId; };
+    const addAnother = submitter?.dataset.addAnother === 'true';
+    const formData = new FormData(form);
+    const key = form.dataset.idempotencyKey || newIdempotencyKey();
+    form.dataset.idempotencyKey = key;
+    const feedback = form.querySelector('[data-quick-product-error]');
+    const submitButtons = Array.from(modal.querySelectorAll('button[type="submit"][form="entity-form"]'));
+    const submitButton = submitButtons.find(function (button) { return !button.dataset.addAnother; });
+    const reportError = function (message) {
+      if (feedback) { feedback.hidden = false; feedback.textContent = message; }
+      else toast('Chưa lưu được mặt hàng', message, 'error');
+    };
+    let pending = loadPendingProductImport();
+    if (pending && (pending.storeId !== store.id || pending.key !== key)) {
+      return reportError('Còn một lần nhập danh sách đang chờ xác nhận. Hãy mở mục Nhập danh sách để hoàn tất trước.');
+    }
+    if (!pending) {
+      const name = String(formData.get('name') || '').trim();
+      const price = Number(formData.get('price'));
+      const cost = Number(formData.get('cost') || 0);
+      const inventoryTracked = formData.get('inventoryTracked') === 'on';
+      const openingQuantity = String(formData.get('openingQuantity') || '').trim() || '0';
+      const quantityPattern = /^\d{1,10}(?:\.\d{1,3})?$/;
+      if (!name || name.length > 240) return reportError('Nhập tên mặt hàng từ 1 đến 240 ký tự.');
+      if (!String(formData.get('price') || '').trim() || !Number.isSafeInteger(price) || price < 0) return reportError('Nhập giá bán bằng số đồng, không có phần lẻ.');
+      if (!Number.isSafeInteger(cost) || cost < 0) return reportError('Giá vốn phải là số VND nguyên không âm.');
+      if (!quantityPattern.test(openingQuantity)) return reportError('Số lượng đang có phải không âm và tối đa 3 chữ số thập phân.');
+      if (!inventoryTracked && Number(openingQuantity) !== 0) return reportError('Mặt hàng không theo dõi tồn cần để số lượng đang có bằng 0.');
+      const rawSku = String(formData.get('sku') || '').trim();
+      const sku = rawSku || `SL-${key.replace(/[^a-z0-9]/gi, '').slice(0, 16).toUpperCase()}`;
+      const rawThreshold = String(formData.get('minStock') || '').trim() || '0';
+      if (!quantityPattern.test(rawThreshold)) return reportError('Mức nhắc tồn phải không âm và tối đa 3 chữ số thập phân.');
+      const items = [{
+        sku,
+        barcode: String(formData.get('barcode') || '').trim() || null,
+        name,
+        category: String(formData.get('category') || '').trim() || 'Chưa phân loại',
+        unit: String(formData.get('unit') || '').trim() || 'cái',
+        salePriceVnd: price,
+        costVnd: cost,
+        lowStockThreshold: rawThreshold,
+        inventoryTracked,
+        openingQuantity,
+      }];
+      const payload = { items };
+      if (selectedWarehouseId) payload.warehouseId = selectedWarehouseId;
+      pending = { storeId: store.id, key, payload };
+    }
+    if (!savePendingProductImport(pending)) return pendingSaveFailed();
+    const requestGeneration = modalGeneration;
+    form.dataset.saving = 'true';
+    if (feedback) feedback.hidden = true;
+    form.querySelectorAll('input,select').forEach(function (field) { field.disabled = true; });
+    submitButtons.forEach(function (button) { button.disabled = true; });
+    if (submitButton) { submitButton.disabled = true; submitButton.textContent = 'Đang lưu…'; }
+    try {
+      const result = await apiRequest(`/api/stores/${encodeURIComponent(requestStoreId)}/products/import`, {
+        method: 'POST', headers: { 'idempotency-key': pending.key }, body: pending.payload,
+      });
+      if (!sameContext()) return;
+      clearPendingProductImport();
+      const canContinue = requestGeneration === modalGeneration && !modal.hidden;
+      if (canContinue) { closeModal(); resetCatalogFilters(); }
+      await loadProductsPage('', 0);
+      if (!sameContext()) return;
+      const created = result.products?.[0];
+      const fallback = pending.payload.items[0];
+      const readyToSell = !(created?.inventory_tracked ?? fallback.inventoryTracked) || Number(created?.on_hand ?? fallback.openingQuantity) > 0;
+      const createdName = created?.name || fallback.name || 'Mặt hàng mới';
+      toast('Đã thêm mặt hàng', readyToSell ? `${createdName} · có thể bán ngay.` : `${createdName} · ghi số lượng đang có để bắt đầu bán.`);
+      if (canContinue && requestGeneration === modalGeneration && modal.hidden) {
+        if (addAnother) openQuickProduct();
+        else if (page !== 'pos' || !readyToSell) openCatalogNextStep(readyToSell);
+      }
+    } catch (error) {
+      if (!sameContext()) return;
+      if (error.status === 401) return showSignedOut('Phiên đăng nhập đã hết hạn. Đăng nhập lại để kiểm tra mặt hàng.', 'error');
+      const definitiveFailure = error.status >= 400 && error.status < 500 && !['idempotency_conflict', 'request_in_progress'].includes(error.code);
+      if (definitiveFailure) {
+        clearPendingProductImport();
+        submitButtons.forEach(function (button) { button.disabled = false; });
+        form.querySelectorAll('input,select').forEach(function (field) { field.disabled = false; });
+        if (feedback) { feedback.hidden = false; feedback.textContent = error.message; }
+        if (submitButton) { submitButton.disabled = false; submitButton.textContent = 'Lưu mặt hàng'; }
+      } else {
+        if (feedback) { feedback.hidden = false; feedback.textContent = 'Chưa nhận được xác nhận. Bấm “Gửi lại để kiểm tra” để Slink kiểm tra đúng thao tác này, không tạo trùng.'; }
+        if (submitButton) { submitButton.disabled = false; submitButton.textContent = 'Gửi lại để kiểm tra'; }
+      }
+      if (!feedback) toast('Chưa lưu được mặt hàng', error.message, 'error');
+    } finally {
+      delete form.dataset.saving;
+    }
+  }
+
   function openProduct(id, initial) {
+    if (!id && !initial) return openQuickProduct();
     const p = id ? productById(id) : null;
     const scanned = !p && initial && initial.fromScan ? initial : null;
     const rawBarcode = p ? p.barcode : (scanned && scanned.barcode ? scanned.barcode : '');
@@ -3789,7 +3958,7 @@
   }
 
   function productPriceSourceName(source) {
-    return ({ created: 'Tạo sản phẩm', csv_import: 'Nhập danh mục CSV', manual_adjustment: 'Điều chỉnh thủ công', bulk_update: 'Cập nhật danh mục hàng loạt', migration_baseline: 'Giá tại thời điểm bắt đầu ghi lịch sử' })[source] || 'Cập nhật giá';
+    return ({ created: 'Tạo sản phẩm', csv_import: 'Thêm vào danh mục', manual_adjustment: 'Điều chỉnh thủ công', bulk_update: 'Cập nhật danh mục hàng loạt', migration_baseline: 'Giá tại thời điểm bắt đầu ghi lịch sử' })[source] || 'Cập nhật giá';
   }
 
   function renderProductPriceHistory() {
@@ -5334,6 +5503,9 @@
   }
 
   async function saveProductImport(form) {
+    if (form.dataset.saving === 'true') return;
+    const requestStoreId = store.id;
+    const requestSession = authSession;
     let pending = loadPendingProductImport();
     if (!pending) {
       if (productImportErrors.length || !productImportRows.length) return toast('Chưa thể nhập sản phẩm', 'Chọn tệp CSV hợp lệ rồi kiểm tra bản xem trước.', 'error');
@@ -5341,6 +5513,7 @@
       pending = { storeId: store.id, key: newIdempotencyKey(), payload: { items: productImportRows, warehouseId: productImportVerifiedWarehouseId } };
     }
     if (!savePendingProductImport(pending)) return pendingSaveFailed();
+    form.dataset.saving = 'true';
     const requestGeneration = modalGeneration;
     const submitButton = modal.querySelector('button[type="submit"][form="entity-form"]');
     const fileInput = modal.querySelector('#product-import-file');
@@ -5350,17 +5523,25 @@
       const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/products/import`, {
         method: 'POST', headers: { 'idempotency-key': pending.key }, body: pending.payload,
       });
+      if (store.id !== requestStoreId || authSession !== requestSession) return;
       clearPendingProductImport();
-      if (requestGeneration === modalGeneration && !modal.hidden) {
+      const canContinue = requestGeneration === modalGeneration && !modal.hidden;
+      if (canContinue) {
         closeModal();
+        resetCatalogFilters();
         productImportRows = [];
         productImportSourceRows = [];
         productImportErrors = [];
         productImportPending = false;
       }
       await loadProductsPage('', 0);
+      if (store.id !== requestStoreId || authSession !== requestSession) return;
       toast('Đã nhập sản phẩm', `${number(Number(result.count))} sản phẩm · tồn đầu kỳ đã ghi vào sổ kho.`);
+      if (canContinue && requestGeneration === modalGeneration && modal.hidden && page !== 'pos') {
+        openCatalogNextStep(result.products.some(function (product) { return !product.inventory_tracked || Number(product.on_hand) > 0; }));
+      }
     } catch (error) {
+      if (store.id !== requestStoreId || authSession !== requestSession) return;
       if (error.status === 401) showSignedOut('Phiên đăng nhập đã hết hạn. Đăng nhập lại để kiểm tra lần nhập.', 'error');
       else if (error.status >= 400 && error.status < 500 && !['idempotency_conflict', 'request_in_progress'].includes(error.code)) {
         clearPendingProductImport();
@@ -5376,6 +5557,8 @@
       toast('Chưa nhập được danh mục', error.message, 'error');
       if (submitButton && requestGeneration === modalGeneration && !modal.hidden && submitButton.isConnected && !productImportRows.length) submitButton.disabled = true;
       else if (submitButton && requestGeneration === modalGeneration && !modal.hidden && submitButton.isConnected) submitButton.disabled = false;
+    } finally {
+      delete form.dataset.saving;
     }
   }
 
@@ -6678,6 +6861,7 @@
     else if (action === 'account-settings') { closeModal(); routeTo('settings'); }
     else if (action === 'reload-security') loadAccountSecurity();
     else if (action === 'revoke-session') revokeAccountSession(id);
+    else if (action === 'retry-pos-catalog') loadWarehouses().then(function () { return loadProductsPage('', 0); });
     else if (action === 'products-page') loadProductsPage(searchTerms.products, Number(button.dataset.offset) || 0);
     else if (action === 'inventory-page') loadInventoryPage(searchTerms.inventory, Number(button.dataset.offset) || 0);
     else if (action === 'customers-page') loadCustomersPage(searchTerms.customers, Number(button.dataset.offset) || 0).then(render);
@@ -7435,6 +7619,7 @@
     else if (type === 'channel-order-create') createChannelOrder(form);
     else if (type === 'channel-order-status') saveChannelOrderStatus(form);
     else if (type === 'product') saveProduct(form);
+    else if (type === 'quick-product') saveQuickProduct(form, event.submitter);
     else if (type === 'product-variants') saveProductVariantGroup(form);
     else if (type === 'product-variant-add') saveProductVariantAdd(form);
     else if (type === 'promotion-create') savePromotion(form);
