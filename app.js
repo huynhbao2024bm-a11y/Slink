@@ -659,6 +659,10 @@
     return customer;
   }
 
+  function mapPosCustomer(row) {
+    return { id: row.id, name: row.name, phone: row.phone || '' };
+  }
+
   function statusText(status, due) {
     if (status === 'returned') return 'Đã trả hàng';
     if (status === 'partially_returned') return 'Trả một phần';
@@ -721,6 +725,28 @@
       if (page === 'customers' && customerSavedSegmentsStoreId !== store.id) await loadCustomerSavedSegments();
     } catch (error) {
       if (requestNumber !== customerRequestNumber) return;
+      if (error.status === 401) showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
+      else toast('Chưa tải được khách hàng', error.message, 'error');
+    }
+  }
+
+  async function loadPosCustomers(query) {
+    if (!authSession || !store.id) return;
+    if (store.role === 'stockkeeper') {
+      customerRequestNumber += 1;
+      store.customers = [];
+      customerListLoaded = true;
+      return;
+    }
+    const requestedStoreId = store.id;
+    const requestNumber = ++customerRequestNumber;
+    try {
+      const result = await apiRequest(`/api/stores/${encodeURIComponent(requestedStoreId)}/customers?view=picker&limit=100&q=${encodeURIComponent(query || '')}`);
+      if (requestNumber !== customerRequestNumber || store.id !== requestedStoreId) return;
+      store.customers = result.customers.map(mapPosCustomer);
+      customerListLoaded = true;
+    } catch (error) {
+      if (requestNumber !== customerRequestNumber || store.id !== requestedStoreId) return;
       if (error.status === 401) showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
       else toast('Chưa tải được khách hàng', error.message, 'error');
     }
@@ -4522,7 +4548,7 @@
       });
       closeModal();
       await Promise.all([
-        loadProductsPage('', 0), loadInventoryPage('', 0), loadCustomersPage('', 0),
+        loadProductsPage('', 0), loadInventoryPage('', 0),
         loadOrdersPage('', 0), loadFinancePage(),
       ]);
       render();
@@ -4702,7 +4728,7 @@
       });
       clearPendingReturn(orderId);
       closeModal();
-      await Promise.all([loadProductsPage('', 0), loadCustomersPage(searchTerms.customers, customerOffset), loadOrdersPage(searchTerms.orders, orderOffset)]);
+      await Promise.all([loadProductsPage('', 0), loadOrdersPage(searchTerms.orders, orderOffset)]);
       toast('Đã ghi nhận trả hàng', `${result.return.number} · ${money(Number(result.return.refundTotalVnd))}`);
       await openOrder(orderId);
     } catch (error) {
@@ -4802,14 +4828,14 @@
   async function pickCustomer() {
     if (!customerListLoaded) {
       showModal('Chọn khách hàng', 'Đang lấy danh sách khách hàng…', `<div class='empty-state' role='status'>Đang tải…</div>`, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button>`, true);
-      await loadCustomersPage('', 0);
+      await loadPosCustomers('');
       if (modal.hidden) return;
       if (!customerListLoaded) {
         showModal('Chưa tải được khách hàng', 'Kiểm tra kết nối rồi thử lại, hoặc tiếp tục bán cho khách lẻ.', `<div class='empty-state' role='status'>Danh sách chưa tải được.</div>`, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button><button class='btn btn-primary' type='button' data-action='pick-customer'>Thử lại</button>`, true);
         return;
       }
     }
-    const body = `<div class='search-wrap'><span class='search-symbol'>⌕</span><input id='pick-customer-search' class='input' type='search' placeholder='Tìm tên hoặc điện thoại…'/></div><div id='customer-options' class='customer-picker'>${store.customers.map(function (c) { return `<button class='customer-option' data-action='select-customer' data-id='${c.id}'><span class='avatar' style='width:26px;height:26px'>${esc(initials(c.name))}</span><span>${esc(c.name)}</span><small>${esc(c.phone)}</small></button>`; }).join('')}</div><button class='btn btn-secondary' style='margin-top:13px;width:100%' data-action='new-customer-from-pos'>＋ Tạo khách hàng mới</button>`;
+    const body = `<div class='search-wrap'><span class='search-symbol'>⌕</span><input id='pick-customer-search' class='input' type='search' placeholder='Tìm tên hoặc điện thoại…'/></div><div id='customer-options' class='customer-picker'>${store.customers.map(function (c) { return `<button class='customer-option' data-action='select-customer' data-id='${esc(c.id)}' data-name='${esc(c.name)}' data-phone='${esc(c.phone)}'><span class='avatar' style='width:26px;height:26px'>${esc(initials(c.name))}</span><span>${esc(c.name)}</span><small>${esc(c.phone)}</small></button>`; }).join('')}</div><button class='btn btn-secondary' style='margin-top:13px;width:100%' data-action='new-customer-from-pos'>＋ Tạo khách hàng mới</button>`;
     showModal('Chọn khách hàng', 'Gắn đơn hàng với hồ sơ khách hàng.', body, `<button class='btn btn-secondary' data-action='select-customer' data-id=''>Bán cho khách lẻ</button>`, true);
   }
 
@@ -5245,7 +5271,7 @@
       clearPendingSale();
       closeModal();
       page = 'orders';
-      await Promise.all([loadProductsPage('', 0), loadCustomersPage('', 0), loadOrdersPage('', 0)]);
+      await Promise.all([loadProductsPage('', 0), loadOrdersPage('', 0)]);
       render();
       const order = result.order;
       toast('Đã lưu đơn hàng', `${order.number} · ${money(Number(order.totalVnd))}${Number(order.changeVnd) ? ` · tiền thối ${money(Number(order.changeVnd))}` : ''}`, 'success');
@@ -5639,7 +5665,8 @@
       closeModal();
       toast(old ? 'Đã cập nhật khách hàng' : 'Đã thêm khách hàng', `${customer.name}${!old && Number(payload.openingBalanceVnd) > 0 ? ` · công nợ ban đầu ${money(Number(payload.openingBalanceVnd))}` : ''}`);
       if (page === 'pos') cartCustomerId = customer.id;
-      await loadCustomersPage(searchTerms.customers, customerOffset);
+      if (page === 'pos') await loadPosCustomers('');
+      else await loadCustomersPage(searchTerms.customers, customerOffset);
       if (page === 'pos' && !store.customers.some(function (row) { return row.id === customer.id; })) store.customers.unshift(customer);
       render();
     } catch (error) {
@@ -6812,7 +6839,14 @@
       renderCheckoutTenders(form, tenders.map(function (tender) { return { method: tender.method, amountReceivedVnd: tender.amountText }; }));
     }
     else if (action === 'pick-customer') pickCustomer();
-    else if (action === 'select-customer') { if (checkoutPendingPayload) return toast('Đang chờ xác nhận đơn', 'Hãy kiểm tra đơn đang chờ trước khi đổi khách hàng.', 'error'); cartCustomerId = id || ''; closeModal(); page = 'pos'; render(); }
+    else if (action === 'select-customer') {
+      if (checkoutPendingPayload) return toast('Đang chờ xác nhận đơn', 'Hãy kiểm tra đơn đang chờ trước khi đổi khách hàng.', 'error');
+      if (id && !store.customers.some(function (customer) { return customer.id === id; })) {
+        store.customers.push({ id, name: button.dataset.name || '', phone: button.dataset.phone || '' });
+      }
+      cartCustomerId = id || '';
+      closeModal(); page = 'pos'; render();
+    }
     else if (action === 'retry-pending-sale') openCheckout();
     else if (action === 'new-customer-from-pos') { closeModal(); openCustomer(''); }
     else if (action === 'open-cart') setCartDrawerOpen(true);
@@ -7047,11 +7081,11 @@
       window.clearTimeout(pickerCustomerSearchTimer);
       pickerCustomerSearchTimer = window.setTimeout(async function () {
         try {
-          const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/customers?limit=100&q=${encodeURIComponent(query)}`);
+          const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/customers?view=picker&limit=100&q=${encodeURIComponent(query)}`);
           if (requestNumber !== pickerCustomerRequestNumber || modal.hidden) return;
-          const customers = result.customers.map(mapCustomer);
+          const customers = result.customers.map(mapPosCustomer);
           const options = document.getElementById('customer-options');
-          if (options) options.innerHTML = customers.map(function (customer) { return `<button class='customer-option' data-action='select-customer' data-id='${customer.id}'><span class='avatar' style='width:26px;height:26px'>${esc(initials(customer.name))}</span><span>${esc(customer.name)}</span><small>${esc(customer.phone)}</small></button>`; }).join('') || `<div class='empty-state'>Không tìm thấy khách hàng phù hợp.</div>`;
+          if (options) options.innerHTML = customers.map(function (customer) { return `<button class='customer-option' data-action='select-customer' data-id='${esc(customer.id)}' data-name='${esc(customer.name)}' data-phone='${esc(customer.phone)}'><span class='avatar' style='width:26px;height:26px'>${esc(initials(customer.name))}</span><span>${esc(customer.name)}</span><small>${esc(customer.phone)}</small></button>`; }).join('') || `<div class='empty-state'>Không tìm thấy khách hàng phù hợp.</div>`;
         } catch (error) {
           if (error.status === 401) showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
           else toast('Chưa tìm được khách hàng', error.message, 'error');
