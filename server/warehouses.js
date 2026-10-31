@@ -82,8 +82,22 @@ function registerWarehouseRoutes(app, { pool, env }) {
     const auth = await authenticate(pool, request);
     const { storeId } = request.params;
     if (!UUID_PATTERN.test(storeId)) throw new ApiError(400, 'validation_error', 'Cửa hàng không hợp lệ.');
+    const view = request.query?.view;
+    if (view !== undefined && (typeof view !== 'string' || view !== 'picker')) {
+      throw new ApiError(400, 'validation_error', 'Cách xem danh sách kho không hợp lệ.');
+    }
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
       const warehouseIds = allowedWarehouseIds(membership);
+      if (view === 'picker') {
+        const result = await client.query(
+          `SELECT w.id, w.code, w.name, w.is_default, w.status, w.version
+           FROM warehouses w
+           WHERE w.store_id = $1 AND ($2::boolean = false OR (w.status = 'active' AND w.id = ANY($3::uuid[])))
+           ORDER BY w.is_default DESC, w.name, w.id`,
+          [storeId, warehouseIds !== null, warehouseIds || []]
+        );
+        return { warehouses: result.rows };
+      }
       const result = await client.query(
         `SELECT w.id, w.code, w.name, w.is_default, w.status, w.version,
                 COUNT(DISTINCT b.product_id) FILTER (WHERE b.on_hand > 0)::int AS stocked_product_count,
