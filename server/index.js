@@ -12,6 +12,7 @@ const { databaseTransportOptions } = require('./database-transport');
 const { registerProductRoutes } = require('./products');
 const { registerProductImageRoutes } = require('./product-images');
 const { registerAffiliateRoutes } = require('./affiliate');
+const { assertRuntimeSchema } = require('./runtime-schema');
 const { registerSalesRoutes } = require('./sales');
 const { registerPromotionRoutes } = require('./promotions');
 const { registerReturnRoutes } = require('./returns');
@@ -39,6 +40,8 @@ const ASSETS = new Map([
   ['/verify', 'index.html'],
   ['/invite', 'index.html'],
   ['/styles.css', 'styles.css'],
+  ['/workspace.css', 'workspace.css'],
+  ['/assets/vendor/gsap.min.js', 'assets/vendor/gsap.min.js'],
   ['/app.js', 'app.js'],
   ['/register-sw.js', 'register-sw.js'],
   ['/manifest.webmanifest', 'manifest.webmanifest'],
@@ -243,6 +246,12 @@ async function main() {
   validateProductionConfig(process.env);
   const pool = createPool();
   const app = await buildServer({ pool });
+  try {
+    await assertRuntimeSchema(pool);
+  } catch (error) {
+    await app.close();
+    throw error;
+  }
   if (emailVerificationDisabled(process.env)) {
     app.log.warn('Demo mode is enabled: store-owner sign-up skips email verification. Turn it off after the demonstration.');
   }

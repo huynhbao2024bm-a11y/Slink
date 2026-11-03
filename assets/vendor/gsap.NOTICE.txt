@@ -1,0 +1,5 @@
+GSAP 3.15.0 — GreenSock
+Source: https://registry.npmjs.org/gsap/-/gsap-3.15.0.tgz
+License: https://gsap.com/standard-license/
+The distribution header in gsap.min.js is preserved.
+Used for short interface feedback only; reduced-motion skips animation.
