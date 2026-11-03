@@ -1,5 +1,5 @@
-const CACHE_NAME = 'slink-open-workspace-v1';
-const APP_SHELL = ['./', './index.html', './styles.css', './app.js', './register-sw.js', './manifest.webmanifest', './assets/slink-icon.svg', './assets/slink-icon-180.png', './assets/slink-icon-192.png', './assets/slink-icon-512.png', './assets/slink-icon-maskable-512.png'];
+const CACHE_NAME = 'slink-calm-workspace-v1';
+const APP_SHELL = ['./', './index.html', './styles.css', './workspace.css', './assets/vendor/gsap.min.js', './app.js', './register-sw.js', './manifest.webmanifest', './assets/slink-icon.svg', './assets/slink-icon-180.png', './assets/slink-icon-192.png', './assets/slink-icon-512.png', './assets/slink-icon-maskable-512.png'];
 
 self.addEventListener('install', function (event) {
   event.waitUntil(caches.open(CACHE_NAME).then(function (cache) { return cache.addAll(APP_SHELL); }).then(function () { return self.skipWaiting(); }));

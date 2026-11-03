@@ -22,6 +22,11 @@ test('server exposes the app shell and health routes without exposing source fil
   assert.match(html.body, /Slink/);
   assert.match(html.headers['content-security-policy'], /default-src 'self'/);
 
+  for (const asset of ['/workspace.css', '/assets/vendor/gsap.min.js']) {
+    const response = await app.inject({ method: 'GET', url: asset });
+    assert.equal(response.statusCode, 200, `Required interface asset: ${asset}`);
+  }
+
   const privateFile = await app.inject({ method: 'GET', url: '/server/db.js' });
   assert.equal(privateFile.statusCode, 404);
   const missingApi = await app.inject({ method: 'GET', url: '/api/not-implemented' });
