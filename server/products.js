@@ -3,6 +3,7 @@
 const { createHash, randomUUID } = require('node:crypto');
 const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
+const { prepareProductImage, writeProductImage } = require('./product-images');
 const { allowedWarehouseIds, findAccessibleWarehouse } = require('./warehouse-access');
 
 const EDIT_ROLES = new Set(['owner', 'manager', 'stockkeeper']);
@@ -350,7 +351,7 @@ function registerProductRoutes(app, { pool, env }) {
                 p.sale_price_vnd::text AS sale_price_vnd,
                 CASE WHEN $5::boolean THEN p.cost_vnd::text ELSE NULL END AS cost_vnd,
                 p.low_stock_threshold::text AS low_stock_threshold, p.inventory_tracked,
-                p.variant_group_id, p.variant_group_name, p.variant_attributes,
+                p.variant_group_id, p.variant_group_name, p.variant_attributes, p.image_version, p.image_content_type,
                 p.status, p.version, COALESCE(i.on_hand, 0)::text AS on_hand,
                 COALESCE(i.reserved, 0)::text AS reserved, COALESCE(i.version, 1)::int AS inventory_version,
                 p.updated_at, COUNT(*) OVER()::int AS total_count
@@ -460,6 +461,8 @@ function registerProductRoutes(app, { pool, env }) {
       throw new ApiError(400, 'idempotency_key_required', 'Thiếu mã lưu thao tác an toàn. Hãy thử lại.');
     }
     const products = validateImportRows(request.body?.items);
+    if (products.length > 1 && request.body.items.some(item => item.image !== undefined)) throw new ApiError(400, 'validation_error', 'Thêm ảnh riêng cho từng mặt hàng sau khi nhập danh sách.');
+    if (products.length === 1) products[0].image = await prepareProductImage(request.body.items[0].image);
     const warehouseInput = request.body?.warehouseId;
     if (warehouseInput !== undefined && (typeof warehouseInput !== 'string' || !UUID_PATTERN.test(warehouseInput))) throw new ApiError(400, 'validation_error', 'Kho nhận tồn đầu kỳ không hợp lệ.');
     const requestedWarehouseId = warehouseInput?.toLowerCase() || null;
@@ -521,6 +524,7 @@ function registerProductRoutes(app, { pool, env }) {
               product.variantGroupName, JSON.stringify(product.variantAttributes || {})]
           );
           const created = inserted.rows[0];
+          Object.assign(created, await writeProductImage(client, storeId, created.id, product.image, auth.userId));
           await client.query(
             `INSERT INTO product_sale_price_history (store_id, product_id, previous_price_vnd, new_price_vnd, source_type, source_id, actor_user_id)
              VALUES ($1, $2, NULL, $3, 'csv_import', $4, $5)`,
@@ -852,6 +856,7 @@ function registerProductRoutes(app, { pool, env }) {
     const { storeId } = request.params;
     if (!UUID_PATTERN.test(storeId)) throw new ApiError(400, 'validation_error', 'Cửa hàng không hợp lệ.');
     const product = validateProduct(request.body);
+    const image = await prepareProductImage(request.body?.image);
     try {
       return await withStore(pool, auth.userId, storeId, async (client, membership) => {
         requireEditor(membership.role);
@@ -868,6 +873,7 @@ function registerProductRoutes(app, { pool, env }) {
             product.lowStockThreshold, product.inventoryTracked, auth.userId]
         );
         const created = inserted.rows[0];
+        Object.assign(created, await writeProductImage(client, storeId, created.id, image, auth.userId));
         await client.query(
           `INSERT INTO product_sale_price_history (store_id, product_id, previous_price_vnd, new_price_vnd, source_type, actor_user_id)
            VALUES ($1, $2, NULL, $3, 'created', $4)`,
@@ -1148,6 +1154,7 @@ function registerProductRoutes(app, { pool, env }) {
     const expectedVersion = request.body?.version;
     if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) throw new ApiError(400, 'validation_error', 'Phiên bản sản phẩm không hợp lệ. Hãy tải lại danh sách.');
     const product = validateProduct(request.body, { partial: true });
+    const image = await prepareProductImage(request.body?.image);
     try {
       return await withStore(pool, auth.userId, storeId, async (client, membership) => {
         requireEditor(membership.role);
@@ -1252,6 +1259,7 @@ function registerProductRoutes(app, { pool, env }) {
           [storeId, auth.userId, old.variant_group_id && product.variantAttributes !== undefined ? 'product.variant_attributes_updated' : 'product.updated',
             productId, updated.rows[0].version, JSON.stringify(old.variant_attributes || {}), JSON.stringify(next.variantAttributes)]
         );
+        Object.assign(updated.rows[0], await writeProductImage(client, storeId, productId, image, auth.userId));
         return { product: updated.rows[0] };
       });
     } catch (error) {
