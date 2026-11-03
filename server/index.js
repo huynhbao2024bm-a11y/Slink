@@ -10,6 +10,8 @@ const { ApiError, emailVerificationDisabled, registerAuthRoutes } = require('./a
 const { createPool } = require('./db');
 const { databaseTransportOptions } = require('./database-transport');
 const { registerProductRoutes } = require('./products');
+const { registerProductImageRoutes } = require('./product-images');
+const { registerAffiliateRoutes } = require('./affiliate');
 const { registerSalesRoutes } = require('./sales');
 const { registerPromotionRoutes } = require('./promotions');
 const { registerReturnRoutes } = require('./returns');
@@ -170,6 +172,8 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
   if (pool) {
     registerAuthRoutes(app, { pool, env });
     registerProductRoutes(app, { pool, env });
+    registerProductImageRoutes(app, { pool, env });
+    registerAffiliateRoutes(app, { pool, env });
     registerSalesRoutes(app, { pool, env });
     registerPromotionRoutes(app, { pool, env });
     registerReturnRoutes(app, { pool, env });

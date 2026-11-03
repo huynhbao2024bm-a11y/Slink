@@ -96,7 +96,7 @@ async function authenticate(pool, request) {
   if (!token || token.length > 128) throw new ApiError(401, 'unauthorized', 'Vui lòng đăng nhập để tiếp tục.');
   const tokenDigest = digest(token);
   const result = await pool.query(
-    `SELECT s.user_id, s.csrf_digest, u.email, u.display_name
+    `SELECT s.user_id, s.csrf_digest, u.email, u.display_name, u.workspace_mode
      FROM sessions s JOIN users u ON u.id = s.user_id
      WHERE s.token_digest = $1 AND s.revoked_at IS NULL AND s.expires_at > now()
        AND u.status = 'active' AND (u.email_verified_at IS NOT NULL OR $2::boolean)`,
@@ -107,6 +107,7 @@ async function authenticate(pool, request) {
     userId: result.rows[0].user_id,
     email: result.rows[0].email,
     displayName: result.rows[0].display_name,
+    workspaceMode: result.rows[0].workspace_mode,
     tokenDigest,
     csrfDigest: result.rows[0].csrf_digest,
   };
@@ -197,7 +198,7 @@ async function createUserSession(pool, userId, reply, env, { activatePendingOwne
   const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
   const user = await withUser(pool, userId, async (client) => {
     const found = await client.query(
-      'SELECT id, email, display_name, status, email_verified_at FROM users WHERE id = $1 FOR UPDATE',
+      'SELECT id, email, display_name, workspace_mode, status, email_verified_at FROM users WHERE id = $1 FOR UPDATE',
       [userId]
     );
     if (!found.rowCount) throw new ApiError(401, 'invalid_credentials', 'Email hoặc mật khẩu không đúng.');
@@ -227,7 +228,7 @@ async function createUserSession(pool, userId, reply, env, { activatePendingOwne
   });
   const stores = await listStores(pool, userId);
   setSessionCookies(reply, env, sessionToken, csrfToken);
-  return { user: { id: user.id, email: user.email, displayName: user.display_name }, stores };
+  return { user: { id: user.id, email: user.email, displayName: user.display_name, workspaceMode: user.workspace_mode }, stores };
 }
 
 function registerAuthRoutes(app, { pool, env }) {
@@ -239,9 +240,11 @@ function registerAuthRoutes(app, { pool, env }) {
     const email = typeof body.email === 'string' ? body.email.trim() : '';
     const emailNormalized = email.toLowerCase();
     const displayName = typeof body.displayName === 'string' ? body.displayName.trim() : '';
+    const workspaceMode = body.workspaceMode === undefined ? 'shop' : body.workspaceMode;
+    if (!['shop', 'affiliate'].includes(workspaceMode)) throw new ApiError(400, 'validation_error', 'Chọn Chủ shop hoặc Affiliate.');
     const storeName = typeof body.storeName === 'string' ? body.storeName.trim() : '';
     const password = typeof body.password === 'string' ? body.password : '';
-    if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || displayName.length < 2 || displayName.length > 120 || storeName.length < 2 || storeName.length > 160 || password.length < 12 || password.length > 128) {
+    if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || displayName.length < 2 || displayName.length > 120 || (workspaceMode === 'shop' && (storeName.length < 2 || storeName.length > 160)) || password.length < 12 || password.length > 128) {
       throw new ApiError(400, 'validation_error', 'Hãy kiểm tra email, tên, tên cửa hàng và mật khẩu (tối thiểu 12 ký tự).');
     }
     const { randomUUID } = require('node:crypto');
@@ -254,10 +257,11 @@ function registerAuthRoutes(app, { pool, env }) {
       verificationToken = await withUser(pool, userId, async (client) => {
         await client.query("SELECT set_config('app.store_id', $1, true)", [storeId]);
         await client.query(
-          `INSERT INTO users (id, email, email_normalized, display_name, password_hash, status)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
-          [userId, email, emailNormalized, displayName, passwordHash, demoBypass ? 'active' : 'pending']
+          `INSERT INTO users (id, email, email_normalized, display_name, password_hash, status, workspace_mode)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [userId, email, emailNormalized, displayName, passwordHash, demoBypass ? 'active' : 'pending', workspaceMode]
         );
+        if (workspaceMode === 'shop') {
         await client.query('INSERT INTO stores (id, name) VALUES ($1, $2)', [storeId, storeName]);
         await client.query(
           `INSERT INTO memberships (store_id, user_id, role, status, joined_at)
@@ -265,6 +269,7 @@ function registerAuthRoutes(app, { pool, env }) {
           [storeId, userId]
         );
         await client.query('INSERT INTO store_sequences (store_id) VALUES ($1)', [storeId]);
+        }
         return demoBypass ? null : recordVerificationToken(client, userId);
       });
     } catch (error) {
@@ -277,7 +282,7 @@ function registerAuthRoutes(app, { pool, env }) {
       return {
         ...session,
         status: 'created_without_email_verification',
-        message: 'Đã tạo cửa hàng và đăng nhập. Chế độ dùng thử hiện không yêu cầu xác minh email.',
+        message: 'Đã tạo tài khoản và đăng nhập. Chế độ dùng thử hiện không yêu cầu xác minh email.',
       };
     }
     const publicOrigin = env.PUBLIC_ORIGIN || 'http://127.0.0.1:3000';
@@ -534,7 +539,7 @@ function registerAuthRoutes(app, { pool, env }) {
   app.get('/api/auth/me', async (request) => {
     const auth = await authenticate(pool, request);
     const stores = await listStores(pool, auth.userId);
-    return { user: { id: auth.userId, email: auth.email, displayName: auth.displayName }, stores };
+    return { user: { id: auth.userId, email: auth.email, displayName: auth.displayName, workspaceMode: auth.workspaceMode }, stores };
   });
 
   app.post('/api/auth/logout', async (request, reply) => {
