@@ -1,4 +1,5 @@
 'use strict';
+const { normalizeOffline, beginOffline, recordOffline } = require('./offline-operations');
 
 const { createHash, randomUUID } = require('node:crypto');
 const { ApiError, authenticate, requireCsrf } = require('./auth');
@@ -310,6 +311,7 @@ function registerStockRoutes(app, { pool, env }) {
       throw new ApiError(400, 'idempotency_key_required', 'Thiếu mã lưu thao tác an toàn. Hãy thử lại.');
     }
     const body = request.body || {};
+    const offline = normalizeOffline(body.offline);
     if (typeof body.productId !== 'string' || !UUID_PATTERN.test(body.productId)) throw new ApiError(400, 'validation_error', 'Sản phẩm không hợp lệ.');
     const warehouseInput = body.warehouseId;
     if (warehouseInput !== undefined && (typeof warehouseInput !== 'string' || !UUID_PATTERN.test(warehouseInput))) throw new ApiError(400, 'validation_error', 'Kho không hợp lệ.');
@@ -321,6 +323,7 @@ function registerStockRoutes(app, { pool, env }) {
     if (!reason || reason.length > 500) throw new ApiError(400, 'validation_error', 'Lý do điều chỉnh cần từ 1 đến 500 ký tự.');
     const value = { productId: body.productId, countMilli: countMilli.toString(), expectedInventoryVersion, reason };
     if (requestedWarehouseId) value.warehouseId = requestedWarehouseId;
+    if (offline) value.offline = offline;
     const digest = createHash('sha256').update(JSON.stringify(value)).digest();
 
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
@@ -345,6 +348,7 @@ function registerStockRoutes(app, { pool, env }) {
         return { status: record.response_status, body: record.response_body, replayed: true };
       }
 
+      await beginOffline(client, offline);
       const productResult = await client.query(
         `SELECT p.id, p.name, p.status, p.inventory_tracked, b.on_hand::text AS on_hand, b.reserved::text AS reserved, b.version AS inventory_version
          FROM products p JOIN inventory_balances b ON b.store_id = p.store_id AND b.product_id = p.id AND b.warehouse_id = $3
@@ -379,6 +383,7 @@ function registerStockRoutes(app, { pool, env }) {
         [storeId, auth.userId, body.productId, reason, quantityText(previousMilli), count]
       );
       const response = { product: { id: body.productId, onHand: count, delta, version: Number(updatedBalance.rows[0].version) } };
+      await recordOffline(client, { storeId, userId: auth.userId, key: idempotencyKey, kind: 'stock-count', entityId: body.productId, metadata: offline });
       await client.query(
         `UPDATE idempotency_records SET response_status = 201, response_body = $4::jsonb, completed_at = now()
          WHERE store_id = $1 AND actor_user_id = $2 AND idempotency_key = $3`,

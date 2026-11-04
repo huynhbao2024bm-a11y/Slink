@@ -3,6 +3,7 @@
 const { createHash, randomUUID } = require('node:crypto');
 const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
+const { normalizeOffline, beginOffline, recordOffline } = require('./offline-operations');
 
 const MAX_BIGINT = 9223372036854775807n;
 const VIEW_ROLES = new Set(['owner', 'manager', 'cashier', 'accountant']);
@@ -60,12 +61,16 @@ async function saveIdempotency(client, storeId, userId, key, status, body) {
 
 async function lockActiveCashSession(client, storeId, { cashOutVnd = 0n } = {}) {
   const result = await client.query(
-    `SELECT id, opening_float_vnd::text AS opening_float_vnd
+    `SELECT id, opened_at, opening_float_vnd::text AS opening_float_vnd,
+            current_setting('app.offline_occurred_at', true) AS offline_at,
+            current_setting('app.offline_cash_session_id', true) AS offline_session_id
      FROM cash_register_sessions WHERE store_id = $1 AND status = 'open' FOR UPDATE`,
     [storeId]
   );
   if (!result.rowCount) throw new ApiError(409, 'cash_session_required', 'Hãy mở ca tiền mặt trước khi ghi giao dịch tiền mặt.');
   const session = result.rows[0];
+  if (session.offline_at && session.offline_session_id !== session.id) throw new ApiError(409, 'offline_cash_session_changed', 'Ca tiền mặt trên máy chủ đã đổi. Chứng từ chờ vẫn được giữ, chưa tự gán sang ca khác.');
+  if (session.offline_at && new Date(session.offline_at) < new Date(session.opened_at)) throw new ApiError(409, 'offline_clock_before_shift', 'Giờ ghi chứng từ sớm hơn lúc mở ca. Cần kiểm tra lại chứng từ chờ.');
   const requestedCashOut = BigInt(cashOutVnd);
   if (requestedCashOut > 0n) {
     const totals = await client.query(
@@ -180,13 +185,16 @@ function registerCashRegisterRoutes(app, { pool, env }) {
     if (!UUID_PATTERN.test(storeId)) throw new ApiError(400, 'validation_error', 'Cửa hàng không hợp lệ.');
     const key = requireIdempotencyKey(request);
     const openingFloat = amount(request.body?.openingFloatVnd, 'Tiền đầu ca');
+    const offline = normalizeOffline(request.body?.offline);
     const value = { openingFloatVnd: openingFloat.toString() };
+    if (offline) value.offline = offline;
     const requestDigest = digest(value);
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
       if (!OPERATE_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền mở ca tiền mặt.');
       await client.query('SELECT id FROM stores WHERE id = $1 FOR UPDATE', [storeId]);
       const replay = await reserveIdempotency(client, storeId, auth.userId, key, requestDigest);
       if (replay) return replay;
+      await beginOffline(client, offline);
       const open = await client.query("SELECT id FROM cash_register_sessions WHERE store_id = $1 AND status = 'open' FOR UPDATE", [storeId]);
       if (open.rowCount) throw new ApiError(409, 'cash_session_already_open', 'Cửa hàng đã có một ca tiền mặt đang mở. Hãy kiểm tra ca hiện tại.');
       const inserted = await client.query(
@@ -201,6 +209,7 @@ function registerCashRegisterRoutes(app, { pool, env }) {
         [storeId, auth.userId, session.id, openingFloat.toString()]
       );
       const body = { session: { id: session.id, status: 'open', openingFloatVnd: openingFloat.toString(), openedAt: session.opened_at } };
+      await recordOffline(client, { storeId, userId: auth.userId, key, kind: 'shift-open', entityId: session.id, metadata: offline });
       await saveIdempotency(client, storeId, auth.userId, key, 201, body);
       return { status: 201, body, replayed: false };
     });
@@ -217,12 +226,16 @@ function registerCashRegisterRoutes(app, { pool, env }) {
     const counted = amount(request.body?.countedCashVnd, 'Tiền mặt đã đếm');
     const note = typeof request.body?.note === 'string' ? request.body.note.trim() : '';
     if (note.length > 500) throw new ApiError(400, 'validation_error', 'Ghi chú chốt ca tối đa 500 ký tự.');
+    const offline = normalizeOffline(request.body?.offline);
+    if (offline && (offline.cashSessionId !== sessionId || offline.expectedCashVnd === null)) throw new ApiError(400, 'offline_metadata_invalid', 'Thiếu ca hoặc số tiền đối chiếu của lần chốt trên máy.');
     const value = { sessionId, countedCashVnd: counted.toString(), note };
+    if (offline) value.offline = offline;
     const requestDigest = digest(value);
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
       if (!OPERATE_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền chốt ca tiền mặt.');
       const replay = await reserveIdempotency(client, storeId, auth.userId, key, requestDigest);
       if (replay) return replay;
+      await beginOffline(client, offline);
       const locked = await client.query(
         `SELECT id, opened_by, opening_float_vnd::text AS opening_float_vnd
          FROM cash_register_sessions WHERE store_id = $1 AND id = $2 AND status = 'open' FOR UPDATE`,
@@ -242,6 +255,7 @@ function registerCashRegisterRoutes(app, { pool, env }) {
       const cashIn = BigInt(movementTotals.rows[0].cash_in_vnd);
       const cashOut = BigInt(movementTotals.rows[0].cash_out_vnd);
       const expected = BigInt(session.opening_float_vnd) + cashIn - cashOut;
+      if (offline && offline.expectedCashVnd !== expected.toString()) throw new ApiError(409, 'offline_cash_balance_changed', 'Tiền trong ca đã thay đổi trên máy chủ. Lần chốt trên thiết bị vẫn được giữ để đối chiếu.');
       const variance = counted - expected;
       if (expected < -MAX_BIGINT || expected > MAX_BIGINT || variance < -MAX_BIGINT || variance > MAX_BIGINT) {
         throw new ApiError(409, 'cash_session_total_overflow', 'Tổng tiền ca vượt giới hạn lưu trữ. Hãy yêu cầu hỗ trợ trước khi chốt.');
@@ -258,7 +272,7 @@ function registerCashRegisterRoutes(app, { pool, env }) {
       }
       await client.query(
         `UPDATE cash_register_sessions
-         SET status = 'closed', closed_by = $3, closed_at = now(), expected_cash_vnd = $4,
+         SET status = 'closed', closed_by = $3, closed_at = slink_operation_time(), expected_cash_vnd = $4,
              counted_cash_vnd = $5, variance_vnd = $6, close_note = $7
          WHERE store_id = $1 AND id = $2`,
         [storeId, sessionId, auth.userId, expected.toString(), counted.toString(), variance.toString(), note]
@@ -280,9 +294,10 @@ function registerCashRegisterRoutes(app, { pool, env }) {
           countedCashVnd: counted.toString(),
           varianceVnd: variance.toString(),
           note,
-          closedAt: new Date().toISOString(),
+          closedAt: offline?.occurredAt || new Date().toISOString(),
         },
       };
+      await recordOffline(client, { storeId, userId: auth.userId, key, kind: 'shift-close', entityId: sessionId, metadata: offline });
       await saveIdempotency(client, storeId, auth.userId, key, 201, body);
       return { status: 201, body, replayed: false };
     });

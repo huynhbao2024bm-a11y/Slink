@@ -22,10 +22,17 @@ test('server exposes the app shell and health routes without exposing source fil
   assert.match(html.body, /Slink/);
   assert.match(html.headers['content-security-policy'], /default-src 'self'/);
 
-  for (const asset of ['/workspace.css', '/assets/vendor/gsap.min.js']) {
+  for (const asset of ['/workspace.css', '/assets/vendor/gsap.min.js', '/offline-store.js', '/offline-ledger.js', '/offline-sync.js']) {
     const response = await app.inject({ method: 'GET', url: asset });
     assert.equal(response.statusCode, 200, `Required interface asset: ${asset}`);
   }
+
+  const worker = await app.inject({ method: 'GET', url: '/sw.js' });
+  assert.equal(worker.statusCode, 200);
+  assert.equal(worker.headers['cache-control'], 'no-store');
+  assert.match(worker.body, /slink-offline-[a-f0-9]{20}/);
+  assert.ok(!worker.body.includes('__SLINK_ASSET_VERSION__'));
+  assert.match(worker.body, /if \(shellFile && cached\) return cached/);
 
   const privateFile = await app.inject({ method: 'GET', url: '/server/db.js' });
   assert.equal(privateFile.statusCode, 404);

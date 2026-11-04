@@ -5,6 +5,7 @@ const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
 const { findAccessibleWarehouse } = require('./warehouse-access');
 const { lockActiveCashSession } = require('./cash-register');
+const { normalizeOffline, beginOffline, recordOffline } = require('./offline-operations');
 
 const PURCHASE_ROLES = new Set(['owner', 'manager', 'stockkeeper', 'accountant']);
 const METHODS = new Set(['cash', 'bank_transfer', 'bank_qr', 'card', 'other']);
@@ -69,6 +70,12 @@ function registerPurchaseRoutes(app, { pool, env }) {
     if (typeof idempotencyKey !== 'string' || idempotencyKey.length < 16 || idempotencyKey.length > 200) throw new ApiError(400, 'idempotency_key_required', 'Thiếu mã lưu phiếu nhập an toàn. Hãy thử lại.');
     const body = request.body || {};
     const { items, total } = parsePurchaseLines(body);
+    const offline = normalizeOffline(body.offline);
+    const offlineVersions = {};
+    if (offline) for (const item of body.items || []) {
+      if (!Number.isSafeInteger(item.expectedProductVersion) || item.expectedProductVersion < 1) throw new ApiError(400, 'offline_product_version_required', 'Thiếu phiên bản mặt hàng của phiếu nhập chờ.');
+      offlineVersions[item.productId] = item.expectedProductVersion;
+    }
     const warehouseIdInput = body.warehouseId || null;
     if (warehouseIdInput !== null && (typeof warehouseIdInput !== 'string' || !UUID_PATTERN.test(warehouseIdInput))) throw new ApiError(400, 'validation_error', 'Kho nhận hàng không hợp lệ.');
     const requestedWarehouseId = warehouseIdInput?.toLowerCase() || null;
@@ -91,6 +98,7 @@ function registerPurchaseRoutes(app, { pool, env }) {
       paidVnd: paidVnd.toString(), supplierName, note, method,
     };
     if (requestedWarehouseId) value.warehouseId = requestedWarehouseId;
+    if (offline) { value.offline = offline; value.offlineVersions = offlineVersions; }
     const digest = createHash('sha256').update(JSON.stringify(value)).digest();
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
       if (!PURCHASE_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền nhập hàng.');
@@ -114,13 +122,15 @@ function registerPurchaseRoutes(app, { pool, env }) {
         return { status: record.response_status, body: record.response_body, replayed: true };
       }
 
+      await beginOffline(client, offline);
       const productIds = items.map((item) => item.productId);
       const selected = await client.query(
-        `SELECT p.id, p.name, p.sku, p.unit, p.status, p.inventory_tracked
+        `SELECT p.id, p.name, p.sku, p.unit, p.status, p.inventory_tracked, p.version
          FROM products p WHERE p.store_id = $1 AND p.id = ANY($2::uuid[]) ORDER BY p.id FOR UPDATE`,
         [storeId, productIds]
       );
       const byId = new Map(selected.rows.map((row) => [row.id, row]));
+      if (offline && selected.rows.some(row => offlineVersions[row.id] !== Number(row.version))) throw new ApiError(409, 'offline_product_changed', 'Mặt hàng đã thay đổi trên máy chủ. Phiếu nhập chờ vẫn được giữ để kiểm tra.');
       if (byId.size !== items.length) throw new ApiError(404, 'product_not_found', 'Không tìm thấy đủ sản phẩm trong cửa hàng. Phiếu nhập chưa được ghi.');
       for (const item of items) {
         const product = byId.get(item.productId);
@@ -234,6 +244,7 @@ function registerPurchaseRoutes(app, { pool, env }) {
       const response = {
         purchase: { id: purchaseId, number: purchaseNumber, itemCount: items.length, totalVnd: total.toString(), paidVnd: paidVnd.toString(), items: receiptItems },
       };
+      await recordOffline(client, { storeId, userId: auth.userId, key: idempotencyKey, kind: 'purchase', entityId: purchaseId, metadata: offline });
       await client.query(
         `UPDATE idempotency_records SET response_status = 201, response_body = $4::jsonb, completed_at = now()
          WHERE store_id = $1 AND actor_user_id = $2 AND idempotency_key = $3`,

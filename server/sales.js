@@ -4,6 +4,7 @@ const { createHash } = require('node:crypto');
 const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
 const { lockActiveCashSession } = require('./cash-register');
+const { normalizeOffline, beginOffline, recordOffline, expectedPrices } = require('./offline-operations');
 const { calculatePromotion, consumePromotion, promotionCode } = require('./promotions');
 
 const MAX_BIGINT = 9223372036854775807n;
@@ -126,6 +127,8 @@ function registerSalesRoutes(app, { pool, env }) {
       throw new ApiError(400, 'idempotency_key_required', 'Thiếu mã lưu đơn an toàn. Hãy thử lại.');
     }
     const sale = normalizeSale(request.body);
+    const offline = normalizeOffline(request.body?.offline);
+    const prices = expectedPrices(request.body?.items, offline);
     const canonicalSale = {
       items: sale.items,
       discountVnd: sale.discountVnd,
@@ -136,6 +139,12 @@ function registerSalesRoutes(app, { pool, env }) {
     };
     if (sale.appliedPromotionCode) canonicalSale.promotionCode = sale.appliedPromotionCode;
     if (sale.warehouseId) canonicalSale.warehouseId = sale.warehouseId;
+    if (offline) {
+      canonicalSale.offline = offline;
+      canonicalSale.offlinePrices = prices;
+      canonicalSale.offlineTotalVnd = String(request.body.totalVnd);
+      if (!/^(0|[1-9]\d{0,18})$/.test(canonicalSale.offlineTotalVnd)) throw new ApiError(400, 'offline_total_required', 'Thiếu tổng tiền đã chốt trên thiết bị.');
+    }
     // Keep the original single-tender request hash stable so a pending sale
     // can still be safely retried by a client upgraded to this version.
     if (sale.tenders.length > 1) canonicalSale.tenders = sale.tenders;
@@ -163,6 +172,7 @@ function registerSalesRoutes(app, { pool, env }) {
         return { status: record.response_status, body: record.response_body, replayed: true };
       }
 
+      await beginOffline(client, offline);
       if (sale.customerId) {
         const customer = await client.query(
           `SELECT id FROM customers WHERE store_id = $1 AND id = $2 AND status = 'active' FOR UPDATE`,
@@ -185,6 +195,9 @@ function registerSalesRoutes(app, { pool, env }) {
         [storeId, productIds]
       );
       const productMap = new Map(productResult.rows.map((product) => [product.id, product]));
+      if (offline && productResult.rows.some(product => prices[product.id] !== product.sale_price_vnd)) {
+        throw new ApiError(409, 'offline_price_changed', 'Giá trên máy chủ đã đổi. Đơn trên thiết bị vẫn được giữ để kiểm tra, chưa tự đổi số tiền đã thu.');
+      }
       if (productMap.size !== productIds.length || productResult.rows.some((product) => product.status !== 'active')) {
         throw new ApiError(409, 'product_unavailable', 'Có sản phẩm đã ngừng bán hoặc không còn trong cửa hàng. Hãy tải lại giỏ hàng.');
       }
@@ -227,6 +240,7 @@ function registerSalesRoutes(app, { pool, env }) {
         throw new ApiError(400, 'validation_error', 'Khoản giảm giá không được vượt quá tiền hàng.');
       }
       const total = subtotal - totalDiscountVnd;
+      if (offline && total.toString() !== canonicalSale.offlineTotalVnd) throw new ApiError(409, 'offline_total_changed', 'Tổng tiền trên thiết bị không khớp. Chưa ghi đơn; cần kiểm tra chứng từ chờ.');
       const nonCashReceived = sale.tenders.filter((tender) => tender.method !== 'cash')
         .reduce((sum, tender) => sum + tender.amountReceivedVnd, 0n);
       const cashTender = sale.tenders.find((tender) => tender.method === 'cash');
@@ -380,6 +394,7 @@ function registerSalesRoutes(app, { pool, env }) {
           })),
         },
       };
+      await recordOffline(client, { storeId, userId: auth.userId, key: idempotencyKey, kind: 'sale', entityId: order.id, metadata: offline });
       await client.query(
         `UPDATE idempotency_records SET response_status = 201, response_body = $4::jsonb, completed_at = now()
          WHERE store_id = $1 AND actor_user_id = $2 AND idempotency_key = $3`,
