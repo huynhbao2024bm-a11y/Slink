@@ -5,7 +5,7 @@
   --app-height: 100vh;
   --forest: #185c46; --forest-2: #185c46; --ink: #202823; --muted: #5d6861;
   --paper: #fff; --line: #e8ece9; --radius: 8px;
-  background: #fff; color: var(--ink); font: 16px/1.5 'DM Sans', system-ui, sans-serif;
+  background: #fff; color: var(--ink); font: 16px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   font-variant-numeric: tabular-nums;
 }
 .calm-ui *, .calm-ui *::before, .calm-ui *::after { box-sizing: border-box; }
@@ -59,6 +59,13 @@
 .calm-ui .brand-period { color: #287c55; }
 .calm-ui .brand-mark { width: 36px; height: 36px; background: #185c46; color: #fff; border-radius: 10px; }
 .calm-ui .store-switcher { border: 0; border-radius: 0; background: transparent; margin-bottom: 28px; min-height: 52px; padding: 8px 12px; }
+.calm-ui .store-switcher:disabled { opacity: 1; cursor: default; }
+.calm-ui .store-switcher:disabled .switch-chevron { visibility: hidden; }
+.calm-ui .store-option { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; min-height: 56px; padding: 10px 0; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--ink); text-align: left; font: inherit; }
+.calm-ui .store-option:disabled { opacity: 1; cursor: default; }
+.calm-ui .store-option > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.calm-ui .store-option > span:last-child { flex: none; color: #30603f; font-size: 14px; }
+.calm-ui .store-option small { display: block; color: var(--muted); font-size: 14px; }
 .calm-ui .store-avatar { display: none; }
 .calm-ui .store-meta strong { font-size: 14px; color: #34483b; }
 .calm-ui .store-meta small { font-size: 12px; color: #657166; }
@@ -166,8 +173,15 @@
 .calm-ui .cart-empty { min-height: 120px; }
 .calm-ui .cart-close { min-width: 44px; min-height: 44px; }
 .calm-ui .pos-mobile-cart, .calm-ui .drawer-cart { display: none; }
-.calm-ui .sale-saved { margin-bottom: 20px; padding: 10px 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 0; border-bottom: 1px solid #dfeadf; font-size: 14px; line-height: 1.5; color: #30603f; }
-.calm-ui .sale-saved .link-button { flex: none; }
+.calm-ui .sale-saved { margin-bottom: 20px; padding: 10px 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 16px; border: 0; border-bottom: 1px solid #dfeadf; font-size: 15px; line-height: 1.5; color: #30603f; }
+.calm-ui .sale-saved > span { min-width: 0; overflow-wrap: anywhere; }
+.calm-ui .sale-saved-actions, .calm-ui .receipt-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.calm-ui .sale-saved-actions .link-button { min-height: 44px; }
+.calm-ui .digital-receipt { display: grid; gap: 12px; min-width: 0; }
+.calm-ui .digital-receipt h3 { margin: 0; overflow-wrap: anywhere; font-size: 18px; }
+.calm-ui .digital-receipt textarea { width: 100%; min-height: 170px; resize: vertical; font-size: 16px; }
+.calm-ui .digital-receipt [role='status'] { margin: 0; }
+.calm-ui .digital-receipt [role='status']:empty { height: 0; }
 
 /* Records use alignment; advanced details do not compete with the daily task. */
 .calm-ui .toolbar { gap: 16px; flex-wrap: wrap; margin: 0 0 20px; }
@@ -222,6 +236,10 @@
 .calm-ui .modal-body { padding: 24px; overflow: auto; min-height: 0; overscroll-behavior: contain; }
 .calm-ui .modal-footer { padding: 18px 24px; flex: none; gap: 12px; border-top: 1px solid var(--line); background: #fff; }
 .calm-ui .modal-close { width: 44px; height: 44px; font-size: 24px; }
+.calm-ui .modal-discard { flex: none; padding: 12px clamp(12px, 5vw, 24px); border-top: 1px solid var(--line); background: #f2f7f2; }
+.calm-ui .modal-discard p { margin: 0 0 8px; font-size: 15px; }
+.calm-ui .modal-discard > div { display: flex; flex-wrap: wrap; gap: 8px; }
+.calm-ui .modal-discard + .modal-footer { display: none; }
 .calm-ui .modal-note { padding: 14px 0; font-size: 14px; line-height: 1.6; background: transparent; border: 0; }
 .calm-ui .checkout-total { padding: 20px 0; border-radius: 0; background: transparent; }
 .calm-ui .checkout-total span { font-size: 15px; }
@@ -298,7 +316,9 @@
   .calm-ui .topbar-left, .calm-ui .connection-status { display: none; }
   .calm-ui .mobile-brand { display: flex; flex: none; }
   .calm-ui .mobile-brand .brand-name { font-size: 26px; }
-  .calm-ui .workspace-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--muted); }
+  .calm-ui .workspace-name { flex: 1; min-width: 0; min-height: 44px; padding: 0 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; border-radius: 10px; background: #edf4ef; font-size: 14px; color: var(--ink); text-align: left; }
+  .calm-ui .workspace-name:enabled::after { content: '⌄'; margin-left: 6px; }
+  .calm-ui .workspace-name:disabled { background: transparent; color: var(--muted); opacity: 1; cursor: default; }
   .calm-ui .topbar-right { margin-left: auto; gap: 8px; }
   .calm-ui .icon-button, .calm-ui .topbar-avatar { width: 44px; height: 44px; border: 0; background: transparent; color: #365b40; font-size: 18px; }
   .calm-ui .topbar-avatar { display: none; }
@@ -438,3 +458,23 @@
 }
 
 @supports (height: 100dvh) { .calm-ui { --app-height: 100dvh; } }
+
+@media (max-width: 600px) {
+  .calm-ui .modal, .calm-ui .modal.wide { inset: auto 0 0; transform: none; width: 100%; max-width: 100%; max-height: calc(var(--app-height) - 12px); border-radius: 16px 16px 0 0; padding-bottom: env(safe-area-inset-bottom); }
+  .calm-ui .receipt-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .calm-ui .receipt-actions .btn { justify-content: center; text-align: center; }
+  .calm-ui .receipt-actions [data-action='receipt-share'] { grid-column: 1 / -1; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .calm-ui :is(.btn, .pos-product, .qty-control button, .mobile-nav-link):enabled { transition: scale 170ms cubic-bezier(.2,.7,.2,1), background-color 150ms ease; }
+  .calm-ui :is(.btn, .pos-product, .qty-control button, .mobile-nav-link):enabled:active { scale: .975; transition-duration: 75ms; }
+  .calm-ui .modal:not([hidden]) { animation: slink-surface-in 210ms cubic-bezier(.2,.75,.25,1) both; }
+  .calm-ui .drawer-cart { transition: opacity 160ms ease, visibility 0s 160ms; }
+  .calm-ui .drawer-cart.open { transition-delay: 0s; }
+}
+
+@keyframes slink-surface-in {
+  from { opacity: 0; translate: 0 8px; }
+  to { opacity: 1; translate: 0 0; }
+}

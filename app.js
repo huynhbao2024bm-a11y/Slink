@@ -127,6 +127,7 @@
   let customerSearchTimer = null;
   let modalGeneration = 0;
   let modalReturnFocus = null;
+  let modalEditedField = null;
   let pickerCustomerRequestNumber = 0;
   let pickerCustomerSearchTimer = null;
   let orderTotal = 0;
@@ -811,8 +812,16 @@
     if (url.endsWith('/finance')) value.offlineSummaryDate = new Intl.DateTimeFormat('vi-VN', { timeZone: store.settings.timezone || 'Asia/Ho_Chi_Minh', day: '2-digit', month: '2-digit' }).format(new Date(saved.fetchedAt));
     return value;
   }
+  let activeWrites = 0;
   async function apiRequest(url, options) {
     const method = String(options?.method || 'GET').toUpperCase();
+    if (method === 'GET' || method === 'HEAD') return runApiRequest(url, options, method);
+    activeWrites += 1;
+    try { return await runApiRequest(url, options, method); }
+    finally { activeWrites -= 1; }
+  }
+
+  async function runApiRequest(url, options, method) {
     if (method === 'POST' && offlineKind(url) && options?.body?._slinkOfflineVersion === 1 && !(offlineKind(url) === 'sale' && options.body.promotionCode)) return queueOfflineOperation(url, options);
     const scope = method === 'GET' ? cacheScope(url) : '';
     const snapshot = scope ? await offlineDisk.snapshot(scope) : null;
@@ -1542,7 +1551,11 @@
     let title = 'Đăng nhập Slink';
     let subtitle = 'Quản lý cửa hàng của bạn trên mọi thiết bị.';
     let body = '';
-    if (authMode === 'invite-register') {
+    if (authMode === 'invite-confirm' && invitationInfo) {
+      title = 'Xác nhận tham gia cửa hàng';
+      subtitle = `Bạn được mời vào ${invitationInfo.storeName} với vai trò ${staffRoleName(invitationInfo.role)}.`;
+      body = `<form class='auth-form' data-auth-form='invite-accept'><p class='muted'>Lời mời dành cho ${esc(invitationInfo.email)}.</p><button class='btn btn-primary auth-submit' type='submit'>Tham gia cửa hàng</button></form><button class='auth-switch' type='button' data-action='leave-invitation'>Để sau</button>`;
+    } else if (authMode === 'invite-register') {
       title = 'Tham gia cửa hàng';
       subtitle = invitationInfo ? `Bạn được mời tham gia ${invitationInfo.storeName} với vai trò ${staffRoleName(invitationInfo.role)}.` : 'Hoàn tất đăng ký từ lời mời của cửa hàng.';
       body = `<form class='auth-form' data-auth-form='invite-register'><div class='form-field'><label class='input-label' for='auth-name'>Tên của bạn</label><input class='input' id='auth-name' name='displayName' autocomplete='name' required minlength='2' maxlength='120'/></div><div class='form-field'><label class='input-label' for='auth-email'>Email được mời</label><input class='input' id='auth-email' name='email' type='email' value='${esc(invitationInfo ? invitationInfo.email : '')}' readonly/></div>${authPasswordField('auth-password', 'password', 'Mật khẩu (tối thiểu 12 ký tự)', 'new-password')}${authPasswordField('auth-password-confirm', 'passwordConfirm', 'Nhập lại mật khẩu', 'new-password', 'auth-password')}<button class='btn btn-primary auth-submit' type='submit'>Tạo tài khoản và tham gia</button></form><button class='auth-switch' type='button' data-action='auth-mode' data-mode='invite-login'>Đã có tài khoản? Đăng nhập</button>`;
@@ -1716,7 +1729,14 @@
     checkoutPendingPayload = null;
     cart = [];
     cartCustomerId = '';
-    const activeStore = session.stores.find(function (item) { return item.id === preferredStoreId; }) || session.stores[0];
+    let rememberedStoreId = '';
+    try { rememberedStoreId = sessionStorage.getItem('slink-current-store:' + session.user.id); } catch (error) { /* This tab can still use its first store. */ }
+    const requestedStoreId = preferredStoreId || rememberedStoreId;
+    const requestedStore = session.stores.find(item => item.id === requestedStoreId);
+    const activeStore = requestedStore || session.stores[0];
+    if (preferredStoreId && requestedStore) {
+      try { sessionStorage.setItem('slink-current-store:' + session.user.id, requestedStore.id); } catch (error) { /* Current selection still works. */ }
+    }
     store = emptyStore();
     store.id = activeStore.id;
     store.role = activeStore.role;
@@ -1770,11 +1790,26 @@
     }
     await restoreCartDraft();
     if (authSession) render();
-    if (store.role === 'owner' && !store.onboardingCompletedAt) openBusinessProfileOnboarding();
+    if (requestedStoreId && !requestedStore) toast('Cửa hàng trước không còn truy cập được', 'Bạn đang ở ' + activeStore.name + '.', 'error');
+    if (store.role === 'owner' && !store.onboardingCompletedAt && !businessProfileDeferred()) openBusinessProfileOnboarding();
     else scheduleInitialGuidedTour();
     await offlineRowsChanged(false);
     startOfflineSync();
     if (offlineState.mode === 'online') window.setTimeout(prepareOfflineData, 500);
+  }
+
+  const deferredProfiles = new Set();
+  function businessProfileDeferred() {
+    const key = 'slink-profile-deferred:' + authSession?.user.id + ':' + store.id;
+    try { return deferredProfiles.has(key) || localStorage.getItem(key) === 'yes'; }
+    catch (error) { return deferredProfiles.has(key); }
+  }
+
+  function deferBusinessProfile() {
+    const key = 'slink-profile-deferred:' + authSession?.user.id + ':' + store.id;
+    deferredProfiles.add(key);
+    try { localStorage.setItem(key, 'yes'); } catch (error) { /* Remember this choice in the current view. */ }
+    closeModal();
   }
 
   function openBusinessProfileOnboarding() {
@@ -2156,7 +2191,16 @@
     const brand = document.querySelector('.mobile-brand');
     if (brand) { brand.dataset.route = home; brand.setAttribute('aria-label', visibleNav[0].label); }
     const workspaceName = document.querySelector('.workspace-name');
-    if (workspaceName) workspaceName.textContent = store.role === 'affiliate' ? 'Affiliate' : store.settings.storeName;
+    const storeName = store.role === 'affiliate' ? 'Affiliate' : store.settings.storeName;
+    const canSwitchStore = Boolean(store.id && authSession?.stores?.length > 1);
+    const desktopStorePicker = document.getElementById('store-switcher');
+    desktopStorePicker.disabled = !canSwitchStore;
+    desktopStorePicker.setAttribute('aria-label', canSwitchStore ? 'Đổi cửa hàng · ' + storeName : storeName);
+    if (workspaceName) {
+      workspaceName.textContent = storeName;
+      workspaceName.disabled = !canSwitchStore;
+      workspaceName.setAttribute('aria-label', canSwitchStore ? 'Đổi cửa hàng · ' + storeName : storeName);
+    }
     const names = { dashboard: ['Trang chính', 'Hôm nay'], pos: ['Bán hàng', 'Tạo đơn'], products: ['Hàng hóa', 'Sản phẩm'], orders: ['Vận hành', 'Đơn hàng'], customers: ['Khách hàng', 'Danh sách'], inventory: ['Kho hàng', 'Tồn kho'], finance: ['Tài chính', 'Thu chi & công nợ'], reports: ['Phân tích', 'Báo cáo'], workspace: ['Quản lý', 'Cửa hàng'], affiliate: ['Affiliate', 'Link của tôi'], settings: ['Cửa hàng', 'Cài đặt'], channels: ['Bán hàng đa kênh', 'Kênh bán'], staff: ['Cửa hàng', 'Nhân viên'], audit: ['Quản trị', 'Nhật ký hoạt động'], 'order-detail': ['Đơn hàng', 'Chi tiết đơn'], 'product-detail': ['Hàng hóa', 'Chi tiết sản phẩm'] };
     const meta = names[page] || ['Slink', 'Cửa hàng'];
     document.getElementById('crumb').textContent = meta[0];
@@ -2249,15 +2293,16 @@
     if (open) { const panel = drawer.querySelector('.cart-panel'); if (panel) panel.outerHTML = cartPanel(); }
     drawer.classList.toggle('open', open);
     drawer.setAttribute('aria-hidden', String(!open));
+    drawer.toggleAttribute('inert', !open);
     document.body.style.overflow = open || !modal.hidden ? 'hidden' : '';
     document.querySelectorAll('[data-action="open-cart"]').forEach(function (button) { button.setAttribute('aria-expanded', String(open)); });
     if (open) window.requestAnimationFrame(function () {
       const closeButton = drawer.querySelector('[data-action="close-cart"]');
-      if (closeButton) closeButton.focus({ preventScroll: true });
+      if (drawer.classList.contains('open') && modal.hidden) closeButton?.focus({ preventScroll: true });
     });
     else window.requestAnimationFrame(function () {
-      const cartButton = document.querySelector('.pos-cart-top');
-      if (cartButton && cartButton.getClientRects().length) cartButton.focus({ preventScroll: true });
+      const cartButton = document.querySelector('.pos-mobile-cart-edit');
+      if (modal.hidden && !drawer.classList.contains('open') && cartButton?.getClientRects().length) cartButton.focus({ preventScroll: true });
     });
   }
 
@@ -2266,7 +2311,7 @@
     setCartDrawerOpen(false);
     const productList = document.getElementById('pos-products');
     if (productList) {
-      productList.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      productList.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
       window.requestAnimationFrame(function () {
         const firstProduct = productList.querySelector('[data-action="add-cart"]');
         if (firstProduct) firstProduct.focus({ preventScroll: true });
@@ -2275,32 +2320,65 @@
     }
   }
 
-  function cartPanel() {
-    const totals = cartTotals();
+  const emptyCartRow = `<div class='cart-empty'><div>Chọn sản phẩm để bắt đầu đơn hàng</div></div>`;
+  function cartRow(item) {
+    const product = productById(item.id);
+    if (!product) return '';
+    return `<div class='cart-row' data-cart-product='${esc(product.id)}'><div><div class='cart-item-name'>${esc(product.name)}</div><div class='cart-item-price'>${money(product.price)} / ${esc(product.unit)}</div></div><div class='qty-control'><button data-action='cart-qty' data-id='${esc(product.id)}' data-delta='-1' ${checkoutPendingPayload ? 'disabled' : ''} aria-label='Giảm'>−</button><button data-action='cart-qty-edit' data-id='${esc(product.id)}' ${checkoutPendingPayload ? 'disabled' : ''} aria-label='Sửa số lượng'>${number(item.qty)}</button><button data-action='cart-qty' data-id='${esc(product.id)}' data-delta='1' ${checkoutPendingPayload || (product.inventoryTracked && item.qty >= product.stock) ? 'disabled' : ''} aria-label='Tăng'>＋</button></div></div>`;
+  }
+
+  function cartPanel(totals = cartTotals()) {
     const customer = customerById(cartCustomerId);
     const pendingNote = checkoutPendingPayload ? `<div class='modal-note' style='margin:0 14px 10px'>Có đơn đang chờ xác nhận. <button class='link-button' data-action='retry-pending-sale'>Kiểm tra đơn →</button></div>` : '';
-    const rows = cart.map(function (item) {
-      const product = productById(item.id); if (!product) return '';
-      return `<div class='cart-row'><div><div class='cart-item-name'>${esc(product.name)}</div><div class='cart-item-price'>${money(product.price)} / ${esc(product.unit)}</div></div><div class='qty-control'><button data-action='cart-qty' data-id='${product.id}' data-delta='-1' ${checkoutPendingPayload ? 'disabled' : ''} aria-label='Giảm'>−</button><button data-action='cart-qty-edit' data-id='${product.id}' ${checkoutPendingPayload ? 'disabled' : ''} aria-label='Sửa số lượng'>${number(item.qty)}</button><button data-action='cart-qty' data-id='${product.id}' data-delta='1' ${checkoutPendingPayload || (product.inventoryTracked && item.qty >= product.stock) ? 'disabled' : ''} aria-label='Tăng'>＋</button></div></div>`;
-    }).join('');
+    const rows = cart.map(cartRow).join('');
     return `<section class='panel cart-panel'><div class='cart-heading'><h2>Đơn hàng mới</h2><div class='cart-heading-actions'><span>${number(totals.count)} sản phẩm</span><button class='cart-close mobile-only' data-action='close-cart' aria-label='Đóng giỏ hàng'>×</button></div></div><div class='cart-customer'><button data-action='pick-customer' ${checkoutPendingPayload ? 'disabled' : ''}><span class='avatar' style='width:24px;height:24px;font-size:8px'>${customer ? initials(customer.name) : '+'}</span><span>${customer ? esc(customer.name) : 'Thêm khách hàng'}</span><strong>${customer ? esc(customer.phone) : '＋'}</strong></button></div><div class='cart-add-product mobile-only'><button class='btn btn-secondary' data-action='add-more-products' ${checkoutPendingPayload ? 'disabled' : ''}>＋ Thêm sản phẩm</button></div>${pendingNote}<div class='cart-items'>${rows || `<div class='cart-empty'><div>${checkoutPendingPayload ? 'Đơn đang chờ xác nhận.' : 'Chọn sản phẩm để bắt đầu đơn hàng'}</div></div>`}</div><div class='cart-totals'><div class='cart-total-line'><span>Tạm tính</span><strong>${money(totals.subtotal)}</strong></div><button class='cart-total-line' data-action='discount' ${checkoutPendingPayload ? 'disabled' : ''} style='border:0;background:transparent;padding:0;text-align:left'><span>Giảm giá <span style='color:#4a7b58'>＋</span></span><strong>${totals.discount ? '−' + money(totals.discount) : 'Thêm'}</strong></button><div class='cart-total-line total'><span>Khách cần trả</span><strong>${money(totals.total)}</strong></div></div><div class='cart-footer'><button class='btn btn-primary' data-action='checkout' ${cart.length || checkoutPendingPayload ? '' : 'disabled'}>${checkoutPendingPayload ? 'Kiểm tra đơn đang chờ' : 'Thanh toán'} <span style='margin-left:auto'>${money(checkoutPendingPayload ? checkoutPendingPayload.totalVnd : totals.total)} →</span></button>${checkoutPendingPayload ? `<div class='cart-hint'>Thử lại dùng đúng thông tin đã gửi trước đó.</div>` : ''}</div></section>`;
   }
 
-  function updateProductSelections() {
-    document.querySelectorAll('.pos-product[data-action="add-cart"]').forEach(function (button) {
-      const item = cart.find(function (line) { return line.id === button.dataset.id; });
-      button.dataset.selected = item ? 'true' : 'false';
-      button.setAttribute('aria-label', button.querySelector('strong').textContent + (item ? ' · trong giỏ: ' + number(item.qty) : ' · thêm vào đơn'));
+  function updateProductSelections(changedId) {
+    const selector = changedId ? `.pos-product[data-id="${CSS.escape(changedId)}"]` : '.pos-product[data-action="add-cart"]';
+    const byId = new Map(cart.map(item => [item.id, item]));
+    document.querySelectorAll(selector).forEach(function (button) {
+      const item = byId.get(button.dataset.id);
+      const selected = item ? 'true' : 'false';
+      if (button.dataset.selected !== selected) button.dataset.selected = selected;
+      const label = button.querySelector('strong').textContent + (item ? ' · trong giỏ: ' + number(item.qty) : ' · thêm vào đơn');
+      if (button.getAttribute('aria-label') !== label) button.setAttribute('aria-label', label);
       let badge = button.querySelector('.selected-quantity');
       if (!item) { if (badge) badge.remove(); return; }
       if (!badge) { badge = document.createElement('span'); badge.className = 'selected-quantity'; badge.setAttribute('aria-hidden', 'true'); (button.querySelector('.pos-price-row') || button).appendChild(badge); }
-      badge.textContent = number(item.qty);
+      const quantity = number(item.qty);
+      if (badge.textContent !== quantity) badge.textContent = quantity;
     });
+  }
+
+  function updateCartPanelLine(panel, id, totals) {
+    const items = panel.querySelector('.cart-items');
+    const row = items.querySelector(`[data-cart-product="${CSS.escape(id)}"]`);
+    const item = cart.find(line => line.id === id);
+    if (!item) {
+      row?.remove();
+      if (!items.firstElementChild) items.innerHTML = emptyCartRow;
+    } else if (!row) {
+      items.querySelector('.cart-empty')?.remove();
+      items.insertAdjacentHTML('beforeend', cartRow(item));
+    } else {
+      const product = productById(id);
+      row.querySelector('[data-action="cart-qty-edit"]').textContent = number(item.qty);
+      row.querySelector('[data-delta="1"]').disabled = Boolean(product?.inventoryTracked && item.qty >= product.stock);
+    }
+    panel.querySelector('.cart-heading-actions > span').textContent = `${number(totals.count)} sản phẩm`;
+    panel.querySelector('.cart-totals > div:first-child strong').textContent = money(totals.subtotal);
+    panel.querySelector('[data-action="discount"] strong').textContent = totals.discount ? '−' + money(totals.discount) : 'Thêm';
+    panel.querySelector('.cart-total-line.total strong').textContent = money(totals.total);
+    const checkout = panel.querySelector('[data-action="checkout"]');
+    checkout.disabled = !cart.length;
+    checkout.querySelector('span').textContent = `${money(totals.total)} →`;
   }
 
   function refreshCartPanels(options) {
     saveCartDraft();
-    updateProductSelections();
+    const changedId = options?.changedId;
+    updateProductSelections(changedId);
     const drawer = document.getElementById('drawer-cart');
     const drawerWasOpen = Boolean(drawer && drawer.classList.contains('open'));
     const activeControl = document.activeElement?.closest('#drawer-cart [data-action], .pos-layout > .cart-panel [data-action]');
@@ -2317,11 +2395,12 @@
       const desktop = document.querySelector('.pos-layout > .cart-panel'); if (desktop) panels.push(desktop);
     }
     if (drawerWasOpen) { const current = drawer.querySelector('.cart-panel'); if (current) panels.push(current); }
-    if (panels.length) { const panelMarkup = cartPanel(); panels.forEach(function (panel) { const scroll = panel.querySelector('.cart-items')?.scrollTop || 0, parent = panel.parentElement; panel.outerHTML = panelMarkup; const items = parent.querySelector('.cart-panel .cart-items'); if (items) items.scrollTop = scroll; }); }
+    const totals = cartTotals();
+    if (changedId && !checkoutPendingPayload) panels.forEach(panel => updateCartPanelLine(panel, changedId, totals));
+    else if (panels.length) { const panelMarkup = cartPanel(totals); panels.forEach(function (panel) { const scroll = panel.querySelector('.cart-items')?.scrollTop || 0, parent = panel.parentElement; panel.outerHTML = panelMarkup; const items = parent.querySelector('.cart-panel .cart-items'); if (items) items.scrollTop = scroll; }); }
 
     const currentDrawer = document.getElementById('drawer-cart');
 
-    const totals = cartTotals();
     document.querySelectorAll('[data-action="open-cart"]').forEach(function (button) {
       button.setAttribute('aria-expanded', String(drawerWasOpen));
       if (button.classList.contains('pos-cart-top')) button.textContent = `Giỏ hàng · ${number(totals.count)}`;
@@ -2339,19 +2418,28 @@
       if (amount) amount.textContent = `${money(checkoutPendingPayload ? checkoutPendingPayload.totalVnd : totals.total)} →`;
     }
 
-    if (focusTarget) window.requestAnimationFrame(function () {
+    if (focusTarget && (!changedId || !activeControl?.isConnected || activeControl.disabled)) window.requestAnimationFrame(function () {
+      if (!modal.hidden || (document.activeElement !== document.body && document.activeElement !== activeControl)) return;
       const focusContainer = focusTarget.inDrawer || drawerWasOpen ? currentDrawer : document.querySelector('.pos-layout > .cart-panel');
       if (!focusContainer) return;
       const controls = Array.from(focusContainer.querySelectorAll('[data-action]'));
       const target = controls.find(function (control) {
-        return control.dataset.action === focusTarget.action && control.dataset.id === focusTarget.id && control.dataset.delta === focusTarget.delta;
-      }) || focusContainer.querySelector('[data-action="cart-qty"]') || focusContainer.querySelector('[data-action="add-more-products"]') || focusContainer.querySelector('[data-action="close-cart"]') || focusContainer.querySelector('[data-action="checkout"]');
+        return !control.disabled && control.dataset.action === focusTarget.action && control.dataset.id === focusTarget.id && control.dataset.delta === focusTarget.delta;
+      }) || focusContainer.querySelector('[data-action="cart-qty"]:not([disabled])') || focusContainer.querySelector('[data-action="add-more-products"]') || focusContainer.querySelector('[data-action="close-cart"]') || focusContainer.querySelector('[data-action="checkout"]:not([disabled])') || document.getElementById('pos-search');
       if (target) target.focus({ preventScroll: true });
     });
   }
 
   function posProductButton(product) {
     return `<button class='pos-product' data-has-photo='${Boolean(product.imageUrl)}' data-action='add-cart' data-id='${product.id}'>${productThumb(product)}<span class='pos-stock'>${product.inventoryTracked ? `Còn ${number(product.stock)}` : 'Không theo dõi tồn'}</span><strong>${esc(product.name)}</strong><small>${esc(product.sku)}</small><div class='pos-price-row'><span class='pos-price'>${money(product.price)}</span></div></button>`;
+  }
+
+  function renderLastSale() {
+    if (!lastCompletedSale) return '';
+    const sale = lastCompletedSale;
+    const id = esc(sale.id);
+    const receipt = sale.offlineQueued ? '' : `<button class='btn btn-secondary' type='button' data-action='latest-receipt' data-id='${id}'>Biên nhận</button>`;
+    return `<div class='sale-saved'><span role='status'>${icon('check', 16)} ${sale.offlineQueued ? 'Đã lưu trên máy' : 'Đã lưu'} ${esc(sale.number)} · ${moneyVndText(sale.total)}${Number(sale.change) ? ` · Trả lại khách ${moneyVndText(sale.change)}` : ''}</span><div class='sale-saved-actions'><button class='link-button' type='button' data-action='order-detail' data-id='${id}'>Xem đơn</button>${receipt}</div></div>`;
   }
 
   function renderPOS() {
@@ -2382,7 +2470,7 @@
     const activePosWarehouse = warehouses.find(function (warehouse) { return warehouse.id === selectedWarehouseId; }) || warehouses.find(function (warehouse) { return warehouse.is_default; }) || warehouses[0];
     const posWarehousePicker = warehouses.length > 1 ? `<div class='pos-warehouse-picker'><span>Đang bán từ</span><strong id='pos-warehouse-current'>${esc(activePosWarehouse?.name || 'Kho chính')}${activePosWarehouse?.is_default ? ' · Kho chính' : ''}</strong><details ${cart.length || checkoutPendingPayload ? 'hidden' : ''}><summary>Đổi kho</summary><div class='select-wrap'><select class='input' id='pos-warehouse' aria-label='Chọn kho bán hàng'>${warehouses.map(function (warehouse) { return `<option value='${esc(warehouse.id)}' ${warehouse.id === activePosWarehouse?.id ? 'selected' : ''}>${esc(warehouse.name)}${warehouse.is_default ? ' · Kho chính' : ''}</option>`; }).join('')}</select></div></details>${cart.length || checkoutPendingPayload ? `<small>Hoàn tất đơn này trước khi đổi kho.</small>` : ''}</div>` : '';
     return pageHeading('Bán hàng', '', canManageProducts ? "<button class='link-button pos-add' data-action='new-product'>＋ Thêm hàng</button>" : '') +
-      `${lastCompletedSale ? `<div class='sale-saved' role='status'><span>${icon('check', 16)} ${lastCompletedSale.offlineQueued ? 'Đã lưu trên máy' : 'Đã lưu'} ${esc(lastCompletedSale.number)} · ${moneyVndText(lastCompletedSale.total)}${Number(lastCompletedSale.change) ? ` · Trả lại khách ${moneyVndText(lastCompletedSale.change)}` : ''}</span><button class='link-button' data-action='order-detail' data-id='${esc(lastCompletedSale.id)}'>Xem đơn</button></div>` : ''}<div class='pos-layout'><div><div class='pos-tools ${warehouses.length > 1 ? 'has-warehouse' : ''}'><div class='pos-search-group'><div class='search-wrap pos-search' data-tour-target='pos-search'><span class='search-symbol'>⌕</span><input class='input' id='pos-search' type='search' placeholder='Tìm tên, SKU hoặc mã hàng…' value='${esc(query)}' aria-label='Tìm sản phẩm'></div></div>${posWarehousePicker}</div><div class='category-scroll'>${categories.map(function (category) { return `<button class='pos-category ${categoryFilter === category ? 'active' : ''}' data-action='category' data-category='${esc(category)}'>${esc(category)}</button>`; }).join('')}</div><div class='pos-product-grid' id='pos-products'>${products.map(function (product) { return posProductButton(product); }).join('') || emptyProductState}</div></div>${cartPanel()}</div><div class='pos-mobile-cart'><button class='btn pos-mobile-cart-edit' data-action='open-cart' aria-controls='drawer-cart' aria-expanded='false'><span class='mobile-cart-count'>${number(totals.count)}</span><span>Giỏ</span></button><button class='btn btn-primary pos-mobile-checkout' data-action='checkout' data-tour-target='pos-cart-mobile' ${cart.length || checkoutPendingPayload ? '' : 'disabled'}><span>${checkoutPendingPayload ? 'Kiểm tra đơn chờ' : 'Thanh toán'}</span><strong>${money(checkoutPendingPayload ? checkoutPendingPayload.totalVnd : totals.total)} →</strong></button></div><div class='drawer-cart' id='drawer-cart' role='dialog' aria-modal='true' aria-label='Giỏ hàng' aria-hidden='true'>${cartPanel()}</div>`;
+      `${renderLastSale()}<div class='pos-layout'><div><div class='pos-tools ${warehouses.length > 1 ? 'has-warehouse' : ''}'><div class='pos-search-group'><div class='search-wrap pos-search' data-tour-target='pos-search'><span class='search-symbol'>⌕</span><input class='input' id='pos-search' type='search' placeholder='Tìm tên, SKU hoặc mã hàng…' value='${esc(query)}' aria-label='Tìm sản phẩm'></div></div>${posWarehousePicker}</div><div class='category-scroll'>${categories.map(function (category) { return `<button class='pos-category ${categoryFilter === category ? 'active' : ''}' data-action='category' data-category='${esc(category)}'>${esc(category)}</button>`; }).join('')}</div><div class='pos-product-grid' id='pos-products'>${products.map(function (product) { return posProductButton(product); }).join('') || emptyProductState}</div></div>${cartPanel()}</div><div class='pos-mobile-cart'><button class='btn pos-mobile-cart-edit' data-action='open-cart' aria-controls='drawer-cart' aria-expanded='false'><span class='mobile-cart-count'>${number(totals.count)}</span><span>Giỏ</span></button><button class='btn btn-primary pos-mobile-checkout' data-action='checkout' data-tour-target='pos-cart-mobile' ${cart.length || checkoutPendingPayload ? '' : 'disabled'}><span>${checkoutPendingPayload ? 'Kiểm tra đơn chờ' : 'Thanh toán'}</span><strong>${money(checkoutPendingPayload ? checkoutPendingPayload.totalVnd : totals.total)} →</strong></button></div><div class='drawer-cart' id='drawer-cart' role='dialog' aria-modal='true' aria-label='Giỏ hàng' aria-hidden='true' inert>${cartPanel()}</div>`;
   }
 
   function orderRows(orders) {
@@ -3698,7 +3786,7 @@
     if (preservePos) {
       const drawer = document.getElementById('drawer-cart');
       if (drawerOpen && drawer && window.matchMedia('(max-width: 1100px)').matches) {
-        drawer.classList.add('open'); drawer.setAttribute('aria-hidden', 'false');
+        drawer.classList.add('open'); drawer.setAttribute('aria-hidden', 'false'); drawer.removeAttribute('inert');
         root.querySelectorAll('[data-action="open-cart"]').forEach(button => button.setAttribute('aria-expanded', 'true'));
       }
       for (const [container, scroll] of [[root.querySelector('.pos-layout > .cart-panel .cart-items'), posScroll.desktop], [drawer?.querySelector('.cart-items'), posScroll.drawer]]) if (container) container.scrollTop = scroll;
@@ -3717,52 +3805,72 @@
       modalReturnFocus = active && active !== document.body && !modal.contains(active) ? active : null;
     }
     modalGeneration += 1;
+    modalEditedField = null;
     modal.className = 'modal' + (wide ? ' wide' : '');
     modal.innerHTML = `<div class='modal-head'><div><h2 id='modal-title'>${esc(title)}</h2><p id='modal-description'>${esc(subtitle || '')}</p></div><button class='modal-close' data-action='close-modal' aria-label='Đóng'>×</button></div><div class='modal-body'>${body || ''}</div>${footer ? `<div class='modal-footer'>${footer}</div>` : ''}`;
     modal.hidden = false; backdrop.hidden = false; document.body.style.overflow = 'hidden';
-    if (window.gsap && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      window.gsap.killTweensOf(modal);
-      window.gsap.fromTo(modal, { opacity: 0.65 }, { opacity: 1, duration: 0.12, ease: 'power1.out', clearProps: 'opacity' });
-    }
-    const first = modal.querySelector('input:not([type=hidden]),select,button'); if (first) window.setTimeout(function () { first.focus(); }, 40);
+    const first = modal.querySelector('input:not([type=hidden]),select,button');
+    if (first) window.requestAnimationFrame(function () {
+      if (first.isConnected && !modal.hidden && !modal.contains(document.activeElement)) first.focus({ preventScroll: true });
+    });
   }
 
-  function closeModal(force) {
-    if (!force && modal.querySelector('#business-profile-onboarding') && store.role === 'owner' && !store.onboardingCompletedAt) {
-      saveBusinessProfile('unsure');
+  function requestCloseModal() {
+    if (modal.hidden) return;
+    const form = modal.querySelector('form[data-user-edited="true"]');
+    if (activeWrites && form) {
+      toast('Đang lưu', 'Chờ ứng dụng xác nhận kết quả.', 'error');
       return;
     }
+    if (!form) return dismissModal();
+    const existing = modal.querySelector('.modal-discard');
+    if (existing) { existing.querySelector('[data-action="keep-modal-input"]')?.focus(); return; }
+    const actions = document.createElement('section');
+    actions.className = 'modal-discard';
+    actions.innerHTML = `<p>Giữ nội dung đang nhập?</p><div><button class='btn btn-secondary' type='button' data-action='discard-modal-input'>Bỏ thay đổi</button><button class='btn btn-primary' type='button' data-action='keep-modal-input'>Tiếp tục nhập</button></div>`;
+    const footer = modal.querySelector('.modal-footer');
+    if (footer) footer.before(actions);
+    else modal.appendChild(actions);
+    actions.querySelector('[data-action="keep-modal-input"]').focus({ preventScroll: true });
+  }
+
+  function dismissModal() {
+    if (modal.querySelector('#business-profile-onboarding')) deferBusinessProfile();
+    else closeModal();
+  }
+
+  function closeModal() {
     const wasOpen = !modal.hidden;
     stopScanCamera();
-    if (window.gsap) window.gsap.killTweensOf(modal);
-    modal.style.removeProperty('transform'); modal.style.removeProperty('opacity');
     modal.hidden = true;
     backdrop.hidden = true;
-    document.body.style.overflow = '';
+    modalEditedField = null;
+    document.body.style.overflow = document.querySelector('#drawer-cart.open') ? 'hidden' : '';
     if (!wasOpen) return;
     const focusTarget = modalReturnFocus;
     modalReturnFocus = null;
     if (focusTarget && focusTarget.isConnected && !focusTarget.disabled) window.requestAnimationFrame(function () {
-      if (modal.hidden) focusTarget.focus();
+      if (modal.hidden) focusTarget.focus({ preventScroll: true });
     });
   }
 
   function keepModalFocus(event) {
-    if (modal.hidden || event.key !== 'Tab') return;
-    const focusable = Array.from(modal.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]):not([type="hidden"]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'))
+    const dialog = modal.hidden ? document.querySelector('#drawer-cart.open') : modal;
+    if (!dialog || event.key !== 'Tab') return;
+    const focusable = Array.from(dialog.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]):not([type="hidden"]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'))
       .filter(function (element) { return !element.hidden && element.getAttribute('aria-hidden') !== 'true' && element.getClientRects().length > 0; });
     if (!focusable.length) {
       event.preventDefault();
-      modal.setAttribute('tabindex', '-1');
-      modal.focus();
+      dialog.setAttribute('tabindex', '-1');
+      dialog.focus();
       return;
     }
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
-    if (event.shiftKey && (document.activeElement === first || !modal.contains(document.activeElement))) {
+    if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
       event.preventDefault();
       last.focus();
-    } else if (!event.shiftKey && (document.activeElement === last || !modal.contains(document.activeElement))) {
+    } else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
       event.preventDefault();
       first.focus();
     }
@@ -5087,12 +5195,20 @@
     }
   }
 
-  async function openOrder(id) {
+  let orderDetailRequest = 0;
+  async function openOrder(id, receipt = false) {
     if (!id) return;
+    const request = ++orderDetailRequest;
     if (id.startsWith('local:')) return openLocalOrder(id.slice(6));
+    const generation = modalGeneration;
+    const openedOnPage = page;
+    const session = authSession;
+    const wasHidden = modal.hidden;
+    const canShow = () => request === orderDetailRequest && modalGeneration === generation && page === openedOnPage && authSession === session && modal.hidden === wasHidden;
     let o;
     try {
       const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/orders/${encodeURIComponent(id)}`);
+      if (!canShow()) return;
       const row = result.order;
       const payments = row.payments.filter(function (p) { return p.status === 'succeeded'; });
       const paid = payments.reduce(function (sum, p) { return sum + Number(p.amount_vnd); }, 0);
@@ -5169,7 +5285,13 @@
       if (cached) Object.assign(cached, o);
       else store.orders.unshift(o);
     } catch (error) {
-      return toast('Chưa tải được đơn hàng', error.message, 'error');
+      if (canShow()) toast('Chưa tải được đơn hàng', error.message, 'error');
+      return;
+    }
+    if (receipt) {
+      showModal('Biên nhận số', 'Chọn cách lưu hoặc gửi cho khách.', '', `<button class='btn btn-secondary' data-action='close-modal'>Đóng</button>`);
+      showDigitalReceipt(id);
+      return;
     }
     const c = customerById(o.customerId);
     const items = o.items.map(function (i) { return `<div class='detail-line'><span>${esc(i.name)} <small>× ${number(i.qty)} ${esc(i.unit)}</small></span><strong>${money(i.total)}</strong></div>`; }).join('');
@@ -5636,8 +5758,49 @@
     const avatar = esc(initials(user.displayName || user.email || 'S'));
     const storeName = esc(store.settings.storeName || 'Cửa hàng của bạn');
     const body = `<div class='account-summary'><span class='account-avatar' aria-hidden='true'>${avatar}</span><div class='account-summary-copy'><strong>${displayName}</strong><span>${email}</span></div></div><div class='account-store'><span class='account-store-label'>Cửa hàng</span><strong>${storeName}</strong></div>`;
-    const footer = `<button class='btn btn-secondary' data-action='account-settings'>Cài đặt tài khoản</button><button class='btn btn-danger' data-action='logout'>Đăng xuất</button>`;
+    const switchButton = store.id && authSession.stores.length > 1 ? `<button class='btn btn-secondary' data-action='store-picker'>Đổi cửa hàng</button>` : '';
+    const footer = `${switchButton}<button class='btn btn-secondary' data-action='account-settings'>Cài đặt tài khoản</button><button class='btn btn-danger' data-action='logout'>Đăng xuất</button>`;
     showModal('Tài khoản', 'Quản lý phiên đăng nhập và thông tin cửa hàng.', body, footer);
+  }
+
+  function openStorePicker() {
+    const stores = authSession?.stores || [];
+    if (!store.id || stores.length < 2) return;
+    const rows = stores.map(item => {
+      const current = item.id === store.id;
+      return `<button class='store-option' type='button' data-action='switch-store' data-id='${esc(item.id)}' ${current ? 'disabled aria-current="true"' : ''}><span><strong>${esc(item.name)}</strong><small>${esc(staffRoleName(item.role))}</small></span><span>${current ? 'Đang mở' : 'Mở →'}</span></button>`;
+    }).join('');
+    showModal('Đổi cửa hàng', 'Chọn cửa hàng bạn muốn làm việc. Giỏ nháp và chứng từ chờ được giữ riêng cho từng nơi.', `<div class='store-options'>${rows}</div><p class='auth-message error' data-store-switch-error role='alert' hidden></p>`, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button>`);
+  }
+
+  let switchingStore = false;
+  async function switchStore(id, button) {
+    const session = authSession;
+    if (switchingStore || !store.id || id === store.id || !session?.stores.some(item => item.id === id)) return;
+    const feedback = modal.querySelector('[data-store-switch-error]');
+    if (!feedback) return;
+    switchingStore = true;
+    button.disabled = true;
+    feedback.hidden = true;
+    const generation = modalGeneration;
+    try {
+      if (activeWrites) throw new Error('Đang ghi giao dịch. Chờ lưu xong rồi đổi cửa hàng.');
+      if (root.querySelector('form[data-dirty="true"]')) throw new Error('Bạn đang sửa cài đặt. Hãy lưu hoặc bỏ thay đổi ở cửa hàng này trước.');
+      if (!checkoutPendingPayload && (cart.length || cartCustomerId || cart.discount)) {
+        const scope = activeOfflineScope();
+        if (!scope) throw new Error('Chưa thể lưu giỏ nháp trên máy. Hãy hoàn tất đơn trước khi đổi cửa hàng.');
+        await offlineDisk.putMeta('cart|' + scope, cartDraftValue());
+      }
+      if (modal.hidden || modalGeneration !== generation || authSession !== session) return;
+      sessionStorage.setItem('slink-current-store:' + session.user.id, id);
+      window.location.reload();
+    } catch (error) {
+      feedback.hidden = false;
+      feedback.textContent = error.message || 'Chưa đổi được cửa hàng. Hãy thử lại.';
+    } finally {
+      switchingStore = false;
+      if (button.isConnected) button.disabled = false;
+    }
   }
 
 
@@ -5930,10 +6093,13 @@
   }
 
   let cartDraftReady = '', cartDraftLast = '';
+  function cartDraftValue() {
+    return { items: cart.map(item => ({ id: item.id, qty: item.qty })), customerId: cartCustomerId, discount: cart.discount || 0, warehouseId: selectedWarehouseId };
+  }
   function saveCartDraft() {
     const scope = activeOfflineScope();
     if (!scope || scope !== cartDraftReady || checkoutPendingPayload) return;
-    const value = { items: cart.map(item => ({ id: item.id, qty: item.qty })), customerId: cartCustomerId, discount: cart.discount || 0, warehouseId: selectedWarehouseId };
+    const value = cartDraftValue();
     const signature = JSON.stringify(value);
     if (cartDraftLast === signature) return;
     cartDraftLast = signature;
@@ -6002,7 +6168,7 @@
     const increment = product.inventoryTracked ? Math.min(1, remaining) : 1;
     if (current) current.qty += increment;
     else cart.push({ id: product.id, qty: increment });
-    if (page === 'pos') refreshCartPanels();
+    if (page === 'pos') refreshCartPanels({ changedId: product.id });
     else render();
     return true;
   }
@@ -6017,7 +6183,7 @@
     item.qty += Number(delta);
     if (item.qty <= 0) cart = cart.filter(function (x) { return x.id !== id; });
     else if (p && p.inventoryTracked && item.qty > p.stock) { item.qty = p.stock; toast('Đã đạt số lượng tồn', 'Kho hiện còn ' + p.stock + ' ' + p.unit + '.', 'error'); }
-    refreshCartPanels();
+    refreshCartPanels({ changedId: id });
   }
 
   function editCartQuantity(id) {
@@ -6041,7 +6207,7 @@
     if (product.inventoryTracked && quantity > product.stock) return toast('Không đủ hàng trong kho', `Hiện còn ${number(product.stock)} ${product.unit}.`, 'error');
     item.qty = quantity;
     closeModal();
-    if (page === 'pos') refreshCartPanels({ focus: { action: 'cart-qty-edit', id: id } });
+    if (page === 'pos') refreshCartPanels({ changedId: id, focus: { action: 'cart-qty-edit', id: id } });
     else render();
   }
 
@@ -6098,6 +6264,11 @@
     if (!savePendingSale()) return pendingSaveFailed();
     const key = checkoutIdempotencyKey;
     const payload = checkoutPendingPayload;
+    const generation = modalGeneration;
+    const session = authSession;
+    const storeId = store.id;
+    const sameStore = () => authSession === session && store.id === storeId;
+    const checkoutOpen = () => !modal.hidden && modalGeneration === generation;
     const submitButton = modal.querySelector('button[type="submit"][form="entity-form"]');
     if (submitButton) submitButton.disabled = true;
     try {
@@ -6106,29 +6277,33 @@
         headers: { 'idempotency-key': key },
         body: payload,
       });
+      if (!sameStore()) return;
       cart = [];
       cartCustomerId = '';
       checkoutPromotion = null;
       clearPendingSale();
-      closeModal();
+      if (checkoutOpen()) {
+        closeModal();
+        if (document.getElementById('drawer-cart')?.classList.contains('open')) setCartDrawerOpen(false);
+      }
       lastCompletedSale = { id: result.order.id, number: result.order.number, total: result.order.totalVnd, change: result.order.changeVnd, offlineQueued: result.offlineQueued };
-      page = 'pos';
-      await loadProductsPage('', 0);
-      render();
       const order = result.order;
-      toast(result.offlineQueued ? 'Đã lưu đơn trên máy' : 'Đã lưu đơn hàng', result.offlineQueued ? order.number + ' · Tự đồng bộ khi có mạng.' : order.number);
-
-
+      if (page === 'pos') await loadProductsPage('', 0);
+      else toast(result.offlineQueued ? 'Đã lưu đơn trên máy' : 'Đã lưu đơn hàng', order.number);
     } catch (error) {
+      if (!sameStore()) return;
       if (error.status === 401) showSignedOut('Phiên đăng nhập đã hết hạn. Đăng nhập lại để kiểm tra đơn đang chờ.', 'error');
       else if (error.status >= 400 && error.status < 500 && !['idempotency_conflict', 'request_in_progress'].includes(error.code)) {
-        if (error.code === 'cash_session_required') { openCashSessionForm('checkout'); return; }
-        clearPendingSale();
-        if (error.code === 'insufficient_stock' || error.code === 'product_unavailable' || error.code === 'inventory_unavailable') await loadProductsPage('', 0);
-        if (!modal.hidden) openCheckout();
+        if (error.code === 'cash_session_required') {
+          if (checkoutOpen()) { openCashSessionForm('checkout'); return; }
+        } else {
+          clearPendingSale();
+          if (page === 'pos' && ['insufficient_stock', 'product_unavailable', 'inventory_unavailable'].includes(error.code)) await loadProductsPage('', 0);
+          if (checkoutOpen()) openCheckout();
+        }
       }
       toast('Chưa hoàn tất được đơn hàng', error.message, 'error');
-      if (submitButton && !modal.hidden) submitButton.disabled = false;
+      if (submitButton?.isConnected) submitButton.disabled = false;
     }
   }
 
@@ -6787,12 +6962,18 @@
       if (feedback) { feedback.hidden = false; feedback.textContent = 'Hãy chọn một cách sử dụng cửa hàng.'; }
       return;
     }
-    const submitButton = form ? (form.querySelector('[type="submit"]') || modal.querySelector('button[form="business-profile-onboarding"]')) : modal.querySelector('[data-action="business-profile-later"]');
+    const submitButton = form?.querySelector('[type="submit"]') || modal.querySelector('button[form="business-profile-onboarding"]');
+    const generation = modalGeneration;
+    const session = authSession;
+    const storeId = store.id;
+    const wasModalForm = Boolean(form?.closest('#modal'));
+    const selectedFocus = form?.dataset.taskFocusEdited === 'true' ? String(new FormData(form).get('taskFocusRoute') || '') : '';
     if (submitButton) submitButton.disabled = true;
     try {
       const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/business-profile`, {
         method: 'PUT', body: { businessProfile: profile },
       });
+      if (authSession !== session || store.id !== storeId) return;
       store.businessProfile = result.businessProfile;
       store.onboardingCompletedAt = result.onboardingCompletedAt;
       authSession.stores = authSession.stores.map(function (item) {
@@ -6804,16 +6985,20 @@
           if (saved && await offlineDisk.getMeta('active-user') === userId) await offlineDisk.putMeta('session|' + userId, { ...saved, stores: authSession.stores });
         } catch (error) { offlineState.storageIssue = error.message; updateOfflineStatus(); }
       }
-      const focusInput = form && form.querySelector('[name="taskFocusRoute"]');
-      if (focusInput) {
-        const selectedFocus = String(new FormData(form).get('taskFocusRoute') || '');
+      if (authSession !== session || store.id !== storeId) return;
+      if (selectedFocus) {
         if (!saveTaskFocusRoute(selectedFocus)) saveTaskFocusRoute(defaultTaskFocusRoute());
       } else if (taskFocusRoute && !taskFocusOptions().some(function (option) { return option.route === taskFocusRoute; })) {
         saveTaskFocusRoute(defaultTaskFocusRoute());
       }
-      closeModal(true);
+      if (modalGeneration !== generation || (wasModalForm && modal.hidden)) {
+        renderShell();
+        toast('Đã lưu cách sắp xếp cửa hàng', businessProfileLabel(profile));
+        return;
+      }
+      if (wasModalForm) closeModal();
       if (page === 'settings') render();
-      else if (profile === 'online' && canAccessRoute('channels')) { channelState.view = 'orders'; routeTo('channels'); }
+      else if (!selectedFocus && profile === 'online' && canAccessRoute('channels')) { channelState.view = 'orders'; routeTo('channels'); }
       else {
         renderShell();
         if (taskFocusRoute && taskFocusRoute !== page) routeTo(taskFocusRoute);
@@ -7108,9 +7293,7 @@
     win.document.close();
   }
 
-  async function shareOrder(id) {
-    const order = store.orders.find(function (item) { return item.id === id; });
-    if (!order || !Array.isArray(order.items)) return toast('Chưa thể chia sẻ biên nhận', 'Đóng và mở lại chi tiết đơn để tải dữ liệu mới nhất.', 'error');
+  function digitalReceiptText(order) {
     const shareLabel = function (value, limit) { return String(value == null ? '' : value).replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, limit || 240); };
     const paymentLines = (order.paymentLines || []).map(function (payment) {
       return `${shareLabel(payment.method, 40)}: ${moneyVndText(payment.amountVnd ?? payment.amount)}`;
@@ -7133,32 +7316,55 @@
       `Tổng cộng: ${moneyVndText(order.totalVndText ?? order.total)}`,
       `Đã thanh toán: ${moneyVndText(order.paidVndText ?? order.paid)}`,
       ...paymentLines,
+      BigInt(String(order.cashReceivedVndText ?? order.cashReceived ?? '0')) > 0n ? `Tiền mặt khách đưa: ${moneyVndText(order.cashReceivedVndText ?? order.cashReceived)}` : null,
+      BigInt(String(order.cashChangeVndText ?? order.cashChange ?? '0')) > 0n ? `Tiền thối: ${moneyVndText(order.cashChangeVndText ?? order.cashChange)}` : null,
       BigInt(String(order.dueVndText ?? order.due ?? '0')) > 0n ? `Còn phải thu: ${moneyVndText(order.dueVndText ?? order.due)}` : null,
       BigInt(String(order.refundedVndText ?? order.refunded ?? '0')) > 0n ? `Đã hoàn tiền: ${moneyVndText(order.refundedVndText ?? order.refunded)}` : null,
       '',
       shareLabel(store.settings.receiptFooter || 'Cảm ơn quý khách!', 300)
     ].filter(function (line) { return line != null; });
-    const text = lines.join('\n');
-    const shareData = { title: `Biên nhận ${shareLabel(order.number, 80)}`, text: text };
+    return lines.join('\n');
+  }
 
-    if (typeof navigator.share === 'function') {
-      try {
-        await navigator.share(shareData);
-        toast('Đã hoàn tất chia sẻ', 'Biên nhận đã được chuyển đến ứng dụng bạn chọn.');
-        return;
-      } catch (error) {
-        if (error && error.name === 'AbortError') return;
+  function showDigitalReceipt(id) {
+    const order = store.orders.find(item => item.id === id);
+    if (!order || !Array.isArray(order.items)) return toast('Chưa có biên nhận', 'Mở lại chi tiết đơn để tải dữ liệu.', 'error');
+    const body = modal.querySelector('.modal-body');
+    if (!body) return;
+    let panel = body.querySelector('.digital-receipt');
+    if (!panel) {
+      panel = document.createElement('section');
+      panel.className = 'digital-receipt';
+      panel.dataset.number = order.number;
+      panel.innerHTML = `<h3 tabindex='-1'>Biên nhận ${esc(order.number)}</h3><div class='receipt-actions'>${typeof navigator.share === 'function' ? `<button class='btn btn-primary' type='button' data-action='receipt-share'>Gửi qua ứng dụng</button>` : ''}<button class='btn btn-secondary' type='button' data-action='receipt-copy'>Sao chép</button><button class='btn btn-secondary' type='button' data-action='receipt-download'>Lưu tệp văn bản</button></div><label class='input-label' for='share-order-copy'>Nội dung để gửi khách</label><textarea id='share-order-copy' class='input' rows='7' readonly>${esc(digitalReceiptText(order))}</textarea><p class='muted' role='status' data-receipt-feedback></p>`;
+      body.prepend(panel);
+    }
+    body.scrollTop = 0;
+    panel.querySelector('h3').focus({ preventScroll: true });
+  }
+
+  async function useDigitalReceipt(action, button) {
+    const panel = button.closest('.digital-receipt');
+    const field = panel?.querySelector('textarea');
+    if (!field || button.disabled) return;
+    const feedback = panel.querySelector('[data-receipt-feedback]');
+    const number = panel.dataset.number;
+    if (action === 'receipt-download') {
+      download('bien-nhan-' + number.replace(/[^a-z0-9-]/gi, '-') + '.txt', field.value, 'text/plain;charset=utf-8');
+      return;
+    }
+    button.disabled = true;
+    try {
+      if (action === 'receipt-share') await navigator.share({ title: 'Biên nhận ' + number, text: field.value });
+      else {
+        await navigator.clipboard.writeText(field.value);
+        feedback.textContent = 'Đã sao chép. Bạn có thể dán vào tin nhắn cho khách.';
       }
-    }
-    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-      try {
-        await navigator.clipboard.writeText(text);
-        return toast('Đã sao chép biên nhận', 'Bạn có thể dán nội dung vào tin nhắn cho khách.');
-      } catch (error) { /* Show a selectable local copy if clipboard access is unavailable. */ }
-    }
-    showModal('Chia sẻ biên nhận', 'Chọn và sao chép nội dung để gửi cho khách. Thông tin cá nhân và ghi chú nội bộ không được đưa vào.', `<label class='input-label' for='share-order-copy'>Nội dung biên nhận</label><textarea id='share-order-copy' class='input' rows='12' readonly aria-label='Nội dung biên nhận để sao chép'>${esc(text)}</textarea>`, `<button type='button' class='btn btn-secondary' data-action='close-modal'>Đóng</button>`, true);
-    const copyField = modal.querySelector('#share-order-copy');
-    if (copyField) window.setTimeout(function () { copyField.focus(); copyField.select(); }, 60);
+    } catch (error) {
+      if (error.name === 'AbortError' || !field.isConnected) return;
+      if (action === 'receipt-copy') { field.focus(); field.select(); }
+      feedback.textContent = action === 'receipt-share' ? 'Chưa mở được trình chia sẻ. Bạn có thể sao chép hoặc lưu tệp.' : 'Chọn nội dung ở trên để sao chép thủ công.';
+    } finally { button.disabled = false; }
   }
   function dashboardMobilePrimaryActionHtml() {
     if (isProfileRouteEnabled('pos') && canAccessRoute('pos')) return `<button class='btn btn-primary dashboard-mobile-primary' data-route='pos' data-tour-target='dashboard-mobile-primary'>＋ Tạo đơn mới</button>`;
@@ -7354,14 +7560,10 @@
         const session = await apiRequest('/api/auth/login', {
           method: 'POST', body: { email: String(data.get('email') || '').trim(), password: String(data.get('password') || '') },
         });
-        if (invitationToken && invitationInfo && invitationInfo.status === 'pending') {
-          const accepted = await apiRequest(`/api/invitations/${encodeURIComponent(invitationToken)}/accept`, { method: 'POST', body: {} });
-          const current = await apiRequest('/api/auth/me');
-          invitationToken = '';
-          invitationInfo = null;
-          window.history.replaceState({}, '', '/');
-          await enterStore(current, accepted.storeId);
-        } else await enterStore(session);
+        if (authMode === 'invite-login' && invitationToken && invitationInfo?.status === 'pending') await acceptStoreInvitation();
+        else await enterStore(session);
+      } else if (type === 'invite-accept') {
+        await acceptStoreInvitation();
       } else if (type === 'register') {
         const result = await apiRequest('/api/auth/register', {
           method: 'POST', body: {
@@ -7432,6 +7634,20 @@
     }
   }
 
+  function clearInvitation() {
+    invitationToken = '';
+    invitationInfo = null;
+    window.history.replaceState({}, '', '/');
+  }
+
+  async function acceptStoreInvitation() {
+    if (!invitationToken || invitationInfo?.status !== 'pending') return;
+    const accepted = await apiRequest(`/api/invitations/${encodeURIComponent(invitationToken)}/accept`, { method: 'POST', body: {} });
+    const current = await apiRequest('/api/auth/me');
+    clearInvitation();
+    await enterStore(current, accepted.storeId);
+  }
+
   async function boot() {
     const resetToken = new URLSearchParams(window.location.hash.slice(1)).get('reset');
     if (resetToken) {
@@ -7474,17 +7690,8 @@
         if (error.status === 401) { authMode = 'invite-login'; renderAuth(); return; }
         authMode = 'invite-login'; renderAuth('Chưa kết nối được máy chủ. Kiểm tra mạng rồi thử lại.', 'error'); return;
       }
-      try {
-        const accepted = await apiRequest(`/api/invitations/${encodeURIComponent(invitationToken)}/accept`, { method: 'POST', body: {} });
-        const current = await apiRequest('/api/auth/me');
-        invitationToken = '';
-        invitationInfo = null;
-        window.history.replaceState({}, '', '/');
-        await enterStore(current, accepted.storeId);
-      } catch (error) {
-        authMode = 'invite-login';
-        renderAuth(error.message, 'error');
-      }
+      authMode = session.user.email.toLowerCase() === invitationInfo.email.toLowerCase() ? 'invite-confirm' : 'invite-login';
+      renderAuth(authMode === 'invite-login' ? 'Đăng nhập bằng email được mời để tham gia.' : '');
       return;
     }
     try {
@@ -7525,6 +7732,8 @@
     if (action === 'reload-affiliate') { loadAffiliateLinks(0); return; }
     if (action === 'more-affiliate-links') { loadAffiliateLinks(affiliateState.nextOffset); return; }
     if (action === 'switch-workspace') { changeWorkspace(button.dataset.mode); return; }
+    if (action === 'store-picker') { openStorePicker(); return; }
+    if (action === 'switch-store') { switchStore(id, button); return; }
     if (action === 'copy-affiliate-link') {
       const link = affiliateState.links.find(function (item) { return item.id === id; });
       if (link) navigator.clipboard.writeText(link.affiliate_url).then(function () { toast('Đã sao chép link', 'Dán link khi đăng nội dung.'); }).catch(function () { toast('Chưa sao chép được', 'Cho phép truy cập bộ nhớ tạm rồi thử lại.', 'error'); });
@@ -7546,7 +7755,8 @@
         ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.7"/><path d="m4 4 16 16"/></svg>'
         : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.7"/></svg>';
     }
-    else if (action === 'business-profile-later') saveBusinessProfile('unsure');
+    else if (action === 'business-profile-later') { if (!activeWrites) requestCloseModal(); }
+    else if (action === 'leave-invitation') { if (!activeWrites) { clearInvitation(); authMode = 'login'; boot(); } }
     else if (action === 'auth-mode') { authMode = button.dataset.mode || 'login'; renderAuth(); }
     else if (action === 'logout') { closeModal(); signOut(); }
     else if (action === 'account-menu') showAccountMenu();
@@ -7558,7 +7768,12 @@
     else if (action === 'inventory-page') loadInventoryPage(searchTerms.inventory, Number(button.dataset.offset) || 0);
     else if (action === 'customers-page') loadCustomersPage(searchTerms.customers, Number(button.dataset.offset) || 0).then(render);
     else if (action === 'orders-page') loadOrdersPage(searchTerms.orders, Number(button.dataset.offset) || 0).then(render);
-    else if (action === 'close-modal') closeModal();
+    else if (action === 'close-modal') requestCloseModal();
+    else if (action === 'discard-modal-input') { if (!activeWrites) dismissModal(); }
+    else if (action === 'keep-modal-input') {
+      button.closest('.modal-discard')?.remove();
+      if (modalEditedField?.isConnected) modalEditedField.focus({ preventScroll: true });
+    }
     else if (action === 'review-legacy-pending') clearReviewedLegacyPending();
     else if (action === 'import-products') openProductImport();
     else if (action === 'bulk-update-products') openProductBulkUpdate();
@@ -7684,7 +7899,9 @@
     else if (action === 'return-order') openReturn(id);
     else if (action === 'collect-payment') openCollectPayment(id);
     else if (action === 'print-order') printOrder(id);
-    else if (action === 'share-order') shareOrder(id);
+    else if (action === 'share-order') showDigitalReceipt(id);
+    else if (action === 'latest-receipt') openOrder(id, true);
+    else if (['receipt-share', 'receipt-copy', 'receipt-download'].includes(action)) useDigitalReceipt(action, button);
     else if (action === 'download-reports-csv') downloadReportsCsv();
     else if (action === 'print-reports-pdf') printReportsPdf();
     else if (action === 'add-cart') addToCart(id);
@@ -8366,10 +8583,13 @@
     else if (type === 'discount') { if (checkoutPendingPayload) return toast('Đang chờ xác nhận đơn', 'Hãy kiểm tra đơn đang chờ trước khi thay đổi giảm giá.', 'error'); cart.discount = Math.max(0, Math.min(cartTotals().subtotal, Number(new FormData(form).get('discount')) || 0)); closeModal(); render(); toast('Đã áp dụng giảm giá', money(cart.discount)); }
   });
 
-  backdrop.addEventListener('click', closeModal);
+  backdrop.addEventListener('click', requestCloseModal);
   document.addEventListener('keydown', function (event) {
     keepModalFocus(event);
-    if (event.key === 'Escape') { closeModal(); setCartDrawerOpen(false); }
+    if (event.key === 'Escape') {
+      if (!modal.hidden) requestCloseModal();
+      else if (document.querySelector('#drawer-cart.open')) setCartDrawerOpen(false);
+    }
   });
   document.addEventListener('click', function (event) { const drawer = document.getElementById('drawer-cart'); if (drawer && event.target === drawer) setCartDrawerOpen(false); });
   const cartViewport = window.matchMedia('(min-width: 1101px)');
@@ -8386,6 +8606,14 @@
   document.addEventListener('change', function (event) {
     if (page === 'settings' && event.target.closest('#view form')) event.target.closest('form').dataset.dirty = 'true';
   }, true);
+  for (const type of ['input', 'change']) modal.addEventListener(type, function (event) {
+    const form = event.target.closest('form[data-form]');
+    if (form) {
+      form.dataset.userEdited = 'true';
+      if (event.target.name === 'taskFocusRoute') form.dataset.taskFocusEdited = 'true';
+      modalEditedField = event.target;
+    }
+  });
   document.addEventListener('keydown', function (event) {
     if (!event.target.matches('[data-action="settings-area"]') || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
     const buttons = Array.from(root.querySelectorAll('[data-action="settings-area"]'));
