@@ -198,6 +198,8 @@ async function applyMigrations(db, migrationsDirectory) {
     GRANT SELECT, INSERT ON public.promotion_redemptions TO slink_app;
     REVOKE UPDATE, DELETE ON public.user_security_events FROM slink_app;
     REVOKE ALL ON public.schema_migrations FROM slink_app;
+    REVOKE UPDATE, DELETE, TRUNCATE ON public.offline_operation_receipts FROM slink_app;
+    GRANT SELECT, INSERT ON public.offline_operation_receipts TO slink_app;
     GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO slink_app;
     REVOKE ALL ON public.sales_channel_profiles, public.channel_product_mappings FROM slink_app;
     GRANT SELECT, INSERT, UPDATE ON public.sales_channel_profiles, public.channel_product_mappings TO slink_app;

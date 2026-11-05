@@ -1,4 +1,5 @@
 'use strict';
+const { normalizeOffline, beginOffline, recordOffline } = require('./offline-operations');
 
 const { createHash, randomUUID } = require('node:crypto');
 const { ApiError, authenticate, requireCsrf } = require('./auth');
@@ -341,6 +342,7 @@ function registerFinanceRoutes(app, { pool, env }) {
     const idempotencyKey = request.headers['idempotency-key'];
     if (typeof idempotencyKey !== 'string' || idempotencyKey.length < 16 || idempotencyKey.length > 200) throw new ApiError(400, 'idempotency_key_required', 'Thiếu mã lưu phiếu an toàn. Hãy thử lại.');
     const body = request.body || {};
+    const offline = normalizeOffline(body.offline);
     const direction = body.direction;
     if (!['in', 'out'].includes(direction)) throw new ApiError(400, 'validation_error', 'Loại phiếu thu chi không hợp lệ.');
     const amount = positiveAmount(body.amountVnd);
@@ -350,6 +352,7 @@ function registerFinanceRoutes(app, { pool, env }) {
     const note = typeof body.note === 'string' ? body.note.trim() : '';
     if (!category || category.length > 100 || note.length > 300) throw new ApiError(400, 'validation_error', 'Khoản mục hoặc ghi chú không hợp lệ.');
     const value = { direction, amountVnd: amount.toString(), method, category, note };
+    if (offline) value.offline = offline;
     const digest = createHash('sha256').update(JSON.stringify(value)).digest();
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
       if (!FINANCE_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền ghi phiếu thu chi.');
@@ -369,6 +372,7 @@ function registerFinanceRoutes(app, { pool, env }) {
         if (!record.response_body || !record.response_status) throw new ApiError(409, 'request_in_progress', 'Phiếu đang được xử lý. Hãy thử lại sau.');
         return { status: record.response_status, body: record.response_body, replayed: true };
       }
+      await beginOffline(client, offline);
       const movementId = randomUUID();
       const cashSessionId = method === 'cash'
         ? await lockActiveCashSession(client, storeId, { cashOutVnd: direction === 'out' ? amount : 0n })
@@ -383,7 +387,8 @@ function registerFinanceRoutes(app, { pool, env }) {
          VALUES ($1, $2, 'cash_movement.created', 'cash_movement', $3, $4, jsonb_build_object('direction', $5::text, 'amountVnd', $6::text))`,
         [storeId, auth.userId, movementId, note || category, direction, amount.toString()]
       );
-      const bodyResult = { movement: { id: movementId, direction, category, amountVnd: amount.toString(), method, note, occurredAt: new Date().toISOString() } };
+      const bodyResult = { movement: { id: movementId, direction, category, amountVnd: amount.toString(), method, note, occurredAt: offline?.occurredAt || new Date().toISOString() } };
+      await recordOffline(client, { storeId, userId: auth.userId, key: idempotencyKey, kind: 'cash', entityId: movementId, metadata: offline });
       await client.query(
         `UPDATE idempotency_records SET response_status = 201, response_body = $4::jsonb, completed_at = now()
          WHERE store_id = $1 AND actor_user_id = $2 AND idempotency_key = $3`,

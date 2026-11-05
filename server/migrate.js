@@ -121,6 +121,8 @@ async function main() {
       END;
       $$;
       REVOKE ALL ON public.schema_migrations FROM slink_app;
+      REVOKE UPDATE, DELETE, TRUNCATE ON public.offline_operation_receipts FROM slink_app;
+      GRANT SELECT, INSERT ON public.offline_operation_receipts TO slink_app;
       REVOKE UPDATE, DELETE, TRUNCATE ON public.promotions, public.promotion_redemptions FROM slink_app;
       GRANT SELECT, INSERT, UPDATE ON public.promotions TO slink_app;
       GRANT SELECT, INSERT ON public.promotion_redemptions TO slink_app;

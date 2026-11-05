@@ -2,7 +2,7 @@
 
 ## Trạng thái
 
-Web Service Slink đã được tạo trên Render; trang gốc đã trả HTTP 200. Các request đăng nhập/đăng ký hiện lỗi xác minh TLS khi nối tới Supabase. Vì vậy chưa xác nhận database, đăng nhập hay giao dịch production hoạt động.
+Ngày 04/11/2026, bản đang chạy trên Render là `99d6573` (PR #37), với schema production tới `0026`. Bản ngoại tuyến cần chạy migration `0027` trước khi đưa runtime mới vào main để Render triển khai. Kiểm tra mục phát hành bên dưới; trạng thái triển khai phải được xác nhận lại trên Render.
 
 ## Kiến trúc
 
@@ -32,7 +32,7 @@ Sau khi commit chứa CA có trên nhánh dịch vụ:
 3. Lưu biến và deploy commit mới nhất (nếu Render chưa tự deploy).
 4. Mở /api/ready và xem log. Hết SELF_SIGNED_CERT_IN_CHAIN chỉ xác nhận TLS; nếu báo lỗi role, bảng hoặc migration thì phải xử lý riêng trước khi dùng dữ liệu thật.
 
-Chưa chạy migrations trên database production. APP_DATABASE_URL phải thuộc role ứng dụng giới hạn quyền; không dùng role quản trị. Migrations cần backup đã xác minh và role riêng có đúng quyền. Trên Supabase, kiểm tra role/preflight trước khi chạy bất kỳ migration nào vì một vài migration yêu cầu BYPASSRLS.
+Migrations tới0026 đã có bằng chứng chạy production ở đợt trước;0027 chưa chạy trên production trong đợt này. APP_DATABASE_URL phải thuộc role ứng dụng giới hạn quyền; không dùng role quản trị. Migrations cần backup đã xác minh và role riêng có đúng quyền. Trên Supabase, kiểm tra role/preflight trước khi chạy bất kỳ migration nào vì một vài migration yêu cầu BYPASSRLS.
 
 ## Biến production
 
@@ -55,3 +55,9 @@ Sau khi readiness kết nối thành công, vẫn cần xác nhận schema/migra
 Để trình diễn khi chưa có dịch vụ gửi thư, đặt `DEMO_DISABLE_EMAIL_VERIFICATION=true` trong Render rồi deploy lại mã mới. Giá trị mặc định là `false`. Khi bật, chủ cửa hàng có thể đăng ký và đăng nhập ngay; tài khoản chủ đang chờ xác minh cũng có thể đăng nhập bằng đúng email và mật khẩu đã đăng ký.
 
 Chế độ này chỉ bỏ xác minh email cho đăng ký chủ cửa hàng. Email vẫn không được ghi nhận là đã xác minh; lời mời nhân viên và đặt lại mật khẩu vẫn cần email. Tài khoản và cửa hàng vẫn được lưu trong Supabase, nên chỉ dùng email/dữ liệu demo. Tắt cờ này khi không còn trình diễn; tài khoản chưa xác minh cần xác minh email trước khi đăng nhập lại.
+
+## Phát hành bản ngoại tuyến (0027)
+
+Bản runtime offline cần `0027_offline_operations.sql`, gồm receipt chỉ thêm mới và thời gian giao dịch theo transaction. Chạy workflow `Prepare production database` từ đúng nhánh phát hành, bằng role migrator và với tham chiếu bản sao lưu đã xác minh, trước khi gộp main. Runtime mới sẽ từ chối schema còn thiếu `0027`. Đợt 04/11 đã thử trên PostgreSQL 18.6 local bằng hai role riêng; kiểm tra lịch sử workflow và schema production để xác nhận bước chạy trên Supabase.
+
+Thứ tự phát hành: kiểm tra CI, sao lưu, áp dụng migration, gộp main, theo dõi deploy và xác minh `/api/ready`. Không cần biến môi trường mới để bật offline. Thiết bị phải đăng nhập và tải dữ liệu khi có mạng trước; chứng từ được giữ trên máy và gửi khi ứng dụng đang mở/có kết nối. Đổi trả, chuyển kho, sửa danh mục, quản lý tài khoản và kết nối bên ngoài vẫn cần mạng. Khi có chứng từ xung đột, hệ thống giữ nguyên để kiểm tra và dừng các chứng từ tiếp theo; không tự đổi giá hoặc bỏ chứng từ. Build Docker và kiểm thử local không thay thế bằng chứng Render hoặc thử trên điện thoại thật.

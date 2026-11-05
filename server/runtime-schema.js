@@ -8,10 +8,11 @@ async function assertRuntimeSchema(pool) {
       AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='products' AND column_name='image_version')
       AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='products' AND column_name='image_content_type')
       AND to_regclass('public.product_images') IS NOT NULL
-      AND to_regclass('public.affiliate_links') IS NOT NULL AS compatible
+      AND to_regclass('public.affiliate_links') IS NOT NULL
+      AND to_regclass('public.offline_operation_receipts') IS NOT NULL AS compatible
   `);
   if (result.rows[0]?.compatible !== true) {
-    throw new Error('Database schema is behind this application. Apply migrations through 0026_affiliate_workspace.sql before deploying.');
+    throw new Error('Database schema is behind this application. Apply migrations through 0027_offline_operations.sql before deploying.');
   }
 }
 

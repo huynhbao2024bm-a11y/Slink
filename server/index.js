@@ -4,7 +4,8 @@ const cookie = require('@fastify/cookie');
 const helmet = require('@fastify/helmet');
 const rateLimit = require('@fastify/rate-limit');
 const staticFiles = require('@fastify/static');
-const { existsSync } = require('node:fs');
+const { existsSync, readFileSync } = require('node:fs');
+const { createHash } = require('node:crypto');
 const path = require('node:path');
 const { ApiError, emailVerificationDisabled, registerAuthRoutes } = require('./auth');
 const { createPool } = require('./db');
@@ -43,6 +44,9 @@ const ASSETS = new Map([
   ['/workspace.css', 'workspace.css'],
   ['/assets/vendor/gsap.min.js', 'assets/vendor/gsap.min.js'],
   ['/app.js', 'app.js'],
+  ['/offline-store.js', 'offline-store.js'],
+  ['/offline-ledger.js', 'offline-ledger.js'],
+  ['/offline-sync.js', 'offline-sync.js'],
   ['/register-sw.js', 'register-sw.js'],
   ['/manifest.webmanifest', 'manifest.webmanifest'],
   ['/sw.js', 'sw.js'],
@@ -52,6 +56,8 @@ const ASSETS = new Map([
   ['/assets/slink-icon-512.png', 'assets/slink-icon-512.png'],
   ['/assets/slink-icon-maskable-512.png', 'assets/slink-icon-maskable-512.png'],
 ]);
+
+const APP_ASSET_VERSION = createHash('sha256').update(Array.from(new Set(ASSETS.values())).map(file => readFileSync(path.join(APP_ROOT, file))).map(content => createHash('sha256').update(content).digest('hex')).join('|')).digest('hex').slice(0, 20);
 
 function trustedProxies(addressesValue, hopsValue) {
   const addresses = (addressesValue || '').split(',').map((item) => item.trim()).filter(Boolean);
@@ -144,7 +150,7 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
   app.addHook('onSend', async (request, reply, payload) => {
     if (ASSETS.has(request.url.split('?')[0])) {
       const pathName = request.url.split('?')[0];
-      reply.header('cache-control', ['/assets/slink-icon.svg', '/assets/slink-icon-180.png', '/assets/slink-icon-192.png', '/assets/slink-icon-512.png', '/assets/slink-icon-maskable-512.png'].includes(pathName)
+      reply.header('cache-control', pathName === '/sw.js' ? 'no-store' : ['/assets/slink-icon.svg', '/assets/slink-icon-180.png', '/assets/slink-icon-192.png', '/assets/slink-icon-512.png', '/assets/slink-icon-maskable-512.png'].includes(pathName)
         ? 'public, max-age=86400'
         : 'no-cache');
     }
@@ -199,7 +205,9 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
   }
 
   for (const [route, fileName] of ASSETS) {
-    app.get(route, async (_request, reply) => reply.sendFile(fileName));
+    if (route === '/sw.js') {
+      app.get(route, async (_request, reply) => reply.header('cache-control', 'no-store').type('application/javascript; charset=utf-8').send(readFileSync(path.join(APP_ROOT, fileName), 'utf8').replace('__SLINK_ASSET_VERSION__', APP_ASSET_VERSION)));
+    } else app.get(route, async (_request, reply) => reply.sendFile(fileName));
   }
 
   app.setNotFoundHandler((request, reply) => {

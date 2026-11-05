@@ -43,6 +43,7 @@
           <span class="workspace-name"></span>
           <div class="topbar-right"><span class="connection-status" id="connection-status" role="status" aria-live="polite" aria-atomic="true"><i></i> Đang kiểm tra kết nối</span><button class="icon-button help-button" aria-label="Trợ giúp" data-action="help">?</button><button class="topbar-avatar" data-action="account-menu" aria-label="Mở menu tài khoản" aria-haspopup="dialog">S</button></div>
         </header>
+        <section id="offline-status" class="offline-status" role="status" aria-live="polite" hidden></section>
         <div id="pending-compatibility-warning" class="auth-message error pending-compatibility-warning" role="alert" aria-live="assertive" hidden>
           <span><strong>Cần đối soát thao tác cũ.</strong> Có bản chờ từ phiên bản trước chưa gắn với tài khoản. Hãy kiểm tra đơn hàng, công nợ, sổ quỹ và tồn kho trên máy chủ trước khi nhập lại.</span>
           <button class="link-button" type="button" data-action="review-legacy-pending">Đã đối soát · xóa bản lưu cũ</button>
@@ -55,6 +56,9 @@
     <section class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-describedby="modal-description" hidden></section>
     <div class="toast-stack" id="toast-stack" aria-live="polite" aria-atomic="true"></div>
     <script src="./assets/vendor/gsap.min.js" defer></script>
+    <script src="./offline-ledger.js" defer></script>
+    <script src="./offline-store.js" defer></script>
+    <script src="./offline-sync.js" defer></script>
     <script src="./app.js" defer></script>
     <script src="./register-sw.js" defer></script>
   </body>
