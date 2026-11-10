@@ -1,7 +1,7 @@
 param([string]$Destination = '', [string]$AppOrigin = 'https://slink-xny3.onrender.com')
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
-if (-not $Destination) { $Destination = Join-Path $projectRoot 'dist/Slink-0.3.2-preview.apk' }
+if (-not $Destination) { $Destination = Join-Path $projectRoot 'dist/Slink-0.3.3-preview.apk' }
 $previousJava = $env:JAVA_HOME
 $previousAndroid = $env:ANDROID_HOME
 try {
