@@ -165,7 +165,8 @@ public class MainActivity extends Activity {
         updater = new AppUpdater(this, this::sendUpdateState);
         updater.check(false);
         Uri incoming = getIntent().getData();
-        web.loadUrl(incoming != null && isAppOrigin(incoming) ? incoming.toString() : BuildConfig.APP_ORIGIN + "/");
+        Uri initial = incoming != null && isAppOrigin(incoming) ? incoming : Uri.parse(BuildConfig.APP_ORIGIN + "/");
+        web.loadUrl(initial.buildUpon().appendQueryParameter("appVersion", String.valueOf(BuildConfig.VERSION_CODE)).build().toString());
     }
 
     private void launchFileChooser() {

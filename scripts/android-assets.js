@@ -20,6 +20,10 @@ for (const file of files) {
   fs.mkdirSync(path.dirname(target), { recursive: true });
   if (file === 'sw.js') {
     fs.writeFileSync(target, fs.readFileSync(path.join(root, file), 'utf8').replace('__SLINK_ASSET_VERSION__', hash));
+  } else if (file === 'index.html') {
+    const html = fs.readFileSync(path.join(root, file), 'utf8').replace(/\b(src|href)="\.\/([^"?]+)"/g, (match, attribute, asset) =>
+      files.includes(asset) ? `${attribute}="./${asset}?appAssets=${hash}"` : match);
+    fs.writeFileSync(target, html);
   } else fs.copyFileSync(path.join(root, file), target);
 }
 const iconDir = path.join(root, 'android/app/src/main/res/mipmap-xxxhdpi');
