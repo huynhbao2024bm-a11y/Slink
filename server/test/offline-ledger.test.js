@@ -33,6 +33,20 @@ test('offline ledger keeps sale, change, receipt, count, expense and shift arith
   assert.equal(responses[1].value.products[0].on_hand, '12', 'canonical snapshot is never mutated');
 });
 
+test('offline pack receipt uses base stock and keeps exact payment before a per-item sale', () => {
+  const receipt = operation('purchase', { warehouseId, items: [{ productId, quantity: '24', unitCostVnd: '4167', pack: { name: 'thùng', size: '24', quantity: '1', unitCostVnd: '100000' } }], amountPaidVnd: '100000', method: 'cash' }, 1);
+  let state = ledger.validateEnqueue(responses, [], receipt, session);
+  assert.equal(state.products.get(ledger.productKey(warehouseId, productId)).on_hand, '36');
+  assert.equal(state.products.get(ledger.productKey(warehouseId, productId)).purchase_pack.size, '24');
+  assert.equal(state.session.expectedCashVnd, '0', 'invoice stays 100000, not 100008');
+  const projected = ledger.projectResponse(responses[1].url, responses[1].value, responses, [receipt], userId);
+  assert.equal(projected.products[0].purchase_pack.size, '24', 'remember pack defaults while acknowledgement is delayed');
+  state = ledger.validateEnqueue(responses, [receipt], operation('sale', sale(), 2), session);
+  assert.equal(state.products.get(ledger.productKey(warehouseId, productId)).on_hand, '35');
+  assert.equal(state.session.expectedCashVnd, '80000');
+  assert.throws(() => ledger.validateEnqueue(responses, [], { ...receipt, payload: { ...receipt.payload, items: [{ ...receipt.payload.items[0], quantity: '23' }] } }, session), error => error.code === 'purchase_pack_invalid');
+});
+
 test('offline validation rejects overselling, price/version conflicts, short cash, wrong account and role', () => {
   const cases = [
     [operation('sale', sale('13'), 1), 'offline_insufficient_stock'],

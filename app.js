@@ -76,6 +76,7 @@
   let auditState = { events: [], total: 0, nextOffset: null, offset: 0, limit: 50, loading: false, error: '', requestNumber: 0, filters: { from: '', to: '', q: '' } };
   let accountSecurityState = { sessions: [], events: [], loading: false, error: '', requestNumber: 0 };
   let productTotal = 0;
+  let purchasePacksSupported = false;
   let productOffset = 0;
   let productNextOffset = null;
   let productLoading = false;
@@ -591,20 +592,17 @@
 
   const offlineDisk = window.SlinkOfflineStore ? window.SlinkOfflineStore({ validateEnqueue: window.SlinkOfflineLedger?.validateEnqueue }) : null;
   const offlineState = { mode: navigator.onLine ? 'online' : 'offline', cachedAt: '', storageIssue: '', preparing: false, pending: 0, conflicts: 0, syncing: false, issue: '' };
+  let cachedBootScope = '';
+  let cachedBootSnapshot = null;
+  let financeTab = 'cashbook';
+  let financeBookOpen = true;
   let offlinePreparation = 0, offlineSender = null, offlineSenderScope = '', offlineRefreshDue = false;
   const offlineOwner = newIdempotencyKey();
   const offlineChannel = window.BroadcastChannel ? new BroadcastChannel('slink-offline') : null;
 
   function activeOfflineScope() { return offlineDisk && authSession?.user?.id && store.id ? offlineDisk.scopeKey(authSession.user.id, store.id) : ''; }
   function updateOfflineStatus() {
-    const node = document.getElementById('offline-status');
-    if (!node) return;
-    node.hidden = !authSession || (offlineState.mode === 'online' && !offlineState.storageIssue && !offlineState.preparing && !offlineState.pending && !offlineState.issue);
-    const status = offlineState.storageIssue || (offlineState.conflicts ? 'Có chứng từ cần kiểm tra. Dữ liệu vẫn được giữ trên máy.' : offlineState.issue || (offlineState.pending ? `${offlineState.pending} việc đã lưu trên máy · ${offlineState.syncing ? 'Đang đồng bộ…' : 'Chờ đồng bộ'}` : offlineState.preparing ? 'Đang chuẩn bị để dùng khi mất mạng…' : 'Không có kết nối · Đang dùng dữ liệu trên máy.'));
-    node.innerHTML = `<span>${esc(status)}${offlineState.mode === 'offline' && offlineState.cachedAt ? ` Cập nhật: ${esc(humanDate(offlineState.cachedAt, true))}.` : ''}</span>${store.id ? `<button type='button' class='link-button' data-action='offline-records'>${offlineState.pending ? 'Xem chứng từ' : 'Chi tiết'}</button>` : ''}`;
     document.body.dataset.connection = offlineState.mode;
-    const connection = document.getElementById('connection-status');
-    if (connection) connection.innerHTML = `<i></i>${offlineState.mode === 'online' ? (offlineState.pending ? 'Có việc chờ đồng bộ' : 'Có kết nối mạng') : 'Đang làm việc trên máy'}`;
   }
   function cacheScope(url) {
     if (!offlineDisk || !authSession?.user?.id) return '';
@@ -638,8 +636,7 @@
   async function collectOfflineResponses(storeId, role, confirmed) {
     const base = '/api/stores/' + encodeURIComponent(storeId), rows = [];
     const take = async url => { const value = await networkRequest(url); rows.push({ url, value, fetchedAt: new Date().toISOString() }); return value; };
-    await take(base + '/settings');
-    const list = await take(base + '/warehouses?view=picker');
+    const [, list] = await Promise.all([take(base + '/settings'), take(base + '/warehouses?view=picker')]);
     const active = list.warehouses.filter(item => item.status === 'active');
     for (const warehouse of active) {
       let offset = 0; const seen = new Set();
@@ -663,7 +660,10 @@
       const orders = await take(base + '/orders?limit=100&offset=0&q=&status=all');
       const ids = new Set((orders.orders || []).slice(0, 30).map(item => item.id));
       (confirmed || []).forEach(row => { if (row.result?.order?.id) ids.add(row.result.order.id); });
-      for (const id of ids) await take(base + '/orders/' + encodeURIComponent(id));
+      const orderIds = Array.from(ids);
+      for (let offset = 0; offset < orderIds.length; offset += 3) {
+        await Promise.all(orderIds.slice(offset, offset + 3).map(id => take(base + '/orders/' + encodeURIComponent(id))));
+      }
     }
     if (['owner', 'manager', 'accountant'].includes(role)) {
       await take(base + '/analytics?days=7'); await take(base + '/analytics?days=30');
@@ -736,16 +736,18 @@
   }
   async function refreshAfterOfflineSync() {
     if (!offlineRefreshDue || !authSession || !modal.hidden || cart.length || checkoutPendingPayload || document.getElementById('drawer-cart')?.classList.contains('open')) return;
+    if (root.querySelector('form[data-dirty="true"]') || (root.contains(document.activeElement) && document.activeElement.matches('input,textarea,select'))) return;
     offlineRefreshDue = false;
     if (page === 'pos' || page === 'products') await loadProductsPage(page === 'pos' ? posSearchTerm : searchTerms.products, 0);
     else if (page === 'inventory') await loadInventoryPage(searchTerms.inventory, inventoryOffset);
     else if (page === 'finance') await loadFinancePage();
     else if (page === 'orders') await loadOrdersPage(searchTerms.orders, 0);
+    else if (page === 'customers') { await loadCustomersPage(searchTerms.customers, customerOffset); if (page === 'customers') render(); }
   }
   function offlineKind(url) {
     const tail = url.replace(/^\/api\/stores\/[^/]+/, '');
     if (tail === '/sales') return 'sale';
-    if (tail === '/purchases') return 'purchase';
+    if (tail === '/purchases' || tail === '/purchase-packs') return 'purchase';
     if (tail === '/stock-adjustments') return 'stock-count';
     if (tail === '/cash-movements') return 'cash';
     if (tail === '/cash-register/open') return 'shift-open';
@@ -761,7 +763,7 @@
       const order = state.localOrders.find(row => row.key === record.key);
       result.order = { ...order, id: 'local:' + record.key, number, changeVnd: order.changeVnd, totalVnd: order.totalVnd };
     }
-    if (record.kind === 'purchase') result.purchase = { id: 'local:' + record.key, number, totalVnd: String(body.items.reduce((sum, item) => sum + window.SlinkOfflineLedger.lineTotal(item.unitCostVnd, window.SlinkOfflineLedger.quantity(item.quantity)), 0n)), itemCount: body.items.length };
+    if (record.kind === 'purchase') result.purchase = { id: 'local:' + record.key, number, totalVnd: String(body.items.reduce((sum, item) => sum + (item.pack ? window.SlinkPurchaseUnits.fromPack(item.pack).lineTotalVnd : window.SlinkOfflineLedger.lineTotal(item.unitCostVnd, window.SlinkOfflineLedger.quantity(item.quantity))), 0n)), itemCount: body.items.length };
     if (record.kind === 'cash') result.movement = { id: 'local:' + record.key, amountVnd: body.amountVnd };
     if (record.kind === 'shift-open') result.session = state.session;
     if (record.kind === 'shift-close') result.session = state.lastClosed;
@@ -824,7 +826,11 @@
   async function runApiRequest(url, options, method) {
     if (method === 'POST' && offlineKind(url) && options?.body?._slinkOfflineVersion === 1 && !(offlineKind(url) === 'sale' && options.body.promotionCode)) return queueOfflineOperation(url, options);
     const scope = method === 'GET' ? cacheScope(url) : '';
-    const snapshot = scope ? await offlineDisk.snapshot(scope) : null;
+    const snapshot = scope ? (scope === cachedBootScope && cachedBootSnapshot ? cachedBootSnapshot : await offlineDisk.snapshot(scope)) : null;
+    if (scope && scope === cachedBootScope && snapshot) {
+      const saved = await cachedOfflineRead(scope, url, snapshot);
+      if (saved) return saved;
+    }
     if (snapshot?.operations.some(row => row.state !== 'acknowledged')) {
       if (method === 'GET') {
         const saved = await cachedOfflineRead(scope, url, snapshot); if (saved) return saved;
@@ -974,6 +980,7 @@
       name: row.name,
       category: row.category,
       unit: row.unit,
+      purchasePack: row.purchase_pack || null,
       price: Number(row.sale_price_vnd),
       cost: Number(row.cost_vnd),
       stock: Number(row.on_hand),
@@ -1019,7 +1026,7 @@
   }
 
   function statusText(status, due) {
-    if (status === 'pending_sync') return 'Chờ đồng bộ';
+    if (status === 'pending_sync') return 'Đã lưu trên máy';
     if (status === 'returned') return 'Đã trả hàng';
     if (status === 'partially_returned') return 'Trả một phần';
     if (status === 'partially_returned') return 'Trả một phần';
@@ -1273,6 +1280,12 @@
   function saveTaskFocusSelection(form) {
     const route = String(new FormData(form).get('taskFocusRoute') || '');
     if (!saveTaskFocusRoute(route)) return toast('Hãy chọn công việc', 'Chọn vai trò phù hợp với quyền tài khoản của bạn.', 'error');
+    if (!modal.contains(form)) {
+      delete form.dataset.dirty;
+      renderShell();
+      toast('Đã lưu màn hình mở đầu', 'Lần mở tiếp theo sẽ vào ' + (taskFocusOptions().find(item => item.route === route)?.label || 'màn hình đã chọn') + '.');
+      return;
+    }
     closeModal(true);
     renderShell();
     routeTo(route);
@@ -1561,8 +1574,8 @@
       body = `<form class='auth-form' data-auth-form='invite-register'><div class='form-field'><label class='input-label' for='auth-name'>Tên của bạn</label><input class='input' id='auth-name' name='displayName' autocomplete='name' required minlength='2' maxlength='120'/></div><div class='form-field'><label class='input-label' for='auth-email'>Email được mời</label><input class='input' id='auth-email' name='email' type='email' value='${esc(invitationInfo ? invitationInfo.email : '')}' readonly/></div>${authPasswordField('auth-password', 'password', 'Mật khẩu (tối thiểu 12 ký tự)', 'new-password')}${authPasswordField('auth-password-confirm', 'passwordConfirm', 'Nhập lại mật khẩu', 'new-password', 'auth-password')}<button class='btn btn-primary auth-submit' type='submit'>Tạo tài khoản và tham gia</button></form><button class='auth-switch' type='button' data-action='auth-mode' data-mode='invite-login'>Đã có tài khoản? Đăng nhập</button>`;
     } else if (authMode === 'register') {
       title = 'Bắt đầu với Slink';
-      subtitle = 'Chọn công việc để bắt đầu.';
-      body = `<form class='auth-form' data-auth-form='register'><label class='form-field'><span class='input-label'>Bạn muốn làm gì?</span><select class='input' name='workspaceMode' id='register-workspace'><option value='shop'>Bán hàng — Chủ shop</option><option value='affiliate'>Làm Affiliate — Chia sẻ link nhận hoa hồng</option></select></label><div class='form-field'><label class='input-label' for='auth-name'>Tên của bạn</label><input class='input' id='auth-name' name='displayName' autocomplete='name' required minlength='2' maxlength='120'/></div><div class='form-field' data-shop-registration><label class='input-label' for='auth-store'>Tên cửa hàng</label><input class='input' id='auth-store' name='storeName' autocomplete='organization' required minlength='2' maxlength='160'/></div><div class='form-field'><label class='input-label' for='auth-email'>Email</label><input class='input' id='auth-email' name='email' type='email' autocomplete='email' required maxlength='254'/></div>${authPasswordField('auth-password', 'password', 'Mật khẩu (tối thiểu 12 ký tự)', 'new-password')}${authPasswordField('auth-password-confirm', 'passwordConfirm', 'Nhập lại mật khẩu', 'new-password', 'auth-password')}<button class='btn btn-primary auth-submit' type='submit'>Tạo tài khoản</button></form><button class='auth-switch' type='button' data-action='auth-mode' data-mode='login'>Đã có tài khoản? Đăng nhập</button>`;
+      subtitle = 'Thông tin của bạn và cửa hàng.';
+      body = `<form class='auth-form' data-auth-form='register'><input type='hidden' name='workspaceMode' value='shop'/><div class='form-field'><label class='input-label' for='auth-name'>Tên của bạn</label><input class='input' id='auth-name' name='displayName' autocomplete='name' required minlength='2' maxlength='120'/></div><div class='form-field' data-shop-registration><label class='input-label' for='auth-store'>Tên cửa hàng</label><input class='input' id='auth-store' name='storeName' autocomplete='organization' required minlength='2' maxlength='160'/></div><div class='form-field'><label class='input-label' for='auth-email'>Email</label><input class='input' id='auth-email' name='email' type='email' autocomplete='email' required maxlength='254'/></div>${authPasswordField('auth-password', 'password', 'Mật khẩu (tối thiểu 12 ký tự)', 'new-password')}${authPasswordField('auth-password-confirm', 'passwordConfirm', 'Nhập lại mật khẩu', 'new-password', 'auth-password')}<button class='btn btn-primary auth-submit' type='submit'>Tạo tài khoản</button></form><button class='auth-switch' type='button' data-action='auth-mode' data-mode='login'>Đã có tài khoản? Đăng nhập</button>`;
     } else if (authMode === 'resend') {
       title = 'Gửi lại email xác nhận';
       subtitle = 'Nhập email đã dùng khi đăng ký Slink.';
@@ -1690,7 +1703,15 @@
 
   async function enterStore(session, preferredStoreId) {
     cartDraftReady = '';
-    if (session?.user?.workspaceMode === 'affiliate' && !preferredStoreId) return enterAffiliate(session);
+    if (session?.user?.workspaceMode === 'affiliate' && !session.stores?.length) {
+      authSession = { user: session.user, stores: [] };
+      store = emptyStore();
+      store.role = 'affiliate';
+      page = 'workspace';
+      authRoot.hidden = true; appShell.hidden = false;
+      render();
+      return;
+    }
     if (!session || !session.stores || !session.stores.length) {
       showSignedOut('Tài khoản chưa có cửa hàng đang hoạt động. Hãy tạo tài khoản cửa hàng mới hoặc liên hệ quản lý.', 'error');
       return;
@@ -1760,7 +1781,7 @@
     warehouseTransfers = [];
     selectedWarehouseId = '';
     warehouseError = '';
-    page = store.role === 'stockkeeper' ? 'inventory' : store.role === 'accountant' ? 'finance' : store.businessProfile === 'online' && canAccessRoute('channels') ? 'channels' : 'pos';
+    page = taskFocusRoute || (store.role === 'stockkeeper' ? 'inventory' : store.role === 'accountant' ? 'finance' : store.businessProfile === 'online' && canAccessRoute('channels') ? 'channels' : 'pos');
     authRoot.hidden = true;
     appShell.hidden = false;
     productLoading = page === 'pos';
@@ -1795,7 +1816,60 @@
     else scheduleInitialGuidedTour();
     await offlineRowsChanged(false);
     startOfflineSync();
-    if (offlineState.mode === 'online') window.setTimeout(prepareOfflineData, 500);
+    if (offlineState.mode === 'online' && !cachedBootScope) window.setTimeout(prepareOfflineData, 3000);
+  }
+
+  async function restoreSavedWorkspace() {
+    if (!offlineDisk) return false;
+    try {
+      const userId = await offlineDisk.getMeta('active-user');
+      const session = userId ? await offlineDisk.getMeta('session|' + userId) : null;
+      if (!session?.user?.id || !session.stores?.length) return false;
+      let selected = '';
+      try { selected = sessionStorage.getItem('slink-current-store:' + userId) || ''; } catch (_) { /* Use the first authorized store. */ }
+      const activeStore = session.stores.find(item => item.id === selected) || session.stores[0];
+      const scope = offlineDisk.scopeKey(userId, activeStore.id);
+      const snapshot = await offlineDisk.snapshot(scope);
+      if (!snapshot.responses.length) return false;
+      cachedBootScope = scope;
+      cachedBootSnapshot = snapshot;
+      offlineState.mode = navigator.onLine ? 'cached' : 'offline';
+      offlineState.cachedAt = session.verifiedAt;
+      try { await enterStore(session); }
+      finally { cachedBootScope = ''; cachedBootSnapshot = null; }
+      verifySavedWorkspace(authSession).catch(function (error) {
+        if (authSession) { offlineState.issue = error.message; updateOfflineStatus(); }
+      });
+      return true;
+    } catch (error) {
+      cachedBootScope = ''; cachedBootSnapshot = null;
+      return false;
+    }
+  }
+
+  async function verifySavedWorkspace(session) {
+    if (!navigator.onLine || !session) return;
+    try {
+      const current = await networkRequest('/api/auth/me');
+      if (authSession !== session) return;
+      const membership = current.stores.find(item => item.id === store.id);
+      if (current.user.id !== session.user.id || !membership || membership.role !== store.role) {
+        showSignedOut('Quyền hoặc tài khoản đã thay đổi. Đăng nhập lại để tiếp tục.', 'error');
+        return;
+      }
+      await rememberOfflineSession(current);
+      if (authSession !== session) return;
+      offlineState.mode = 'online'; updateOfflineStatus();
+      await startOfflineSync();
+      if (authSession !== session) return;
+      offlineRefreshDue = true;
+      await refreshAfterOfflineSync();
+      if (authSession === session) window.setTimeout(prepareOfflineData, 3000);
+    } catch (error) {
+      if (authSession !== session) return;
+      if (error.status === 401) showSignedOut('Đăng nhập lại để tiếp tục. Các việc đã lưu trên máy vẫn được giữ.', 'error');
+      else { offlineState.mode = 'offline'; updateOfflineStatus(); }
+    }
   }
 
   const deferredProfiles = new Set();
@@ -1833,6 +1907,7 @@
       if (!result.products.length && offset > 0) return loadProductsPage(query, Math.max(0, offset - 100));
       store.products = result.products.map(mapProduct);
       productTotal = result.total;
+      purchasePacksSupported = result.purchasePacksSupported === true;
       productOffset = offset || 0;
       productNextOffset = result.nextOffset;
       productLoading = false;
@@ -1865,6 +1940,7 @@
       store.products = result.products.map(mapProduct);
       store.movements = result.movements.map(function (movement) { return { productId: movement.productId, type: movement.type, delta: Number(movement.delta), reason: movement.reason, createdAt: movement.createdAt }; });
       inventorySummary = result.summary;
+      purchasePacksSupported = result.purchasePacksSupported === true;
       inventoryTotal = result.total;
       inventoryOffset = offset || 0;
       inventoryNextOffset = result.nextOffset;
@@ -2140,7 +2216,8 @@
   }
 
   function navHtml(item, mobile) {
-    const active = (item.id === 'workspace' && ['dashboard', 'finance', 'reports', 'customers', 'channels', 'staff', 'settings', 'audit'].includes(page) && !['affiliate', 'cashier', 'accountant'].includes(store.role) && !(page === 'channels' && store.businessProfile === 'online')) || (item.id === 'products' && page === 'inventory' && store.role !== 'stockkeeper') || page === item.id || (item.id === 'products' && page === 'product-detail') || (item.id === 'orders' && page === 'order-detail');
+    const financeHome = taskFocusRoute === 'finance' || store.role === 'accountant';
+    const active = (item.id === 'workspace' && ['dashboard', 'finance', 'reports', 'customers', 'channels', 'staff', 'settings', 'audit'].includes(page) && !['affiliate', 'cashier', 'accountant'].includes(store.role) && !(financeHome && ['finance', 'customers'].includes(page)) && !(page === 'channels' && store.businessProfile === 'online')) || (item.id === 'products' && page === 'inventory' && store.role !== 'stockkeeper') || page === item.id || (item.id === 'products' && page === 'product-detail') || (item.id === 'orders' && page === 'order-detail');
     if (mobile) {
       const mobileLabels = { dashboard: 'Hôm nay', pos: 'Bán hàng', products: 'Hàng hóa', orders: 'Đơn hàng', inventory: 'Kho hàng', channels: 'Đơn online', reports: 'Báo cáo', staff: 'Nhân viên', finance: 'Thu chi', customers: 'Khách hàng', settings: 'Cài đặt' };
       const label = mobileLabels[item.id] || item.label;
@@ -2181,8 +2258,9 @@
     document.body.dataset.page = page;
     updateOfflineStatus();
     document.body.dataset.role = store.role;
-    const home = store.role === 'affiliate' ? 'affiliate' : store.role === 'stockkeeper' ? 'inventory' : store.role === 'accountant' ? 'finance' : store.businessProfile === 'online' && canAccessRoute('channels') ? 'channels' : 'pos';
-    const ids = store.role === 'affiliate' ? ['affiliate', 'workspace'] : store.role === 'cashier' ? ['pos', 'orders', 'workspace'] : store.role === 'accountant' ? ['finance', 'orders', 'workspace'] : [home, 'products', 'workspace'];
+    const financeFirst = taskFocusRoute === 'finance' || store.role === 'accountant';
+    const home = store.role === 'affiliate' ? 'workspace' : taskFocusRoute || (store.role === 'stockkeeper' ? 'inventory' : store.businessProfile === 'online' && canAccessRoute('channels') ? 'channels' : 'pos');
+    const ids = store.role === 'affiliate' ? ['workspace'] : store.role === 'cashier' ? ['pos', 'orders', 'workspace'] : financeFirst ? ['finance', 'customers', 'workspace'] : [home, 'products', 'workspace'];
     const navIds = Array.from(new Set(ids)).filter(canAccessRoute);
     const visibleNav = navIds.map(function (id) { const item = navItems.find(function (n) { return n.id === id; }); return { ...item, label: id === 'workspace' && ['affiliate', 'cashier'].includes(store.role) ? 'Tài khoản' : id === 'channels' ? 'Đơn online' : item.label }; });
     document.getElementById('primary-nav').innerHTML = visibleNav.map(function (item) { return navHtml(item, false); }).join('');
@@ -2515,8 +2593,8 @@
     const savedSegmentOptions = [`<option value=''>Bộ lọc đã lưu…</option>`].concat(customerSavedSegments.map(function (segment) {
       return `<option value='${esc(segment.id)}' ${selectedCustomerSavedSegmentId === segment.id ? 'selected' : ''}>${esc(segment.name)}</option>`;
     })).join('');
-    return pageHeading('Khách hàng', 'Thông tin mua hàng, liên hệ và công nợ trên cùng một nơi.', (canImport ? `<button class='btn btn-secondary' data-action='import-customers'>Nhập CSV</button>` : '') + (canEdit ? `<button class='btn btn-primary' data-action='new-customer'><span class='btn-icon'>＋</span> Thêm khách hàng</button>` : '') + (canExportData() ? `<button class='btn btn-secondary' data-action='open-export'>Xuất CSV</button>` : '')) +
-      `<div class='customer-saved-tools'><label class='customer-saved-select-wrap'><span>Bộ lọc đã lưu</span><select class='input' id='customer-saved-segment-select' aria-label='Chọn bộ lọc khách hàng đã lưu'>${savedSegmentOptions}</select></label>${canManageSegments ? `<button class='btn btn-secondary' data-action='save-customer-segment' ${hasSavedCriteria ? '' : 'disabled'}>${selectedSaved ? 'Cập nhật bộ lọc' : 'Lưu bộ lọc hiện tại'}</button>${selectedSaved ? `<button class='btn btn-secondary' data-action='delete-customer-segment' data-id='${esc(selectedSaved.id)}'>Xóa bộ lọc</button>` : ''}` : ''}<span class='customer-saved-hint'>Lưu cách lọc này để cửa hàng dùng lại.</span></div><div class='toolbar'><div class='toolbar-left customer-filters'><div class='search-wrap'><span class='search-symbol'>⌕</span><input class='input' id='customer-search' type='search' placeholder='Tìm tên hoặc số điện thoại…' value='${esc(searchTerms.customers)}' aria-label='Tìm khách hàng'></div><input class='input customer-tag-filter' id='customer-tag-filter' type='search' maxlength='32' placeholder='Lọc theo nhãn…' value='${esc(customerTagFilter)}' aria-label='Lọc khách hàng theo nhãn'/><select class='input customer-segment-filter' id='customer-segment-filter' aria-label='Phân khúc khách hàng'>${segmentOptions}</select><label class='customer-spend-filter'><span>Chi tiêu từ (VND)</span><input class='input customer-min-spent' id='customer-min-spent' type='number' min='0' max='9223372036854775807' step='1' inputmode='numeric' placeholder='Không giới hạn' value='${esc(customerMinSpentVnd)}' aria-describedby='customer-spend-error'/><small id='customer-spend-error' class='customer-spend-error' hidden></small></label><span class='result-count'>${number(customerTotal)} hồ sơ</span></div><p class='customer-filter-hint'>Phân khúc tính từ đơn chưa hủy, công nợ hiện tại và chi tiêu sau hoàn tiền.</p></div><section class='panel'><div class='table-wrap'><table class='data-table'><thead><tr><th>Khách hàng</th><th>Lượt mua</th><th class='text-right'>Tổng chi tiêu</th><th class='text-right'>Công nợ / dư</th><th></th></tr></thead><tbody>${customerRows(customers) || `<tr><td colspan='5'><div class='empty-state'><strong>${hasCustomerFilters ? 'Không tìm thấy khách hàng phù hợp' : 'Chưa có khách hàng'}</strong><span>${customerTagFilter ? `Không có khách hàng mang nhãn “${esc(customerTagFilter)}”.` : hasCustomerFilters ? 'Thử điều chỉnh từ khóa hoặc bộ lọc khách hàng.' : 'Thêm hồ sơ khách mới tại quầy hoặc từ đây.'}</span></div></td></tr>`}</tbody></table></div><div class='pagination'><span>Hiển thị ${customers.length} trên ${number(customerTotal)} khách</span><span class='pagination-actions'>${customerOffset > 0 ? `<button class='page-button' data-action='customers-page' data-offset='${Math.max(0, customerOffset - 100)}'>‹</button>` : ''}<span class='page-button current'>${Math.floor(customerOffset / 100) + 1}</span>${customerNextOffset !== null ? `<button class='page-button' data-action='customers-page' data-offset='${customerNextOffset}'>›</button>` : ''}</span></div></section>`;
+    return pageHeading('Khách hàng', '', (canImport ? `<button class='btn btn-secondary' data-action='import-customers'>Nhập CSV</button>` : '') + (canEdit ? `<button class='btn btn-primary' data-action='new-customer'><span class='btn-icon'>＋</span> Thêm khách hàng</button>` : '') + (canExportData() ? `<button class='btn btn-secondary' data-action='open-export'>Xuất CSV</button>` : '')) +
+      `<nav class='workspace-tabs' aria-label='Danh sách khách hàng'><button type='button' data-action='customer-quick-filter' data-segment='' ${!customerSegmentFilter ? `aria-current='page'` : ''}>Tất cả</button><button type='button' data-action='customer-quick-filter' data-segment='owing' ${customerSegmentFilter === 'owing' ? `aria-current='page'` : ''}>Khách còn nợ</button></nav><div class='customer-saved-tools'><label class='customer-saved-select-wrap'><span>Bộ lọc đã lưu</span><select class='input' id='customer-saved-segment-select' aria-label='Chọn bộ lọc khách hàng đã lưu'>${savedSegmentOptions}</select></label>${canManageSegments ? `<button class='btn btn-secondary' data-action='save-customer-segment' ${hasSavedCriteria ? '' : 'disabled'}>${selectedSaved ? 'Cập nhật bộ lọc' : 'Lưu bộ lọc hiện tại'}</button>${selectedSaved ? `<button class='btn btn-secondary' data-action='delete-customer-segment' data-id='${esc(selectedSaved.id)}'>Xóa bộ lọc</button>` : ''}` : ''}<span class='customer-saved-hint'>Lưu cách lọc này để cửa hàng dùng lại.</span></div><div class='toolbar'><div class='toolbar-left customer-filters'><div class='search-wrap'><span class='search-symbol'>⌕</span><input class='input' id='customer-search' type='search' placeholder='Tìm tên hoặc số điện thoại…' value='${esc(searchTerms.customers)}' aria-label='Tìm khách hàng'></div><input class='input customer-tag-filter' id='customer-tag-filter' type='search' maxlength='32' placeholder='Lọc theo nhãn…' value='${esc(customerTagFilter)}' aria-label='Lọc khách hàng theo nhãn'/><select class='input customer-segment-filter' id='customer-segment-filter' aria-label='Phân khúc khách hàng'>${segmentOptions}</select><label class='customer-spend-filter'><span>Chi tiêu từ (VND)</span><input class='input customer-min-spent' id='customer-min-spent' type='number' min='0' max='9223372036854775807' step='1' inputmode='numeric' placeholder='Không giới hạn' value='${esc(customerMinSpentVnd)}' aria-describedby='customer-spend-error'/><small id='customer-spend-error' class='customer-spend-error' hidden></small></label><span class='result-count'>${number(customerTotal)} hồ sơ</span></div><p class='customer-filter-hint'>Phân khúc tính từ đơn chưa hủy, công nợ hiện tại và chi tiêu sau hoàn tiền.</p></div><section class='panel'><div class='table-wrap'><table class='data-table'><thead><tr><th>Khách hàng</th><th>Lượt mua</th><th class='text-right'>Tổng chi tiêu</th><th class='text-right'>Công nợ / dư</th><th></th></tr></thead><tbody>${customerRows(customers) || `<tr><td colspan='5'><div class='empty-state'><strong>${hasCustomerFilters ? 'Không tìm thấy khách hàng phù hợp' : 'Chưa có khách hàng'}</strong><span>${customerTagFilter ? `Không có khách hàng mang nhãn “${esc(customerTagFilter)}”.` : hasCustomerFilters ? 'Thử điều chỉnh từ khóa hoặc bộ lọc khách hàng.' : 'Thêm hồ sơ khách mới tại quầy hoặc từ đây.'}</span></div></td></tr>`}</tbody></table></div><div class='pagination'><span>Hiển thị ${customers.length} trên ${number(customerTotal)} khách</span><span class='pagination-actions'>${customerOffset > 0 ? `<button class='page-button' data-action='customers-page' data-offset='${Math.max(0, customerOffset - 100)}'>‹</button>` : ''}<span class='page-button current'>${Math.floor(customerOffset / 100) + 1}</span>${customerNextOffset !== null ? `<button class='page-button' data-action='customers-page' data-offset='${customerNextOffset}'>›</button>` : ''}</span></div></section>`;
   }
 
   function movementLabel(movement) {
@@ -2823,15 +2901,18 @@
     }
     const actions = isStockkeeper
       ? `${canManageSuppliers ? `<button class='btn btn-secondary' data-action='new-supplier'>＋ Nhà cung cấp</button>` : ''}${canReceivePurchases ? `<button class='btn btn-secondary' data-action='new-purchase-order'>＋ Đặt hàng</button><button class='btn btn-primary' data-action='receive-stock'>＋ Nhập hàng</button>` : ''}`
-      : `${canRecord ? `<button class='btn btn-primary' data-action='new-expense'><span class='btn-icon'>＋</span> Ghi thu / chi</button>` : ''}${canReceivePurchases ? `<button class='btn btn-secondary' data-action='new-purchase-order'>＋ Đặt hàng</button>` : ''}${canExportData() ? `<button class='btn btn-secondary' data-action='open-export'>Xuất CSV</button>` : ''}`;
+      : `${canRecord ? `<button class='btn btn-primary' data-action='new-expense' data-direction='in'>＋ Ghi thu</button><button class='btn btn-secondary' data-action='new-expense' data-direction='out'>− Ghi chi</button>` : ''}${canReceivePurchases ? `<button class='btn btn-secondary' data-action='new-purchase-order'>＋ Đặt hàng</button>` : ''}${canExportData() ? `<button class='btn btn-secondary' data-action='open-export'>Xuất CSV</button>` : ''}`;
     const heading = pageHeading(isStockkeeper ? 'Nhập hàng' : 'Thu chi', isStockkeeper ? 'Quản lý nhà cung cấp và theo dõi các phiếu hàng đã nhận.' : store.role === 'cashier' ? 'Theo dõi giao dịch trong ca tiền mặt của bạn.' : 'Theo dõi tiền đã thu, đã chi và các khoản còn phải thu.', actions);
-    const metrics = canViewFullFinance ? `<div class='stat-grid finance-today'><article class='stat-card'><div class='stat-label'>${offlineState.mode === 'offline' || offlineState.pending ? 'Thu' + (financeSummary.periodDate ? ' ' + financeSummary.periodDate : '') + ' · trên máy' : 'Đã thu hôm nay'}</div><div class='stat-value'>${moneyVndText(financeSummary.todayInVnd)}</div></article><article class='stat-card'><div class='stat-label'>${offlineState.mode === 'offline' || offlineState.pending ? 'Chi' + (financeSummary.periodDate ? ' ' + financeSummary.periodDate : '') + ' · trên máy' : 'Đã chi hôm nay'}</div><div class='stat-value'>${moneyVndText(financeSummary.todayOutVnd)}</div></article></div>` : '';
+    const metrics = canViewFullFinance ? `<div class='stat-grid finance-today'><article class='stat-card'><div class='stat-label'>${financeSummary.periodDate || offlineState.mode !== 'online' || offlineState.pending ? 'Thu' + (financeSummary.periodDate ? ' ' + financeSummary.periodDate : '') + ' · trên máy' : 'Đã thu hôm nay'}</div><div class='stat-value'>${moneyVndText(financeSummary.todayInVnd)}</div></article><article class='stat-card'><div class='stat-label'>${financeSummary.periodDate || offlineState.mode !== 'online' || offlineState.pending ? 'Chi' + (financeSummary.periodDate ? ' ' + financeSummary.periodDate : '') + ' · trên máy' : 'Đã chi hôm nay'}</div><div class='stat-value'>${moneyVndText(financeSummary.todayOutVnd)}</div></article></div>` : '';
     const cashbookPanel = canViewCashbook ? `<section class='panel' data-tour-target='finance-register'><div class='panel-header'><div><h2>Sổ thu chi</h2><p>${store.role === 'cashier' ? 'Giao dịch thuộc ca đang mở hoặc ca do bạn mở' : '100 giao dịch gần nhất'}</p></div></div><div class='table-wrap'><table class='data-table'><thead><tr><th>Khoản mục</th><th>Thời gian</th><th>Người ghi nhận / ca</th><th>Phương thức</th><th class='text-right'>Số tiền</th></tr></thead><tbody>${cashRows(store.cashbook) || `<tr><td colspan='5'><div class='empty-state'><strong>${financeLoading ? 'Đang tải sổ thu chi' : 'Chưa có giao dịch'}</strong></div></td></tr>`}</tbody></table></div><div class='pagination'><span>Hiển thị ${store.cashbook.length} trên ${number(financeMovementTotal)} giao dịch</span></div></section>` : '';
-    const customerPanel = canViewFullFinance ? `<section class='panel'><div class='panel-header'><h2>Khách hàng còn nợ</h2></div><div class='activity-list'>${financeTopCustomers.map(function (customer) { return `<div class='activity-item'><span class='avatar'>${esc(initials(customer.name))}</span><span class='activity-text'><strong>${esc(customer.name)}</strong><small>${esc(customer.phone)}</small></span><span class='activity-amount'>${moneyVndText(customer.debt)}</span></div>`; }).join('') || `<div class='empty-state'><strong>Không có công nợ khách hàng</strong></div>`}</div></section>` : '';
+    const customerPanel = canViewFullFinance ? `<section class='panel'><div class='panel-header'><h2>Khách hàng còn nợ</h2></div><div class='activity-list'>${financeTopCustomers.map(function (customer) { return `<div class='activity-item'><span class='avatar'>${esc(initials(customer.name))}</span><span class='activity-text'><strong>${esc(customer.name)}</strong><small>${esc(customer.phone)}</small></span><span class='activity-amount'>${moneyVndText(customer.debt)}</span><button class='link-button' data-action='collect-customer-payment' data-id='${esc(customer.id)}'>Thu tiền</button></div>`; }).join('') || `<div class='empty-state'><strong>Không có công nợ khách hàng</strong></div>`}</div></section>` : '';
     const supplierPanel = store.role === 'cashier' ? '' : `<section class='panel'><div class='panel-header'><h2>Nhà cung cấp</h2><span>${canManageSuppliers ? `<button class='link-button' data-action='new-supplier'>＋ Thêm</button>` : ''}${canReceivePurchases ? `<button class='link-button' data-action='receive-stock'>＋ Nhập hàng</button>` : ''}</span></div><div class='activity-list'>${store.suppliers.map(function (supplier) { return `<div class='activity-item'><span class='activity-mark'>${icon('truck', 14)}</span><span class='activity-text'><strong>${esc(supplier.name)}</strong><small>${canViewFullFinance ? supplier.debt ? 'Còn phải trả' : 'Không còn nợ' : 'Dùng trong phiếu nhập hàng'}</small></span>${canViewFullFinance ? `<span class='activity-amount'>${money(supplier.debt)}</span>${canRecord && supplier.debt > 0 ? `<button class='link-button' data-action='supplier-payment' data-id='${supplier.id}'>Thanh toán</button>` : ''}` : ''}</div>`; }).join('') || `<div class='empty-state'><strong>Chưa có nhà cung cấp</strong><span>${isStockkeeper ? 'Tạo hồ sơ nhà cung cấp hoặc nhập hàng để bắt đầu.' : 'Nhập hàng để theo dõi công nợ.'}</span></div>`}</div></section>`;
-    const sidePanels = [customerPanel ? `<details class='work-details'><summary>Khách còn nợ · ${moneyVndText(financeSummary.customerDebtVnd)}</summary>${customerPanel}</details>` : '', supplierPanel ? `<details class='work-details'><summary>Nhà cung cấp và khoản cần trả</summary>${supplierPanel}</details>` : ''].filter(Boolean).join('');
-    const layout = cashbookPanel || sidePanels ? `<div class='finance-layout'>${cashbookPanel}${sidePanels ? `<div class='stack'>${sidePanels}</div>` : ''}</div>` : '';
-    return `${heading}${metrics}${cashSessionPanel}${financeError ? `<div class='notice-item'><span>${icon('alert', 18)}</span><span><strong>Chưa tải đủ dữ liệu</strong><small>${esc(financeError)}</small></span></div>` : ''}${layout}`;
+    const tabs = canViewFullFinance ? `<nav class='workspace-tabs finance-tabs' aria-label='Sổ tiền và công nợ'>${[['cashbook', 'Thu chi'], ['receivables', 'Khách còn nợ'], ['payables', 'Cần trả']].map(([value, label]) => `<button type='button' data-action='finance-tab' data-tab='${value}' ${financeTab === value ? `aria-current='page'` : ''}>${label}</button>`).join('')}</nav>` : '';
+    const cashbook = cashbookPanel ? `<details class='finance-cashbook' data-finance-book ${financeBookOpen ? 'open' : ''}><summary>Sổ thu chi <span>${number(store.cashbook.length)} giao dịch gần nhất</span></summary>${cashbookPanel}</details>` : '';
+    const payable = `${supplierPanel}${canViewFullFinance ? `<p class='finance-balance'>Tổng cần trả <strong>${moneyVndText(financeSummary.supplierPayableVnd)}</strong></p>` : ''}`;
+    const receivable = `${customerPanel}<div class='finance-balance'><span>Tổng khách còn nợ <strong>${moneyVndText(financeSummary.customerDebtVnd)}</strong></span><button type='button' class='link-button' data-action='view-customer-debt'>Xem tất cả</button></div>`;
+    const content = isStockkeeper ? payable : financeTab === 'receivables' && canViewFullFinance ? receivable : financeTab === 'payables' && canViewFullFinance ? payable : `${metrics}${cashbook}<details class='work-details'><summary>Tiền mặt trong quầy</summary>${cashSessionPanel}</details>`;
+    return `${heading}${tabs}${financeError ? `<div class='notice-item' role='status'><span><strong>Chưa tải đủ dữ liệu</strong><small>${esc(financeError)}</small></span><button class='link-button' data-action='reload-finance'>Thử lại</button></div>` : ''}${content}`;
   }
 
   function purchaseHistoryPanel() {
@@ -3151,18 +3232,32 @@
     const purchase = purchaseHistory.find(function (item) { return item.id === id; });
     if (!purchase) return;
     const rows = purchase.items.map(function (item) {
-      return `<tr><td><span class='product-name-stack'><strong>${esc(item.productName)}</strong><small>${esc(item.sku)}</small></span></td><td>${number(Number(item.quantity))} ${esc(item.unit)}</td><td class='text-right'>${money(Number(item.unitCostVnd))}</td><td class='text-right'><strong>${money(Number(item.totalVnd))}</strong></td></tr>`;
+      return `<tr><td><span class='product-name-stack'><strong>${esc(item.productName)}</strong><small>${esc(item.sku)}</small>${item.pack ? `<small>${number(Number(item.pack.quantity))} ${esc(item.pack.name)} × ${number(Number(item.pack.size))} ${esc(item.unit)} · ${moneyVndText(item.pack.unitCostVnd)} / ${esc(item.pack.name)}</small>` : ''}</span></td><td>${number(Number(item.quantity))} ${esc(item.unit)}</td><td class='text-right'>${item.pack ? '≈ ' : ''}${moneyVndText(item.unitCostVnd)}</td><td class='text-right'><strong>${moneyVndText(item.totalVnd)}</strong></td></tr>`;
     }).join('');
     const body = `<div class='summary-banner'><div><strong>${esc(purchase.supplierName || 'Không chỉ định nhà cung cấp')}</strong><small>${humanDate(purchase.receivedAt, true)} · ${esc(purchase.status === 'received' ? 'Đã nhận hàng' : purchase.status)}${purchase.purchaseOrderNumber ? ` · đơn ${esc(purchase.purchaseOrderNumber)}` : ''}</small></div><strong>${money(purchase.total)}</strong></div><div class='table-wrap' style='margin-top:14px'><table class='data-table'><thead><tr><th>Sản phẩm</th><th>Số lượng</th><th class='text-right'>Giá nhập</th><th class='text-right'>Thành tiền</th></tr></thead><tbody>${rows}</tbody></table></div>${purchase.note ? `<div class='modal-note'>${esc(purchase.note)}</div>` : ''}`;
     showModal(`Phiếu nhập ${purchase.number}`, 'Chi tiết hàng đã nhận và giá nhập được ghi vào sổ.', body, `<button class='btn btn-secondary' data-action='close-modal'>Đóng</button>`, true);
   }
 
   function renderSettings() {
-    if (['cashier', 'affiliate'].includes(store.role)) return pageHeading('Tài khoản của bạn', '', '') + renderChangePasswordForm() + renderAccountSecurity();
+    if (['cashier', 'affiliate'].includes(store.role)) return pageHeading('Cài đặt', '', '') + renderAccountSummary() + renderChangePasswordForm() + renderAccountSecurity() + renderDeviceSettings();
     const canEdit = ['owner', 'manager'].includes(store.role);
     const disabled = canEdit ? '' : 'disabled';
-    return pageHeading('Cài đặt', '', '') +
+    return pageHeading('Cài đặt', '', '') + renderAccountSummary() + renderDeviceSettings() +
       `<section class='panel settings-panel'><h2>Thông tin cửa hàng</h2><p>Tên cửa hàng, số điện thoại, địa chỉ và lời chào trên biên nhận.</p><form id='entity-form' data-form='settings' data-version='${store.settings.version || 1}'><div class='form-grid'><div class='form-field full'><label class='input-label' for='setting-store-name'>Tên cửa hàng *</label><input class='input' id='setting-store-name' name='storeName' value='${esc(store.settings.storeName)}' required minlength='2' maxlength='160' ${disabled}/></div><div class='form-field'><label class='input-label' for='setting-phone'>Số điện thoại</label><input class='input' id='setting-phone' name='phone' value='${esc(store.settings.phone)}' inputmode='tel' maxlength='40' ${disabled}/></div><div class='form-field full'><label class='input-label' for='setting-address'>Địa chỉ</label><input class='input' id='setting-address' name='address' value='${esc(store.settings.address)}' maxlength='300' ${disabled}/></div><div class='form-field full'><label class='input-label' for='setting-footer'>Lời chào cuối biên nhận</label><input class='input' id='setting-footer' name='receiptFooter' value='${esc(store.settings.receiptFooter)}' maxlength='240' placeholder='Cảm ơn quý khách' ${disabled}/></div></div>${canEdit ? `<div class='modal-footer' style='padding:17px 0 0;margin-top:12px'><button class='btn btn-primary' type='submit'>Lưu thay đổi</button></div>` : `<div class='install-hint'>Chỉ chủ cửa hàng và quản lý mới được sửa thông tin.</div>`}</form></section>${renderBusinessProfileSettings(canEdit)}${renderChangePasswordForm()}${renderAccountSecurity()}${canAccessRoute('audit') ? `<section class='panel settings-panel'><div class='panel-header'><div><h2>Nhật ký hoạt động</h2><p>Xem các thao tác nghiệp vụ đã được ghi nhận, người thực hiện và lý do.</p></div><button class='btn btn-secondary' data-route='audit'>Mở nhật ký</button></div></section>` : ''}`;
+  }
+
+  function renderAccountSummary() {
+    const user = authSession.user;
+    return `<section class='panel settings-panel'><h2>Thông tin tài khoản</h2><dl class='settings-identity'><div><dt>Tên</dt><dd>${esc(user.displayName)}</dd></div><div><dt>Email đăng nhập</dt><dd>${esc(user.email)}</dd></div><div><dt>Vai trò</dt><dd>${esc(staffRoleName(store.role))}</dd></div></dl><div class='settings-actions'>${authSession.stores.length > 1 ? `<button class='btn btn-secondary' type='button' data-action='store-picker'>Đổi cửa hàng</button>` : ''}<button class='btn btn-secondary' type='button' data-action='account-logout'>Đăng xuất</button></div></section>`;
+  }
+
+  function renderDeviceSettings() {
+    const startOptions = taskFocusOptions();
+    const focus = store.id && startOptions.length ? `<section class='panel settings-panel'><h2>Màn hình làm việc</h2><p>Chọn việc thường làm trên thiết bị này.</p><form data-form='task-focus'><div class='task-focus-choices'>${renderTaskFocusChoices(taskFocusRoute)}</div><button class='btn btn-primary' type='submit'>Lưu màn hình mở đầu</button></form><button class='link-button' type='button' data-action='replay-guided-tour'>Xem lại hướng dẫn</button></section>` : '';
+    const data = `<section class='panel settings-panel'><h2>Dữ liệu trên thiết bị</h2><p>Ứng dụng tự gửi dữ liệu khi có mạng. Các việc cần kiểm tra được đánh dấu tại đây.</p><div class='settings-actions'>${store.id ? `<button class='btn btn-secondary' type='button' data-action='offline-records'>Xem dữ liệu đã lưu</button>` : ''}${canExportData() && store.id ? `<button class='btn btn-secondary' type='button' data-action='open-export'>Xuất dữ liệu cửa hàng</button>` : ''}</div><p class='muted'>Các chứng từ chờ nằm trên thiết bị này. Giữ ứng dụng và dữ liệu của ứng dụng cho đến khi gửi xong.</p></section>`;
+    const operations = store.id ? `<section class='panel settings-panel'><h2>Quản lý vận hành</h2><p>Mở phần cần điều chỉnh theo quyền của bạn.</p>${renderWorkspaceLinks([{ title: '', routes: ['staff', 'inventory', 'promotions', 'channels'] }])}</section>` : '';
+    const updates = window.SlinkAndroid ? `<section class='panel settings-panel' data-app-update-state><h2>Phiên bản ứng dụng</h2><p data-app-version>Slink</p><p data-app-update-message>App tự kiểm tra và tải bản mới ở nền.</p><div class='settings-actions'><button class='btn btn-secondary' type='button' data-action='check-app-update'>Kiểm tra bản mới</button><button class='btn btn-primary' type='button' data-action='install-app-update' hidden>Cài bản mới</button></div><p class='muted'>Cài khi thuận tiện. Tài khoản và dữ liệu vẫn được giữ trên máy.</p></section>` : '';
+    return focus + data + operations + updates;
   }
 
   function renderBusinessProfileSettings(canEdit) {
@@ -3684,7 +3779,7 @@
     root.querySelectorAll('.pagination-actions').forEach(function (pagination) {
       if (!pagination.querySelector('button')) pagination.hidden = true;
     });
-    if (page === 'finance') {
+    if (page === 'finance' && !root.querySelector('.finance-cashbook')) {
       const heading = Array.from(root.querySelectorAll('.panel h2')).find(function (item) { return item.textContent === 'Ca tiền mặt'; });
       const panel = heading?.closest('.panel');
       if (panel) {
@@ -3695,7 +3790,7 @@
     }
     const actions = root.querySelector('.page-heading .heading-actions');
     if (actions) {
-      const extras = Array.from(actions.children).filter(function (node) { return node.tagName === 'BUTTON' && !node.classList.contains('btn-primary'); });
+      const extras = Array.from(actions.children).filter(function (node) { return node.tagName === 'BUTTON' && !node.classList.contains('btn-primary') && !(page === 'finance' && node.dataset.action === 'new-expense'); });
       let menu = actions.querySelector('.catalog-more');
       if (extras.length && (actions.children.length > 1 || menu)) {
         if (!menu) {
@@ -3716,15 +3811,25 @@
         ['.customer-saved-tools', '.customer-tag-filter', '.customer-segment-filter', '.customer-spend-filter', '.customer-filter-hint'].forEach(function (selector) {
           const node = root.querySelector(selector); if (node) content.append(node);
         });
-        if (customerTagFilter || customerSegmentFilter || customerMinSpentVnd) details.open = true;
+        if (customerTagFilter || (customerSegmentFilter && customerSegmentFilter !== 'owing') || customerMinSpentVnd || selectedCustomerSavedSegmentId) details.open = true;
         filters.closest('.toolbar').after(details);
       }
     }
     if (page === 'settings') {
+      const blocks = Array.from(root.querySelectorAll('.settings-panel'));
+      const groups = [['Tài khoản', ['Thông tin tài khoản', 'Đổi mật khẩu', 'Bảo mật tài khoản']], ['Cửa hàng', ['Thông tin cửa hàng', 'Quản lý vận hành', 'Nhật ký hoạt động']], ['Cách dùng', ['Cách bạn dùng cửa hàng', 'Màn hình làm việc']], ['Dữ liệu', ['Dữ liệu trên thiết bị', 'Phiên bản ứng dụng']]];
+      for (const [label, titles] of groups) {
+        const members = blocks.filter(block => titles.includes(block.querySelector('h2')?.textContent));
+        if (!members.length) continue;
+        const group = document.createElement('section'); group.className = 'settings-panel settings-group'; group.dataset.label = label;
+        members.forEach(block => { block.classList.remove('settings-panel'); block.classList.add('settings-block'); group.append(block); });
+        root.append(group);
+      }
       const sections = Array.from(root.querySelectorAll('.settings-panel'));
       const tabs = document.createElement('div'); tabs.className = 'settings-areas'; tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Các phần cài đặt');
-      tabs.innerHTML = sections.map(function (section, i) { section.id = 'settings-area-' + i; section.setAttribute('role', 'tabpanel'); section.setAttribute('aria-labelledby', 'settings-tab-' + i); return "<button role='tab' id='settings-tab-" + i + "' aria-controls='" + section.id + "' data-action='settings-area' data-index='" + i + "'>" + esc(({ 'Thông tin cửa hàng': 'Cửa hàng', 'Cách bạn dùng cửa hàng': 'Cách dùng', 'Đổi mật khẩu': 'Mật khẩu', 'Bảo mật tài khoản': 'Thiết bị', 'Nhật ký hoạt động': 'Nhật ký' })[section.querySelector('h2')?.textContent] || section.querySelector('h2')?.textContent || 'Tài khoản') + '</button>'; }).join('');
+      tabs.innerHTML = sections.map(function (section, i) { section.id = 'settings-area-' + i; section.setAttribute('role', 'tabpanel'); section.setAttribute('aria-labelledby', 'settings-tab-' + i); return "<button role='tab' id='settings-tab-" + i + "' aria-controls='" + section.id + "' data-action='settings-area' data-index='" + i + "'>" + esc(section.dataset.label || ({ 'Thông tin cửa hàng': 'Cửa hàng', 'Cách bạn dùng cửa hàng': 'Cách dùng', 'Đổi mật khẩu': 'Mật khẩu', 'Bảo mật tài khoản': 'Thiết bị', 'Nhật ký hoạt động': 'Nhật ký' })[section.querySelector('h2')?.textContent] || section.querySelector('h2')?.textContent || 'Tài khoản') + '</button>'; }).join('');
       root.querySelector('.page-heading')?.after(tabs); selectSettingsArea(activeSettingsArea);
+      if (window.SlinkAndroid) nativeAction({ type: 'appUpdate', action: 'state' }).catch(() => {});
     }
     if (['products', 'inventory'].includes(page)) {
       const tabs = document.createElement('nav');
@@ -3759,7 +3864,7 @@
     const drafts = page === 'settings' && root.dataset.page === 'settings' ? Array.from(root.querySelectorAll('form[data-dirty="true"]')).map(function (form) {
       return { type: form.dataset.form, fields: Array.from(form.querySelectorAll('input[name],select[name],textarea[name]')).filter(function (field) { return field.type !== 'file'; }).map(function (field) { return { name: field.name, value: field.value, checked: field.checked }; }) };
     }) : [];
-    const editing = drafts.length && root.contains(document.activeElement) && document.activeElement.matches('input[id],textarea[id]') ? { id: document.activeElement.id, start: document.activeElement.selectionStart, end: document.activeElement.selectionEnd } : null;
+    const editing = root.dataset.page === page && root.contains(active) && active.matches('input[id],textarea[id]') ? { id: active.id, page: page, start: active.selectionStart, end: active.selectionEnd } : null;
     root.dataset.page = page;
     renderShell();
     const renderers = { workspace: renderWorkspace, affiliate: renderAffiliate, dashboard: renderDashboard, products: renderProducts, pos: renderPOS, orders: renderOrders, customers: renderCustomers, inventory: renderInventory, finance: renderFinance, reports: renderReports, settings: renderSettings, channels: renderChannelMappings, staff: renderStaff, audit: renderAudit };
@@ -3777,7 +3882,7 @@
     });
     if (editing) window.requestAnimationFrame(function () {
       const field = document.getElementById(editing.id);
-      if (field && modal.hidden && page === 'settings' && document.activeElement === document.body) {
+      if (field && modal.hidden && page === editing.page && document.activeElement === document.body) {
         field.focus({ preventScroll: true });
         if (editing.start !== null && field.setSelectionRange) field.setSelectionRange(editing.start, editing.end);
       }
@@ -4999,35 +5104,68 @@
     const warehouseField = warehouses.length > 1
       ? `<div class='form-field full'><label class='input-label' for='purchase-warehouse'>Kho nhận hàng *</label><div class='select-wrap'><select class='input' id='purchase-warehouse' name='warehouseId' required ${disabled}>${receiveWarehouseOptions}</select></div></div>`
       : `<input type='hidden' name='warehouseId' value='${esc(receiveWarehouseId)}'/>`;
-    const form = `<form id='entity-form' data-form='receive'><div class='form-grid'>${warehouseField}<div class='form-field full'><div class='panel-header'><div><h2>Hàng vừa nhận</h2><p>Tối đa 50 mặt hàng trên một phiếu</p></div>${pending ? '' : `<button class='btn btn-secondary' type='button' data-action='add-purchase-line'>＋ Thêm mặt hàng</button>`}</div><div id='purchase-lines'>${renderReceivePurchaseLines(initialItems, disabled)}</div><div class='checkout-total' style='margin:12px 0 0'><span>Tổng giá trị phiếu nhập</span><strong id='purchase-total'>Đang tính…</strong></div></div><div class='form-field full'><label class='input-label' for='receive-payment-state'>Tiền hàng</label><select class='input' id='receive-payment-state' name='paymentState' ${disabled}><option value='unpaid' ${!pending || Number(pending.payload.amountPaidVnd || 0) === 0 ? 'selected' : ''}>Chưa trả tiền</option><option value='full'>Đã trả đủ</option><option value='partial' ${pending && Number(pending.payload.amountPaidVnd || 0) > 0 ? 'selected' : ''}>Nhập số tiền đã trả</option></select></div><div class='form-field full' id='receive-paid-field' ${pending && Number(pending.payload.amountPaidVnd || 0) > 0 ? '' : 'hidden'}><label class='input-label'>Đã trả (VND)</label><input class='input' name='paid' type='number' min='0' step='1' value='${pending ? esc(pending.payload.amountPaidVnd ?? '0') : '0'}' ${disabled}/></div><div class='form-field full' id='receive-supplier-field'><label class='input-label'>Mua của ai?</label><input class='input' name='supplierName' list='suppliers' value='${pending ? esc(pending.payload.supplierName || '') : ''}' placeholder='Nhập tên nếu còn nợ' ${disabled}/><datalist id='suppliers'>${suppliers}</datalist></div><details class='work-details full' ${pending ? 'open' : ''}><summary>Cách trả tiền và ghi chú</summary><div class='form-grid'><div class='form-field full'><label class='input-label'>Trả bằng</label><select class='input' name='method' ${disabled}><option value='cash'>Tiền mặt</option><option value='bank_transfer' ${pending && pending.payload.method === 'bank_transfer' ? 'selected' : ''}>Chuyển khoản</option><option value='bank_qr' ${pending && pending.payload.method === 'bank_qr' ? 'selected' : ''}>QR ngân hàng</option></select></div><div class='form-field full'><label class='input-label'>Ghi chú</label><input class='input' name='note' maxlength='500' value='${pending ? esc(pending.payload.note || '') : ''}' placeholder='Không bắt buộc' ${disabled}/></div></div></details></div>${pending ? `<div class='modal-note'>Phiếu nhập đang chờ xác nhận. Gửi lại cùng nội dung để tránh cộng tồn kho hai lần.</div>` : `<div class='modal-note'>Số lượng sẽ cộng vào kho. Chưa trả đủ tiền? Ghi người giao hàng để theo dõi khoản nợ.</div>`}</form>`;
+    const form = `<form id='entity-form' data-form='receive'><div class='form-grid'>${warehouseField}<div class='form-field full'><div class='panel-header'><div><h2>Hàng vừa nhận</h2><p>Tối đa 50 mặt hàng trên một phiếu</p></div>${pending ? '' : `<button class='btn btn-secondary' type='button' data-action='add-purchase-line'>＋ Thêm mặt hàng</button>`}</div><div id='purchase-lines'>${renderReceivePurchaseLines(initialItems, disabled)}</div><div class='purchase-total'><span>Tổng tiền hàng</span><strong id='purchase-total'>—</strong><small id='purchase-total-note' role='status' aria-live='polite'>Chọn hàng, nhập số lượng và giá.</small></div></div><div class='form-field full'><label class='input-label' for='receive-payment-state'>Tiền hàng</label><select class='input' id='receive-payment-state' name='paymentState' ${disabled}><option value='unpaid' ${!pending || Number(pending.payload.amountPaidVnd || 0) === 0 ? 'selected' : ''}>Chưa trả tiền</option><option value='full'>Đã trả đủ</option><option value='partial' ${pending && Number(pending.payload.amountPaidVnd || 0) > 0 ? 'selected' : ''}>Nhập số tiền đã trả</option></select></div><div class='form-field full' id='receive-paid-field' ${pending && Number(pending.payload.amountPaidVnd || 0) > 0 ? '' : 'hidden'}><label class='input-label'>Đã trả (VND)</label><input class='input' name='paid' type='number' min='0' step='1' value='${pending ? esc(pending.payload.amountPaidVnd ?? '0') : '0'}' ${disabled}/></div><div class='form-field full' id='receive-supplier-field'><label class='input-label'>Mua của ai?</label><input class='input' name='supplierName' list='suppliers' value='${pending ? esc(pending.payload.supplierName || '') : ''}' placeholder='Nhập tên nếu còn nợ' ${disabled}/><datalist id='suppliers'>${suppliers}</datalist></div><details class='work-details full' ${pending ? 'open' : ''}><summary>Cách trả tiền và ghi chú</summary><div class='form-grid'><div class='form-field full'><label class='input-label'>Trả bằng</label><select class='input' name='method' ${disabled}><option value='cash'>Tiền mặt</option><option value='bank_transfer' ${pending && pending.payload.method === 'bank_transfer' ? 'selected' : ''}>Chuyển khoản</option><option value='bank_qr' ${pending && pending.payload.method === 'bank_qr' ? 'selected' : ''}>QR ngân hàng</option></select></div><div class='form-field full'><label class='input-label'>Ghi chú</label><input class='input' name='note' maxlength='500' value='${pending ? esc(pending.payload.note || '') : ''}' placeholder='Không bắt buộc' ${disabled}/></div></div></details></div>${pending ? `<div class='modal-note'>Phiếu nhập đang chờ xác nhận. Gửi lại cùng nội dung để tránh cộng tồn kho hai lần.</div>` : `<div class='modal-note'>Số lượng sẽ cộng vào kho. Chưa trả đủ tiền? Ghi người giao hàng để theo dõi khoản nợ.</div>`}</form>`;
     showModal(pending ? 'Kiểm tra phiếu nhập đang chờ' : 'Nhận hàng vào kho', 'Chọn hàng đã nhận, ghi số lượng rồi lưu.', form, `<button class='btn btn-secondary' type='button' data-action='close-modal'>${pending ? 'Để sau' : 'Hủy'}</button><button class='btn btn-primary' type='submit' form='entity-form'>${pending ? 'Thử lại phiếu nhập' : 'Xác nhận nhập kho'}</button>`, true);
     updateReceivePurchaseTotal(modal.querySelector('[data-form="receive"]'));
   }
 
   function renderReceivePurchaseLines(items, disabled) {
     return items.map(function (item, index) {
-      const product = store.products.find(function (candidate) { return candidate.id === item.productId; });
-      const options = store.products.map(function (candidate) {
-        return `<option value='${candidate.id}' data-cost='${candidate.cost}' ${candidate.id === item.productId ? 'selected' : ''}>${esc(candidate.name)} · ${esc(candidate.sku)}</option>`;
-      }).join('');
-      const selectedOption = item.productId && !product ? `<option value='${esc(item.productId)}' selected>Phiếu đang chờ · sản phẩm đã chọn</option>` : '';
-      return `<article class='purchase-line-card' data-purchase-line data-index='${index}'><div class='purchase-line-head'><strong>Mặt hàng ${number(index + 1)}</strong>${!disabled && items.length > 1 ? `<button class='link-button' type='button' data-action='remove-purchase-line' data-index='${index}'>Xóa dòng</button>` : ''}</div><div class='form-grid'><details class='receive-search full'><summary>Tìm theo tên hoặc mã hàng</summary><div class='form-field full'><label class='input-label' for='purchase-product-search-${index}'>Tìm sản phẩm</label><input class='input' id='purchase-product-search-${index}' data-purchase-search data-index='${index}' type='search' placeholder='Tên hoặc mã SKU…' ${disabled}/></div></details><div class='form-field full'><label class='input-label' for='purchase-product-${index}'>Sản phẩm *</label><div class='select-wrap'><select class='input' id='purchase-product-${index}' name='productId' data-purchase-product data-index='${index}' required ${disabled}><option value=''>Chọn mặt hàng…</option>${selectedOption}${options}</select></div></div><div class='form-field'><label class='input-label' for='purchase-quantity-${index}'>Số lượng nhận *</label><input class='input' id='purchase-quantity-${index}' data-purchase-quantity name='quantity' type='number' min='0.001' step='0.001' value='${esc(item.quantity ?? '1')}' required ${disabled}/></div><div class='form-field'><label class='input-label' for='purchase-cost-${index}'>Giá nhập / đơn vị (VND) *</label><input class='input' id='purchase-cost-${index}' data-purchase-cost name='unitCostVnd' type='number' min='0' step='1' value='${esc(item.unitCostVnd ?? (product ? product.cost : ''))}' required ${disabled}/></div></div></article>`;
+      const product = productById(item.productId);
+      const pack = item.pack || (item.packMode !== false && product?.purchasePack ? { ...product.purchasePack, quantity: item.quantity || '1' } : null);
+      const packed = Boolean(pack);
+      const unit = product?.unit || 'cái';
+      const options = store.products.map(candidate => `<option value='${candidate.id}' data-cost='${candidate.cost}' ${candidate.id === item.productId ? 'selected' : ''}>${esc(candidate.name)} · ${esc(candidate.sku)}</option>`).join('');
+      const selected = item.productId && !product ? `<option value='${esc(item.productId)}' selected>Sản phẩm trên phiếu đang chờ</option>` : '';
+      const packControls = purchasePacksSupported || packed ? `<div class='form-field full'><label class='input-label' for='purchase-mode-${index}'>Cách nhận hàng</label><select class='input' id='purchase-mode-${index}' data-purchase-mode ${disabled}><option value='loose' ${packed ? '' : 'selected'}>Nhận từng ${esc(unit)}</option><option value='pack' ${packed ? 'selected' : ''}>Nhận theo lô, hộp hoặc thùng</option></select></div><div class='form-field full' data-purchase-pack-fields ${packed ? '' : 'hidden'}><div class='form-grid'><label class='form-field'><span class='input-label'>Tên đơn vị nhập</span><input class='input' data-pack-name value='${esc(pack?.name || 'lô')}' placeholder='Lô, hộp, thùng…' maxlength='40' ${packed ? 'required' : ''} ${disabled}/></label><label class='form-field'><span class='input-label'>Mỗi đơn vị có bao nhiêu ${esc(unit)}?</span><input class='input' data-pack-size type='number' min='1' max='1000000' step='1' inputmode='numeric' value='${esc(pack?.size || '')}' ${packed ? 'required' : ''} ${disabled}/></label></div><small>Nhớ cách nhập này cho lần sau.</small></div>` : '';
+      return `<article class='purchase-line-card' data-purchase-line data-index='${index}'><div class='purchase-line-head'><strong>Mặt hàng ${number(index + 1)}</strong>${!disabled && items.length > 1 ? `<button class='link-button' type='button' data-action='remove-purchase-line' data-index='${index}'>Xóa dòng</button>` : ''}</div><div class='form-grid'><details class='receive-search full'><summary>Tìm theo tên hoặc mã hàng</summary><label class='form-field'><span class='input-label'>Tìm sản phẩm</span><input class='input' data-purchase-search data-index='${index}' type='search' placeholder='Tên hoặc mã SKU…' ${disabled}/></label></details><label class='form-field full'><span class='input-label'>Sản phẩm *</span><select class='input' name='productId' data-purchase-product data-index='${index}' required ${disabled}><option value=''>Chọn mặt hàng…</option>${selected}${options}</select></label>${packControls}<label class='form-field'><span class='input-label' data-purchase-quantity-label>${packed ? 'Số ' + esc(pack.name) + ' nhận' : 'Số lượng nhận (' + esc(unit) + ')'}</span><input class='input' data-purchase-quantity name='quantity' type='number' min='0.001' step='0.001' value='${esc(pack?.quantity || item.quantity || '1')}' required ${disabled}/></label><label class='form-field'><span class='input-label' data-purchase-cost-label>${packed ? 'Giá 1 ' + esc(pack.name) : 'Giá 1 ' + esc(unit)} (đ)</span><input class='input' data-purchase-cost name='unitCostVnd' type='number' min='0' step='1' value='${esc(pack?.unitCostVnd ?? item.unitCostVnd ?? product?.cost ?? '')}' required ${disabled}/></label><p class='muted full' data-pack-preview ${packed ? '' : 'hidden'} aria-live='polite'></p></div></article>`;
     }).join('');
   }
 
   function receivePurchaseItemsFromForm(form) {
     return Array.from(form.querySelectorAll('[data-purchase-line]')).map(function (row) {
+      const quantity = String(row.querySelector('[data-purchase-quantity]')?.value || '');
+      const unitCostVnd = String(row.querySelector('[data-purchase-cost]')?.value || '');
+      const packed = row.querySelector('[data-purchase-mode]')?.value === 'pack';
       return {
-        productId: String(row.querySelector('[data-purchase-product]')?.value || ''),
-        quantity: String(row.querySelector('[data-purchase-quantity]')?.value || ''),
-        unitCostVnd: String(row.querySelector('[data-purchase-cost]')?.value || ''),
+        productId: String(row.querySelector('[data-purchase-product]')?.value || ''), quantity, unitCostVnd, packMode: packed,
+        ...(packed ? { pack: { name: row.querySelector('[data-pack-name]').value.trim(), size: row.querySelector('[data-pack-size]').value, quantity, unitCostVnd } } : {}),
       };
     });
+  }
+
+  function setReceivePackMode(row, product, useSaved) {
+    const mode = row.querySelector('[data-purchase-mode]');
+    if (!mode) return;
+    if (useSaved) mode.value = product?.purchasePack ? 'pack' : 'loose';
+    const packed = mode.value === 'pack', saved = product?.purchasePack;
+    const fields = row.querySelector('[data-purchase-pack-fields]');
+    fields.hidden = !packed;
+    fields.querySelectorAll('input').forEach(input => input.required = packed);
+    const unit = product?.unit || 'cái', name = saved?.name || row.querySelector('[data-pack-name]').value || 'lô';
+    const sizeLabel = row.querySelector('[data-pack-size]').closest('label').querySelector('.input-label');
+    sizeLabel.textContent = 'Mỗi đơn vị có bao nhiêu ' + unit + '?';
+    row.querySelector('[data-purchase-quantity-label]').textContent = packed ? 'Số ' + name + ' nhận' : 'Số lượng nhận (' + unit + ')';
+    row.querySelector('[data-purchase-cost-label]').textContent = 'Giá 1 ' + (packed ? name : unit) + ' (đ)';
+    if (useSaved && saved) {
+      row.querySelector('[data-pack-name]').value = saved.name;
+      row.querySelector('[data-pack-size]').value = saved.size;
+    } else if (useSaved) {
+      row.querySelector('[data-pack-name]').value = 'lô';
+      row.querySelector('[data-pack-size]').value = '';
+    }
+    row.querySelector('[data-purchase-cost]').value = packed ? saved?.unitCostVnd || '' : String(product?.cost ?? '');
   }
 
   function updateReceivePurchaseTotal(form) {
     const output = form && form.querySelector('#purchase-total');
     if (!output) return;
+    const note = form.querySelector('#purchase-total-note');
+    const explain = message => {
+      output.textContent = '—';
+      note.textContent = message;
+      note.hidden = false;
+    };
     const items = receivePurchaseItemsFromForm(form);
     let total = 0n;
     try {
@@ -5035,6 +5173,23 @@
       for (const item of items) {
         if (!item.productId || seenProducts.has(item.productId)) throw new Error('incomplete');
         seenProducts.add(item.productId);
+        if (item.pack) {
+          const packed = window.SlinkPurchaseUnits.fromPack(item.pack);
+          total += packed.lineTotalVnd;
+          const row = form.querySelector(`[data-purchase-line][data-index='${items.indexOf(item)}']`);
+          const unit = productById(item.productId)?.unit || 'cái';
+          row.querySelector('[data-pack-preview]').hidden = false;
+          row.querySelector('[data-pack-preview]').textContent = `Nhận ${number(Number(packed.quantity))} ${unit} · ${moneyVndText(packed.lineTotalVnd)}`;
+          row.querySelector('[data-purchase-quantity-label]').textContent = 'Số ' + packed.pack.name + ' nhận';
+          row.querySelector('[data-purchase-cost-label]').textContent = 'Giá 1 ' + packed.pack.name + ' (đ)';
+          if (total > 9223372036854775807n) throw new Error('limit');
+          continue;
+        }
+        const row = form.querySelector(`[data-purchase-line][data-index='${items.indexOf(item)}']`);
+        if (row.querySelector('[data-pack-preview]')) row.querySelector('[data-pack-preview]').hidden = true;
+        const unit = productById(item.productId)?.unit || 'cái';
+        row.querySelector('[data-purchase-quantity-label]').textContent = 'Số lượng nhận (' + unit + ')';
+        row.querySelector('[data-purchase-cost-label]').textContent = 'Giá 1 ' + unit + ' (đ)';
         const quantity = /^(0|[1-9]\d{0,9})(?:\.(\d{1,3}))?$/.exec(item.quantity);
         if (!quantity || !/^(0|[1-9]\d{0,18})$/.test(item.unitCostVnd)) throw new Error('incomplete');
         const quantityMilli = BigInt(quantity[1]) * 1000n + BigInt((quantity[2] || '').padEnd(3, '0') || '0');
@@ -5044,17 +5199,19 @@
         if (total > 9223372036854775807n) throw new Error('limit');
       }
       output.textContent = moneyVndText(total.toString());
+      note.textContent = '';
+      note.hidden = true;
       const mode = form.querySelector('[name="paymentState"]')?.value;
       const paid = form.querySelector('[name="paid"]');
       if (paid && mode === 'unpaid') paid.value = '0';
       if (paid && mode === 'full' && total <= BigInt(Number.MAX_SAFE_INTEGER)) paid.value = total.toString();
-      if (mode === 'full' && total > BigInt(Number.MAX_SAFE_INTEGER)) { output.textContent = 'Số tiền vượt giới hạn. Chia thành phiếu nhỏ hơn.'; if (paid) paid.value = ''; }
+      if (mode === 'full' && total > BigInt(Number.MAX_SAFE_INTEGER)) { explain('Số tiền quá lớn. Chia thành phiếu nhỏ hơn.'); if (paid) paid.value = ''; }
       const supplierField = form.querySelector('#receive-supplier-field');
       if (supplierField) supplierField.hidden = mode === 'full';
       const paidField = form.querySelector('#receive-paid-field');
       if (paidField) paidField.hidden = mode !== 'partial';
     } catch (error) {
-      output.textContent = error.message === 'limit' ? 'Vượt giới hạn lưu trữ' : 'Nhập đủ số lượng và giá';
+      explain(error.message === 'limit' ? 'Số tiền quá lớn. Chia thành phiếu nhỏ hơn.' : 'Nhập số lượng và giá để tính tổng.');
     }
   }
 
@@ -5094,10 +5251,10 @@
     showModal(pending ? 'Kiểm tra khoản thanh toán đang chờ' : 'Thanh toán nhà cung cấp', `Số dư hiện tại · ${money(supplier.debt)}`, form, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Để sau</button><button class='btn btn-primary' type='submit' form='entity-form'>${pending ? 'Thử lại khoản thanh toán' : 'Ghi nhận thanh toán'}</button>`);
   }
 
-  function openExpense() {
+  function openExpense(direction) {
     const pending = loadPendingCash();
     const disabled = pending ? 'disabled' : '';
-    const payload = pending ? pending.payload : { direction: 'out', amountVnd: '', category: 'Vận hành', method: 'cash', note: '' };
+    const payload = pending ? pending.payload : { direction: direction === 'in' ? 'in' : 'out', amountVnd: '', category: direction === 'in' ? 'Thu khác' : 'Vận hành', method: 'cash', note: '' };
     const form = `<form id='entity-form' data-form='cash'><div class='form-grid'><div class='form-field'><label class='input-label'>Loại giao dịch</label><div class='select-wrap'><select class='input' name='type' ${disabled}><option value='out' ${payload.direction === 'out' ? 'selected' : ''}>Phiếu chi</option><option value='in' ${payload.direction === 'in' ? 'selected' : ''}>Phiếu thu khác</option></select></div></div><div class='form-field'><label class='input-label'>Số tiền (VND) *</label><input class='input' name='amount' type='number' min='1' step='1' required value='${esc(payload.amountVnd)}' placeholder='0' ${disabled}/></div><div class='form-field'><label class='input-label'>Khoản mục</label><div class='select-wrap'><select class='input' name='category' ${disabled}>${['Vận hành', 'Điện nước', 'Thuê mặt bằng', 'Nhập hàng', 'Thu khác', 'Hoàn tiền'].map(function (name) { return `<option ${payload.category === name ? 'selected' : ''}>${name}</option>`; }).join('')}</select></div></div><div class='form-field'><label class='input-label'>Phương thức</label><div class='select-wrap'><select class='input' name='method' ${disabled}><option value='cash' ${payload.method === 'cash' ? 'selected' : ''}>Tiền mặt</option><option value='bank_transfer' ${payload.method === 'bank_transfer' ? 'selected' : ''}>Chuyển khoản</option><option value='bank_qr' ${payload.method === 'bank_qr' ? 'selected' : ''}>QR ngân hàng</option><option value='card' ${payload.method === 'card' ? 'selected' : ''}>Thẻ</option><option value='other' ${payload.method === 'other' ? 'selected' : ''}>Khác</option></select></div></div><div class='form-field full'><label class='input-label'>Nội dung</label><input class='input' name='note' maxlength='300' value='${esc(payload.note)}' placeholder='Ghi chú cho giao dịch này' ${disabled}/></div></div>${pending ? `<div class='modal-note'>Phiếu đang chờ xác nhận. Hãy gửi lại cùng nội dung để tránh ghi sổ hai lần.</div>` : ''}</form>`;
     showModal(pending ? 'Kiểm tra phiếu đang chờ' : 'Ghi phiếu thu / chi', 'Ghi lại giao dịch để đối soát sổ quỹ.', form, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Hủy</button><button class='btn btn-primary' type='submit' form='entity-form'>${pending ? 'Thử lại phiếu' : 'Lưu giao dịch'}</button>`);
   }
@@ -5146,7 +5303,7 @@
       closeModal();
       await loadFinancePage();
       render();
-      toast(result.offlineQueued ? 'Đã lưu ca trên máy' : 'Đã mở ca tiền mặt', result.offlineQueued ? 'Ca và các giao dịch sẽ tự đồng bộ khi có mạng.' : 'Các giao dịch được đối soát trong ca này.');
+      toast(result.offlineQueued ? 'Đã lưu ca trên máy' : 'Đã mở ca tiền mặt', result.offlineQueued ? '' : 'Các giao dịch được đối soát trong ca này.');
       if (form.dataset.returnFlow === 'checkout' && checkoutPendingPayload) openCheckout();
     } catch (error) {
       if (error.status === 401) showSignedOut('Phiên đăng nhập đã hết hạn. Đăng nhập lại để kiểm tra yêu cầu mở ca.', 'error');
@@ -5502,11 +5659,17 @@
   }
 
   async function openCollectCustomerPayment(customerId) {
+    const generation = modalGeneration;
+    const openedOnPage = page;
+    const session = authSession;
+    const canShow = () => modalGeneration === generation && page === openedOnPage && authSession === session;
     let customer;
     try {
       const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/customers/${encodeURIComponent(customerId)}`);
       customer = result.customer;
-    } catch (error) { return toast('Chưa tải được công nợ', error.message, 'error'); }
+    } catch (error) { if (canShow()) toast('Chưa tải được công nợ', error.message, 'error'); return; }
+    if (!canShow()) return;
+    mapCustomer(customer);
     const pending = loadPendingCustomerPayment(customerId);
     const due = BigInt(customer.balance_vnd || '0');
     if (due <= 0n && !pending) return toast('Khách hàng không còn nợ', 'Không có khoản công nợ cần thu.');
@@ -5519,6 +5682,9 @@
 
   async function saveCustomerPayment(form) {
     const customerId = form.dataset.customerId;
+    const session = authSession;
+    const generation = modalGeneration;
+    const originalPage = page;
     let pending = loadPendingCustomerPayment(customerId);
     if (!pending) {
       const data = new FormData(form);
@@ -5533,13 +5699,16 @@
       const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/customers/${encodeURIComponent(customerId)}/payments`, {
         method: 'POST', headers: { 'idempotency-key': pending.key }, body: pending.payload,
       });
+      if (authSession !== session) return;
       clearPendingCustomerPayment(customerId);
+      const canFinishHere = !modal.hidden && modalGeneration === generation && page === originalPage;
+      if (canFinishHere && page === 'finance') closeModal();
       const refreshList = page === 'customers'
         ? loadCustomersPage(searchTerms.customers, customerOffset)
         : Promise.resolve();
       await Promise.all([refreshList, loadFinancePage()]);
       toast('Đã ghi nhận khoản thu', `${moneyVndText(result.payment.amountVnd)} · còn nợ ${moneyVndText(result.payment.customerBalanceVnd)}`);
-      await openCustomerDetail(customerId);
+      if (canFinishHere && page === 'customers' && modalGeneration === generation && !modal.hidden) await openCustomerDetail(customerId);
       if (page === 'finance') render();
     } catch (error) {
       if (error.status === 401) showSignedOut('Phiên đăng nhập đã hết hạn. Đăng nhập lại để kiểm tra khoản thu.', 'error');
@@ -5733,14 +5902,14 @@
 
   function renderWorkspace() {
     if (['affiliate', 'cashier'].includes(store.role)) {
-      return pageHeading('Tài khoản', '', '') + renderWorkspaceLinks([{ title: '', routes: ['settings'] }]) + (store.role === 'affiliate' && authSession.stores.length ? "<button class='btn btn-secondary' data-action='switch-workspace' data-mode='shop'>Về cửa hàng của tôi</button>" : '');
+      return pageHeading('Tài khoản', '', '') + renderWorkspaceLinks([{ title: '', routes: ['settings'] }]);
     }
     const groups = [
       { title: 'Mỗi ngày', routes: ['dashboard', 'finance', 'inventory', 'orders'] },
       { title: 'Việc khác', routes: ['customers', 'channels', 'pos'], folded: true },
       { title: 'Cửa hàng', routes: ['staff', 'reports', 'promotions', 'settings', 'audit'], folded: true }
     ];
-    return pageHeading('Quản lý', '', '') + renderWorkspaceLinks(groups) + (store.role === 'owner' ? "<details class='work-details'><summary>Làm thêm Affiliate</summary><p>Lưu các link tiếp thị riêng, tách khỏi dữ liệu cửa hàng.</p><button class='btn btn-secondary' data-action='switch-workspace' data-mode='affiliate'>Mở khu Affiliate</button></details>" : '');
+    return pageHeading('Quản lý', '', '') + renderWorkspaceLinks(groups);
   }
 
   function renderWorkspaceLinks(groups) {
@@ -6143,15 +6312,12 @@
     const states = { ready: 'Đã lưu trên máy', sending: 'Đang gửi', confirmed: 'Đã nhận · đang đối chiếu', acknowledged: 'Đã đồng bộ', conflict: 'Cần kiểm tra' };
     const rows = snapshot.operations.slice().reverse();
     const html = rows.map(row => `<article class='offline-record' data-offline-state='${esc(row.state)}'><div class='offline-line'><strong>${esc(names[row.kind])} · ${row.result?.order?.number ? esc(row.result.order.number) : 'TẠM-' + String(row.sequence).padStart(4, '0')}</strong><span>${esc(states[row.state])}</span></div><small>${esc(humanDate(row.queuedAt, true))}</small>${row.issue ? `<p role='alert'>${esc(row.issue.message)}</p>` : ''}<details><summary>Xem thông tin</summary><dl><dt>Mã chống ghi trùng</dt><dd>${esc(row.key)}</dd><dt>Nội dung</dt><dd><pre>${esc(JSON.stringify(row.source || row.payload, null, 2))}</pre></dd></dl></details>${row.kind === 'sale' ? `<button class='link-button' data-action='order-detail' data-id='local:${esc(row.key)}'>Xem đơn</button>` : ''}${row.state === 'conflict' ? `<button class='btn btn-secondary' data-action='offline-retry' data-id='${esc(row.id)}'>Đã kiểm tra · thử gửi lại</button>` : ''}</article>`).join('');
-    showModal('Chứng từ trên thiết bị', prepared ? 'Đã chuẩn bị dữ liệu: ' + humanDate(prepared, true) : 'Kết nối mạng một lần để chuẩn bị dữ liệu.', `<p class='modal-note'>${offlineState.pending ? 'Chứng từ chưa đồng bộ vẫn ở máy này. Giữ dữ liệu ứng dụng; không tạo lại cùng giao dịch ở máy khác.' : 'Các việc đã đồng bộ có trên máy chủ. Việc cần dữ liệu chung như trả hàng, sửa danh mục, quản lý tài khoản và kết nối sàn cần mạng.'}</p>${html || `<p>Chưa có chứng từ chờ trên máy này.</p>`}`, `<button class='btn btn-secondary' data-action='offline-export'>Lưu bản đối chiếu</button><button class='btn btn-secondary' data-action='offline-sync'>Đồng bộ / chuẩn bị</button><button class='btn btn-primary' data-action='close-modal'>Đóng</button>`);
+    showModal('Chứng từ trên thiết bị', prepared ? 'Đã chuẩn bị dữ liệu: ' + humanDate(prepared, true) : 'Kết nối mạng một lần để chuẩn bị dữ liệu.', `${offlineState.storageIssue || offlineState.issue ? `<p class='auth-message error' role='alert'>${esc(offlineState.storageIssue || offlineState.issue)}</p>` : ''}<p class='modal-note'>${offlineState.pending ? 'Chứng từ chưa đồng bộ vẫn ở máy này. Giữ dữ liệu ứng dụng; không tạo lại cùng giao dịch ở máy khác.' : 'Các việc đã đồng bộ có trên máy chủ. Việc cần dữ liệu chung như trả hàng, sửa danh mục, quản lý tài khoản và kết nối sàn cần mạng.'}</p>${html || `<p>Chưa có chứng từ chờ trên máy này.</p>`}`, `<button class='btn btn-secondary' data-action='offline-export'>Lưu bản đối chiếu</button><button class='btn btn-secondary' data-action='offline-sync'>Đồng bộ / chuẩn bị</button><button class='btn btn-primary' data-action='close-modal'>Đóng</button>`);
   }
   async function exportOfflineRecords() {
     const scope = activeOfflineScope(); if (!scope) return;
     const rows = await offlineDisk.operations(scope);
-    const blob = new Blob([JSON.stringify({ format: 'slink-offline-review-v1', userId: authSession.user.id, storeId: store.id, exportedAt: new Date().toISOString(), operations: rows }, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob), link = document.createElement('a');
-    link.href = url; link.download = 'chung-tu-tren-may-' + new Date().toISOString().slice(0, 10) + '.json'; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 60000);
-    toast('Đã tải bản đối chiếu', 'Bản này giúp kiểm tra chứng từ, không thay thế đồng bộ.');
+    await download('chung-tu-tren-may-' + new Date().toISOString().slice(0, 10) + '.json', JSON.stringify({ format: 'slink-offline-review-v1', userId: authSession.user.id, storeId: store.id, exportedAt: new Date().toISOString(), operations: rows }, null, 2), 'application/json');
   }
 
   function showHelp() {
@@ -6796,13 +6962,22 @@
       const seenProducts = new Set();
       const normalizedItems = [];
       for (const item of purchaseItems) {
+        if (item.pack) {
+          try {
+            const converted = window.SlinkPurchaseUnits.fromPack(item.pack);
+            if (!Number.isSafeInteger(Number(item.pack.unitCostVnd))) throw new Error('Giá nhập vượt giới hạn trên thiết bị. Chia thành nhiều phiếu.');
+            item.quantity = converted.quantity;
+            item.unitCostVnd = String(converted.unitCostVnd);
+            item.pack = converted.pack;
+          } catch (error) { return toast('Kiểm tra cách nhập theo lô', error.message, 'error'); }
+        }
         const quantity = Number(item.quantity);
         const unitCostVnd = Number(item.unitCostVnd);
         if (!item.productId || seenProducts.has(item.productId)) return toast('Sản phẩm bị thiếu hoặc lặp', 'Mỗi sản phẩm chỉ xuất hiện một lần trên phiếu nhập. Gộp số lượng vào cùng dòng.', 'error');
         seenProducts.add(item.productId);
         if (!Number.isFinite(quantity) || quantity <= 0 || quantity > 1_000_000_000 || Math.abs(quantity * 1000 - Math.round(quantity * 1000)) > 1e-6) return toast('Số lượng không hợp lệ', 'Mỗi dòng cần số lượng lớn hơn 0, tối đa 3 chữ số thập phân.', 'error');
         if (!Number.isSafeInteger(unitCostVnd) || unitCostVnd < 0) return toast('Giá nhập không hợp lệ', 'Giá nhập mỗi mặt hàng phải là VND nguyên không âm.', 'error');
-        normalizedItems.push({ productId: item.productId, quantity: item.quantity, unitCostVnd: unitCostVnd });
+        normalizedItems.push({ productId: item.productId, quantity: item.quantity, unitCostVnd: unitCostVnd, ...(item.pack ? { pack: item.pack } : {}) });
       }
       if (!Number.isSafeInteger(amountPaidVnd) || amountPaidVnd < 0) return toast('Số tiền không hợp lệ', 'Số tiền thanh toán phải là VND nguyên không âm.', 'error');
       pending = {
@@ -6821,14 +6996,15 @@
     const submitButton = modal.querySelector('button[type="submit"][form="entity-form"]');
     if (submitButton) submitButton.disabled = true;
     try {
-      const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/purchases`, {
+      const endpoint = pending.payload.items?.some(item => item.pack) ? 'purchase-packs' : 'purchases';
+      const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/${endpoint}`, {
         method: 'POST', headers: { 'idempotency-key': pending.key }, body: pending.payload,
       });
       clearPendingPurchase();
-      closeModal();
       if (page === 'inventory') await loadInventoryPage(searchTerms.inventory, inventoryOffset);
       else await loadProductsPage('', 0);
       if (page === 'finance') await loadFinancePage();
+      if (modal.contains(form)) closeModal();
       render();
       toast(result.offlineQueued ? 'Đã lưu phiếu nhập trên máy' : 'Đã nhập kho', `${result.purchase.number} · ${number(Number(result.purchase.itemCount || (result.purchase.items || []).length || 1))} mặt hàng · ${moneyVndText(result.purchase.totalVnd)}`);
     } catch (error) {
@@ -7164,8 +7340,48 @@
     }
   }
 
-  function download(name, content, type) {
+  const nativeRequests = new Map();
+  let appUpdateState = null;
+  function applyAppUpdateState(state) {
+    appUpdateState = state;
+    const panel = root.querySelector('[data-app-update-state]');
+    if (!panel) return;
+    const labels = { idle: 'Tự kiểm tra bản mới khi mở ứng dụng.', checking: 'Đang kiểm tra bản mới…', downloading: 'Đang tải bản mới ở nền…', ready: 'Bản ' + (state.nextVersion || '') + ' đã sẵn sàng.', current: 'Đang dùng bản mới nhất.', unpublished: 'Chưa có bản cập nhật được phát hành.', unavailable: 'Chưa kiểm tra được. Ứng dụng sẽ tự thử lại.' };
+    panel.querySelector('[data-app-version]').textContent = 'Slink ' + state.versionName;
+    panel.querySelector('[data-app-update-message]').textContent = labels[state.status] || labels.idle;
+    panel.querySelector('[data-action="install-app-update"]').hidden = state.status !== 'ready';
+    panel.querySelector('[data-action="check-app-update"]').disabled = ['checking', 'downloading'].includes(state.status);
+  }
+  window.addEventListener('slink-app-update', event => applyAppUpdateState(event.detail));
+  function nativeAction(payload) {
+    return new Promise((resolve, reject) => {
+      const id = newIdempotencyKey();
+      nativeRequests.set(id, { resolve, reject });
+      try { window.SlinkAndroid.postMessage(JSON.stringify({ ...payload, id: id })); }
+      catch (error) { nativeRequests.delete(id); reject(error); }
+    });
+  }
+  if (window.SlinkAndroid) window.SlinkAndroid.onmessage = function (event) {
+    let result;
+    try { result = JSON.parse(event.data); } catch (_) { return; }
+    const pending = nativeRequests.get(result.id);
+    if (!pending) return;
+    nativeRequests.delete(result.id);
+    if (result.update) { applyAppUpdateState(result.update); pending.resolve(result.update); }
+    else if (['saved', 'opened', 'canceled'].includes(result.status)) pending.resolve(result.status);
+    else pending.reject(new Error('Chưa lưu được tệp. Hãy thử lại.'));
+  };
+
+  async function download(name, content, type) {
+    if (window.SlinkAndroid) {
+      try {
+        const status = await nativeAction({ type: 'save', name: name, content: content, mime: type || 'text/plain' });
+        if (status === 'saved') toast('Đã lưu tệp', name);
+        return status === 'saved';
+      } catch (error) { toast('Chưa lưu được tệp', error.message, 'error'); return false; }
+    }
     const blob = new Blob([content], { type: type || 'text/plain;charset=utf-8' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); window.setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    return true;
   }
 
   let exportInProgress = false;
@@ -7336,7 +7552,7 @@
       panel = document.createElement('section');
       panel.className = 'digital-receipt';
       panel.dataset.number = order.number;
-      panel.innerHTML = `<h3 tabindex='-1'>Biên nhận ${esc(order.number)}</h3><div class='receipt-actions'>${typeof navigator.share === 'function' ? `<button class='btn btn-primary' type='button' data-action='receipt-share'>Gửi qua ứng dụng</button>` : ''}<button class='btn btn-secondary' type='button' data-action='receipt-copy'>Sao chép</button><button class='btn btn-secondary' type='button' data-action='receipt-download'>Lưu tệp văn bản</button></div><label class='input-label' for='share-order-copy'>Nội dung để gửi khách</label><textarea id='share-order-copy' class='input' rows='7' readonly>${esc(digitalReceiptText(order))}</textarea><p class='muted' role='status' data-receipt-feedback></p>`;
+      panel.innerHTML = `<h3 tabindex='-1'>Biên nhận ${esc(order.number)}</h3><div class='receipt-actions'>${typeof navigator.share === 'function' || window.SlinkAndroid ? `<button class='btn btn-primary' type='button' data-action='receipt-share'>Gửi qua ứng dụng</button>` : ''}<button class='btn btn-secondary' type='button' data-action='receipt-copy'>Sao chép</button><button class='btn btn-secondary' type='button' data-action='receipt-download'>Lưu tệp văn bản</button></div><label class='input-label' for='share-order-copy'>Nội dung để gửi khách</label><textarea id='share-order-copy' class='input' rows='7' readonly>${esc(digitalReceiptText(order))}</textarea><p class='muted' role='status' data-receipt-feedback></p>`;
       body.prepend(panel);
     }
     body.scrollTop = 0;
@@ -7355,7 +7571,10 @@
     }
     button.disabled = true;
     try {
-      if (action === 'receipt-share') await navigator.share({ title: 'Biên nhận ' + number, text: field.value });
+      if (action === 'receipt-share') {
+        if (window.SlinkAndroid) await nativeAction({ type: 'share', title: 'Biên nhận ' + number, text: field.value });
+        else await navigator.share({ title: 'Biên nhận ' + number, text: field.value });
+      }
       else {
         await navigator.clipboard.writeText(field.value);
         feedback.textContent = 'Đã sao chép. Bạn có thể dán vào tin nhắn cho khách.';
@@ -7522,6 +7741,10 @@
   function routeTo(next) {
     if (!next) return;
     if (!canAccessRoute(next)) return toast('Không có quyền truy cập', 'Vai trò của bạn không được mở khu vực này.', 'error');
+    if (page === 'settings' && next !== page && root.querySelector('form[data-dirty="true"]')) {
+      showModal('Bạn đang sửa cài đặt', 'Chọn tiếp tục nhập để giữ nội dung, hoặc bỏ thay đổi để sang trang khác.', '', `<button class='btn btn-secondary' data-action='discard-settings' data-next='${esc(next)}'>Bỏ thay đổi</button><button class='btn btn-primary' data-action='close-modal'>Tiếp tục nhập</button>`);
+      return;
+    }
     page = next; closeModal();
     if (page === 'products') loadProductsPage(searchTerms.products, 0);
     else if (page === 'dashboard') {
@@ -7606,6 +7829,7 @@
         const result = await apiRequest(`/api/invitations/${encodeURIComponent(invitationToken)}/register`, {
           method: 'POST', body: { displayName: String(data.get('displayName') || '').trim(), password: String(data.get('password') || '') },
         });
+        if (result.user && Array.isArray(result.stores)) { clearInvitation(); await enterStore(result); return; }
         authMode = 'invite-login';
         renderAuth(result.message, 'success', result.developmentVerificationUrl);
       }
@@ -7695,6 +7919,7 @@
       return;
     }
     try {
+      if (await restoreSavedWorkspace()) return;
       const session = await apiRequest('/api/auth/me');
       await enterStore(session);
     } catch (error) {
@@ -7760,7 +7985,24 @@
     else if (action === 'auth-mode') { authMode = button.dataset.mode || 'login'; renderAuth(); }
     else if (action === 'logout') { closeModal(); signOut(); }
     else if (action === 'account-menu') showAccountMenu();
-    else if (action === 'account-settings') { closeModal(); routeTo('settings'); }
+    else if (action === 'account-settings') { closeModal(); activeSettingsArea = 0; routeTo('settings'); }
+    else if (action === 'check-app-update') nativeAction({ type: 'appUpdate', action: 'check' }).catch(error => toast('Chưa kiểm tra được bản mới', error.message, 'error'));
+    else if (action === 'install-app-update') {
+      if (activeWrites || offlineState.syncing) return toast('Đang lưu dữ liệu', 'Chờ hoàn tất rồi hãy cài bản mới.');
+      if (root.querySelector('form[data-dirty="true"]')) return toast('Bạn đang sửa cài đặt', 'Lưu hoặc bỏ thay đổi trước khi cập nhật.');
+      showModal('Cài bản Slink mới?', 'Ứng dụng sẽ đóng trong lúc cài. Tài khoản, cửa hàng và dữ liệu đã lưu được giữ nguyên.', '<p>Nếu Android hỏi, hãy cho phép Slink cài bản cập nhật, sau đó quay lại và bấm Cài bản mới. Không cần gỡ ứng dụng hiện tại.</p>', `<button class='btn btn-secondary' data-action='close-modal'>Để sau</button><button class='btn btn-primary' data-action='confirm-app-update'>Tiếp tục</button>`);
+    }
+    else if (action === 'confirm-app-update') { closeModal(); nativeAction({ type: 'appUpdate', action: 'install' }).catch(() => toast('Chưa cài được bản mới', 'Kiểm tra quyền cài ứng dụng và thử lại.', 'error')); }
+    else if (action === 'account-logout') showModal('Đăng xuất tài khoản?', 'Các việc đã lưu trên thiết bị được giữ lại cho đúng tài khoản.', '', `<button class='btn btn-secondary' data-action='close-modal'>Ở lại</button><button class='btn btn-primary' data-action='logout'>Đăng xuất</button>`);
+    else if (action === 'discard-settings') { root.querySelectorAll('form[data-dirty]').forEach(form => delete form.dataset.dirty); routeTo(button.dataset.next); }
+    else if (action === 'reload-finance') loadFinancePage();
+    else if (action === 'finance-tab') { financeTab = button.dataset.tab; render(); }
+    else if (action === 'view-customer-debt' || action === 'customer-quick-filter') {
+      customerSegmentFilter = action === 'view-customer-debt' ? 'owing' : button.dataset.segment || '';
+      selectedCustomerSavedSegmentId = '';
+      if (page !== 'customers') routeTo('customers');
+      else loadCustomersPage(searchTerms.customers, 0).then(render);
+    }
     else if (action === 'reload-security') loadAccountSecurity();
     else if (action === 'revoke-session') revokeAccountSession(id);
     else if (action === 'retry-pos-catalog') loadWarehouses().then(function () { return loadProductsPage('', 0); });
@@ -7956,7 +8198,7 @@
       orderFilter = button.dataset.filter;
       loadOrdersPage(searchTerms.orders, 0).then(render);
     }
-    else if (action === 'new-expense') openExpense();
+    else if (action === 'new-expense') openExpense(button.dataset.direction);
     else if (action === 'open-cash-session') openCashSessionForm();
     else if (action === 'close-cash-session') openCashSessionCloseForm();
     else if (action === 'supplier-payment') openSupplierPayment(id);
@@ -8008,7 +8250,7 @@
 
   document.addEventListener('input', function (event) {
     if (event.target.matches('[data-tender-amount]')) { updateCheckoutTenderSummary(event.target.form); return; }
-    if (event.target.matches('[data-purchase-quantity],[data-purchase-cost]')) { updateReceivePurchaseTotal(event.target.form); return; }
+    if (event.target.matches('[data-purchase-quantity],[data-purchase-cost],[data-pack-name],[data-pack-size]')) { updateReceivePurchaseTotal(event.target.form); return; }
     if (event.target.matches('[data-order-quantity],[data-order-cost]')) { updatePurchaseOrderTotal(event.target.form); return; }
     if (event.target.matches('[data-receipt-quantity]')) { updatePurchaseOrderReceiptTotal(event.target.form); return; }
     const id = event.target.id;
@@ -8111,9 +8353,15 @@
           const select = row && row.querySelector('[data-purchase-product]');
           if (!select) return;
           select.innerHTML = products.map(function (product, index) { return `<option value='${product.id}' data-cost='${product.cost}' ${index === 0 ? 'selected' : ''}>${esc(product.name)} · ${esc(product.sku)}</option>`; }).join('');
+          for (const product of products) {
+            const position = store.products.findIndex(item => item.id === product.id);
+            if (position === -1) store.products.push(product);
+            else store.products[position] = product;
+          }
           const selected = products[0];
           const cost = row.querySelector('[data-purchase-cost]');
           if (selected && cost) cost.value = String(selected.cost);
+          setReceivePackMode(row, selected, true);
           updateReceivePurchaseTotal(modal.querySelector('[data-form="receive"]'));
           if (!products.length) select.innerHTML = `<option value=''>Không tìm thấy sản phẩm</option>`;
         } catch (error) {
@@ -8486,12 +8734,18 @@
       const help = modal.querySelector('.staff-role-help');
       if (help) help.textContent = staffRoleDescription(event.target.value);
     }
+    if (event.target.matches('[data-purchase-mode]')) {
+      const row = event.target.closest('[data-purchase-line]');
+      setReceivePackMode(row, productById(row.querySelector('[data-purchase-product]').value), false);
+      updateReceivePurchaseTotal(event.target.form); return;
+    }
     if (event.target.matches('[data-purchase-product]')) {
       const row = event.target.closest('[data-purchase-line]');
       const selectedCost = event.target.selectedOptions[0]?.dataset.cost;
       const product = productById(event.target.value);
       const cost = row && row.querySelector('[data-purchase-cost]');
       if (cost && !loadPendingPurchase()) cost.value = String(selectedCost ?? (product ? product.cost : ''));
+      if (!loadPendingPurchase()) setReceivePackMode(row, product, true);
       updateReceivePurchaseTotal(modal.querySelector('[data-form="receive"]'));
     }
     if (event.target.matches('[data-order-product]')) {
@@ -8614,6 +8868,10 @@
       modalEditedField = event.target;
     }
   });
+  document.addEventListener('toggle', function (event) {
+    if (event.target.matches?.('[data-finance-book]')) financeBookOpen = event.target.open;
+  }, true);
+  root.addEventListener('focusout', function () { window.setTimeout(refreshAfterOfflineSync, 0); });
   document.addEventListener('keydown', function (event) {
     if (!event.target.matches('[data-action="settings-area"]') || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
     const buttons = Array.from(root.querySelectorAll('[data-action="settings-area"]'));
@@ -8621,6 +8879,13 @@
     event.preventDefault(); selectSettingsArea(index); buttons[index].focus();
   });
   document.addEventListener('visibilitychange', function () { if (document.hidden) stopScanCamera(); else if (authSession) { offlineRowsChanged(false).catch(() => {}); startOfflineSync(); } });
+  window.SlinkHandleBack = function () {
+    if (!modal.hidden) { requestCloseModal(); return true; }
+    if (document.getElementById('drawer-cart')?.classList.contains('open')) { setCartDrawerOpen(false); return true; }
+    const home = taskFocusRoute || defaultTaskFocusRoute();
+    if (authSession && home && page !== home) { routeTo(home); return true; }
+    return false;
+  };
   window.addEventListener('pagehide', stopScanCamera);
   document.addEventListener('error', function (event) { if (event.target.matches?.('img[data-product-photo]')) event.target.remove(); }, true);
   boot();

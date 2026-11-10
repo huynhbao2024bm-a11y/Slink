@@ -10,7 +10,7 @@ test('runtime rejects the pre-upgrade schema before accepting traffic and accept
   const db = new PGlite(); t.after(() => db.close());
   const directory = path.join(__dirname, '..', 'migrations');
   for (const name of (await fs.readdir(directory)).filter(n => n.endsWith('.sql')).sort()) {
-    if (name.startsWith('0025_') || name.startsWith('0027_')) await assert.rejects(() => assertRuntimeSchema(db), /Apply migrations through 0027/);
+    if (name.startsWith('0025_') || name.startsWith('0027_') || name.includes('purchase_unit_packs')) await assert.rejects(() => assertRuntimeSchema(db), /Apply migrations through 20261110050914/);
     await db.exec(await fs.readFile(path.join(directory, name), 'utf8'));
   }
   await assert.doesNotReject(() => assertRuntimeSchema(db));

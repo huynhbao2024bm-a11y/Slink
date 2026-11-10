@@ -569,6 +569,7 @@ module.exports = {
   digest,
   deliverEmail,
   emailVerificationDisabled,
+  createUserSession,
   hashPassword,
   newToken,
   registerAuthRoutes,

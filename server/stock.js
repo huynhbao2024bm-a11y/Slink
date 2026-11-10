@@ -88,6 +88,7 @@ function registerStockRoutes(app, { pool, env }) {
         `SELECT p.id, p.sku, p.barcode, p.name, p.category, p.unit,
                 p.sale_price_vnd::text AS sale_price_vnd,
                 CASE WHEN $5::boolean THEN p.cost_vnd::text ELSE NULL END AS cost_vnd,
+                CASE WHEN $5::boolean THEN p.purchase_pack ELSE NULL END AS purchase_pack,
                 p.low_stock_threshold::text AS low_stock_threshold, p.inventory_tracked, p.status, p.version,
                 COALESCE(b.on_hand, 0)::text AS on_hand, COALESCE(b.reserved, 0)::text AS reserved, COALESCE(b.version, 1) AS inventory_version,
                 latest.movement_type AS latest_movement_type,
@@ -109,6 +110,7 @@ function registerStockRoutes(app, { pool, env }) {
       const hasMore = rows.rows.length > limit;
       return {
         products: rows.rows.slice(0, limit),
+        purchasePacksSupported: true,
         total: Number(rows.rows[0]?.total_count || 0),
         nextOffset: hasMore ? offset + limit : null,
         summary: {

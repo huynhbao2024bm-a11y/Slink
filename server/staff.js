@@ -1,6 +1,6 @@
 'use strict';
 
-const { ApiError, authenticate, assertSameOrigin, deliverEmail, digest, hashPassword, newToken, requireCsrf, sendVerification } = require('./auth');
+const { ApiError, authenticate, assertSameOrigin, deliverEmail, digest, hashPassword, newToken, requireCsrf, sendVerification, emailVerificationDisabled, createUserSession } = require('./auth');
 const { UUID_PATTERN, withStore, withUser } = require('./db');
 
 const STAFF_ROLES = new Set(['manager', 'cashier', 'stockkeeper', 'accountant']);
@@ -25,7 +25,7 @@ async function withInvitation(pool, rawToken, operation) {
   return withUser(pool, '00000000-0000-4000-8000-000000000000', async (client) => {
     await client.query("SELECT set_config('app.invitation_digest', $1, true)", [tokenDigest.toString('hex')]);
     const found = await client.query(
-      `SELECT id, store_id, email, email_normalized, role, claimed_user_id, expires_at, accepted_at, revoked_at
+      `SELECT id, store_id, email, email_normalized, role, invited_by, claimed_user_id, expires_at, accepted_at, revoked_at
        FROM store_invitations WHERE token_digest = $1 FOR UPDATE`,
       [tokenDigest]
     );
@@ -129,24 +129,42 @@ function registerStaffRoutes(app, { pool, env }) {
       throw new ApiError(400, 'validation_error', 'Tên cần từ 2 ký tự và mật khẩu từ 12 đến 128 ký tự.');
     }
     const passwordHash = await hashPassword(password);
-    const { verificationToken, invitation } = await withInvitation(pool, request.params.token, async (client, current) => {
+    const demoBypass = emailVerificationDisabled(env);
+    const { verificationToken, invitation, userId } = await withInvitation(pool, request.params.token, async (client, current) => {
       if (!pending(current) || current.claimed_user_id) throw new ApiError(409, 'invitation_unavailable', 'Lời mời đã được sử dụng, thu hồi hoặc hết hạn.');
       const userId = require('node:crypto').randomUUID();
       try {
         await client.query(
           `INSERT INTO users (id, email, email_normalized, display_name, password_hash, status)
-           VALUES ($1, $2, $3, $4, $5, 'pending')`,
-          [userId, current.email, current.email_normalized, displayName, passwordHash]
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [userId, current.email, current.email_normalized, displayName, passwordHash, demoBypass ? 'active' : 'pending']
         );
       } catch (error) {
         if (error.code === '23505') throw new ApiError(409, 'account_exists', 'Email này đã có tài khoản. Hãy đăng nhập để chấp nhận lời mời.');
         throw error;
       }
       await client.query('UPDATE store_invitations SET claimed_user_id = $2, updated_at = now() WHERE id = $1', [current.id, userId]);
+      if (demoBypass) {
+        await client.query("SELECT set_config('app.user_id', $1, true)", [userId]);
+        const activeStore = await client.query("SELECT id FROM stores WHERE id = $1 AND status = 'active'", [current.store_id]);
+        if (!activeStore.rowCount) throw new ApiError(409, 'store_unavailable', 'Cửa hàng này hiện không hoạt động.');
+        await client.query(
+          `INSERT INTO memberships (store_id,user_id,role,status,invited_by,joined_at)
+           VALUES ($1,$2,$3,'active',$4,now())`,
+          [current.store_id,userId,current.role,current.invited_by]
+        );
+        await client.query('UPDATE store_invitations SET accepted_at=now(),updated_at=now() WHERE id=$1', [current.id]);
+        await client.query(`INSERT INTO audit_events (store_id,actor_user_id,action,entity_type,entity_id,metadata) VALUES ($1,$2,'staff.joined','store_invitation',$3,$4::jsonb)`, [current.store_id,userId,current.id,JSON.stringify({role:current.role,acceptedDuring:'demo_registration'})]);
+        return { verificationToken: null, invitation: current, userId };
+      }
       const token = newToken();
       await client.query('INSERT INTO email_verification_tokens (user_id, token_digest, expires_at) VALUES ($1, $2, now() + interval \'24 hours\')', [userId, digest(token)]);
-      return { verificationToken: token, invitation: { email: current.email, role: current.role, store_id: current.store_id } };
+      return { verificationToken: token, invitation: { email: current.email, role: current.role, store_id: current.store_id }, userId };
     });
+    if (demoBypass) {
+      const session = await createUserSession(pool, userId, reply, env);
+      return reply.code(201).send({ ...session, status: 'created_without_email_verification' });
+    }
     const verificationUrl = new URL('/verify', env.PUBLIC_ORIGIN || 'http://127.0.0.1:3000');
     verificationUrl.hash = new URLSearchParams({ token: verificationToken }).toString();
     const delivery = await sendVerification(env, invitation.email, verificationUrl.toString());
