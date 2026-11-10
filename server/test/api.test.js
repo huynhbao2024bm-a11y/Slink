@@ -10,7 +10,7 @@ const { createPGlitePool } = require('../pglite-test-pool');
 const migrationsDirectory = path.join(__dirname, '..', 'migrations');
 const origin = 'http://slink.test';
 
-async function testApp(t) {
+async function testApp(t, envOverrides = {}) {
   const { PGlite } = await import('@electric-sql/pglite');
   const db = new PGlite();
   const migrations = (await readdir(migrationsDirectory)).filter((name) => name.endsWith('.sql')).sort();
@@ -41,7 +41,7 @@ async function testApp(t) {
     REVOKE UPDATE ON SEQUENCE public.product_sale_price_history_id_seq FROM slink_app;
   `);
   const pool = createPGlitePool(db);
-  const app = await buildServer({ pool, logger: false, env: { NODE_ENV: 'test', PUBLIC_ORIGIN: origin } });
+  const app = await buildServer({ pool, logger: false, env: { NODE_ENV: 'test', PUBLIC_ORIGIN: origin, ...envOverrides } });
   app.testDb = db;
   t.after(() => app.close());
   return app;
@@ -3500,4 +3500,80 @@ test('manual channel orders reserve, ship, cancel, and audit stock without recor
   assert.ok(channelCsv.body.includes('12 Đường Số 1, Quận 1, TP. Hồ Chí Minh'));
   assert.ok(channelCsv.body.includes('23000'));
   assert.ok(!channelCsv.body.includes('SH-ORDER-1002'), 'rejected oversell is absent from the export');
+});
+
+
+test('demo accounts enter immediately without email, including invited staff, while password and role checks remain', async t => {
+  const app = await testApp(t, { DEMO_DISABLE_EMAIL_VERIFICATION: 'true' });
+  const password = 'test password kept private 123';
+  const registration = await app.inject({ method: 'POST', url: '/api/auth/register', headers: { origin }, payload: {
+    email: 'demo-owner@example.test', displayName: 'Chủ dùng thử', storeName: 'Cửa hàng dùng thử', password,
+  } });
+  assert.equal(registration.statusCode, 201, registration.body);
+  assert.equal(registration.json().status, 'created_without_email_verification');
+  const owner = registration.json();
+  const cookies = cookiesFrom(registration);
+  const headers = { origin, cookie: cookieHeader(cookies), 'x-csrf-token': cookies.slink_csrf };
+  const me = await app.inject({ method: 'GET', url: '/api/auth/me', headers });
+  assert.equal(me.statusCode, 200);
+  assert.equal(me.json().stores[0].role, 'owner');
+  const record = (await app.testDb.query('SELECT email_verified_at,status FROM users WHERE id=$1', [owner.user.id])).rows[0];
+  assert.equal(record.email_verified_at, null);
+  assert.equal(record.status, 'active');
+  const login = await app.inject({ method: 'POST', url: '/api/auth/login', headers: { origin }, payload: { email: ' DEMO-OWNER@EXAMPLE.TEST ', password } });
+  assert.equal(login.statusCode, 200, login.body);
+  const wrong = await app.inject({ method: 'POST', url: '/api/auth/login', headers: { origin }, payload: { email: 'demo-owner@example.test', password: 'wrong password' } });
+  assert.equal(wrong.statusCode, 401);
+  const createdInvite = await app.inject({ method: 'POST', url: '/api/stores/' + owner.stores[0].id + '/staff/invitations', headers, payload: { email: 'demo-staff@example.test', role: 'cashier' } });
+  assert.equal(createdInvite.statusCode, 201, createdInvite.body);
+  const token = new URLSearchParams(new URL(createdInvite.json().developmentInviteUrl).hash.slice(1)).get('invite');
+  const join = await app.inject({ method: 'POST', url: '/api/invitations/' + token + '/register', headers: { origin }, payload: { displayName: 'Người bán thử', password } });
+  assert.equal(join.statusCode, 201, join.body);
+  assert.equal(join.json().stores[0].id, owner.stores[0].id);
+  assert.equal(join.json().stores[0].role, 'cashier');
+  assert.equal(join.json().developmentVerificationUrl, undefined);
+  const staff = cookiesFrom(join);
+  const forbidden = await app.inject({ method: 'GET', url: '/api/stores/' + owner.stores[0].id + '/analytics?days=7', headers: { cookie: cookieHeader(staff) } });
+  assert.equal(forbidden.statusCode, 403);
+  const repeated = await app.inject({ method: 'POST', url: '/api/invitations/' + token + '/register', headers: { origin }, payload: { displayName: 'Người khác', password } });
+  assert.equal(repeated.statusCode, 409);
+  assert.equal((await app.testDb.query('SELECT count(*)::int AS n FROM email_verification_tokens')).rows[0].n, 0);
+});
+
+
+test('pack receipts keep exact invoice money, base stock, defaults and safe retries', async t => {
+  const app = await testApp(t, { DEMO_DISABLE_EMAIL_VERIFICATION: 'true' });
+  const registration = await app.inject({ method:'POST',url:'/api/auth/register',headers:{origin},payload:{email:'packs@example.test',displayName:'Chủ hàng',storeName:'Cửa hàng giấy',password:'long pack test password 123'} });
+  assert.equal(registration.statusCode,201,registration.body);
+  const owner = registration.json(), cookies = cookiesFrom(registration), base='/api/stores/'+owner.stores[0].id;
+  const headers={origin,cookie:cookieHeader(cookies),'x-csrf-token':cookies.slink_csrf};
+  const post=async (url,payload,key)=>app.inject({method:'POST',url:base+url,headers:{...headers,'idempotency-key':key},payload});
+  const imported=await post('/products/import',{items:[{name:'Giấy trắng',sku:'GIAY',unit:'tờ',salePriceVnd:500,costVnd:0,openingQuantity:0,inventoryTracked:true},{name:'Nước chai',sku:'NUOC',unit:'chai',salePriceVnd:5000,costVnd:0,openingQuantity:0,inventoryTracked:true}]},'pack-products-import-01');
+  assert.equal(imported.statusCode,201,imported.body);
+  const list=await app.inject({method:'GET',url:base+'/products?limit=100',headers});
+  const products=list.json().products, paper=products.find(p=>p.sku==='GIAY'), bottle=products.find(p=>p.sku==='NUOC');
+  assert.equal(list.json().purchasePacksSupported,true);
+  const payload={items:[{productId:paper.id,pack:{name:'lô',size:'100',quantity:'1',unitCostVnd:'10000'}},{productId:bottle.id,pack:{name:'thùng',size:'24',quantity:'1',unitCostVnd:'100000'}}],supplierName:'Người giao hàng',amountPaidVnd:0,method:'bank_transfer'};
+  const received=await post('/purchase-packs',payload,'pack-receipt-stable-001');
+  assert.equal(received.statusCode,201,received.body);
+  assert.equal(received.json().purchase.totalVnd,'110000');
+  const again=await post('/purchase-packs',payload,'pack-receipt-stable-001');
+  assert.equal(again.headers['idempotent-replayed'],'true');
+  const conflict=await post('/purchase-packs',{...payload,items:[{...payload.items[0],pack:{...payload.items[0].pack,size:'200'}}]},'pack-receipt-stable-001');
+  assert.equal(conflict.statusCode,409);
+  const after=(await app.inject({method:'GET',url:base+'/products?limit=100',headers})).json().products;
+  assert.equal(Number(after.find(p=>p.id===paper.id).on_hand),100);
+  assert.equal(Number(after.find(p=>p.id===bottle.id).on_hand),24);
+  assert.equal(after.find(p=>p.id===bottle.id).cost_vnd,'4167');
+  assert.equal(after.find(p=>p.id===paper.id).purchase_pack.size,'100');
+  const finance=(await app.inject({method:'GET',url:base+'/finance',headers})).json();
+  assert.equal(finance.summary.supplierPayableVnd,'110000');
+  const lines=(await app.testDb.query('SELECT quantity_received::text AS qty,line_total_vnd::text AS total,purchase_pack FROM purchase_lines ORDER BY product_name_snapshot')).rows;
+  assert.equal(lines.find(l=>l.purchase_pack.name==='thùng').total,'100000');
+  const sale=await post('/sales',{items:[{productId:paper.id,quantity:1}],discountVnd:0,method:'bank_transfer',amountReceivedVnd:500},'pack-single-paper-sale-01');
+  assert.equal(sale.statusCode,201,sale.body);
+  const stock=(await app.inject({method:'GET',url:base+'/products?limit=100',headers})).json().products.find(p=>p.id===paper.id);
+  assert.equal(Number(stock.on_hand),99);
+  const invalid=await post('/purchase-packs',{...payload,items:[{productId:paper.id,pack:{...payload.items[0].pack,size:'0'}}]},'pack-invalid-receipt-01');
+  assert.equal(invalid.statusCode,400);
 });

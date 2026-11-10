@@ -106,6 +106,7 @@ function registerFinanceRoutes(app, { pool, env }) {
                       'sku', l.sku_snapshot,
                       'unit', l.unit_snapshot,
                       'quantity', l.quantity_received::text,
+                      'pack', l.purchase_pack,
                       'unitCostVnd', l.unit_cost_vnd::text,
                       'totalVnd', l.line_total_vnd::text
                     ) ORDER BY l.id)

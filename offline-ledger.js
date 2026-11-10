@@ -1,9 +1,9 @@
 (function (root, factory) {
   'use strict';
-  const value = factory();
+  const value = factory(typeof module === 'object' && module.exports ? require('./purchase-units') : root.SlinkPurchaseUnits);
   if (typeof module === 'object' && module.exports) module.exports = value;
   else root.SlinkOfflineLedger = value;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (purchaseUnits) {
   'use strict';
   function problem(code, message) { const error = new Error(message); error.code = code; error.status = 409; return error; }
   function amount(value) {
@@ -166,9 +166,11 @@
         const product = findProduct(state, body.warehouseId, item.productId, operation, validate), milli = quantity(item.quantity);
         if (!milli) throw problem('offline_invalid_quantity', 'Số lượng nhập phải lớn hơn 0.');
         if (validate && item.expectedProductVersion !== undefined && Number(item.expectedProductVersion) !== Number(product.version || 1)) throw problem('offline_product_changed', 'Mặt hàng trên thiết bị đã đổi. Kiểm tra phiếu nhập trước khi lưu.');
-        total += lineTotal(item.unitCostVnd, milli); move(state, operation, product, milli, validate);
+        const packed = item.pack ? purchaseUnits.fromPack(item.pack) : null;
+        if (packed && (packed.quantity !== String(item.quantity) || String(packed.unitCostVnd) !== String(item.unitCostVnd))) throw problem('purchase_pack_invalid', 'Số lượng quy đổi của phiếu nhập chưa khớp.');
+        total += packed ? packed.lineTotalVnd : lineTotal(item.unitCostVnd, milli); move(state, operation, product, milli, validate);
         const version = Number(product.version || 1) + 1;
-        for (const peer of state.products.values()) if (peer.id === product.id) { peer.cost_vnd = String(item.unitCostVnd); peer.version = version; }
+        for (const peer of state.products.values()) if (peer.id === product.id) { peer.cost_vnd = String(item.unitCostVnd); peer.version = version; if (packed) peer.purchase_pack = packed.pack; }
       }
       const paid = amount(body.amountPaidVnd || 0);
       if (paid > total) throw problem('offline_overpaid_purchase', 'Tiền trả không được lớn hơn phiếu nhập.');
@@ -223,7 +225,7 @@
       result.products = (result.products || []).map(row => {
         const candidates = Array.from(state.products.values()).filter(item => item.id === row.id && (!warehouseId || item.warehouseId === warehouseId));
         if (!candidates.length) return row;
-        return { ...row, on_hand: String(candidates.reduce((sum, item) => sum + item.milli, 0) / 1000), inventory_version: Math.max(...candidates.map(item => Number(item.inventory_version || 1))), cost_vnd: candidates[0].cost_vnd, version: Math.max(...candidates.map(item => Number(item.version || row.version || 1))) };
+        return { ...row, on_hand: String(candidates.reduce((sum, item) => sum + item.milli, 0) / 1000), inventory_version: Math.max(...candidates.map(item => Number(item.inventory_version || 1))), cost_vnd: candidates[0].cost_vnd, purchase_pack: candidates[0].purchase_pack || null, version: Math.max(...candidates.map(item => Number(item.version || row.version || 1))) };
       });
       if (query.pathname.endsWith('/inventory')) {
         const products = Array.from(state.products.values()).filter(row => row.inventory_tracked && (!warehouseId || row.warehouseId === warehouseId));

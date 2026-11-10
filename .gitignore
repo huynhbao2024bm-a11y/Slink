@@ -6,6 +6,14 @@ var/
 .local-data/
 *.log
 coverage/
+dist/
+android/.gradle/
+android/**/build/
+android/local.properties
+android/app/src/main/assets/web/
+android/app/src/main/res/mipmap-xxxhdpi/
+*.keystore
+*.jks
 .pitch-build/
 *.db
 *.db-shm
@@ -15,3 +23,4 @@ coverage/
 **/terraform.tfstate.*
 **/terraform.tfvars
 !**/terraform.tfvars.example
+supabase/.temp/

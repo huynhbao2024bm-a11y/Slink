@@ -80,7 +80,6 @@
 .calm-ui .profile-button strong { font-size: 14px; }
 .calm-ui .profile-button small { font-size: 12px; color: #5d6f60; max-width: 106px; overflow: hidden; text-overflow: ellipsis; }
 .calm-ui .main-panel { margin-left: 208px; min-width: 0; }
-.calm-ui .offline-status { padding: 12px 24px; background: #f7eedc; color: #654b1e; font-size: 14px; line-height: 1.6; }
 .calm-ui[data-page='pos'] .main-panel { background: #f4f7f4; }
 .calm-ui .view { max-width: 1440px; margin: 0 auto; padding: 36px 32px 48px; width: 100%; }
 .calm-ui #view[data-page='dashboard'] { display: block; }
@@ -118,6 +117,25 @@
 .calm-ui .workspace-tabs button, .calm-ui .settings-areas button { flex: none; min-height: 48px; padding: 12px 0; font-size: 15px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--muted); }
 .calm-ui .workspace-tabs [aria-current], .calm-ui .settings-areas [aria-selected='true'] { border-bottom-color: #285a40; color: #234531; font-weight: 600; }
 .calm-ui .settings-panel { max-width: 780px; padding: 8px 0 32px; }
+.calm-ui .settings-block { padding: 8px 0 32px; }
+.calm-ui .settings-block + .settings-block { padding-top: 32px; border-top: 1px solid var(--line); }
+.calm-ui .settings-identity { display: grid; gap: 16px; margin: 24px 0; }
+.calm-ui .settings-identity > div { display: grid; gap: 4px; }
+.calm-ui .settings-identity dt { font-size: 14px; color: var(--muted); }
+.calm-ui .settings-identity dd { margin: 0; font-size: 17px; overflow-wrap: anywhere; }
+.calm-ui .settings-actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 20px 0; }
+.calm-ui .settings-block .task-focus-choices { margin: 24px 0; }
+.calm-ui .settings-areas { gap: 0; justify-content: space-between; }
+.calm-ui .settings-areas { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); overflow: visible; }
+.calm-ui .settings-areas button { padding-inline: 6px; }
+.calm-ui .sidebar-tools { display: flex; align-items: center; gap: 12px; margin: 12px 0; }
+.calm-ui .sidebar-tools .icon-button { width: 44px; height: 44px; padding: 10px; border: 0; background: transparent; color: var(--muted); font-size: 23px; }
+.calm-ui .finance-cashbook { margin: 24px 0; }
+.calm-ui .finance-cashbook > summary { min-height: 52px; cursor: pointer; font-size: 18px; font-weight: 600; }
+.calm-ui .finance-cashbook > summary span { display: block; margin: 4px 0 16px; font-weight: 400; font-size: 14px; color: var(--muted); }
+.calm-ui .finance-balance { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; padding: 20px 0; }
+.calm-ui .finance-balance strong { display: block; font-size: 20px; }
+.calm-ui .finance-tabs { margin-top: 8px; }
 .calm-ui .settings-panel h2 { font-size: 19px; margin-bottom: 8px; }
 .calm-ui .settings-panel > p { max-width: 660px; margin-bottom: 24px; font-size: 15px; color: var(--muted); line-height: 1.6; }
 
@@ -244,6 +262,10 @@
 .calm-ui .checkout-total { padding: 20px 0; border-radius: 0; background: transparent; }
 .calm-ui .checkout-total span { font-size: 15px; }
 .calm-ui .checkout-total strong { font-size: 32px; color: #20472f; }
+.calm-ui .purchase-total { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; margin: 16px 0 0; padding: 16px 0; border-top: 1px solid var(--line); }
+.calm-ui .purchase-total > span { font-size: 15px; }
+.calm-ui .purchase-total > strong { min-width: 0; max-width: 100%; font-size: clamp(20px, 5vw, 26px); line-height: 1.4; overflow-wrap: anywhere; color: #20472f; }
+.calm-ui .purchase-total > small { flex-basis: 100%; font-size: 15px; line-height: 1.5; color: var(--muted); }
 .calm-ui .checkout-item { padding: 12px 0; font-size: 15px; }
 .calm-ui .checkout-item small { font-size: 14px; }
 .calm-ui .checkout-payment { margin-top: 16px; }
@@ -412,9 +434,6 @@
 }
 
 /* Offline records remain readable without widening a phone. */
-.calm-ui .offline-status { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 16px; }
-.calm-ui .offline-status > span { flex: 1 1 220px; min-width: 0; }
-.calm-ui .offline-status .link-button { flex: none; color: inherit; text-decoration: underline; }
 .calm-ui .offline-record { min-width: 0; padding: 20px 0; border-bottom: 1px solid var(--line); }
 .calm-ui .offline-line { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px 16px; padding: 10px 0; font-size: 16px; }
 .calm-ui .offline-line > span { min-width: 0; overflow-wrap: anywhere; }
@@ -424,7 +443,6 @@
 .calm-ui .offline-record summary { cursor: pointer; min-height: 44px; padding: 10px 0; }
 .calm-ui .offline-record dd { margin: 4px 0 16px; overflow-wrap: anywhere; }
 .calm-ui .offline-record pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 14px/1.6 system-ui, sans-serif; }
-@media (max-width: 600px) { .calm-ui .offline-status { padding: 10px 16px; } }
 
 /* Names, prices and stock have their own lanes on tablet and phone. */
 .calm-ui .cart-row > div:first-child { min-width: 0; overflow-wrap: anywhere; }
@@ -460,6 +478,17 @@
 @supports (height: 100dvh) { .calm-ui { --app-height: 100dvh; } }
 
 @media (max-width: 600px) {
+  .calm-ui .view { padding: 28px 20px 116px; }
+  .calm-ui .topbar { gap: 8px; padding-inline: 12px; }
+  .calm-ui .mobile-brand .brand-name { display: none; }
+  .calm-ui .mobile-brand { padding: 0; flex: none; }
+  .calm-ui .topbar-right { gap: 0; margin-left: 0; flex: none; }
+  .calm-ui .topbar .help-button { display: inline-flex; align-items: center; justify-content: center; }
+  .calm-ui .topbar .workspace-name { padding-inline: 4px; }
+  .calm-ui .page-heading { margin-bottom: 28px; }
+  .calm-ui .activity-item { flex-wrap: wrap; row-gap: 8px; }
+  .calm-ui .activity-text { min-width: 70px; }
+  .calm-ui .settings-areas button { font-size: 14px; }
   .calm-ui .modal, .calm-ui .modal.wide { inset: auto 0 0; transform: none; width: 100%; max-width: 100%; max-height: calc(var(--app-height) - 12px); border-radius: 16px 16px 0 0; padding-bottom: env(safe-area-inset-bottom); }
   .calm-ui .receipt-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .calm-ui .receipt-actions .btn { justify-content: center; text-align: center; }

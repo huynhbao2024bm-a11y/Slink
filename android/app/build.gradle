@@ -1,0 +1,63 @@
+plugins {
+    id 'com.android.application'
+}
+
+def appOrigin = providers.gradleProperty('slinkOrigin').getOrElse('https://slink-xny3.onrender.com')
+def originUri = new URI(appOrigin)
+if (originUri.scheme != 'https' || !originUri.host || originUri.rawUserInfo ||
+        originUri.rawQuery || originUri.rawFragment || !(originUri.path in ['', '/'])) {
+    throw new GradleException('slinkOrigin must be an HTTPS origin without a path or credentials.')
+}
+
+android {
+    namespace 'com.slink.retail'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.slink.retail'
+        minSdk 29
+        targetSdk 35
+        versionCode providers.gradleProperty('slinkVersionCode').getOrElse('3002').toInteger()
+        versionName providers.gradleProperty('slinkVersionName').getOrElse('0.3.2')
+        buildConfigField 'String', 'APP_ORIGIN', '"' + appOrigin.replaceAll('/$', '') + '"'
+        buildConfigField 'String', 'UPDATE_MANIFEST', '"https://github.com/huynhbao2024bm-a11y/Slink/releases/latest/download/android-update.json"'
+        manifestPlaceholders = [slinkHost: originUri.host]
+    }
+    buildFeatures { buildConfig true }
+    signingConfigs {
+        published {
+            if (System.getenv('ANDROID_KEYSTORE_PATH')) {
+                storeFile file(System.getenv('ANDROID_KEYSTORE_PATH'))
+                storePassword System.getenv('ANDROID_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('ANDROID_KEY_ALIAS')
+                keyPassword System.getenv('ANDROID_KEY_PASSWORD')
+            }
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (System.getenv('ANDROID_KEYSTORE_PATH')) signingConfig signingConfigs.published
+        }
+    }
+}
+
+tasks.register('prepareWeb', Exec) {
+    workingDir rootProject.projectDir.parentFile
+    commandLine 'node', 'scripts/android-assets.js'
+    inputs.files fileTree(rootProject.projectDir.parentFile) {
+        include 'index.html', '*.js', '*.css', 'manifest.webmanifest', 'assets/slink-icon*'
+        exclude 'node_modules/**', 'android/**'
+    }
+    outputs.dir 'src/main/assets/web'
+}
+tasks.named('preBuild').configure { dependsOn 'prepareWeb' }
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.13.0'
+    implementation 'androidx.core:core:1.13.1'
+}

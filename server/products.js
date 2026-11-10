@@ -352,6 +352,7 @@ function registerProductRoutes(app, { pool, env }) {
                 CASE WHEN $5::boolean THEN p.cost_vnd::text ELSE NULL END AS cost_vnd,
                 p.low_stock_threshold::text AS low_stock_threshold, p.inventory_tracked,
                 p.variant_group_id, p.variant_group_name, p.variant_attributes, p.image_version, p.image_content_type,
+                CASE WHEN $5::boolean THEN p.purchase_pack ELSE NULL END AS purchase_pack,
                 p.status, p.version, COALESCE(i.on_hand, 0)::text AS on_hand,
                 COALESCE(i.reserved, 0)::text AS reserved, COALESCE(i.version, 1)::int AS inventory_version,
                 p.updated_at, COUNT(*) OVER()::int AS total_count
@@ -368,7 +369,7 @@ function registerProductRoutes(app, { pool, env }) {
         [status, search, limit + 1, offset, canViewCost, requestedWarehouseId || null, warehouseIds]
       );
       const hasMore = result.rows.length > limit;
-      return { products: result.rows.slice(0, limit), total: Number(result.rows[0]?.total_count || 0), nextOffset: hasMore ? offset + limit : null };
+      return { products: result.rows.slice(0, limit), total: Number(result.rows[0]?.total_count || 0), nextOffset: hasMore ? offset + limit : null, purchasePacksSupported: true };
     });
   });
 

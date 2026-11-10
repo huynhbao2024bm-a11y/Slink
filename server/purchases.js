@@ -6,6 +6,7 @@ const { UUID_PATTERN, withStore } = require('./db');
 const { findAccessibleWarehouse } = require('./warehouse-access');
 const { lockActiveCashSession } = require('./cash-register');
 const { normalizeOffline, beginOffline, recordOffline } = require('./offline-operations');
+const { fromPack } = require('../purchase-units');
 
 const PURCHASE_ROLES = new Set(['owner', 'manager', 'stockkeeper', 'accountant']);
 const METHODS = new Set(['cash', 'bank_transfer', 'bank_qr', 'card', 'other']);
@@ -49,19 +50,25 @@ function parsePurchaseLines(body) {
     const productId = raw.productId.toLowerCase();
     if (seen.has(productId)) throw new ApiError(400, 'validation_error', 'Một sản phẩm chỉ được xuất hiện một lần trong phiếu nhập. Gộp số lượng vào cùng dòng.');
     seen.add(productId);
-    const quantity = quantityMilli(raw.quantity);
-    const unitCostVnd = amount(raw.unitCostVnd, 'Giá nhập');
-    const lineTotalVnd = (unitCostVnd * quantity + 500n) / 1000n;
+    let converted;
+    if (raw.pack != null) {
+      try { converted = fromPack(raw.pack); }
+      catch (error) { throw new ApiError(400, error.code, error.message); }
+    }
+    const quantity = converted ? converted.quantityMilli : quantityMilli(raw.quantity);
+    if (converted && raw.quantity != null && quantityMilli(raw.quantity) !== quantity) throw new ApiError(400, 'purchase_pack_invalid', 'Số lượng theo lô và số lượng quy đổi chưa khớp.');
+    const unitCostVnd = converted ? converted.unitCostVnd : amount(raw.unitCostVnd, 'Giá nhập');
+    const lineTotalVnd = converted ? converted.lineTotalVnd : (unitCostVnd * quantity + 500n) / 1000n;
     if (lineTotalVnd > MAX_BIGINT) throw new ApiError(400, 'validation_error', 'Tổng tiền của một dòng vượt giới hạn lưu trữ.');
     total += lineTotalVnd;
     if (total > MAX_BIGINT) throw new ApiError(400, 'validation_error', 'Tổng phiếu nhập vượt giới hạn lưu trữ.');
-    return { productId, quantity, quantityText: quantityText(quantity), unitCostVnd, lineTotalVnd };
+    return { productId, quantity, quantityText: quantityText(quantity), unitCostVnd, lineTotalVnd, pack: converted?.pack };
   });
   return { items, total };
 }
 
 function registerPurchaseRoutes(app, { pool, env }) {
-  app.post('/api/stores/:storeId/purchases', async (request, reply) => {
+  const receive = async (request, reply) => {
     const auth = await authenticate(pool, request);
     requireCsrf(request, env);
     const { storeId } = request.params;
@@ -88,7 +95,7 @@ function registerPurchaseRoutes(app, { pool, env }) {
     if (paidVnd > total) throw new ApiError(400, 'validation_error', 'Số tiền thanh toán không được vượt tổng phiếu nhập.');
     if (paidVnd < total && !supplierName) throw new ApiError(409, 'supplier_required', 'Nhập tên nhà cung cấp để theo dõi khoản còn phải trả.');
     const value = Array.isArray(body.items) ? {
-      items: items.map((item) => ({ productId: item.productId, quantityMilli: item.quantity.toString(), unitCostVnd: item.unitCostVnd.toString() })),
+      items: items.map((item) => ({ productId: item.productId, quantityMilli: item.quantity.toString(), unitCostVnd: item.unitCostVnd.toString(), ...(item.pack ? { pack: item.pack } : {}) })),
       totalVnd: total.toString(), paidVnd: paidVnd.toString(), supplierName, note, method,
     } : {
       // Preserve the previous single-item request hash so an older pending retry can still receive its stored response.
@@ -98,6 +105,7 @@ function registerPurchaseRoutes(app, { pool, env }) {
       paidVnd: paidVnd.toString(), supplierName, note, method,
     };
     if (requestedWarehouseId) value.warehouseId = requestedWarehouseId;
+    if (!Array.isArray(body.items) && items[0].pack) value.pack = items[0].pack;
     if (offline) { value.offline = offline; value.offlineVersions = offlineVersions; }
     const digest = createHash('sha256').update(JSON.stringify(value)).digest();
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
@@ -181,13 +189,13 @@ function registerPurchaseRoutes(app, { pool, env }) {
         const lineTotal = item.lineTotalVnd.toString();
         await client.query(
           `INSERT INTO purchase_lines (store_id, purchase_id, product_id, product_name_snapshot, sku_snapshot, unit_snapshot,
-                                       quantity_ordered, quantity_received, unit_cost_vnd, line_total_vnd)
-           VALUES ($1, $2, $3, $4, $5, $6, $7::numeric, $7::numeric, $8, $9)`,
-          [storeId, purchaseId, product.id, product.name, product.sku, product.unit, qty, item.unitCostVnd.toString(), lineTotal]
+                                       quantity_ordered, quantity_received, unit_cost_vnd, line_total_vnd, purchase_pack)
+           VALUES ($1, $2, $3, $4, $5, $6, $7::numeric, $7::numeric, $8, $9, $10::jsonb)`,
+          [storeId, purchaseId, product.id, product.name, product.sku, product.unit, qty, item.unitCostVnd.toString(), lineTotal, item.pack ? JSON.stringify(item.pack) : null]
         );
         await client.query(
-          `UPDATE products SET cost_vnd = $3, version = version + 1, updated_at = now() WHERE store_id = $1 AND id = $2`,
-          [storeId, product.id, item.unitCostVnd.toString()]
+          `UPDATE products SET cost_vnd = $3, purchase_pack = COALESCE($4::jsonb,purchase_pack), version = version + 1, updated_at = now() WHERE store_id = $1 AND id = $2`,
+          [storeId, product.id, item.unitCostVnd.toString(), item.pack ? JSON.stringify(item.pack) : null]
         );
         await client.query(
           `INSERT INTO product_cost_history (store_id, product_id, unit_cost_vnd, source_type, source_id, actor_user_id)
@@ -208,10 +216,10 @@ function registerPurchaseRoutes(app, { pool, env }) {
             `INSERT INTO inventory_movements (store_id, warehouse_id, product_id, movement_type, quantity_delta, quantity_after,
                                                reason, source_type, source_id, actor_user_id)
              VALUES ($1, $2, $3, 'purchase_receipt', $4::numeric, $5::numeric, $6, 'purchase', $7, $8)`,
-            [storeId, warehouseId, product.id, qty, balance.rows[0].on_hand, `Nhập phiếu ${purchaseNumber}`, purchaseId, auth.userId]
+            [storeId, warehouseId, product.id, qty, balance.rows[0].on_hand, `Nhập phiếu ${purchaseNumber}${item.pack ? ' · ' + item.pack.quantity + ' ' + item.pack.name + ' × ' + item.pack.size + ' ' + product.unit : ''}`, purchaseId, auth.userId]
           );
         }
-        receiptItems.push({ productId: product.id, sku: product.sku, name: product.name, quantity: qty, unitCostVnd: item.unitCostVnd.toString(), lineTotalVnd: lineTotal });
+        receiptItems.push({ productId: product.id, sku: product.sku, name: product.name, quantity: qty, unitCostVnd: item.unitCostVnd.toString(), lineTotalVnd: lineTotal, ...(item.pack ? { pack: item.pack } : {}) });
       }
 
       if (supplierId && total > 0n) {
@@ -254,7 +262,10 @@ function registerPurchaseRoutes(app, { pool, env }) {
     });
     if (outcome.replayed) reply.header('idempotent-replayed', 'true');
     return reply.code(outcome.status).send(outcome.body);
-  });
+  };
+  app.post('/api/stores/:storeId/purchases', receive);
+  // A distinct route keeps older servers from accepting packs as loose items.
+  app.post('/api/stores/:storeId/purchase-packs', receive);
 }
 
 module.exports = { registerPurchaseRoutes };
