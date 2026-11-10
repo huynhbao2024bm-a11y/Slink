@@ -46,7 +46,7 @@ public class MainActivity extends Activity {
     private static final int PHOTO_PERMISSION = 4;
     private static final Set<String> WEB_FILES = new HashSet<>(Arrays.asList(
             "index.html", "styles.css", "workspace.css", "app.js", "offline-store.js",
-            "offline-ledger.js", "purchase-units.js", "offline-sync.js", "register-sw.js", "sw.js", "manifest.webmanifest",
+            "offline-ledger.js", "purchase-units.js", "money-inputs.js", "offline-sync.js", "register-sw.js", "sw.js", "manifest.webmanifest",
             "assets/slink-icon.svg", "assets/slink-icon-180.png", "assets/slink-icon-192.png",
             "assets/slink-icon-512.png", "assets/slink-icon-maskable-512.png"));
     private WebView web;

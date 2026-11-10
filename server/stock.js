@@ -110,7 +110,7 @@ function registerStockRoutes(app, { pool, env }) {
       const hasMore = rows.rows.length > limit;
       return {
         products: rows.rows.slice(0, limit),
-        purchasePacksSupported: true,
+        productPackDefaultsSupported: true, purchasePacksSupported: true,
         total: Number(rows.rows[0]?.total_count || 0),
         nextOffset: hasMore ? offset + limit : null,
         summary: {

@@ -8,7 +8,7 @@ const root = path.resolve(__dirname, '..');
 const destination = path.join(root, 'android/app/src/main/assets/web');
 const files = [
   'index.html', 'styles.css', 'workspace.css', 'app.js', 'offline-store.js',
-  'offline-ledger.js', 'purchase-units.js', 'offline-sync.js', 'register-sw.js', 'sw.js', 'manifest.webmanifest',
+  'offline-ledger.js', 'purchase-units.js', 'money-inputs.js', 'offline-sync.js', 'register-sw.js', 'sw.js', 'manifest.webmanifest',
   'assets/slink-icon.svg', 'assets/slink-icon-180.png', 'assets/slink-icon-192.png',
   'assets/slink-icon-512.png', 'assets/slink-icon-maskable-512.png',
 ];

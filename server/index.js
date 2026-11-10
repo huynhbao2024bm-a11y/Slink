@@ -47,6 +47,7 @@ const ASSETS = new Map([
   ['/offline-store.js', 'offline-store.js'],
   ['/offline-ledger.js', 'offline-ledger.js'],
   ['/purchase-units.js', 'purchase-units.js'],
+  ['/money-inputs.js', 'money-inputs.js'],
   ['/offline-sync.js', 'offline-sync.js'],
   ['/register-sw.js', 'register-sw.js'],
   ['/manifest.webmanifest', 'manifest.webmanifest'],

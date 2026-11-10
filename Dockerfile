@@ -15,7 +15,7 @@ ENV NODE_ENV=production \
 
 COPY --from=dependencies --chown=node:node /app/node_modules ./node_modules
 COPY --chown=node:node package.json ./package.json
-COPY --chown=node:node app.js purchase-units.js offline-store.js offline-ledger.js offline-sync.js index.html styles.css workspace.css manifest.webmanifest register-sw.js sw.js ./
+COPY --chown=node:node app.js purchase-units.js money-inputs.js offline-store.js offline-ledger.js offline-sync.js index.html styles.css workspace.css manifest.webmanifest register-sw.js sw.js ./
 COPY --chown=node:node assets ./assets
 COPY --chown=node:node server ./server
 
