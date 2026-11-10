@@ -3577,3 +3577,27 @@ test('pack receipts keep exact invoice money, base stock, defaults and safe retr
   const invalid=await post('/purchase-packs',{...payload,items:[{productId:paper.id,pack:{...payload.items[0].pack,size:'0'}}]},'pack-invalid-receipt-01');
   assert.equal(invalid.statusCode,400);
 });
+
+test('product pack defaults persist without rewriting stock or previous receipts', async t => {
+  const app=await testApp(t,{DEMO_DISABLE_EMAIL_VERIFICATION:'true'});
+  const register=await app.inject({method:'POST',url:'/api/auth/register',headers:{origin},payload:{email:'unit-defaults@example.test',displayName:'Chủ cửa hàng',storeName:'Cửa hàng đơn vị',password:'valid unit defaults password'}});
+  const owner=register.json(),cookies=cookiesFrom(register),base='/api/stores/'+owner.stores[0].id;
+  const headers={origin,cookie:cookieHeader(cookies),'x-csrf-token':cookies.slink_csrf,'idempotency-key':'product-defaults-stable-001'};
+  const plain=await app.inject({method:'POST',url:base+'/products',headers,payload:{sku:'NO-PACK',name:'Hàng bán từng cái',salePriceVnd:10000}});
+  assert.equal(plain.statusCode,200,plain.body);assert.equal(plain.json().product.purchase_pack,null);
+  const editedPlain=await app.inject({method:'PUT',url:base+'/products/'+plain.json().product.id,headers,payload:{version:plain.json().product.version,name:'Hàng không cần quy đổi'}});
+  assert.equal(editedPlain.statusCode,200,editedPlain.body);assert.equal(editedPlain.json().product.purchase_pack,null);
+  const imported=await app.inject({method:'POST',url:base+'/products/import',headers,payload:{items:[{sku:'PAPER-UNIT',name:'Giấy A4',unit:'tờ',salePriceVnd:3000,costVnd:2300,openingQuantity:200,purchasePack:{name:'ram',size:'100',quantity:'2',unitCostVnd:'230000'}}]}});
+  assert.equal(imported.statusCode,201,imported.body);
+  const product=imported.json().products[0];
+  assert.equal(product.purchase_pack.quantity,'1');
+  const update=await app.inject({method:'PUT',url:base+'/products/'+product.id,headers,payload:{version:product.version,purchasePack:{name:'hộp',size:'50',unitCostVnd:'120000'}}});
+  assert.equal(update.statusCode,200,update.body);
+  assert.equal(update.json().product.purchase_pack.size,'50');
+  const stock=(await app.inject({method:'GET',url:base+'/products?limit=100',headers})).json().products.find(row=>row.id===product.id);
+  assert.equal(Number(stock.on_hand),200);assert.equal(stock.cost_vnd,'2300');
+  const bad=await app.inject({method:'PUT',url:base+'/products/'+product.id,headers,payload:{version:stock.version,purchasePack:{name:'hộp',size:0,unitCostVnd:100}}});
+  assert.equal(bad.statusCode,400);
+  const clear=await app.inject({method:'PUT',url:base+'/products/'+product.id,headers,payload:{version:stock.version,purchasePack:null}});
+  assert.equal(clear.statusCode,200,clear.body);assert.equal(clear.json().product.purchase_pack,null);
+});

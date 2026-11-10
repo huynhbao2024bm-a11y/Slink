@@ -5,6 +5,7 @@ const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
 const { prepareProductImage, writeProductImage } = require('./product-images');
 const { allowedWarehouseIds, findAccessibleWarehouse } = require('./warehouse-access');
+const { fromPack } = require('../purchase-units');
 
 const EDIT_ROLES = new Set(['owner', 'manager', 'stockkeeper']);
 const PRICE_HISTORY_READ_ROLES = new Set(['owner', 'manager', 'stockkeeper', 'accountant']);
@@ -26,6 +27,13 @@ function requireEditor(role) {
 function validateProduct(input, { partial = false } = {}) {
   const source = input || {};
   const values = {};
+  if (source.purchasePack !== undefined) {
+    if (source.purchasePack === null) values.purchasePack = null;
+    else {
+      try { values.purchasePack = fromPack({ ...source.purchasePack, quantity: '1' }).pack; }
+      catch (error) { throw new ApiError(400, error.code, error.message); }
+    }
+  }
   const textFields = [
     ['sku', 1, 80], ['name', 1, 240], ['category', 1, 120], ['unit', 1, 40],
   ];
@@ -369,7 +377,7 @@ function registerProductRoutes(app, { pool, env }) {
         [status, search, limit + 1, offset, canViewCost, requestedWarehouseId || null, warehouseIds]
       );
       const hasMore = result.rows.length > limit;
-      return { products: result.rows.slice(0, limit), total: Number(result.rows[0]?.total_count || 0), nextOffset: hasMore ? offset + limit : null, purchasePacksSupported: true };
+      return { products: result.rows.slice(0, limit), total: Number(result.rows[0]?.total_count || 0), nextOffset: hasMore ? offset + limit : null, productPackDefaultsSupported: true, purchasePacksSupported: true };
     });
   });
 
@@ -514,15 +522,15 @@ function registerProductRoutes(app, { pool, env }) {
             `INSERT INTO products (
                store_id, sku, sku_normalized, barcode, name, category, unit,
                sale_price_vnd, cost_vnd, low_stock_threshold, inventory_tracked, created_by,
-               variant_group_id, variant_group_name, variant_attributes
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb)
+               variant_group_id, variant_group_name, variant_attributes, purchase_pack
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16::jsonb)
              RETURNING id, sku, barcode, name, category, unit, sale_price_vnd::text AS sale_price_vnd,
                        cost_vnd::text AS cost_vnd, low_stock_threshold::text AS low_stock_threshold,
-                       inventory_tracked, status, version, variant_group_id, variant_group_name, variant_attributes, created_at`,
+                       inventory_tracked, status, version, purchase_pack, variant_group_id, variant_group_name, variant_attributes, created_at`,
             [storeId, product.sku, product.sku.toLocaleLowerCase('vi'), product.barcode, product.name,
               product.category, product.unit, product.salePriceVnd, product.costVnd,
               product.lowStockThreshold, product.inventoryTracked, auth.userId, variantGroupId,
-              product.variantGroupName, JSON.stringify(product.variantAttributes || {})]
+              product.variantGroupName, JSON.stringify(product.variantAttributes || {}), product.purchasePack ? JSON.stringify(product.purchasePack) : null]
           );
           const created = inserted.rows[0];
           Object.assign(created, await writeProductImage(client, storeId, created.id, product.image, auth.userId));
@@ -864,14 +872,14 @@ function registerProductRoutes(app, { pool, env }) {
         const inserted = await client.query(
           `INSERT INTO products (
              store_id, sku, sku_normalized, barcode, name, category, unit,
-             sale_price_vnd, cost_vnd, low_stock_threshold, inventory_tracked, created_by
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+             sale_price_vnd, cost_vnd, low_stock_threshold, inventory_tracked, created_by, purchase_pack
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb)
            RETURNING id, sku, barcode, name, category, unit, sale_price_vnd::text AS sale_price_vnd,
                      cost_vnd::text AS cost_vnd, low_stock_threshold::text AS low_stock_threshold,
-                     inventory_tracked, status, version, created_at`,
+                     inventory_tracked, status, version, purchase_pack, created_at`,
           [storeId, product.sku, product.sku.toLocaleLowerCase('vi'), product.barcode, product.name,
             product.category, product.unit, product.salePriceVnd, product.costVnd,
-            product.lowStockThreshold, product.inventoryTracked, auth.userId]
+            product.lowStockThreshold, product.inventoryTracked, auth.userId, product.purchasePack ? JSON.stringify(product.purchasePack) : null]
         );
         const created = inserted.rows[0];
         Object.assign(created, await writeProductImage(client, storeId, created.id, image, auth.userId));
@@ -1200,6 +1208,7 @@ function registerProductRoutes(app, { pool, env }) {
           lowStockThreshold: product.lowStockThreshold ?? Number(old.low_stock_threshold),
           inventoryTracked: product.inventoryTracked ?? old.inventory_tracked,
           variantAttributes: nextVariantAttributes,
+          purchasePack: product.purchasePack !== undefined ? product.purchasePack : (product.unit !== undefined && product.unit !== old.unit ? null : old.purchase_pack),
         };
         if (old.variant_group_id && product.variantAttributes !== undefined) {
           next.name = `${old.variant_group_name} · ${Object.values(nextVariantAttributes).join(' · ')}`;
@@ -1230,14 +1239,14 @@ function registerProductRoutes(app, { pool, env }) {
         const updated = await client.query(
           `UPDATE products SET sku = $3, sku_normalized = $4, barcode = $5, name = $6, category = $7, unit = $8,
                sale_price_vnd = $9, cost_vnd = $10, low_stock_threshold = $11, inventory_tracked = $12,
-               variant_attributes = $14::jsonb, version = version + 1, updated_at = now()
+               variant_attributes = $14::jsonb, purchase_pack = $15::jsonb, version = version + 1, updated_at = now()
            WHERE store_id = $1 AND id = $2 AND version = $13
            RETURNING id, sku, barcode, name, category, unit, sale_price_vnd::text AS sale_price_vnd,
                      cost_vnd::text AS cost_vnd, low_stock_threshold::text AS low_stock_threshold,
-                     inventory_tracked, status, version, variant_group_id, variant_group_name, variant_attributes, updated_at`,
+                     inventory_tracked, status, version, purchase_pack, variant_group_id, variant_group_name, variant_attributes, updated_at`,
           [storeId, productId, next.sku, next.sku.toLocaleLowerCase('vi'), next.barcode, next.name, next.category,
             next.unit, next.salePriceVnd, next.costVnd, next.lowStockThreshold, next.inventoryTracked, expectedVersion,
-            JSON.stringify(next.variantAttributes)]
+            JSON.stringify(next.variantAttributes), next.purchasePack ? JSON.stringify(next.purchasePack) : null]
         );
         if (next.costVnd !== Number(old.cost_vnd)) {
           await client.query(

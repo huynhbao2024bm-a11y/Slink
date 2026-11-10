@@ -1,5 +1,5 @@
 const CACHE_NAME = 'slink-offline-__SLINK_ASSET_VERSION__';
-const APP_SHELL = ['./', './index.html', './styles.css', './workspace.css', './app.js', './offline-store.js', './offline-ledger.js', './purchase-units.js', './offline-sync.js', './register-sw.js', './manifest.webmanifest', './assets/slink-icon.svg', './assets/slink-icon-180.png', './assets/slink-icon-192.png', './assets/slink-icon-512.png', './assets/slink-icon-maskable-512.png'];
+const APP_SHELL = ['./', './index.html', './styles.css', './workspace.css', './app.js', './offline-store.js', './offline-ledger.js', './purchase-units.js', './money-inputs.js', './offline-sync.js', './register-sw.js', './manifest.webmanifest', './assets/slink-icon.svg', './assets/slink-icon-180.png', './assets/slink-icon-192.png', './assets/slink-icon-512.png', './assets/slink-icon-maskable-512.png'];
 
 self.addEventListener('install', function (event) {
   event.waitUntil(caches.open(CACHE_NAME).then(function (cache) { return cache.addAll(APP_SHELL); }).then(function () { return self.skipWaiting(); }));

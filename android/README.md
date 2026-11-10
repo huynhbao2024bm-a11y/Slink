@@ -1,6 +1,6 @@
 # Ứng dụng Android Slink
 
-## Bản cài thử 0.3.3
+## Bản cài thử 0.3.4
 
 Ứng dụng cài được từ APK, có biểu tượng riêng và không mở một thẻ Chrome. Giao diện được đóng gói trong APK; Android WebView hiển thị giao diện đó, còn API dùng máy chủ Slink. Đây là ứng dụng hybrid, chưa phải giao diện viết lại hoàn toàn bằng thành phần Android.
 
@@ -8,7 +8,7 @@ Android 10 trở lên là mức tối thiểu được cấu hình. Cần Androi
 
 ### Cài trên điện thoại
 
-1. Chép `Slink-0.3.3-preview.apk` sang điện thoại Android.
+1. Chép `Slink-0.3.4-preview.apk` sang điện thoại Android.
 2. Mở tệp, cho phép ứng dụng đang mở tệp cài ứng dụng nếu Android yêu cầu, rồi chọn **Cài đặt**.
 3. Mở **Slink**, đăng nhập khi có mạng và chờ tải dữ liệu cửa hàng trong lần đầu.
 4. Sau đó có thể tiếp tục các nghiệp vụ đã hỗ trợ offline. Tài khoản, quyền truy cập, dữ liệu dùng chung và xác nhận giao dịch vẫn cần máy chủ. Đơn chưa gửi được giữ trên thiết bị cho tới khi đối soát xong.
@@ -45,6 +45,8 @@ Gradle wrapper và phiên bản thư viện được cố định trong mã. L�
 Giao diện trong APK được cập nhật bằng bản APK mới. Từ 0.3.1, ứng dụng tự kiểm tra GitHub Releases khi mở hoặc quay lại app, tối đa một lần mỗi 6 giờ; có nút kiểm tra ngay trong Cài đặt → Dữ liệu → Phiên bản ứng dụng. App tự tải bản mới ở nền, không mở trình cài khi đang làm việc. Người dùng chọn Cài bản mới khi thuận tiện và xác nhận trong Android. Mất mạng hoặc chưa có release không chặn việc bán hàng. Render deploy riêng mã web không tạo APK mới. Các bản API tiếp theo phải giữ tương thích với bản APK đang dùng hoặc có kế hoạch nâng cấp. Trước phát hành chính thức cần tăng `versionCode`, cấu hình khóa ký phát hành do chủ dự án giữ và kiểm tra quy trình cập nhật giữ dữ liệu. Khóa ký và mật khẩu không được commit.
 
 Từ 0.3.3, trang mở đầu có mã phiên bản APK và các tài nguyên giao diện có dấu phiên bản nội dung riêng. Nhờ vậy service worker cũ không trả lại giao diện cũ ở lần mở đầu sau khi cài bản mới. Không xóa cache nghiệp vụ, IndexedDB, cookie, giỏ nháp hoặc chứng từ đang chờ để xử lý cập nhật.
+
+Bản 0.3.4 thêm quy đổi đơn vị nhập tùy chọn ngay trong sản phẩm; có thể bỏ qua, hoặc bật rồi tắt mà không bị ô ẩn chặn lưu. Ô tiền có dấu phân cách và nút 000; giá bán chỉ gợi ý khi ô còn trống. Các trang đã có dữ liệu được mở từ máy trước rồi cập nhật nền. Máy chủ vẫn kiểm tra quyền, xác nhận tiền/tồn và xử lý chống gửi trùng.
 
 ## Bằng chứng và phần cần kiểm tra tiếp
 
