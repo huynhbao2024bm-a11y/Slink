@@ -124,18 +124,22 @@
     if (!collection) return null;
     const allowed = new Set(['q', 'offset', 'limit', 'view', 'warehouseId', 'status']);
     if (resource === 'customers') allowed.add('tag');
+    if (resource === 'inventory') allowed.add('stock');
     if (Array.from(query.searchParams.keys()).some(key => !allowed.has(key))) return null;
+    const inventoryFilter = resource === 'inventory' ? query.searchParams.get('stock') : null;
+    const filterStock = inventoryFilter === 'low' || inventoryFilter === 'out';
     const candidates = (snapshotValue ? snapshotValue.responses : await responses(scope)).filter(record => {
       const saved = new URL(record.url, 'https://offline.invalid');
-      return (saved.pathname === query.pathname || (resource === 'inventory' && saved.pathname === query.pathname.replace(/inventory$/, 'products'))) && !saved.searchParams.get('q')
-        && Array.from(saved.searchParams.keys()).every(key => ['q', 'offset', 'limit', 'view', 'warehouseId', 'status'].includes(key))
+      return (saved.pathname === query.pathname || (resource === 'inventory' && saved.pathname === query.pathname.replace(/inventory$/, 'products')))
+        && (!saved.searchParams.get('q') || (filterStock && saved.searchParams.get('q') === query.searchParams.get('q')))
+        && Array.from(saved.searchParams.keys()).every(key => ['q', 'offset', 'limit', 'view', 'warehouseId', 'status'].includes(key) || (filterStock && key === 'stock'))
         && (!saved.searchParams.get('status') || saved.searchParams.get('status') === 'all')
         && (saved.searchParams.get('warehouseId') || '') === (query.searchParams.get('warehouseId') || '')
         && ((saved.searchParams.get('view') || '') === (query.searchParams.get('view') || '') || (!saved.searchParams.get('view') && query.searchParams.get('view') === 'picker'));
     }).sort((a, b) => a.fetchedAt.localeCompare(b.fetchedAt));
     if (!candidates.length) return exact || null;
     const term = (query.searchParams.get('q') || '').trim();
-    if (exact && term && ['products', 'inventory'].includes(resource)) {
+    if (exact && term && !filterStock && ['products', 'inventory'].includes(resource)) {
       const newer = new Map();
       candidates.filter(record => record.fetchedAt > exact.fetchedAt).forEach(record => {
         (record.value[collection] || []).forEach(row => newer.set(row.id, { ...newer.get(row.id), ...row }));
@@ -157,6 +161,11 @@
     const offset = Math.max(0, Number(query.searchParams.get('offset')) || 0);
     const limit = Math.max(1, Math.min(100, Number(query.searchParams.get('limit')) || 100));
     const latest = candidates.filter(row => new URL(row.url, 'https://offline.invalid').pathname === query.pathname).slice(-1)[0] || candidates[candidates.length - 1];
+    if (filterStock) {
+      // Project pending stock changes before matching and paging, including rows that enter the filter.
+      filtered.sort((a, b) => a.name.localeCompare(b.name, 'vi') || a.id.localeCompare(b.id));
+      return { ...latest, url, value: { ...copy(latest.value), products: filtered, offlineCachedCount: rows.size, offlineStockCandidates: true } };
+    }
     return { ...latest, url, value: { ...copy(latest.value), [collection]: filtered.slice(offset, offset + limit), total: filtered.length, nextOffset: offset + limit < filtered.length ? offset + limit : null, offlineCachedCount: rows.size } };
   }
 

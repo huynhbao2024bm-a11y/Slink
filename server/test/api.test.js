@@ -426,6 +426,76 @@ test('product import validates all rows, writes opening stock atomically, and re
   assert.equal(finalCatalog.json().total, 3);
 });
 
+test('finance vouchers and warehouse receipts preserve selected parties, exact totals and store scope', async (t) => {
+  const app = await testApp(t);
+  const owner = await registerAndLogin(app, { email: 'receiving-owner@example.com', displayName: 'Chủ cửa hàng', storeName: 'Cửa hàng nhập kho' });
+  const foreign = await registerAndLogin(app, { email: 'receiving-other@example.com', displayName: 'Chủ cửa hàng khác', storeName: 'Cửa hàng khác' });
+  const request = (method, route, key, payload, identity = owner) => app.inject({
+    method, url: `/api/stores/${identity.store.id}${route}`,
+    headers: { cookie: cookieHeader(identity.cookies), origin, 'x-csrf-token': identity.cookies.slink_csrf, ...(key ? { 'idempotency-key': key } : {}) },
+    payload,
+  });
+  const localSupplier = await request('POST', '/suppliers', 'test-receiving-supplier-01', { name: 'Nhà cung cấp giấy' });
+  const otherSupplier = await request('POST', '/suppliers', 'test-receiving-supplier-02', { name: 'Nhà cung cấp bên khác' }, foreign);
+  assert.equal(localSupplier.statusCode, 201, localSupplier.body);
+  assert.equal(otherSupplier.statusCode, 201, otherSupplier.body);
+  const supplierId = localSupplier.json().supplier.id;
+  const foreignId = otherSupplier.json().supplier.id;
+  const suppliers = await request('GET', '/purchase-suppliers');
+  assert.deepEqual(suppliers.json().suppliers, [{ id: supplierId, name: 'Nhà cung cấp giấy' }]);
+  const listed = await request('GET', '/finance/people?kind=supplier&q=gi%E1%BA%A5y');
+  assert.equal(listed.statusCode, 200, listed.body);
+  assert.equal(listed.json().people[0].id, supplierId);
+
+  const voucher = { direction: 'out', amountVnd: 5000, method: 'bank_transfer', category: 'Vận hành' };
+  const cashKey = 'test-receiving-voucher-01';
+  const rejected = await request('POST', '/cash-movements', cashKey, { ...voucher, counterparty: { kind: 'supplier', id: foreignId } });
+  assert.equal(rejected.statusCode, 404, rejected.body);
+  const cashPayload = { ...voucher, counterparty: { kind: 'supplier', id: supplierId, name: 'Tên từ trình duyệt' } };
+  const cash = await request('POST', '/cash-movements', cashKey, cashPayload);
+  assert.equal(cash.statusCode, 201, cash.body);
+  const replayCash = await request('POST', '/cash-movements', cashKey, cashPayload);
+  assert.equal(replayCash.json().movement.id, cash.json().movement.id);
+  const finance = (await request('GET', '/finance')).json();
+  assert.equal(finance.movements.length, 1);
+  assert.deepEqual(finance.movements[0].counterparty, { kind: 'supplier', id: supplierId, name: 'Nhà cung cấp giấy' });
+  assert.equal(finance.summary.supplierPayableVnd, '0');
+
+  const main = (await request('GET', '/warehouses')).json().warehouses.find(row => row.is_default);
+  const secondary = (await request('POST', '/warehouses', 'test-receiving-warehouse-01', { name: 'Kho phụ', code: 'RCV2' })).json().warehouse;
+  const imported = await request('POST', '/products/import', 'test-receiving-products-01', { items: [
+    { sku: 'GIAY-1', name: 'Giấy A4', barcode: '8931234567890', unit: 'tờ', salePriceVnd: 2000, openingQuantity: '3', lowStockThreshold: '4' },
+    { sku: 'GIAY-2', name: 'Giấy bìa', unit: 'tờ', salePriceVnd: 2000, openingQuantity: '2', lowStockThreshold: '4' },
+  ] });
+  assert.equal(imported.statusCode, 201, imported.body);
+  const productId = imported.json().products[0].id;
+  const low = (await request('GET', `/inventory?warehouseId=${main.id}&stock=low&limit=1`)).json();
+  assert.equal(low.total, 2);
+  assert.equal(low.nextOffset, 1);
+  assert.equal(low.summary.out, 0);
+  const outRoute = `/inventory?warehouseId=${secondary.id}&stock=out&q=8931234567890`;
+  assert.deepEqual((await request('GET', outRoute)).json().products.map(row => row.id), [productId]);
+
+  const receipt = { warehouseId: secondary.id, items: [{ productId, quantity: '1500', lineTotalVnd: '200000' }], amountPaidVnd: 50000, method: 'bank_transfer' };
+  const receiptKey = 'test-receiving-receipt-01';
+  const invalidReceipt = await request('POST', '/purchases', receiptKey, { ...receipt, supplierId: foreignId });
+  assert.equal(invalidReceipt.statusCode, 404, invalidReceipt.body);
+  const saved = await request('POST', '/purchases', receiptKey, { ...receipt, supplierId });
+  assert.equal(saved.statusCode, 201, saved.body);
+  const replayReceipt = await request('POST', '/purchases', receiptKey, { ...receipt, supplierId });
+  assert.equal(replayReceipt.json().purchase.id, saved.json().purchase.id);
+  assert.equal((await request('GET', outRoute)).json().total, 0);
+  const order = await request('POST', '/purchase-orders', 'test-receiving-order-01', {
+    supplierId, warehouseId: secondary.id, items: [{ productId, quantity: '4', unitCostVnd: '133' }],
+  });
+  assert.equal(order.statusCode, 201, order.body);
+  const ledger = (await request('GET', `/suppliers/${supplierId}/ledger`)).json();
+  assert.equal(ledger.supplier.balance_vnd, '150000');
+  assert.deepEqual(ledger.purchases.map(row => row.total_vnd), ['200000']);
+  assert.deepEqual(ledger.purchaseOrders.map(row => row.id), [order.json().purchaseOrder.id]);
+  assert.equal((await request('GET', `/inventory?warehouseId=${main.id}&q=GIAY-1`)).json().products[0].on_hand, '3.000');
+});
+
 test('purchase orders receive partial quantities once and keep stock, payable, and audit records aligned', async (t) => {
   const app = await testApp(t);
   const owner = await registerAndLogin(app, {
@@ -3654,6 +3724,11 @@ test('product pack defaults persist without rewriting stock or previous receipts
   assert.equal(plain.statusCode,200,plain.body);assert.equal(plain.json().product.purchase_pack,null);
   const editedPlain=await app.inject({method:'PUT',url:base+'/products/'+plain.json().product.id,headers,payload:{version:plain.json().product.version,name:'Hàng không cần quy đổi'}});
   assert.equal(editedPlain.statusCode,200,editedPlain.body);assert.equal(editedPlain.json().product.purchase_pack,null);
+  const numericName = await app.inject({ method: 'PUT', url: base + '/products/' + plain.json().product.id, headers, payload: {
+    version: editedPlain.json().product.version, purchasePack: { name: '1000', size: '10', unitCostVnd: '1000' },
+  } });
+  assert.equal(numericName.statusCode, 400, numericName.body);
+  assert.equal(numericName.json().error.code, 'purchase_pack_invalid');
   const imported=await app.inject({method:'POST',url:base+'/products/import',headers,payload:{items:[{sku:'PAPER-UNIT',name:'Giấy A4',unit:'tờ',salePriceVnd:3000,costVnd:2300,openingQuantity:200,purchasePack:{name:'ram',size:'100',quantity:'2',unitCostVnd:'230000'}}]}});
   assert.equal(imported.statusCode,201,imported.body);
   const product=imported.json().products[0];

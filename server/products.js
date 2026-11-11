@@ -5,12 +5,13 @@ const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
 const { prepareProductImage, writeProductImage } = require('./product-images');
 const { allowedWarehouseIds, findAccessibleWarehouse } = require('./warehouse-access');
-const { fromPack } = require('../purchase-units');
+const { fromPack, isPackName } = require('../purchase-units');
 
 const EDIT_ROLES = new Set(['owner', 'manager', 'stockkeeper']);
 const PRICE_HISTORY_READ_ROLES = new Set(['owner', 'manager', 'stockkeeper', 'accountant']);
 const MAX_VND = Number.MAX_SAFE_INTEGER;
 const MAX_BIGINT = 9223372036854775807n;
+const PACK_NAME_MESSAGE = 'Ghi tên đơn vị nhập, ví dụ Thùng, Hộp hoặc Ram.';
 
 function canonicalQuantityText(value) {
   const match = /^(\d{1,11})(?:\.(\d{1,3}))?$/.exec(String(value));
@@ -32,6 +33,7 @@ function validateProduct(input, { partial = false } = {}) {
     else {
       try { values.purchasePack = fromPack({ ...source.purchasePack, quantity: '1' }).pack; }
       catch (error) { throw new ApiError(400, error.code, error.message); }
+      if (!partial && !isPackName(values.purchasePack.name)) throw new ApiError(400, 'purchase_pack_invalid', PACK_NAME_MESSAGE);
     }
   }
   const textFields = [
@@ -380,6 +382,17 @@ function registerProductRoutes(app, { pool, env }) {
       );
       const hasMore = result.rows.length > limit;
       return { products: result.rows.slice(0, limit), total: Number(result.rows[0]?.total_count || 0), nextOffset: hasMore ? offset + limit : null, productPackDefaultsSupported: true, purchasePacksSupported: true };
+    });
+  });
+
+  app.get('/api/stores/:storeId/products/categories', async (request) => {
+    const auth = await authenticate(pool, request);
+    const { storeId } = request.params;
+    if (!UUID_PATTERN.test(storeId)) throw new ApiError(400, 'validation_error', 'Cửa hàng không hợp lệ.');
+    return withStore(pool, auth.userId, storeId, async (client, membership) => {
+      requireEditor(membership.role);
+      const result = await client.query("SELECT DISTINCT category FROM products WHERE store_id = $1 AND status = 'active' ORDER BY category", [storeId]);
+      return { categories: result.rows.map(row => row.category) };
     });
   });
 
@@ -1199,6 +1212,13 @@ function registerProductRoutes(app, { pool, env }) {
           }
           nextVariantAttributes = product.variantAttributes;
         }
+        let requestedPack = product.purchasePack;
+        if (requestedPack && !isPackName(requestedPack.name)) {
+          const saved = old.purchase_pack;
+          const matchesSaved = saved && ['name', 'size', 'unitCostVnd'].every(key => String(saved[key]) === requestedPack[key]);
+          if (!matchesSaved || (product.unit !== undefined && product.unit !== old.unit)) throw new ApiError(400, 'purchase_pack_invalid', PACK_NAME_MESSAGE);
+          requestedPack = undefined;
+        }
         const next = {
           sku: product.sku ?? old.sku,
           barcode: product.barcode !== undefined ? product.barcode : old.barcode,
@@ -1210,7 +1230,7 @@ function registerProductRoutes(app, { pool, env }) {
           lowStockThreshold: product.lowStockThreshold ?? Number(old.low_stock_threshold),
           inventoryTracked: product.inventoryTracked ?? old.inventory_tracked,
           variantAttributes: nextVariantAttributes,
-          purchasePack: product.purchasePack !== undefined ? product.purchasePack : (product.unit !== undefined && product.unit !== old.unit ? null : old.purchase_pack),
+          purchasePack: requestedPack !== undefined ? requestedPack : (product.unit !== undefined && product.unit !== old.unit ? null : old.purchase_pack),
         };
         if (old.variant_group_id && product.variantAttributes !== undefined) {
           next.name = `${old.variant_group_name} · ${Object.values(nextVariantAttributes).join(' · ')}`;

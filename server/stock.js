@@ -67,6 +67,8 @@ function registerStockRoutes(app, { pool, env }) {
     const limit = Number.isSafeInteger(requestedLimit) ? Math.max(1, Math.min(requestedLimit, 100)) : 100;
     const offset = Number.isSafeInteger(requestedOffset) ? Math.max(0, Math.min(requestedOffset, 1_000_000)) : 0;
     const search = typeof request.query?.q === 'string' ? request.query.q.trim().slice(0, 100) : '';
+    const stock = request.query?.stock ?? 'all';
+    if (!['all', 'low', 'out'].includes(stock)) throw new ApiError(400, 'validation_error', 'Bộ lọc tồn kho không hợp lệ.');
     const requestedWarehouseId = request.query?.warehouseId;
     if (requestedWarehouseId !== undefined && (typeof requestedWarehouseId !== 'string' || !UUID_PATTERN.test(requestedWarehouseId))) {
       throw new ApiError(400, 'validation_error', 'Kho không hợp lệ.');
@@ -77,7 +79,7 @@ function registerStockRoutes(app, { pool, env }) {
       if (!warehouse) throw new ApiError(404, 'warehouse_not_found', 'Không tìm thấy kho đang hoạt động.');
       const summaryResult = await client.query(
         `SELECT COUNT(*)::int AS total,
-                COUNT(*) FILTER (WHERE COALESCE(b.on_hand, 0) <= p.low_stock_threshold)::int AS low_count,
+                COUNT(*) FILTER (WHERE b.on_hand > 0 AND b.on_hand <= p.low_stock_threshold)::int AS low_count,
                 COUNT(*) FILTER (WHERE COALESCE(b.on_hand, 0) = 0)::int AS out_count,
                 CASE WHEN $2::boolean THEN COALESCE(SUM(p.cost_vnd * b.on_hand), 0)::text ELSE NULL END AS stock_value_vnd
          FROM products p LEFT JOIN inventory_balances b ON b.store_id = p.store_id AND b.product_id = p.id AND b.warehouse_id = $3
@@ -104,8 +106,10 @@ function registerStockRoutes(app, { pool, env }) {
          ) latest ON true
          WHERE p.store_id = $1 AND p.status = 'active' AND p.inventory_tracked = true
            AND ($2 = '' OR p.name ILIKE '%' || $2 || '%' OR p.sku ILIKE '%' || $2 || '%' OR p.category ILIKE '%' || $2 || '%' OR p.barcode = $2)
+           AND ($7 = 'all' OR ($7 = 'out' AND COALESCE(b.on_hand, 0) = 0)
+                OR ($7 = 'low' AND b.on_hand > 0 AND b.on_hand <= p.low_stock_threshold))
          ORDER BY p.name, p.id LIMIT $3 OFFSET $4`,
-        [storeId, search, limit + 1, offset, canViewCost, warehouse.id]
+        [storeId, search, limit + 1, offset, canViewCost, warehouse.id, stock]
       );
       const hasMore = rows.rows.length > limit;
       return {
