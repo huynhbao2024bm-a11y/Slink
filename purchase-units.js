@@ -33,5 +33,9 @@
       pack: { name, size: String(size), quantity: text(packs), unitCostVnd: String(cost) },
     };
   }
-  return { fromPack };
+  function unitCostFromTotal(totalVnd, quantityMilli) {
+    const quantity = BigInt(quantityMilli);
+    return (BigInt(totalVnd) * 1000n + quantity / 2n) / quantity;
+  }
+  return { fromPack, unitCostFromTotal };
 });

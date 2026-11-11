@@ -6,7 +6,7 @@ const { UUID_PATTERN, withStore } = require('./db');
 const { findAccessibleWarehouse } = require('./warehouse-access');
 const { lockActiveCashSession } = require('./cash-register');
 const { normalizeOffline, beginOffline, recordOffline } = require('./offline-operations');
-const { fromPack } = require('../purchase-units');
+const { fromPack, unitCostFromTotal } = require('../purchase-units');
 
 const PURCHASE_ROLES = new Set(['owner', 'manager', 'stockkeeper', 'accountant']);
 const METHODS = new Set(['cash', 'bank_transfer', 'bank_qr', 'card', 'other']);
@@ -31,7 +31,7 @@ function quantityText(milli) {
 
 function amount(value, label) {
   const text = typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : value;
-  if (typeof text !== 'string' && typeof text !== 'number') throw new ApiError(400, 'validation_error', `${label} không hợp lệ.`);
+  if (typeof text !== 'string') throw new ApiError(400, 'validation_error', `${label} không hợp lệ.`);
   if (!/^(0|[1-9]\d{0,18})$/.test(String(text))) throw new ApiError(400, 'validation_error', `${label} phải là VND nguyên không âm.`);
   const parsed = BigInt(text);
   if (parsed > MAX_BIGINT) throw new ApiError(400, 'validation_error', `${label} vượt giới hạn lưu trữ.`);
@@ -57,12 +57,15 @@ function parsePurchaseLines(body) {
     }
     const quantity = converted ? converted.quantityMilli : quantityMilli(raw.quantity);
     if (converted && raw.quantity != null && quantityMilli(raw.quantity) !== quantity) throw new ApiError(400, 'purchase_pack_invalid', 'Số lượng theo lô và số lượng quy đổi chưa khớp.');
-    const unitCostVnd = converted ? converted.unitCostVnd : amount(raw.unitCostVnd, 'Giá nhập');
-    const lineTotalVnd = converted ? converted.lineTotalVnd : (unitCostVnd * quantity + 500n) / 1000n;
-    if (lineTotalVnd > MAX_BIGINT) throw new ApiError(400, 'validation_error', 'Tổng tiền của một dòng vượt giới hạn lưu trữ.');
+    const hasExactTotal = raw.lineTotalVnd !== undefined;
+    if (hasExactTotal && (converted || raw.unitCostVnd !== undefined)) throw new ApiError(400, 'validation_error', 'Chỉ nhập tổng tiền hoặc đơn giá cho một dòng hàng.');
+    const exactTotal = hasExactTotal ? amount(raw.lineTotalVnd, 'Tổng tiền nhập') : null;
+    const unitCostVnd = converted ? converted.unitCostVnd : hasExactTotal ? unitCostFromTotal(exactTotal, quantity) : amount(raw.unitCostVnd, 'Giá nhập');
+    const lineTotalVnd = converted ? converted.lineTotalVnd : exactTotal ?? (unitCostVnd * quantity + 500n) / 1000n;
+    if (lineTotalVnd > MAX_BIGINT || unitCostVnd > MAX_BIGINT) throw new ApiError(400, 'validation_error', 'Giá nhập vượt giới hạn lưu trữ.');
     total += lineTotalVnd;
     if (total > MAX_BIGINT) throw new ApiError(400, 'validation_error', 'Tổng phiếu nhập vượt giới hạn lưu trữ.');
-    return { productId, quantity, quantityText: quantityText(quantity), unitCostVnd, lineTotalVnd, pack: converted?.pack };
+    return { productId, quantity, quantityText: quantityText(quantity), unitCostVnd, lineTotalVnd, hasExactTotal, pack: converted?.pack };
   });
   return { items, total };
 }
@@ -95,7 +98,7 @@ function registerPurchaseRoutes(app, { pool, env }) {
     if (paidVnd > total) throw new ApiError(400, 'validation_error', 'Số tiền thanh toán không được vượt tổng phiếu nhập.');
     if (paidVnd < total && !supplierName) throw new ApiError(409, 'supplier_required', 'Nhập tên nhà cung cấp để theo dõi khoản còn phải trả.');
     const value = Array.isArray(body.items) ? {
-      items: items.map((item) => ({ productId: item.productId, quantityMilli: item.quantity.toString(), unitCostVnd: item.unitCostVnd.toString(), ...(item.pack ? { pack: item.pack } : {}) })),
+      items: items.map((item) => ({ productId: item.productId, quantityMilli: item.quantity.toString(), unitCostVnd: item.unitCostVnd.toString(), ...(item.pack ? { pack: item.pack } : {}), ...(item.hasExactTotal ? { lineTotalVnd: item.lineTotalVnd.toString() } : {}) })),
       totalVnd: total.toString(), paidVnd: paidVnd.toString(), supplierName, note, method,
     } : {
       // Preserve the previous single-item request hash so an older pending retry can still receive its stored response.
@@ -106,6 +109,7 @@ function registerPurchaseRoutes(app, { pool, env }) {
     };
     if (requestedWarehouseId) value.warehouseId = requestedWarehouseId;
     if (!Array.isArray(body.items) && items[0].pack) value.pack = items[0].pack;
+    if (!Array.isArray(body.items) && items[0].hasExactTotal) value.lineTotalVnd = items[0].lineTotalVnd.toString();
     if (offline) { value.offline = offline; value.offlineVersions = offlineVersions; }
     const digest = createHash('sha256').update(JSON.stringify(value)).digest();
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {

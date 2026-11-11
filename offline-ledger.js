@@ -21,6 +21,22 @@
   }
   function productKey(warehouseId, productId) { return warehouseId + '|' + productId; }
   function lineTotal(price, milli) { return (amount(price) * BigInt(milli) + 500n) / 1000n; }
+  function purchaseLineAmounts(item, milli) {
+    if (!milli) throw problem('offline_invalid_quantity', 'Số lượng nhập phải lớn hơn 0.');
+    if (item.lineTotalVnd !== undefined) {
+      if (item.pack || item.unitCostVnd !== undefined) throw problem('offline_invalid_amount', 'Chỉ nhập tổng tiền hoặc đơn giá cho một dòng hàng.');
+      const total = amount(item.lineTotalVnd);
+      const unitCost = purchaseUnits.unitCostFromTotal(total, milli);
+      amount(unitCost);
+      return { unitCost, total };
+    }
+    if (item.pack) {
+      const packed = purchaseUnits.fromPack(item.pack);
+      if (packed.quantityMilli !== BigInt(milli) || String(packed.unitCostVnd) !== String(item.unitCostVnd)) throw problem('purchase_pack_invalid', 'Số lượng quy đổi của phiếu nhập chưa khớp.');
+      return { unitCost: packed.unitCostVnd, total: packed.lineTotalVnd, pack: packed.pack };
+    }
+    return { unitCost: amount(item.unitCostVnd), total: lineTotal(item.unitCostVnd, milli) };
+  }
 
   function derive(responses, operations) {
     const state = { products: new Map(), customers: new Map(), session: null, lastClosed: null, localOrders: [], moneyEntries: [], customerDebtChanges: new Map(), supplierDebtChanges: new Map(), issues: [], cashChanges: [], movements: [] };
@@ -170,13 +186,11 @@
       if (!body.items?.length || body.items.length > 50) throw problem('offline_empty_purchase', 'Phiếu nhập cần từ 1 đến 50 mặt hàng.');
       for (const item of body.items) {
         const product = findProduct(state, body.warehouseId, item.productId, operation, validate), milli = quantity(item.quantity);
-        if (!milli) throw problem('offline_invalid_quantity', 'Số lượng nhập phải lớn hơn 0.');
         if (validate && item.expectedProductVersion !== undefined && Number(item.expectedProductVersion) !== Number(product.version || 1)) throw problem('offline_product_changed', 'Mặt hàng trên thiết bị đã đổi. Kiểm tra phiếu nhập trước khi lưu.');
-        const packed = item.pack ? purchaseUnits.fromPack(item.pack) : null;
-        if (packed && (packed.quantity !== String(item.quantity) || String(packed.unitCostVnd) !== String(item.unitCostVnd))) throw problem('purchase_pack_invalid', 'Số lượng quy đổi của phiếu nhập chưa khớp.');
-        total += packed ? packed.lineTotalVnd : lineTotal(item.unitCostVnd, milli); move(state, operation, product, milli, validate);
+        const amounts = purchaseLineAmounts(item, milli);
+        total += amounts.total; move(state, operation, product, milli, validate);
         const version = Number(product.version || 1) + 1;
-        for (const peer of state.products.values()) if (peer.id === product.id) { peer.cost_vnd = String(item.unitCostVnd); peer.version = version; if (packed) peer.purchase_pack = packed.pack; }
+        for (const peer of state.products.values()) if (peer.id === product.id) { peer.cost_vnd = String(amounts.unitCost); peer.version = version; if (amounts.pack) peer.purchase_pack = amounts.pack; }
       }
       const paid = amount(body.amountPaidVnd || 0);
       if (paid > total) throw problem('offline_overpaid_purchase', 'Tiền trả không được lớn hơn phiếu nhập.');

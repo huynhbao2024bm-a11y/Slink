@@ -1,6 +1,6 @@
 # Ứng dụng Android Slink
 
-## Bản cài thử 0.3.4
+## Bản cài thử 0.3.5
 
 Ứng dụng cài được từ APK, có biểu tượng riêng và không mở một thẻ Chrome. Giao diện được đóng gói trong APK; Android WebView hiển thị giao diện đó, còn API dùng máy chủ Slink. Đây là ứng dụng hybrid, chưa phải giao diện viết lại hoàn toàn bằng thành phần Android.
 
@@ -8,12 +8,12 @@ Android 10 trở lên là mức tối thiểu được cấu hình. Cần Androi
 
 ### Cài trên điện thoại
 
-1. Chép `Slink-0.3.4-preview.apk` sang điện thoại Android.
+1. Chép `Slink-0.3.5-preview.apk` sang điện thoại Android.
 2. Mở tệp, cho phép ứng dụng đang mở tệp cài ứng dụng nếu Android yêu cầu, rồi chọn **Cài đặt**.
 3. Mở **Slink**, đăng nhập khi có mạng và chờ tải dữ liệu cửa hàng trong lần đầu.
 4. Sau đó có thể tiếp tục các nghiệp vụ đã hỗ trợ offline. Tài khoản, quyền truy cập, dữ liệu dùng chung và xác nhận giao dịch vẫn cần máy chủ. Đơn chưa gửi được giữ trên thiết bị cho tới khi đối soát xong.
 
-Không xóa dữ liệu hoặc gỡ ứng dụng khi còn chứng từ chưa gửi. Bản cài thử được đặt ngoài Git tại `D:\Slink\dist\Slink-0.3.1-preview.apk`.
+Không xóa dữ liệu hoặc gỡ ứng dụng khi còn chứng từ chưa gửi. Bản cài thử được đặt ngoài Git tại `D:\Slink\dist\Slink-0.3.5-preview.apk`.
 
 ## Thành phần đã nối với Android
 
@@ -34,7 +34,7 @@ Từ thư mục gốc của bản mã cần đóng gói:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\android-build.ps1
 ```
 
-Thư mục nhận mặc định là `dist/`. Có thể chọn nơi nhận khác bằng `-Destination 'D:\Slink\dist\Slink-0.3.1-preview.apk'`. API mặc định là `https://slink-xny3.onrender.com`; `-AppOrigin` chỉ nhận HTTPS origin, không nhận mật khẩu, đường dẫn hoặc chuỗi truy vấn. Không nhúng thông tin đăng nhập vào APK.
+Thư mục nhận mặc định là `dist/`. Có thể chọn nơi nhận khác bằng `-Destination 'D:\Slink\dist\Slink-0.3.5-preview.apk'`. API mặc định là `https://slink-xny3.onrender.com`; `-AppOrigin` chỉ nhận HTTPS origin, không nhận mật khẩu, đường dẫn hoặc chuỗi truy vấn. Không nhúng thông tin đăng nhập vào APK.
 
 Gradle wrapper và phiên bản thư viện được cố định trong mã. Lần build đầu cần mạng tải dependency. `prepareWeb` chỉ sao chép danh sách tệp giao diện được phép; không đưa `.env`, dữ liệu thử, backup hoặc mã máy chủ vào APK.
 
@@ -47,6 +47,8 @@ Giao diện trong APK được cập nhật bằng bản APK mới. Từ 0.3.1, 
 Từ 0.3.3, trang mở đầu có mã phiên bản APK và các tài nguyên giao diện có dấu phiên bản nội dung riêng. Nhờ vậy service worker cũ không trả lại giao diện cũ ở lần mở đầu sau khi cài bản mới. Không xóa cache nghiệp vụ, IndexedDB, cookie, giỏ nháp hoặc chứng từ đang chờ để xử lý cập nhật.
 
 Bản 0.3.4 thêm quy đổi đơn vị nhập tùy chọn ngay trong sản phẩm; có thể bỏ qua, hoặc bật rồi tắt mà không bị ô ẩn chặn lưu. Ô tiền có dấu phân cách và nút 000; giá bán chỉ gợi ý khi ô còn trống. Các trang đã có dữ liệu được mở từ máy trước rồi cập nhật nền. Máy chủ vẫn kiểm tra quyền, xác nhận tiền/tồn và xử lý chống gửi trùng.
+
+Bản 0.3.5 cập nhật quầy bán, kho, thu chi và đồng bộ ngầm. Khi nhập theo đơn vị bán, điền số lượng và tổng tiền của dòng. Phiếu giữ đúng số tiền đã nhập, còn giá vốn mỗi đơn vị được làm tròn đến đồng. Máy chủ cần chạy phiên bản hỗ trợ tổng tiền phiếu nhập trước khi phát hành APK.
 
 ## Bằng chứng và phần cần kiểm tra tiếp
 

@@ -3603,6 +3603,48 @@ test('pack receipts keep exact invoice money, base stock, defaults and safe retr
   assert.equal(invalid.statusCode,400);
 });
 
+test('a receipt entered by total keeps exact VND and an independent sale price', async t => {
+  const app = await testApp(t, { DEMO_DISABLE_EMAIL_VERIFICATION: 'true' });
+  const registration = await app.inject({ method: 'POST', url: '/api/auth/register', headers: { origin }, payload: {
+    email: 'receipt-total@example.test', displayName: 'Chủ cửa hàng', storeName: 'Cửa hàng giấy', password: 'receipt total long password',
+  } });
+  assert.equal(registration.statusCode, 201, registration.body);
+  const cookies = cookiesFrom(registration), base = '/api/stores/' + registration.json().stores[0].id;
+  const headers = { origin, cookie: cookieHeader(cookies), 'x-csrf-token': cookies.slink_csrf };
+  const post = (url, payload, key) => app.inject({ method: 'POST', url: base + url, headers: { ...headers, 'idempotency-key': key }, payload });
+  const read = async url => {
+    const response = await app.inject({ method: 'GET', url: base + url, headers });
+    assert.equal(response.statusCode, 200, response.body);
+    return response.json();
+  };
+  const imported = await post('/products/import', { items: [{ name: 'Giấy A4', sku: 'A4', unit: 'tờ', salePriceVnd: 2000, openingQuantity: 0, inventoryTracked: true }] }, 'receipt-total-import-01');
+  assert.equal(imported.statusCode, 201, imported.body);
+  const { id: productId } = imported.json().products[0];
+  const item = { productId, quantity: '1500', lineTotalVnd: '200000' };
+  const payload = { items: [item], supplierName: 'Nhà cung cấp giấy', amountPaidVnd: 50000, method: 'bank_transfer' };
+  const received = await post('/purchases', payload, 'receipt-total-record-01');
+  assert.equal(received.statusCode, 201, received.body);
+  assert.equal(received.json().purchase.totalVnd, '200000');
+  assert.equal(received.json().purchase.items[0].unitCostVnd, '133');
+  const replay = await post('/purchases', payload, 'receipt-total-record-01');
+  assert.equal(replay.headers['idempotent-replayed'], 'true');
+  assert.equal((await post('/purchases', { ...payload, items: [{ ...item, lineTotalVnd: '200001' }] }, 'receipt-total-record-01')).statusCode, 409);
+  assert.equal((await post('/purchases', { ...payload, items: [{ ...item, unitCostVnd: 133 }] }, 'receipt-total-mixed-001')).statusCode, 400);
+  const finance = await read('/finance');
+  assert.equal(finance.summary.todayOutVnd, '50000');
+  assert.equal(finance.summary.supplierPayableVnd, '150000');
+  assert.equal(finance.purchases[0].lines[0].totalVnd, '200000');
+  assert.equal(finance.purchases.length, 1);
+  const stockBefore = (await read('/products?productId=' + productId)).products[0];
+  assert.equal(Number(stockBefore.on_hand), 1500);
+  assert.equal(stockBefore.cost_vnd, '133');
+  assert.equal(stockBefore.sale_price_vnd, '2000');
+  const sale = await post('/sales', { items: [{ productId, quantity: 1 }], discountVnd: 0, method: 'bank_transfer', amountReceivedVnd: 2000 }, 'receipt-total-sale-0001');
+  assert.equal(sale.statusCode, 201, sale.body);
+  assert.equal(sale.json().order.totalVnd, '2000');
+  assert.equal(Number((await read('/products?productId=' + productId)).products[0].on_hand), 1499);
+});
+
 test('product pack defaults persist without rewriting stock or previous receipts', async t => {
   const app=await testApp(t,{DEMO_DISABLE_EMAIL_VERIFICATION:'true'});
   const register=await app.inject({method:'POST',url:'/api/auth/register',headers:{origin},payload:{email:'unit-defaults@example.test',displayName:'Chủ cửa hàng',storeName:'Cửa hàng đơn vị',password:'valid unit defaults password'}});
