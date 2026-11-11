@@ -134,16 +134,24 @@
         && ((saved.searchParams.get('view') || '') === (query.searchParams.get('view') || '') || (!saved.searchParams.get('view') && query.searchParams.get('view') === 'picker'));
     }).sort((a, b) => a.fetchedAt.localeCompare(b.fetchedAt));
     if (!candidates.length) return exact || null;
+    const term = (query.searchParams.get('q') || '').trim();
+    if (exact && term && ['products', 'inventory'].includes(resource)) {
+      const newer = new Map();
+      candidates.filter(record => record.fetchedAt > exact.fetchedAt).forEach(record => {
+        (record.value[collection] || []).forEach(row => newer.set(row.id, { ...newer.get(row.id), ...row }));
+      });
+      return { ...exact, value: { ...exact.value, [collection]: (exact.value[collection] || []).map(row => ({ ...row, ...newer.get(row.id) })) } };
+    }
     const rows = new Map();
     candidates.forEach(record => (record.value[collection] || []).forEach(row => rows.set(row.id, { ...rows.get(row.id), ...row })));
-    const text = (query.searchParams.get('q') || '').trim().toLocaleLowerCase('vi-VN');
+    const text = term.toLocaleLowerCase('vi-VN');
     const tag = query.searchParams.get('tag');
     const status = query.searchParams.get('status');
     let filtered = Array.from(rows.values()).filter(row => {
-      const words = [row.name, row.sku, row.barcode, row.phone, row.email, row.order_number, row.customer_name, row.customer_phone].filter(Boolean).join(' ').toLocaleLowerCase('vi-VN');
+      const words = [row.name, row.sku, row.category, row.variant_group_name, ...Object.entries(row.variant_attributes || {}).map(([key, value]) => key + ' ' + value), row.phone, row.email, row.order_number, row.customer_name, row.customer_phone].filter(Boolean).join(' ').toLocaleLowerCase('vi-VN');
       const due = Number(row.total_vnd || 0) - Number(row.paid_vnd || 0) - Number(row.return_total_vnd || 0) + Number(row.refunded_vnd || 0);
       const statusMatch = !status || status === 'all' || (status === 'due' ? row.status === 'completed' && due > 0 : status === 'completed' ? row.status === status && due <= 0 : row.status === status);
-      return (!text || words.includes(text)) && (!tag || row.tags?.includes(tag)) && statusMatch;
+      return (!text || words.includes(text) || row.barcode === term) && (!tag || row.tags?.includes(tag)) && statusMatch;
     });
     if (resource === 'inventory') filtered = filtered.filter(row => row.inventory_tracked);
     const offset = Math.max(0, Number(query.searchParams.get('offset')) || 0);

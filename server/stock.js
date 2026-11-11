@@ -103,7 +103,7 @@ function registerStockRoutes(app, { pool, env }) {
            ORDER BY occurred_at DESC, id DESC LIMIT 1
          ) latest ON true
          WHERE p.store_id = $1 AND p.status = 'active' AND p.inventory_tracked = true
-           AND ($2 = '' OR p.name ILIKE '%' || $2 || '%' OR p.sku ILIKE '%' || $2 || '%' OR p.category ILIKE '%' || $2 || '%')
+           AND ($2 = '' OR p.name ILIKE '%' || $2 || '%' OR p.sku ILIKE '%' || $2 || '%' OR p.category ILIKE '%' || $2 || '%' OR p.barcode = $2)
          ORDER BY p.name, p.id LIMIT $3 OFFSET $4`,
         [storeId, search, limit + 1, offset, canViewCost, warehouse.id]
       );

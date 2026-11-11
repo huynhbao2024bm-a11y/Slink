@@ -166,6 +166,32 @@ function registerFinanceRoutes(app, { pool, env }) {
     });
   });
 
+  app.get('/api/stores/:storeId/suppliers/:supplierId/ledger', async (request) => {
+    const auth = await authenticate(pool, request);
+    const { storeId, supplierId } = request.params;
+    if (!UUID_PATTERN.test(storeId) || !UUID_PATTERN.test(supplierId)) throw new ApiError(400, 'validation_error', 'Nhà cung cấp không hợp lệ.');
+    return withStore(pool, auth.userId, storeId, async (client, membership) => {
+      if (!FINANCE_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền xem công nợ nhà cung cấp.');
+      const result = await client.query(
+        `SELECT s.id, s.name,
+                (SELECT COALESCE(SUM(l.increases_payable_vnd) - SUM(l.decreases_payable_vnd), 0)::text
+                 FROM supplier_ledger_entries l WHERE l.store_id = s.store_id AND l.supplier_id = s.id) AS balance_vnd,
+                COALESCE((SELECT json_agg(recent ORDER BY recent.occurred_at DESC, recent.id DESC) FROM (
+                  SELECT l.id, l.entry_type, l.increases_payable_vnd::text, l.decreases_payable_vnd::text,
+                         l.occurred_at, l.note, p.id AS purchase_id, p.purchase_number
+                  FROM supplier_ledger_entries l LEFT JOIN purchases p
+                    ON p.store_id = l.store_id AND p.id = l.source_id AND l.source_type IN ('purchase', 'purchase_payment')
+                  WHERE l.store_id = s.store_id AND l.supplier_id = s.id
+                  ORDER BY l.occurred_at DESC, l.id DESC LIMIT 20
+                ) recent), '[]'::json) AS entries
+         FROM suppliers s WHERE s.store_id = $1 AND s.id = $2`, [storeId, supplierId]
+      );
+      if (!result.rowCount) throw new ApiError(404, 'supplier_not_found', 'Không tìm thấy nhà cung cấp.');
+      const { entries, ...supplier } = result.rows[0];
+      return { supplier, entries };
+    });
+  });
+
   app.post('/api/stores/:storeId/suppliers', async (request, reply) => {
     const auth = await authenticate(pool, request);
     requireCsrf(request, env);
