@@ -783,7 +783,14 @@
       const order = state.localOrders.find(row => row.key === record.key);
       result.order = { ...order, id: 'local:' + record.key, number, changeVnd: order.changeVnd, totalVnd: order.totalVnd };
     }
-    if (record.kind === 'purchase') result.purchase = { id: 'local:' + record.key, number, totalVnd: String(body.items.reduce((sum, item) => sum + (item.pack ? window.SlinkPurchaseUnits.fromPack(item.pack).lineTotalVnd : window.SlinkOfflineLedger.lineTotal(item.unitCostVnd, window.SlinkOfflineLedger.quantity(item.quantity))), 0n)), itemCount: body.items.length };
+    if (record.kind === 'purchase') {
+      const total = body.items.reduce((sum, item) => {
+        if (item.lineTotalVnd !== undefined) return sum + BigInt(item.lineTotalVnd);
+        if (item.pack) return sum + window.SlinkPurchaseUnits.fromPack(item.pack).lineTotalVnd;
+        return sum + window.SlinkOfflineLedger.lineTotal(item.unitCostVnd, window.SlinkOfflineLedger.quantity(item.quantity));
+      }, 0n);
+      result.purchase = { id: 'local:' + record.key, number, totalVnd: String(total), itemCount: body.items.length };
+    }
     if (record.kind === 'cash') result.movement = { id: 'local:' + record.key, amountVnd: body.amountVnd };
     if (record.kind === 'shift-open') result.session = state.session;
     if (record.kind === 'shift-close') result.session = state.lastClosed;
@@ -3536,9 +3543,11 @@
     const purchase = purchaseHistory.find(function (item) { return item.id === id; });
     if (!purchase) return;
     const rows = purchase.items.map(function (item) {
-      return `<tr><td><span class='product-name-stack'><strong>${esc(item.productName)}</strong><small>${esc(item.sku)}</small>${item.pack ? `<small>${number(Number(item.pack.quantity))} ${esc(item.pack.name)} × ${number(Number(item.pack.size))} ${esc(item.unit)} · ${moneyVndText(item.pack.unitCostVnd)} / ${esc(item.pack.name)}</small>` : ''}</span></td><td>${number(Number(item.quantity))} ${esc(item.unit)}</td><td class='text-right'>${item.pack ? '≈ ' : ''}${moneyVndText(item.unitCostVnd)}</td><td class='text-right'><strong>${moneyVndText(item.totalVnd)}</strong></td></tr>`;
+      const milli = Math.round(Number(item.quantity) * 1000);
+      const estimated = item.pack || BigInt(item.unitCostVnd) * BigInt(milli) !== BigInt(item.totalVnd) * 1000n;
+      return `<tr><td><span class='product-name-stack'><strong>${esc(item.productName)}</strong><small>${esc(item.sku)}</small>${item.pack ? `<small>${number(Number(item.pack.quantity))} ${esc(item.pack.name)} × ${number(Number(item.pack.size))} ${esc(item.unit)} · ${moneyVndText(item.pack.unitCostVnd)} / ${esc(item.pack.name)}</small>` : ''}</span></td><td>${number(Number(item.quantity))} ${esc(item.unit)}</td><td class='text-right'>${estimated ? '≈ ' : ''}${moneyVndText(item.unitCostVnd)}</td><td class='text-right'><strong>${moneyVndText(item.totalVnd)}</strong></td></tr>`;
     }).join('');
-    const body = `<div class='summary-banner'><div><strong>${esc(purchase.supplierName || 'Không chỉ định nhà cung cấp')}</strong><small>${humanDate(purchase.receivedAt, true)} · ${esc(purchase.status === 'received' ? 'Đã nhận hàng' : purchase.status)}${purchase.purchaseOrderNumber ? ` · đơn ${esc(purchase.purchaseOrderNumber)}` : ''}</small></div><strong>${money(purchase.total)}</strong></div><div class='table-wrap' style='margin-top:14px'><table class='data-table'><thead><tr><th>Sản phẩm</th><th>Số lượng</th><th class='text-right'>Giá nhập</th><th class='text-right'>Thành tiền</th></tr></thead><tbody>${rows}</tbody></table></div>${purchase.note ? `<div class='modal-note'>${esc(purchase.note)}</div>` : ''}`;
+    const body = `<div class='summary-banner'><div><strong>${esc(purchase.supplierName || 'Không chỉ định nhà cung cấp')}</strong><small>${humanDate(purchase.receivedAt, true)} · ${esc(purchase.status === 'received' ? 'Đã nhận hàng' : purchase.status)}${purchase.purchaseOrderNumber ? ` · đơn ${esc(purchase.purchaseOrderNumber)}` : ''}</small></div><strong>${money(purchase.total)}</strong></div><div class='table-wrap' style='margin-top:14px'><table class='data-table'><thead><tr><th>Sản phẩm</th><th>Số lượng</th><th class='text-right'>Giá nhập / đơn vị</th><th class='text-right'>Thành tiền</th></tr></thead><tbody>${rows}</tbody></table></div>${purchase.note ? `<div class='modal-note'>${esc(purchase.note)}</div>` : ''}`;
     showModal(`Phiếu nhập ${purchase.number}`, 'Chi tiết hàng đã nhận và giá nhập được ghi vào sổ.', body, `<button class='btn btn-secondary' data-action='close-modal'>Đóng</button>`, true);
   }
 
@@ -4942,11 +4951,11 @@
         <div class='form-field'><label class='input-label' for='quick-product-barcode'>Mã vạch</label><input class='input' id='quick-product-barcode' name='barcode' maxlength='80' placeholder='Không bắt buộc'/></div>
         <div class='form-field'><label class='input-label' for='quick-product-category'>Danh mục</label><input class='input' id='quick-product-category' name='category' maxlength='120' placeholder='Chưa phân loại'/></div>
         <div class='form-field'><label class='input-label' for='quick-product-unit'>Đơn vị</label><input class='input' id='quick-product-unit' name='unit' maxlength='40' placeholder='cái'/></div>
-        <div class='form-field'><label class='input-label' for='quick-product-cost'>Giá nhập mỗi đơn vị (VND)</label><input class='input' id='quick-product-cost' name='cost' type='number' min='0' step='1' placeholder='Bổ sung sau'/><small>Để trống sẽ ghi 0đ. Nhập giá này để tính lãi đúng trước khi bán.</small></div>
+        <div class='form-field'><label class='input-label' for='quick-product-cost'>Giá vốn mỗi đơn vị (đ)</label><input class='input' id='quick-product-cost' name='cost' type='number' min='0' step='1' placeholder='Bổ sung sau'/><small>Tổng tiền của cả đợt ghi ở Nhập hàng.</small></div>
         <div class='form-field'><label class='input-label' for='quick-product-threshold'>Nhắc khi còn</label><input class='input' id='quick-product-threshold' name='minStock' type='number' min='0' step='0.001' value='0'/></div>
         <label class='quick-product-tracking'><input type='checkbox' name='inventoryTracked' checked/><span><strong>Theo dõi số lượng trong kho</strong><small>Bỏ chọn nếu đây là dịch vụ hoặc mặt hàng không quản lý tồn.</small></span></label>
       </div></details>${productPackFields()}
-      <div class='quick-product-note'>Số lượng này là hàng bạn đang có, không phải lần nhập hàng mới.${warehouses.length > 1 ? ` Ghi vào ${esc(warehouses.find(function (warehouse) { return warehouse.id === selectedWarehouseId; })?.name || 'kho chính')}.` : ''} Muốn tính lãi đúng, hãy điền giá nhập trước khi bán.</div>
+      <div class='quick-product-note'>Số lượng đang có là tồn ban đầu.${warehouses.length > 1 ? ` Ghi vào ${esc(warehouses.find(function (warehouse) { return warehouse.id === selectedWarehouseId; })?.name || 'kho chính')}.` : ''} Nếu đang ghi một đợt nhập mới, để trống số lượng rồi vào Nhập hàng.</div>
       <div class='auth-message error' data-quick-product-error role='alert' hidden></div>
     </form>`;
     showModal('Thêm mặt hàng', 'Nhập tên, giá bán và số lượng để bán ngay.', body, `<button class='btn btn-secondary' type='submit' form='entity-form' data-add-another='true'>Lưu và thêm tiếp</button><button class='btn btn-primary' type='submit' form='entity-form'>Lưu mặt hàng</button>`, true);
@@ -5097,7 +5106,7 @@
     const scanNote = scanned
       ? `<div class='notice-item product-scan-note' role='status'><span>${scanned.barcode ? icon('check', 18) : 'i'}</span><span><strong>${scanned.barcode ? 'Chưa có mã này trong danh mục' : 'Chưa đọc được mã'}</strong><small>${scanned.barcode ? 'Mã vạch đã điền sẵn; mã SKU được điền theo mã nếu phù hợp, nếu không Slink tạo mã tạm. Hãy kiểm tra, nhập tên và giá.' : 'Nhập tên và giá bán. Mã SKU tạm đã tạo và có thể sửa; ảnh chỉ để xem lúc này, chưa được lưu vào sản phẩm.'} Thông tin khác không tự tra cứu. Tồn mới bắt đầu từ 0; cần ghi nhận số lượng trong kho trước khi bán.</small></span></div>`
       : '';
-    const form = `<form id='entity-form' data-form='product' data-from-scan='${scanned ? 'true' : 'false'}' data-id='${p ? p.id : ''}' data-version='${p ? p.version : ''}'>${productPhotoField(p)}${scanPhoto}${scanNote}<div class='form-grid'>${displayedName}${variantAttributes}<div class='form-field'><label class='input-label'>Mã SKU *</label><input class='input' name='sku' value='${esc(p ? p.sku : suggestedSku)}' placeholder='VD: CF-250' required maxlength='80'/></div><div class='form-field'><label class='input-label'>Mã vạch</label><input class='input' name='barcode' value='${esc(barcode)}' placeholder='Nhập mã vạch nếu có' maxlength='80'/></div><div class='form-field'><label class='input-label'>Danh mục</label><input class='input' name='category' list='categories' value='${esc(p ? p.category : scanned ? 'Chưa phân loại' : '')}' placeholder='Chọn hoặc nhập mới' ${grouped ? 'readonly' : ''}/><datalist id='categories'>${Array.from(new Set(store.products.map(function (x) { return x.category; }))).map(function (x) { return `<option value='${esc(x)}'></option>`; }).join('')}</datalist></div><div class='form-field'><label class='input-label'>Đơn vị tính</label><input class='input' name='unit' value='${esc(p ? p.unit : 'cái')}' placeholder='cái, hộp, kg' maxlength='40' ${grouped ? 'readonly' : ''}/></div><div class='form-field'><label class='input-label'>Giá bán (VND) *</label><input class='input' name='price' type='number' min='0' step='1' value='${p ? p.price : ''}' placeholder='0' required/></div><div class='form-field'><label class='input-label'>Giá vốn (VND)</label><input class='input' name='cost' type='number' min='0' step='1' value='${p ? p.cost : ''}' placeholder='0'/></div><div class='form-field'><label class='input-label'>Nhắc khi còn</label><input class='input' name='minStock' type='number' min='0' step='0.001' value='${p ? p.minStock : '5'}'/></div>${p ? `<div class='form-field'><label class='input-label'>Tồn kho hiện tại</label><div class='input' aria-readonly='true'>${number(p.stock)} ${esc(p.unit)}</div></div>` : `<div class='form-field full'><div class='modal-note'>Sản phẩm mới bắt đầu với tồn kho bằng 0. Số lượng chỉ thay đổi qua nghiệp vụ kho.</div></div>`}</div>${productPackFields(p)}<label class='install-hint' style='display:flex;align-items:flex-start;gap:9px;grid-column:1/-1'><input type='checkbox' name='inventoryTracked' ${!p || p.inventoryTracked ? 'checked' : ''} style='margin-top:2px;flex:none'/><span><strong>Theo dõi tồn kho</strong><small style='display:block;margin-top:4px'>Tắt cho dịch vụ hoặc mặt hàng không quản lý số lượng. Trước khi tắt, cần điều chỉnh tồn và lượng đang giữ về 0.</small></span></label></div></form>`;
+    const form = `<form id='entity-form' data-form='product' data-from-scan='${scanned ? 'true' : 'false'}' data-id='${p ? p.id : ''}' data-version='${p ? p.version : ''}'>${productPhotoField(p)}${scanPhoto}${scanNote}<div class='form-grid'>${displayedName}${variantAttributes}<div class='form-field'><label class='input-label'>Mã SKU *</label><input class='input' name='sku' value='${esc(p ? p.sku : suggestedSku)}' placeholder='VD: CF-250' required maxlength='80'/></div><div class='form-field'><label class='input-label'>Mã vạch</label><input class='input' name='barcode' value='${esc(barcode)}' placeholder='Nhập mã vạch nếu có' maxlength='80'/></div><div class='form-field'><label class='input-label'>Danh mục</label><input class='input' name='category' list='categories' value='${esc(p ? p.category : scanned ? 'Chưa phân loại' : '')}' placeholder='Chọn hoặc nhập mới' ${grouped ? 'readonly' : ''}/><datalist id='categories'>${Array.from(new Set(store.products.map(function (x) { return x.category; }))).map(function (x) { return `<option value='${esc(x)}'></option>`; }).join('')}</datalist></div><div class='form-field'><label class='input-label'>Đơn vị tính</label><input class='input' name='unit' value='${esc(p ? p.unit : 'cái')}' placeholder='cái, hộp, kg' maxlength='40' ${grouped ? 'readonly' : ''}/></div><div class='form-field'><label class='input-label'>Giá bán (VND) *</label><input class='input' name='price' type='number' min='0' step='1' value='${p ? p.price : ''}' placeholder='0' required/></div><div class='form-field'><label class='input-label' for='product-unit-cost'>Giá vốn mỗi đơn vị (đ)</label><input class='input' id='product-unit-cost' name='cost' type='number' min='0' step='1' value='${p ? p.cost : ''}' placeholder='0'/></div><div class='form-field'><label class='input-label'>Nhắc khi còn</label><input class='input' name='minStock' type='number' min='0' step='0.001' value='${p ? p.minStock : '5'}'/></div>${p ? `<div class='form-field'><label class='input-label'>Tồn kho hiện tại</label><div class='input' aria-readonly='true'>${number(p.stock)} ${esc(p.unit)}</div></div>` : `<div class='form-field full'><div class='modal-note'>Sản phẩm mới bắt đầu với tồn kho bằng 0. Số lượng chỉ thay đổi qua nghiệp vụ kho.</div></div>`}</div>${productPackFields(p)}<label class='install-hint' style='display:flex;align-items:flex-start;gap:9px;grid-column:1/-1'><input type='checkbox' name='inventoryTracked' ${!p || p.inventoryTracked ? 'checked' : ''} style='margin-top:2px;flex:none'/><span><strong>Theo dõi tồn kho</strong><small style='display:block;margin-top:4px'>Tắt cho dịch vụ hoặc mặt hàng không quản lý số lượng. Trước khi tắt, cần điều chỉnh tồn và lượng đang giữ về 0.</small></span></label></div></form>`;
     const footer = `<button class='btn btn-secondary' type='button' data-action='close-modal'>Hủy</button>${grouped ? `<button class='btn btn-secondary' type='button' data-action='add-product-to-existing-variant-group' data-id='${p.id}'>Thêm SKU vào nhóm</button>` : ''}${p && ['owner', 'manager', 'stockkeeper'].includes(store.role) ? `<button class='btn btn-secondary' type='button' data-action='adjust-stock' data-id='${p.id}'>Kiểm kê tồn</button>` : ''}${p && ['owner', 'manager', 'stockkeeper', 'accountant'].includes(store.role) ? `<button class='btn btn-secondary' type='button' data-action='product-price-history' data-id='${p.id}'>Lịch sử giá</button>` : ''}${p ? `<button class='btn btn-danger' type='button' data-action='archive-product' data-id='${p.id}'>Lưu trữ</button>` : ''}<button class='btn btn-primary' type='submit' form='entity-form'>${p ? 'Lưu thay đổi' : 'Thêm sản phẩm'}</button>`;
     showModal(p ? 'Cập nhật sản phẩm' : 'Thêm sản phẩm mới', p ? 'Chỉnh sửa thông tin sản phẩm. Tồn kho được theo dõi riêng.' : 'Thêm một mặt hàng vào danh mục cửa hàng.', form, footer, true);
   }
@@ -5530,7 +5539,7 @@
         const selected = automatic || products.find(product => product.id === previousId);
         const placeholder = products.length ? 'Chọn mặt hàng…' : 'Không tìm thấy sản phẩm';
         select.innerHTML = `<option value=''>${placeholder}</option>` + products.map(function (product) {
-          return `<option value='${esc(product.id)}' data-cost='${product.cost}'>${esc(product.name)} · ${esc(product.sku)}</option>`;
+          return `<option value='${esc(product.id)}'>${esc(product.name)} · ${esc(product.sku)}</option>`;
         }).join('');
         select.value = selected?.id || '';
         for (const product of products) {
@@ -5540,7 +5549,6 @@
         }
         // Repeating a search must not replace a price or pack the user edited.
         if (select.value !== previousId) {
-          row.querySelector('[data-purchase-cost]').value = window.SlinkMoneyFields.format(selected ? String(selected.cost) : '');
           setReceivePackMode(row, selected, true);
         }
         updateReceivePurchaseTotal(input.form);
@@ -5579,20 +5587,27 @@
       const pack = item.pack || (item.packMode !== false && product?.purchasePack ? { ...product.purchasePack, quantity: item.quantity || '1' } : null);
       const packed = Boolean(pack);
       const unit = product?.unit || 'cái';
-      const options = store.products.map(candidate => `<option value='${candidate.id}' data-cost='${candidate.cost}' ${candidate.id === item.productId ? 'selected' : ''}>${esc(candidate.name)} · ${esc(candidate.sku)}</option>`).join('');
+      const priceMode = packed || item.priceMode === 'unit' || (!item.priceMode && item.unitCostVnd != null) ? 'unit' : 'total';
+      const costLabel = priceMode === 'total' ? 'Tổng tiền nhập' : 'Giá 1 ' + (pack?.name || unit);
+      const amount = pack?.unitCostVnd ?? (priceMode === 'total' ? item.lineTotalVnd : item.unitCostVnd) ?? '';
+      const priceField = `<div class='form-field'><label class='form-field' for='purchase-price-${index}'><span class='input-label' data-purchase-cost-label>${esc(costLabel)} (đ)</span><input class='input' id='purchase-price-${index}' data-purchase-cost type='number' min='0' step='1' value='${esc(amount)}' required ${disabled}/></label>${disabled ? '' : `<button class='link-button' type='button' data-action='toggle-receive-price' ${packed ? 'hidden' : ''}>${priceMode === 'total' ? 'Dùng giá từng ' + esc(unit) : 'Dùng tổng tiền'}</button>`}</div>`;
+      const options = store.products.map(candidate => `<option value='${candidate.id}' ${candidate.id === item.productId ? 'selected' : ''}>${esc(candidate.name)} · ${esc(candidate.sku)}</option>`).join('');
       const selected = item.productId && !product ? `<option value='${esc(item.productId)}' selected>Sản phẩm trên phiếu đang chờ</option>` : '';
       const packControls = purchasePacksSupported || packed ? `<div class='form-field full'><label class='input-label' for='purchase-mode-${index}'>Cách nhận hàng</label><select class='input' id='purchase-mode-${index}' data-purchase-mode ${disabled}><option value='loose' ${packed ? '' : 'selected'}>Nhận từng ${esc(unit)}</option><option value='pack' ${packed ? 'selected' : ''}>Nhận theo lô, hộp hoặc thùng</option></select></div><div class='form-field full' data-purchase-pack-fields ${packed ? '' : 'hidden'}><div class='form-grid'><label class='form-field'><span class='input-label'>Tên đơn vị nhập</span><input class='input' data-pack-name value='${esc(pack?.name || 'lô')}' placeholder='Lô, hộp, thùng…' maxlength='40' ${packed ? 'required' : ''} ${disabled}/></label><label class='form-field'><span class='input-label'>Mỗi đơn vị có bao nhiêu ${esc(unit)}?</span><input class='input' data-pack-size type='number' min='1' max='1000000' step='1' inputmode='numeric' value='${esc(pack?.size || '')}' ${packed ? 'required' : ''} ${disabled}/></label></div><small>Nhớ cách nhập này cho lần sau.</small></div>` : '';
-      return `<article class='purchase-line-card' data-purchase-line data-index='${index}'><div class='purchase-line-head'><strong>Mặt hàng ${number(index + 1)}</strong>${!disabled && items.length > 1 ? `<button class='link-button' type='button' data-action='remove-purchase-line' data-index='${index}'>Xóa dòng</button>` : ''}</div><div class='form-grid'><details class='receive-search full'><summary>Tìm theo tên hoặc mã hàng</summary><label class='form-field'><span class='input-label'>Tìm sản phẩm</span><input class='input' data-purchase-search data-index='${index}' type='search' placeholder='Tên hoặc mã SKU…' ${disabled}/></label></details><label class='form-field full'><span class='input-label'>Sản phẩm *</span><select class='input' name='productId' data-purchase-product data-index='${index}' required ${disabled}><option value=''>Chọn mặt hàng…</option>${selected}${options}</select></label>${packControls}<label class='form-field'><span class='input-label' data-purchase-quantity-label>${packed ? 'Số ' + esc(pack.name) + ' nhận' : 'Số lượng nhận (' + esc(unit) + ')'}</span><input class='input' data-purchase-quantity name='quantity' type='number' min='0.001' step='0.001' value='${esc(pack?.quantity || item.quantity || '1')}' required ${disabled}/></label><label class='form-field'><span class='input-label' data-purchase-cost-label>${packed ? 'Giá 1 ' + esc(pack.name) : 'Giá 1 ' + esc(unit)} (đ)</span><input class='input' data-purchase-cost name='unitCostVnd' type='number' min='0' step='1' value='${esc(pack?.unitCostVnd ?? item.unitCostVnd ?? product?.cost ?? '')}' required ${disabled}/></label><p class='muted full' data-pack-preview ${packed ? '' : 'hidden'} aria-live='polite'></p></div></article>`;
+      return `<article class='purchase-line-card' data-purchase-line data-index='${index}' data-price-mode='${priceMode}' data-total-price='${esc(item.lineTotalVnd ?? '')}' data-unit-price='${esc(item.unitCostVnd ?? '')}'><div class='purchase-line-head'><strong>Mặt hàng ${number(index + 1)}</strong>${!disabled && items.length > 1 ? `<button class='link-button' type='button' data-action='remove-purchase-line' data-index='${index}'>Xóa dòng</button>` : ''}</div><div class='form-grid'><details class='receive-search full'><summary>Tìm theo tên hoặc mã hàng</summary><label class='form-field'><span class='input-label'>Tìm sản phẩm</span><input class='input' data-purchase-search data-index='${index}' type='search' placeholder='Tên hoặc mã SKU…' ${disabled}/></label></details><label class='form-field full'><span class='input-label'>Sản phẩm *</span><select class='input' name='productId' data-purchase-product data-index='${index}' required ${disabled}><option value=''>Chọn mặt hàng…</option>${selected}${options}</select></label>${packControls}<label class='form-field'><span class='input-label' data-purchase-quantity-label>${packed ? 'Số ' + esc(pack.name) + ' nhận' : 'Số lượng nhận (' + esc(unit) + ')'}</span><input class='input' data-purchase-quantity name='quantity' type='number' min='0.001' step='0.001' value='${esc(pack?.quantity || item.quantity || '1')}' required ${disabled}/></label>${priceField}<p class='muted full' data-pack-preview hidden aria-live='polite'></p></div></article>`;
     }).join('');
   }
 
   function receivePurchaseItemsFromForm(form) {
     return Array.from(form.querySelectorAll('[data-purchase-line]')).map(function (row) {
       const quantity = String(row.querySelector('[data-purchase-quantity]')?.value || '');
-      const unitCostVnd = moneyInputRaw(row.querySelector('[data-purchase-cost]')?.value || '');
+      const price = moneyInputRaw(row.querySelector('[data-purchase-cost]').value);
       const packed = row.querySelector('[data-purchase-mode]')?.value === 'pack';
+      const priceMode = row.dataset.priceMode;
+      const unitCostVnd = priceMode === 'unit' ? price : row.dataset.unitPrice;
+      const lineTotalVnd = priceMode === 'total' ? price : row.dataset.totalPrice;
       return {
-        productId: String(row.querySelector('[data-purchase-product]')?.value || ''), quantity, unitCostVnd, packMode: packed,
+        productId: String(row.querySelector('[data-purchase-product]')?.value || ''), quantity, unitCostVnd, lineTotalVnd, priceMode, packMode: packed,
         ...(packed ? { pack: { name: row.querySelector('[data-pack-name]').value.trim(), size: row.querySelector('[data-pack-size]').value, quantity, unitCostVnd } } : {}),
       };
     });
@@ -5600,25 +5615,56 @@
 
   function setReceivePackMode(row, product, useSaved) {
     const mode = row.querySelector('[data-purchase-mode]');
-    if (!mode) return;
-    if (useSaved) mode.value = product?.purchasePack ? 'pack' : 'loose';
-    const packed = mode.value === 'pack', saved = product?.purchasePack;
+    if (useSaved && mode) mode.value = product?.purchasePack ? 'pack' : 'loose';
+    const packed = mode?.value === 'pack', saved = product?.purchasePack;
     const fields = row.querySelector('[data-purchase-pack-fields]');
-    fields.hidden = !packed;
-    fields.querySelectorAll('input').forEach(input => { input.required = packed; input.disabled = !packed; });
-    const unit = product?.unit || 'cái', name = saved?.name || row.querySelector('[data-pack-name]').value || 'lô';
-    const sizeLabel = row.querySelector('[data-pack-size]').closest('label').querySelector('.input-label');
-    sizeLabel.textContent = 'Mỗi đơn vị có bao nhiêu ' + unit + '?';
-    row.querySelector('[data-purchase-quantity-label]').textContent = packed ? 'Số ' + name + ' nhận' : 'Số lượng nhận (' + unit + ')';
-    row.querySelector('[data-purchase-cost-label]').textContent = 'Giá 1 ' + (packed ? name : unit) + ' (đ)';
-    if (useSaved && saved) {
-      row.querySelector('[data-pack-name]').value = saved.name;
-      row.querySelector('[data-pack-size]').value = saved.size;
-    } else if (useSaved) {
-      row.querySelector('[data-pack-name]').value = 'lô';
-      row.querySelector('[data-pack-size]').value = '';
+    if (fields) {
+      fields.hidden = !packed;
+      fields.querySelectorAll('input').forEach(input => { input.required = packed; input.disabled = !packed; });
+      const size = row.querySelector('[data-pack-size]');
+      size.closest('label').querySelector('.input-label').textContent = 'Mỗi đơn vị có bao nhiêu ' + (product?.unit || 'cái') + '?';
+      if (useSaved) {
+        row.querySelector('[data-pack-name]').value = saved?.name || 'lô';
+        size.value = saved?.size || '';
+      }
     }
-    row.querySelector('[data-purchase-cost]').value = window.SlinkMoneyFields.format(packed ? saved?.unitCostVnd || '' : String(product?.cost ?? ''));
+    row.dataset.priceMode = packed ? 'unit' : 'total';
+    row.dataset.totalPrice = '';
+    row.dataset.unitPrice = '';
+    row.querySelector('[data-purchase-cost]').value = window.SlinkMoneyFields.format(packed ? saved?.unitCostVnd || '' : '');
+  }
+
+  function toggleReceivePurchasePrice(button) {
+    const row = button.closest('[data-purchase-line]');
+    const input = row.querySelector('[data-purchase-cost]');
+    const current = row.dataset.priceMode;
+    const next = current === 'total' ? 'unit' : 'total';
+    row.dataset[current + 'Price'] = moneyInputRaw(input.value);
+    row.dataset.priceMode = next;
+    input.value = window.SlinkMoneyFields.format(row.dataset[next + 'Price']);
+    updateReceivePurchaseTotal(input.form);
+    input.focus();
+  }
+
+  function normalizeReceivePurchaseLine(item) {
+    const packed = item.pack ? window.SlinkPurchaseUnits.fromPack(item.pack) : null;
+    const quantity = packed?.quantity || item.quantity;
+    if (!/^(0|[1-9]\d{0,9})(?:\.\d{1,3})?$/.test(quantity) || Number(quantity) <= 0 || Number(quantity) > 1_000_000_000) {
+      throw new Error('Nhập số lượng lớn hơn 0, tối đa 3 chữ số thập phân.');
+    }
+    const milli = BigInt(window.SlinkOfflineLedger.quantity(quantity));
+    const totalMode = item.priceMode === 'total' && !packed;
+    const price = packed?.pack.unitCostVnd ?? (totalMode ? item.lineTotalVnd : item.unitCostVnd);
+    const max = BigInt(Number.MAX_SAFE_INTEGER);
+    if (!/^(0|[1-9]\d{0,15})$/.test(price) || BigInt(price) > max) throw new Error('Nhập số tiền bằng đồng, không có phần lẻ.');
+    const unitCost = packed?.unitCostVnd ?? (totalMode ? window.SlinkPurchaseUnits.unitCostFromTotal(price, milli) : BigInt(price));
+    const total = packed?.lineTotalVnd ?? (totalMode ? BigInt(price) : window.SlinkOfflineLedger.lineTotal(price, milli));
+    if (unitCost > max || total > max) throw new Error('Số tiền quá lớn. Chia thành phiếu nhỏ hơn.');
+    const payload = { productId: item.productId, quantity };
+    if (totalMode) payload.lineTotalVnd = price;
+    else payload.unitCostVnd = Number(unitCost);
+    if (packed) payload.pack = packed.pack;
+    return { payload, total, unitCost, milli };
   }
 
   function updateReceivePurchaseTotal(form) {
@@ -5630,53 +5676,53 @@
       note.textContent = message;
       note.hidden = false;
     };
-    const items = receivePurchaseItemsFromForm(form);
+    const rows = form.querySelectorAll('[data-purchase-line]');
     let total = 0n;
-    try {
-      const seenProducts = new Set();
-      for (const item of items) {
+    let incomplete = false;
+    const seenProducts = new Set();
+    receivePurchaseItemsFromForm(form).forEach((item, index) => {
+      const row = rows[index], unit = productById(item.productId)?.unit || 'cái';
+      const packName = item.pack?.name || 'lô';
+      const totalMode = item.priceMode === 'total' && !item.pack;
+      const mode = row.querySelector('[data-purchase-mode]');
+      if (mode) mode.options[0].textContent = 'Nhận từng ' + unit;
+      row.querySelector('[data-purchase-quantity-label]').textContent = item.pack ? 'Số ' + packName + ' nhận' : 'Số lượng nhận (' + unit + ')';
+      row.querySelector('[data-purchase-cost-label]').textContent = (totalMode ? 'Tổng tiền nhập' : 'Giá 1 ' + (item.pack ? packName : unit)) + ' (đ)';
+      const switcher = row.querySelector('[data-action="toggle-receive-price"]');
+      if (switcher) {
+        switcher.hidden = Boolean(item.pack);
+        switcher.textContent = totalMode ? 'Dùng giá từng ' + unit : 'Dùng tổng tiền';
+      }
+      const preview = row.querySelector('[data-pack-preview]');
+      preview.hidden = true;
+      try {
         if (!item.productId || seenProducts.has(item.productId)) throw new Error('incomplete');
         seenProducts.add(item.productId);
-        if (item.pack) {
-          const packed = window.SlinkPurchaseUnits.fromPack(item.pack);
-          total += packed.lineTotalVnd;
-          const row = form.querySelector(`[data-purchase-line][data-index='${items.indexOf(item)}']`);
-          const unit = productById(item.productId)?.unit || 'cái';
-          row.querySelector('[data-pack-preview]').hidden = false;
-          row.querySelector('[data-pack-preview]').textContent = `Nhận ${number(Number(packed.quantity))} ${unit} · ${moneyVndText(packed.lineTotalVnd)}`;
-          row.querySelector('[data-purchase-quantity-label]').textContent = 'Số ' + packed.pack.name + ' nhận';
-          row.querySelector('[data-purchase-cost-label]').textContent = 'Giá 1 ' + packed.pack.name + ' (đ)';
-          if (total > 9223372036854775807n) throw new Error('limit');
-          continue;
-        }
-        const row = form.querySelector(`[data-purchase-line][data-index='${items.indexOf(item)}']`);
-        if (row.querySelector('[data-pack-preview]')) row.querySelector('[data-pack-preview]').hidden = true;
-        const unit = productById(item.productId)?.unit || 'cái';
-        row.querySelector('[data-purchase-quantity-label]').textContent = 'Số lượng nhận (' + unit + ')';
-        row.querySelector('[data-purchase-cost-label]').textContent = 'Giá 1 ' + unit + ' (đ)';
-        const quantity = /^(0|[1-9]\d{0,9})(?:\.(\d{1,3}))?$/.exec(item.quantity);
-        if (!quantity || !/^(0|[1-9]\d{0,18})$/.test(item.unitCostVnd)) throw new Error('incomplete');
-        const quantityMilli = BigInt(quantity[1]) * 1000n + BigInt((quantity[2] || '').padEnd(3, '0') || '0');
-        if (quantityMilli <= 0n) throw new Error('incomplete');
-        const lineTotal = (BigInt(item.unitCostVnd) * quantityMilli + 500n) / 1000n;
-        total += lineTotal;
-        if (total > 9223372036854775807n) throw new Error('limit');
-      }
-      output.textContent = moneyVndText(total.toString());
-      note.textContent = '';
-      note.hidden = true;
-      const mode = form.querySelector('[name="paymentState"]')?.value;
-      const paid = form.querySelector('[name="paid"]');
-      if (paid && mode === 'unpaid') paid.value = '0';
-      if (paid && mode === 'full' && total <= BigInt(Number.MAX_SAFE_INTEGER)) paid.value = window.SlinkMoneyFields.format(total.toString());
-      if (mode === 'full' && total > BigInt(Number.MAX_SAFE_INTEGER)) { explain('Số tiền quá lớn. Chia thành phiếu nhỏ hơn.'); if (paid) paid.value = ''; }
-      const supplierField = form.querySelector('#receive-supplier-field');
-      if (supplierField) supplierField.hidden = mode === 'full';
-      const paidField = form.querySelector('#receive-paid-field');
-      if (paidField) paidField.hidden = mode !== 'partial';
-    } catch (error) {
-      explain(error.message === 'limit' ? 'Số tiền quá lớn. Chia thành phiếu nhỏ hơn.' : 'Nhập số lượng và giá để tính tổng.');
+        const line = normalizeReceivePurchaseLine(item);
+        total += line.total;
+        const rounded = line.total * 1000n !== line.unitCost * line.milli;
+        if (item.pack) preview.textContent = `Nhận ${number(Number(line.payload.quantity))} ${unit} · ${moneyVndText(line.total)}`;
+        else if (totalMode) preview.textContent = `${rounded ? 'Khoảng ' : ''}${moneyVndText(line.unitCost)} / ${unit}`;
+        else preview.textContent = `Thành tiền ${moneyVndText(line.total)}`;
+        preview.hidden = false;
+      } catch (_) { incomplete = true; }
+    });
+    const mode = form.querySelector('[name="paymentState"]')?.value;
+    const paid = form.querySelector('[name="paid"]');
+    const supplierField = form.querySelector('#receive-supplier-field');
+    if (supplierField) supplierField.hidden = mode === 'full';
+    const paidField = form.querySelector('#receive-paid-field');
+    if (paidField) paidField.hidden = mode !== 'partial';
+    const tooLarge = total > BigInt(Number.MAX_SAFE_INTEGER);
+    if (paid && mode === 'unpaid') paid.value = '0';
+    if (paid && mode === 'full') paid.value = incomplete || tooLarge ? '' : window.SlinkMoneyFields.format(String(total));
+    if (incomplete || tooLarge) {
+      explain(tooLarge ? 'Số tiền quá lớn. Chia thành phiếu nhỏ hơn.' : 'Chọn hàng, nhập số lượng và số tiền.');
+      return;
     }
+    output.textContent = moneyVndText(total);
+    note.textContent = '';
+    note.hidden = true;
   }
 
   function redrawReceivePurchaseLines(form, items) {
@@ -7464,28 +7510,22 @@
     if (!pending) {
       const data = new FormData(form);
       const purchaseItems = receivePurchaseItemsFromForm(form);
-      const amountPaidVnd = Number(data.get('paid') || 0);
       if (!purchaseItems.length || purchaseItems.length > 50) return toast('Dòng hàng chưa hợp lệ', 'Phiếu nhập cần từ 1 đến 50 mặt hàng.', 'error');
       const seenProducts = new Set();
       const normalizedItems = [];
+      let total = 0n;
       for (const item of purchaseItems) {
-        if (item.pack) {
-          try {
-            const converted = window.SlinkPurchaseUnits.fromPack(item.pack);
-            if (!Number.isSafeInteger(Number(item.pack.unitCostVnd))) throw new Error('Giá nhập vượt giới hạn trên thiết bị. Chia thành nhiều phiếu.');
-            item.quantity = converted.quantity;
-            item.unitCostVnd = String(converted.unitCostVnd);
-            item.pack = converted.pack;
-          } catch (error) { return toast('Kiểm tra cách nhập theo lô', error.message, 'error'); }
-        }
-        const quantity = Number(item.quantity);
-        const unitCostVnd = Number(item.unitCostVnd);
         if (!item.productId || seenProducts.has(item.productId)) return toast('Sản phẩm bị thiếu hoặc lặp', 'Mỗi sản phẩm chỉ xuất hiện một lần trên phiếu nhập. Gộp số lượng vào cùng dòng.', 'error');
         seenProducts.add(item.productId);
-        if (!Number.isFinite(quantity) || quantity <= 0 || quantity > 1_000_000_000 || Math.abs(quantity * 1000 - Math.round(quantity * 1000)) > 1e-6) return toast('Số lượng không hợp lệ', 'Mỗi dòng cần số lượng lớn hơn 0, tối đa 3 chữ số thập phân.', 'error');
-        if (!Number.isSafeInteger(unitCostVnd) || unitCostVnd < 0) return toast('Giá nhập không hợp lệ', 'Giá nhập mỗi mặt hàng phải là VND nguyên không âm.', 'error');
-        normalizedItems.push({ productId: item.productId, quantity: item.quantity, unitCostVnd: unitCostVnd, ...(item.pack ? { pack: item.pack } : {}) });
+        try {
+          const line = normalizeReceivePurchaseLine(item);
+          normalizedItems.push(line.payload);
+          total += line.total;
+        } catch (error) { return toast('Kiểm tra số lượng và tiền nhập', error.message, 'error'); }
       }
+      if (total > BigInt(Number.MAX_SAFE_INTEGER)) return toast('Tổng tiền quá lớn', 'Chia thành phiếu nhỏ hơn.', 'error');
+      const paymentState = data.get('paymentState');
+      const amountPaidVnd = paymentState === 'full' ? Number(total) : paymentState === 'partial' ? Number(data.get('paid') || 0) : 0;
       if (!Number.isSafeInteger(amountPaidVnd) || amountPaidVnd < 0) return toast('Số tiền không hợp lệ', 'Số tiền thanh toán phải là VND nguyên không âm.', 'error');
       pending = {
         storeId: store.id,
@@ -8723,6 +8763,7 @@
     else if (action === 'transfer-cancel') openTransferCancel(id);
     else if (action === 'add-purchase-line') addReceivePurchaseLine();
     else if (action === 'remove-purchase-line') removeReceivePurchaseLine(Number(button.dataset.index));
+    else if (action === 'toggle-receive-price') toggleReceivePurchasePrice(button);
     else if (action === 'adjust-stock') openStockAdjust(id);
     else if (action === 'adjust-stock-picker') openStockAdjustPicker();
     else if (action === 'bulk-stock-count') openStockBulkCount();
@@ -9209,10 +9250,7 @@
     }
     if (event.target.matches('[data-purchase-product]')) {
       const row = event.target.closest('[data-purchase-line]');
-      const selectedCost = event.target.selectedOptions[0]?.dataset.cost;
       const product = productById(event.target.value);
-      const cost = row && row.querySelector('[data-purchase-cost]');
-      if (cost && !loadPendingPurchase()) cost.value = String(selectedCost ?? (product ? product.cost : ''));
       if (!loadPendingPurchase()) setReceivePackMode(row, product, true);
       updateReceivePurchaseTotal(modal.querySelector('[data-form="receive"]'));
     }
