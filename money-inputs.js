@@ -19,23 +19,42 @@
       const button=document.createElement('button');button.type='button';button.className='link-button';button.textContent='+000';button.setAttribute('aria-label','Thêm ba số không vào số tiền');
       button.disabled=input.disabled||input.readOnly;
       box.append(button);const wrapper=document.createElement('span');wrapper.className='money-control';input.before(wrapper);wrapper.append(input,box);
-      const update=()=>{
+      let regroupEdit = false;
+      const update = event => {
+        const regroup = event?.type === 'input' && regroupEdit;
+        regroupEdit = false;
         if(input.dataset.composing==='true')return;
-        const start=input.selectionStart??input.value.length,digits=input.value.slice(0,start).replace(/\D/g,'').length;
-        const next=format(input.value);input.value=next;
-        let index=0,count=0;while(index<next.length&&count<digits){if(/\d/.test(next[index]))count++;index++;}
-        input.setSelectionRange(index,index);
+        const value = input.value;
+        const start = input.selectionStart ?? value.length;
+        const digits = value.slice(0, start).replace(/\D/g, '').length;
+        const next = format(regroup && /^[\d.]*$/.test(value) ? value.replace(/\./g, '') : value);
+        if (next === value) return;
+        input.value = next;
+        let caret = 0, digitsSeen = 0;
+        while (caret < next.length && digitsSeen < digits) {
+          if (/\d/.test(next[caret])) digitsSeen++;
+          caret++;
+        }
+        input.setSelectionRange(caret, caret);
       };
       input.addEventListener('input',update);
       input.addEventListener('blur',update);
-      input.addEventListener('keydown',event=>{
-        if(event.ctrlKey||event.metaKey||event.altKey||input.selectionStart!==input.selectionEnd)return;
-        const at=input.selectionStart,value=input.value;
-        if(event.key==='Backspace'&&at>1&&value[at-1]==='.'){
-          event.preventDefault();input.value=value.slice(0,at-2)+value.slice(at);input.setSelectionRange(at-2,at-2);input.dispatchEvent(new Event('input',{bubbles:true}));
-        }else if(event.key==='Delete'&&value[at]==='.'){
-          event.preventDefault();input.value=value.slice(0,at)+value.slice(at+2);input.setSelectionRange(at,at);input.dispatchEvent(new Event('input',{bubbles:true}));
-        }
+      input.addEventListener('beforeinput', event => {
+        const value = input.value;
+        const validAmount = value === '' || /^\d+$/.test(raw(value));
+        const inserted = event.data ?? event.dataTransfer?.getData('text/plain') ?? '';
+        const inputType = event.inputType || '';
+        // Drop display separators during a digit edit, while keeping invalid pasted text visible.
+        regroupEdit = validAmount && (inputType.startsWith('delete') || /^\d+$/.test(inserted));
+        if (!regroupEdit || !event.cancelable || event.isComposing || input.selectionStart !== input.selectionEnd) return;
+        const at = input.selectionStart;
+        const backward = inputType === 'deleteContentBackward' && at > 1 && value[at - 1] === '.';
+        const forward = inputType === 'deleteContentForward' && value[at] === '.';
+        if (!backward && !forward) return;
+        const start = backward ? at - 2 : at;
+        event.preventDefault();
+        input.setRangeText('', start, start + 2, 'start');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
       });
       input.addEventListener('compositionstart',()=>input.dataset.composing='true');
       input.addEventListener('compositionend',()=>{delete input.dataset.composing;update();});

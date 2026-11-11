@@ -93,10 +93,10 @@
     state.movements.push({ key: operation.key, productId: product.id, warehouseId: product.warehouseId, quantity: delta / 1000, kind: operation.kind, queuedAt: operation.queuedAt });
   }
 
-  function moneyEntry(state, operation, direction, amountVnd, method, category) {
+  function moneyEntry(state, operation, direction, amountVnd, method, category, sourceType) {
     if (amountVnd === 0n) return;
-    state.moneyEntries.push({ source_id: 'local:' + operation.key, direction, amount_vnd: String(amountVnd), method, category, note: 'Chờ đồng bộ · ' + (operation.payload.note || ''), actor_name: operation.actorName || 'Bạn', occurred_at: operation.payload.offline?.occurredAt || operation.queuedAt, cash_session_id: state.session?.id || null, offline_pending: true });
-    if (method === 'cash' && state.session) {
+    state.moneyEntries.push({ source_id: 'local:' + operation.key, source_type: sourceType, direction, amount_vnd: String(amountVnd), method, category, note: operation.payload.note || '', actor_name: operation.actorName || 'Bạn', occurred_at: operation.payload.offline?.occurredAt || operation.queuedAt, cash_session_id: state.session?.id || null, offline_pending: true });
+    if (method === 'cash' && state.session && operation.kind !== 'shift-close') {
       const field = direction === 'in' ? 'cashInVnd' : 'cashOutVnd';
       state.session[field] = String(BigInt(state.session[field] || 0) + amountVnd);
     }
@@ -118,8 +118,14 @@
         state.issues.push({ key: operation.key, code: 'cash_session_required' }); return state;
       }
       const counted = amount(body.countedCashVnd);
-      if (validate && counted !== BigInt(state.session.expectedCashVnd) && String(body.note || '').trim().length < 2) throw problem('offline_cash_variance_reason', 'Nhập lý do khi tiền đếm khác số dự kiến.');
-      state.lastClosed = { ...state.session, status: 'closed', countedCashVnd: String(counted), varianceVnd: String(counted - BigInt(state.session.expectedCashVnd)), closedAt: operation.queuedAt, closeNote: body.note || '', offline: true };
+      const expected = BigInt(state.session.expectedCashVnd);
+      if (validate && body.offline?.expectedCashVnd != null && BigInt(body.offline.expectedCashVnd) !== expected) {
+        throw problem('offline_cash_balance_changed', 'Số dự kiến đã thay đổi. Mở lại ca để kiểm tra trước khi chốt.');
+      }
+      const variance = counted - expected;
+      if (validate && variance !== 0n && String(body.note || '').trim().length < 2) throw problem('offline_cash_variance_reason', 'Nhập lý do khi tiền đếm khác số dự kiến.');
+      state.lastClosed = { ...state.session, status: 'closed', countedCashVnd: String(counted), varianceVnd: String(variance), closedAt: operation.payload.offline?.occurredAt || operation.queuedAt, closeNote: body.note || '', offline: true };
+      if (variance !== 0n) moneyEntry(state, operation, variance > 0n ? 'in' : 'out', variance > 0n ? variance : -variance, 'cash', 'Chênh lệch chốt ca', 'cash_session_reconciliation');
       state.session = null; return state;
     }
     if (operation.kind === 'sale') {
@@ -153,8 +159,8 @@
       const change = received > total ? received - total : 0n;
       if (received - cashReceived > total || change > cashReceived) throw problem('offline_invalid_change', 'Chỉ tiền mặt được nhận dư để trả lại khách.');
       cash(state, operation, cashReceived - change, validate);
-      for (const tender of body.tenders || []) moneyEntry(state, operation, 'in', amount(tender.amountReceivedVnd), tender.method, 'Bán hàng');
-      moneyEntry(state, operation, 'out', change, 'cash', 'Tiền thối');
+      for (const tender of body.tenders || []) moneyEntry(state, operation, 'in', amount(tender.amountReceivedVnd), tender.method, 'Bán hàng', 'order_payment');
+      moneyEntry(state, operation, 'out', change, 'cash', 'Tiền thối', 'order_change');
       if (body.customerId && received < total) state.customerDebtChanges.set(body.customerId, (state.customerDebtChanges.get(body.customerId) || 0n) + total - received);
       state.localOrders.push({ key: operation.key, sequence: operation.sequence, items: lines, customerId: body.customerId || null, subtotalVnd: String(subtotal), discountVnd: String(discount), totalVnd: String(total), receivedVnd: String(received), changeVnd: String(change), queuedAt: operation.queuedAt });
       return state;
@@ -176,7 +182,7 @@
       if (paid > total) throw problem('offline_overpaid_purchase', 'Tiền trả không được lớn hơn phiếu nhập.');
       if (paid < total && !String(body.supplierName || '').trim()) throw problem('supplier_required', 'Nhập tên nhà cung cấp để theo dõi khoản còn phải trả.');
       if (body.method === 'cash') cash(state, operation, -paid, validate);
-      moneyEntry(state, operation, 'out', paid, body.method || 'cash', 'Nhập hàng');
+      moneyEntry(state, operation, 'out', paid, body.method || 'cash', 'Nhập hàng', 'purchase_payment');
       if (paid < total) { const name = body.supplierName.trim().toLocaleLowerCase('vi-VN'); state.supplierDebtChanges.set(name, { name: body.supplierName.trim(), amount: (state.supplierDebtChanges.get(name)?.amount || 0n) + total - paid, key: operation.key }); }
       return state;
     }
@@ -193,7 +199,7 @@
       const value = amount(body.amountVnd);
       if (value === 0n || !['in', 'out'].includes(body.direction)) throw problem('offline_invalid_cash', 'Khoản thu/chi cần số tiền dương và đúng loại giao dịch.');
       if (body.method === 'cash') cash(state, operation, body.direction === 'in' ? value : -value, validate);
-      moneyEntry(state, operation, body.direction, value, body.method || 'cash', body.category || 'Vận hành');
+      moneyEntry(state, operation, body.direction, value, body.method || 'cash', body.category || 'Vận hành', 'manual_cash_movement');
       return state;
     }
     throw problem('offline_operation_not_supported', 'Việc này cần kết nối máy chủ.');

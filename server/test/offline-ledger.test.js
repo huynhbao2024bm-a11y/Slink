@@ -33,6 +33,16 @@ test('offline ledger keeps sale, change, receipt, count, expense and shift arith
   assert.equal(responses[1].value.products[0].on_hand, '12', 'canonical snapshot is never mutated');
 });
 
+test('cash close projects one exact reconciliation and rejects a changed expected balance', () => {
+  const close = operation('shift-close', { countedCashVnd: '85000', note: 'Tiền đã đếm', offline: { expectedCashVnd: '100000' } }, 1);
+  const state = ledger.validateEnqueue(responses, [], close, session);
+  assert.equal(state.lastClosed.varianceVnd, '-15000');
+  assert.deepEqual(state.moneyEntries.map(row => [row.source_type, row.direction, row.amount_vnd, row.cash_session_id]), [['cash_session_reconciliation', 'out', '15000', 'shift']]);
+  assert.equal(state.lastClosed.cashOutVnd, undefined, 'the variance entry is separate from the cash counted before closing');
+  const other = operation('cash', { direction: 'in', method: 'cash', amountVnd: '2000' }, 0);
+  assert.throws(() => ledger.validateEnqueue(responses, [other], close, session), { code: 'offline_cash_balance_changed' });
+});
+
 test('offline pack receipt uses base stock and keeps exact payment before a per-item sale', () => {
   const receipt = operation('purchase', { warehouseId, items: [{ productId, quantity: '24', unitCostVnd: '4167', pack: { name: 'thùng', size: '24', quantity: '1', unitCostVnd: '100000' } }], amountPaidVnd: '100000', method: 'cash' }, 1);
   let state = ledger.validateEnqueue(responses, [], receipt, session);

@@ -350,6 +350,8 @@ function registerProductRoutes(app, { pool, env }) {
     const status = request.query?.status === 'archived' ? 'archived' : 'active';
     const requestedWarehouseId = request.query?.warehouseId;
     if (requestedWarehouseId !== undefined && (typeof requestedWarehouseId !== 'string' || !UUID_PATTERN.test(requestedWarehouseId))) throw new ApiError(400, 'validation_error', 'Kho không hợp lệ.');
+    const requestedProductId = request.query?.productId;
+    if (requestedProductId !== undefined && (typeof requestedProductId !== 'string' || !UUID_PATTERN.test(requestedProductId))) throw new ApiError(400, 'validation_error', 'Sản phẩm không hợp lệ.');
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
       const canViewCost = ['owner', 'manager', 'stockkeeper', 'accountant'].includes(membership.role);
       if (requestedWarehouseId && !await findAccessibleWarehouse(client, storeId, membership, requestedWarehouseId)) throw new ApiError(404, 'warehouse_not_found', 'Không tìm thấy kho đang hoạt động.');
@@ -371,10 +373,10 @@ function registerProductRoutes(app, { pool, env }) {
                   MAX(b.version) FILTER (WHERE ($6::uuid IS NULL OR b.warehouse_id = $6) AND ($7::uuid[] IS NULL OR b.warehouse_id = ANY($7))) AS version
            FROM inventory_balances b WHERE b.store_id = p.store_id AND b.product_id = p.id
          ) i ON true
-         WHERE p.status = $1 AND ($2 = '' OR p.name ILIKE '%' || $2 || '%' OR p.variant_group_name ILIKE '%' || $2 || '%'
+         WHERE p.status = $1 AND ($8::uuid IS NULL OR p.id = $8) AND ($2 = '' OR p.name ILIKE '%' || $2 || '%' OR p.category ILIKE '%' || $2 || '%' OR p.variant_group_name ILIKE '%' || $2 || '%'
            OR p.variant_attributes::text ILIKE '%' || $2 || '%' OR p.sku_normalized LIKE '%' || lower($2) || '%' OR p.barcode = $2)
          ORDER BY p.name, p.id LIMIT $3 OFFSET $4`,
-        [status, search, limit + 1, offset, canViewCost, requestedWarehouseId || null, warehouseIds]
+        [status, search, limit + 1, offset, canViewCost, requestedWarehouseId || null, warehouseIds, requestedProductId || null]
       );
       const hasMore = result.rows.length > limit;
       return { products: result.rows.slice(0, limit), total: Number(result.rows[0]?.total_count || 0), nextOffset: hasMore ? offset + limit : null, productPackDefaultsSupported: true, purchasePacksSupported: true };

@@ -188,6 +188,14 @@ test('account verification, session security, and tenant-scoped product workflow
   assert.equal(listed.statusCode, 200, listed.body);
   assert.equal(listed.json().products.length, 1);
   assert.equal(listed.json().products[0].id, product.id);
+  const selectedProduct = await app.inject({ method: 'GET', url: `/api/stores/${first.store.id}/products?productId=${product.id}&limit=1`, headers });
+  assert.equal(selectedProduct.statusCode, 200, selectedProduct.body);
+  assert.deepEqual(selectedProduct.json().products.map(row => row.id), [product.id]);
+  const missingProduct = await app.inject({ method: 'GET', url: `/api/stores/${first.store.id}/products?productId=00000000-0000-4000-8000-000000000000`, headers });
+  assert.equal(missingProduct.statusCode, 200, missingProduct.body);
+  assert.equal(missingProduct.json().total, 0);
+  const invalidProduct = await app.inject({ method: 'GET', url: `/api/stores/${first.store.id}/products?productId=invalid`, headers });
+  assert.equal(invalidProduct.statusCode, 400);
 
   const duplicate = await app.inject({
     method: 'POST', url: `/api/stores/${first.store.id}/products`,
@@ -231,6 +239,12 @@ test('account verification, session security, and tenant-scoped product workflow
     method: 'GET', url: `/api/stores/${first.store.id}/products`, headers: { cookie: cookieHeader(second.cookies) },
   });
   assert.equal(crossTenant.statusCode, 403);
+  const foreignProduct = await app.inject({
+    method: 'GET', url: `/api/stores/${second.store.id}/products?productId=${product.id}`,
+    headers: { cookie: cookieHeader(second.cookies) },
+  });
+  assert.equal(foreignProduct.statusCode, 200, foreignProduct.body);
+  assert.equal(foreignProduct.json().products.length, 0);
   const crossTenantHistory = await app.inject({
     method: 'GET', url: `/api/stores/${first.store.id}/products/${product.id}/price-history`, headers: { cookie: cookieHeader(second.cookies) },
   });
@@ -1789,6 +1803,10 @@ test('supplier payments, cash purchases, and return refunds preserve ledgers whe
   assert.equal(acceptedSupplierPayment.statusCode, 201, acceptedSupplierPayment.body);
   const supplierAfterRetry = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/finance`, headers });
   assert.equal(supplierAfterRetry.json().suppliers.find((item) => item.id === supplierId).balance_vnd, '0');
+  const supplierLedger = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/suppliers/${supplierId}/ledger`, headers });
+  assert.equal(supplierLedger.statusCode, 200, supplierLedger.body);
+  assert.equal(supplierLedger.json().supplier.balance_vnd, '0');
+  assert.deepEqual(supplierLedger.json().entries.map(row => [row.increases_payable_vnd, row.decreases_payable_vnd]), [['0', '1'], ['1', '0']]);
 
   const purchase = {
     productId, quantity: '1', unitCostVnd: '1', amountPaidVnd: '1', method: 'cash',
@@ -2025,6 +2043,13 @@ test('manager, accountant, and stockkeeper receive different finance and record 
   const stockkeeper = await inviteAndLogin(app, {
     storeId, ownerHeaders, email: 'matrix-stockkeeper@example.com', role: 'stockkeeper',
   });
+  const supplierLedgerUrl = `/api/stores/${storeId}/suppliers/${supplierResponse.json().supplier.id}/ledger`;
+  const ledgerForAccountant = await app.inject({ method: 'GET', url: supplierLedgerUrl, headers: accountant.headers });
+  assert.equal(ledgerForAccountant.statusCode, 200, ledgerForAccountant.body);
+  assert.equal(ledgerForAccountant.json().supplier.balance_vnd, '1250');
+  assert.ok(ledgerForAccountant.json().entries.some(row => row.purchase_number));
+  const ledgerForStockkeeper = await app.inject({ method: 'GET', url: supplierLedgerUrl, headers: stockkeeper.headers });
+  assert.equal(ledgerForStockkeeper.statusCode, 403);
 
   for (const staff of [manager, accountant]) {
     const finance = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/finance`, headers: staff.headers });
