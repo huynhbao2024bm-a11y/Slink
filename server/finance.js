@@ -12,6 +12,13 @@ const FINANCE_PAGE_ROLES = new Set([...FINANCE_ROLES, 'cashier', 'stockkeeper'])
 const SUPPLIER_CREATE_ROLES = new Set(['owner', 'manager', 'accountant', 'stockkeeper']);
 const METHODS = new Set(['cash', 'bank_transfer', 'bank_qr', 'card', 'other']);
 const MAX_BIGINT = 9223372036854775807n;
+const PARTY_LOOKUP = {
+  customer: "SELECT id, name, COALESCE(phone, '') AS detail FROM customers WHERE store_id = $1 AND status = 'active'",
+  supplier: "SELECT id, name, '' AS detail FROM suppliers WHERE store_id = $1 AND status = 'active'",
+  staff: "SELECT m.user_id AS id, u.display_name AS name, '' AS detail FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.store_id = $1 AND m.status = 'active'",
+};
+
+function validPartyKind(kind) { return typeof kind === 'string' && Object.hasOwn(PARTY_LOOKUP, kind); }
 
 function positiveAmount(value) {
   const text = typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : value;
@@ -31,7 +38,77 @@ function nonNegativeAmount(value, label) {
   return parsed;
 }
 
+function recentPurchases(client, storeId, warehouseIds, supplierId = null, limit = 50) {
+  return client.query(
+    `SELECT p.id, p.purchase_number, p.status, p.note, p.total_vnd::text AS total_vnd,
+            p.received_at, p.supplier_id, po.purchase_order_number, COALESCE(s.name, '') AS supplier_name,
+            COALESCE((
+              SELECT json_agg(json_build_object(
+                'productName', l.product_name_snapshot,
+                'sku', l.sku_snapshot,
+                'unit', l.unit_snapshot,
+                'quantity', l.quantity_received::text,
+                'pack', l.purchase_pack,
+                'unitCostVnd', l.unit_cost_vnd::text,
+                'totalVnd', l.line_total_vnd::text
+              ) ORDER BY l.id)
+              FROM purchase_lines l WHERE l.store_id = p.store_id AND l.purchase_id = p.id
+            ), '[]'::json) AS lines
+     FROM purchases p LEFT JOIN suppliers s ON s.store_id = p.store_id AND s.id = p.supplier_id
+     LEFT JOIN purchase_orders po ON po.store_id = p.store_id AND po.id = p.purchase_order_id
+     WHERE p.store_id = $1 AND ($2::boolean = false OR p.warehouse_id = ANY($3::uuid[]))
+       AND ($4::uuid IS NULL OR p.supplier_id = $4)
+     ORDER BY p.received_at DESC, p.id DESC LIMIT $5`,
+    [storeId, warehouseIds !== null, warehouseIds || [], supplierId, limit],
+  );
+}
+
+function recentPurchaseOrders(client, storeId, warehouseIds, supplierId = null, limit = 100) {
+  return client.query(
+    `SELECT po.id, po.purchase_order_number, po.status, po.note, po.version, po.warehouse_id,
+            po.total_vnd::text AS total_vnd, po.created_at, po.ordered_at, po.completed_at, po.cancelled_at,
+            s.id AS supplier_id, s.name AS supplier_name, w.name AS warehouse_name,
+            COALESCE((
+              SELECT json_agg(json_build_object(
+                'id', l.id,
+                'productId', l.product_id,
+                'productName', l.product_name_snapshot,
+                'sku', l.sku_snapshot,
+                'unit', l.unit_snapshot,
+                'quantityOrdered', l.quantity_ordered::text,
+                'quantityReceived', l.quantity_received::text,
+                'unitCostVnd', l.unit_cost_vnd::text,
+                'totalVnd', l.line_total_vnd::text
+              ) ORDER BY l.id)
+              FROM purchase_order_lines l WHERE l.store_id = po.store_id AND l.purchase_order_id = po.id
+            ), '[]'::json) AS lines
+     FROM purchase_orders po JOIN suppliers s ON s.store_id = po.store_id AND s.id = po.supplier_id
+     JOIN warehouses w ON w.store_id = po.store_id AND w.id = po.warehouse_id
+     WHERE po.store_id = $1 AND ($2::boolean = false OR po.warehouse_id = ANY($3::uuid[]))
+       AND ($4::uuid IS NULL OR po.supplier_id = $4)
+     ORDER BY po.created_at DESC, po.id DESC LIMIT $5`,
+    [storeId, warehouseIds !== null, warehouseIds || [], supplierId, limit],
+  );
+}
+
 function registerFinanceRoutes(app, { pool, env }) {
+  app.get('/api/stores/:storeId/finance/people', async (request) => {
+    const auth = await authenticate(pool, request);
+    const { storeId } = request.params;
+    const kind = request.query?.kind;
+    const search = typeof request.query?.q === 'string' ? request.query.q.trim() : '';
+    if (!UUID_PATTERN.test(storeId) || !validPartyKind(kind) || search.length > 120) throw new ApiError(400, 'validation_error', 'Thông tin tìm người nộp hoặc nhận tiền không hợp lệ.');
+    return withStore(pool, auth.userId, storeId, async (client, membership) => {
+      if (!FINANCE_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền ghi phiếu thu chi.');
+      const result = await client.query(
+        `SELECT id, name, detail FROM (${PARTY_LOOKUP[kind]}) person
+         WHERE name ILIKE '%' || $2 || '%' OR detail ILIKE '%' || $2 || '%'
+         ORDER BY name, id LIMIT 20`, [storeId, search],
+      );
+      return { people: result.rows };
+    });
+  });
+
   app.get('/api/stores/:storeId/finance', async (request) => {
     const auth = await authenticate(pool, request);
     const { storeId } = request.params;
@@ -44,12 +121,21 @@ function registerFinanceRoutes(app, { pool, env }) {
       const warehouseIds = allowedWarehouseIds(membership);
       const queries = [
         () => cashbookAccess ? client.query(
-          `SELECT c.direction, c.category, c.amount_vnd::text AS amount_vnd, c.method, c.source_type, c.source_id,
+          `SELECT c.id AS movement_id, c.direction, c.category, c.amount_vnd::text AS amount_vnd, c.method, c.source_type, c.source_id,
                   c.cash_session_id, s.opened_at AS cash_session_opened_at,
-                  c.note, c.occurred_at, u.display_name AS actor_name, COUNT(*) OVER()::int AS total_count
+                  c.note, c.occurred_at, u.display_name AS actor_name, o.id AS order_id, o.order_number,
+                  a.metadata->'counterparty' AS counterparty, COUNT(*) OVER()::int AS total_count
            FROM cash_movements c
            JOIN users u ON u.id = c.actor_user_id
            LEFT JOIN cash_register_sessions s ON s.store_id = c.store_id AND s.id = c.cash_session_id
+           LEFT JOIN payments p ON p.store_id = c.store_id AND p.id = c.source_id AND c.source_type = 'order_payment'
+           LEFT JOIN orders o ON o.store_id = c.store_id AND o.id = COALESCE(p.order_id, c.source_id)
+             AND c.source_type IN ('order_payment', 'order_change')
+           LEFT JOIN LATERAL (
+             SELECT metadata FROM audit_events a WHERE $2::boolean AND c.source_type = 'manual_cash_movement'
+               AND a.store_id = c.store_id AND a.entity_id = c.source_id AND a.entity_type = 'cash_movement' AND a.action = 'cash_movement.created'
+             ORDER BY a.occurred_at DESC LIMIT 1
+           ) a ON true
            WHERE c.store_id = $1
              AND ($2::boolean OR c.cash_session_id IN (
                SELECT own.id FROM cash_register_sessions own
@@ -97,51 +183,8 @@ function registerFinanceRoutes(app, { pool, env }) {
            ORDER BY SUM(l.debit_vnd - l.credit_vnd) DESC, c.name LIMIT 10`,
           [storeId]
         ) : Promise.resolve({ rows: [] }),
-        () => purchaseAccess ? client.query(
-          `SELECT p.id, p.purchase_number, p.status, p.note, p.total_vnd::text AS total_vnd,
-                  p.received_at, po.purchase_order_number, COALESCE(s.name, '') AS supplier_name,
-                  COALESCE((
-                    SELECT json_agg(json_build_object(
-                      'productName', l.product_name_snapshot,
-                      'sku', l.sku_snapshot,
-                      'unit', l.unit_snapshot,
-                      'quantity', l.quantity_received::text,
-                      'pack', l.purchase_pack,
-                      'unitCostVnd', l.unit_cost_vnd::text,
-                      'totalVnd', l.line_total_vnd::text
-                    ) ORDER BY l.id)
-                    FROM purchase_lines l WHERE l.store_id = p.store_id AND l.purchase_id = p.id
-                  ), '[]'::json) AS lines
-           FROM purchases p LEFT JOIN suppliers s ON s.store_id = p.store_id AND s.id = p.supplier_id
-           LEFT JOIN purchase_orders po ON po.store_id = p.store_id AND po.id = p.purchase_order_id
-           WHERE p.store_id = $1 AND ($2::boolean = false OR p.warehouse_id = ANY($3::uuid[]))
-           ORDER BY p.received_at DESC, p.id DESC LIMIT 50`,
-          [storeId, warehouseIds !== null, warehouseIds || []]
-        ) : Promise.resolve({ rows: [] }),
-        () => purchaseAccess ? client.query(
-          `SELECT po.id, po.purchase_order_number, po.status, po.note, po.version, po.warehouse_id,
-                  po.total_vnd::text AS total_vnd, po.created_at, po.ordered_at, po.completed_at, po.cancelled_at,
-                  s.id AS supplier_id, s.name AS supplier_name, w.name AS warehouse_name,
-                  COALESCE((
-                    SELECT json_agg(json_build_object(
-                      'id', l.id,
-                      'productId', l.product_id,
-                      'productName', l.product_name_snapshot,
-                      'sku', l.sku_snapshot,
-                      'unit', l.unit_snapshot,
-                      'quantityOrdered', l.quantity_ordered::text,
-                      'quantityReceived', l.quantity_received::text,
-                      'unitCostVnd', l.unit_cost_vnd::text,
-                      'totalVnd', l.line_total_vnd::text
-                    ) ORDER BY l.id)
-                    FROM purchase_order_lines l WHERE l.store_id = po.store_id AND l.purchase_order_id = po.id
-                  ), '[]'::json) AS lines
-           FROM purchase_orders po JOIN suppliers s ON s.store_id = po.store_id AND s.id = po.supplier_id
-           JOIN warehouses w ON w.store_id = po.store_id AND w.id = po.warehouse_id
-           WHERE po.store_id = $1 AND ($2::boolean = false OR po.warehouse_id = ANY($3::uuid[]))
-           ORDER BY po.created_at DESC, po.id DESC LIMIT 100`,
-          [storeId, warehouseIds !== null, warehouseIds || []]
-        ) : Promise.resolve({ rows: [] }),
+        () => purchaseAccess ? recentPurchases(client, storeId, warehouseIds) : Promise.resolve({ rows: [] }),
+        () => purchaseAccess ? recentPurchaseOrders(client, storeId, warehouseIds) : Promise.resolve({ rows: [] }),
       ];
       // These statements share the transaction-bound client; do not overlap client.query calls.
       const results = [];
@@ -188,7 +231,10 @@ function registerFinanceRoutes(app, { pool, env }) {
       );
       if (!result.rowCount) throw new ApiError(404, 'supplier_not_found', 'Không tìm thấy nhà cung cấp.');
       const { entries, ...supplier } = result.rows[0];
-      return { supplier, entries };
+      const warehouseIds = allowedWarehouseIds(membership);
+      const purchases = await recentPurchases(client, storeId, warehouseIds, supplierId, 8);
+      const purchaseOrders = await recentPurchaseOrders(client, storeId, warehouseIds, supplierId, 8);
+      return { supplier, entries, purchases: purchases.rows, purchaseOrders: purchaseOrders.rows };
     });
   });
 
@@ -378,8 +424,11 @@ function registerFinanceRoutes(app, { pool, env }) {
     const category = typeof body.category === 'string' ? body.category.trim() : '';
     const note = typeof body.note === 'string' ? body.note.trim() : '';
     if (!category || category.length > 100 || note.length > 300) throw new ApiError(400, 'validation_error', 'Khoản mục hoặc ghi chú không hợp lệ.');
+    const party = body.counterparty;
+    if (party != null && (!validPartyKind(party.kind) || typeof party.id !== 'string' || !UUID_PATTERN.test(party.id))) throw new ApiError(400, 'validation_error', 'Chọn người nộp hoặc nhận tiền trong danh sách.');
     const value = { direction, amountVnd: amount.toString(), method, category, note };
     if (offline) value.offline = offline;
+    if (party) value.counterparty = { kind: party.kind, id: party.id.toLowerCase() };
     const digest = createHash('sha256').update(JSON.stringify(value)).digest();
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
       if (!FINANCE_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền ghi phiếu thu chi.');
@@ -399,6 +448,13 @@ function registerFinanceRoutes(app, { pool, env }) {
         if (!record.response_body || !record.response_status) throw new ApiError(409, 'request_in_progress', 'Phiếu đang được xử lý. Hãy thử lại sau.');
         return { status: record.response_status, body: record.response_body, replayed: true };
       }
+      let counterparty;
+      if (value.counterparty) {
+        const { kind, id } = value.counterparty;
+        const result = await client.query(`SELECT name FROM (${PARTY_LOOKUP[kind]}) person WHERE id = $2`, [storeId, id]);
+        if (!result.rowCount) throw new ApiError(404, 'counterparty_not_found', 'Người nộp hoặc nhận tiền không còn trong danh sách của cửa hàng.');
+        counterparty = { kind, id, name: result.rows[0].name };
+      }
       await beginOffline(client, offline);
       const movementId = randomUUID();
       const cashSessionId = method === 'cash'
@@ -411,10 +467,10 @@ function registerFinanceRoutes(app, { pool, env }) {
       );
       await client.query(
         `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, reason, metadata)
-         VALUES ($1, $2, 'cash_movement.created', 'cash_movement', $3, $4, jsonb_build_object('direction', $5::text, 'amountVnd', $6::text))`,
-        [storeId, auth.userId, movementId, note || category, direction, amount.toString()]
+         VALUES ($1, $2, 'cash_movement.created', 'cash_movement', $3, $4, $5::jsonb)`,
+        [storeId, auth.userId, movementId, note || category, JSON.stringify({ direction, amountVnd: amount.toString(), ...(counterparty ? { counterparty } : {}) })]
       );
-      const bodyResult = { movement: { id: movementId, direction, category, amountVnd: amount.toString(), method, note, occurredAt: offline?.occurredAt || new Date().toISOString() } };
+      const bodyResult = { movement: { id: movementId, direction, category, amountVnd: amount.toString(), method, note, ...(counterparty ? { counterparty } : {}), occurredAt: offline?.occurredAt || new Date().toISOString() } };
       await recordOffline(client, { storeId, userId: auth.userId, key: idempotencyKey, kind: 'cash', entityId: movementId, metadata: offline });
       await client.query(
         `UPDATE idempotency_records SET response_status = 201, response_body = $4::jsonb, completed_at = now()

@@ -99,6 +99,9 @@
   let inventorySummary = { total: 0, low: 0, out: 0, stockValueVnd: 0 };
   let inventoryProducts = [];
   let inventoryWarehouseId = null;
+  let inventoryStockFilter = 'all';
+  let inventoryLoadedFilter = 'all';
+  let inventoryLoadedQuery = '';
   let warehouses = [];
   let selectedWarehouseId = '';
   let warehouseTransfers = [];
@@ -106,6 +109,7 @@
   let warehouseLoading = false;
   let warehouseError = '';
   let financeLoading = false;
+  let financeDataReady = false;
   let financeError = '';
   let financeRequestNumber = 0;
   let supplierBalanceRequestNumber = 0;
@@ -988,7 +992,11 @@
 
   function productPhotoField(product) {
     const url = product?.imageUrl || '';
-    return "<div class='product-photo-field' data-photo-field><div class='product-photo-preview'><span aria-hidden='true'>" + icon('image', 24) + "</span><img data-photo-preview src='" + esc(url) + "' alt='Ảnh sản phẩm đã chọn' " + (url ? '' : 'hidden') + "/></div><div class='product-photo-controls'><label class='btn btn-secondary product-photo-pick'>" + (url ? 'Đổi ảnh' : 'Thêm ảnh') + "<input type='file' accept='image/jpeg,image/png,image/webp' data-product-photo-input aria-label='Chọn ảnh sản phẩm'/></label><button class='link-button' type='button' data-action='remove-product-photo' " + (url ? '' : 'hidden') + ">Bỏ ảnh</button><small>Không bắt buộc · JPG, PNG, WebP</small><span data-photo-status role='status' aria-live='polite'></span></div></div>";
+    return `<div class='product-photo-field' data-photo-field>
+      <label class='product-photo-preview product-photo-pick'><span aria-hidden='true'>${icon('image', 22)}<small>Thêm ảnh</small></span><img data-photo-preview ${url ? `src='${esc(url)}'` : 'hidden'} alt='Ảnh sản phẩm'/><input type='file' accept='image/jpeg,image/png,image/webp' data-product-photo-input aria-label='Chọn ảnh sản phẩm'/></label>
+      <button class='link-button' type='button' data-action='remove-product-photo' ${url ? '' : 'hidden'}>Bỏ ảnh</button>
+      <span data-photo-status role='status' aria-live='polite'></span>
+    </div>`;
   }
 
   function readProductPhoto(form) {
@@ -1024,7 +1032,7 @@
       if (!form.isConnected || form.dataset.photoRead !== token) return;
       form.productPhotoValue = data; delete form.dataset.photoError;
       const preview = field.querySelector('[data-photo-preview]'); preview.src = data; preview.hidden = false;
-      status.textContent = 'Ảnh sẽ được lưu cùng mặt hàng.';
+      status.textContent = '';
     } catch (error) {
       if (!form.isConnected || form.dataset.photoRead !== token) return;
       form.dataset.photoError = 'true'; status.textContent = error.message || 'Không đọc được ảnh. Hãy chọn ảnh khác.';
@@ -1773,11 +1781,17 @@
     inventorySummary = { total: 0, low: 0, out: 0, stockValueVnd: 0 };
     inventoryProducts = [];
     inventoryWarehouseId = null;
+    inventoryStockFilter = 'all';
+    inventoryLoadedFilter = 'all';
+    inventoryLoadedQuery = '';
     inventoryError = '';
     staffRequestNumber += 1;
     staffState = { members: [], invitations: [], warehouses: [], loading: false, error: '' };
     financeSummary = { todayInVnd: '0', todayOutVnd: '0', customerDebtVnd: '0', customerDebtCount: 0, supplierPayableVnd: '0' };
     financeLoading = false;
+    financeDataReady = false;
+    financeTopCustomers = [];
+    financeTab = 'cashbook';
     financeError = '';
     analyticsData = null;
     analyticsLoading = false;
@@ -1992,7 +2006,10 @@
     const requestSession = authSession;
     const requestStoreId = store.id;
     const requestWarehouseId = selectedWarehouseId;
+    const requestedForInventory = page === 'inventory';
+    const stockFilter = requestedForInventory ? inventoryStockFilter : 'all';
     const isCurrent = () => requestNumber === inventoryRequestNumber && authSession === requestSession && store.id === requestStoreId && selectedWarehouseId === requestWarehouseId &&
+      (!requestedForInventory || inventoryStockFilter === stockFilter) &&
       (!options.keepSearch || (page === 'inventory' && searchTerms.inventory === query));
     const draw = () => {
       if (page === 'inventory') {
@@ -2005,14 +2022,17 @@
     draw();
     try {
       const warehouseQuery = requestWarehouseId ? `&warehouseId=${encodeURIComponent(requestWarehouseId)}` : '';
-      const result = await apiRequest(`/api/stores/${encodeURIComponent(requestStoreId)}/inventory?limit=100&offset=${Math.max(0, offset || 0)}&q=${encodeURIComponent(query || '')}${warehouseQuery}`, { preferFresh: options.keepSearch === true });
+      const stockQuery = stockFilter === 'all' ? '' : `&stock=${stockFilter}`;
+      const result = await apiRequest(`/api/stores/${encodeURIComponent(requestStoreId)}/inventory?limit=100&offset=${Math.max(0, offset || 0)}&q=${encodeURIComponent(query || '')}${warehouseQuery}${stockQuery}`, { preferFresh: options.keepSearch === true });
       if (!isCurrent()) return;
       if (!result.summary || !Array.isArray(result.movements) || (requestWarehouseId && result.warehouse?.id !== requestWarehouseId)) {
         throw new Error('Chưa có đủ dữ liệu của kho này. Thử lại khi có mạng.');
       }
       inventoryWarehouseId = requestWarehouseId;
+      inventoryLoadedFilter = stockFilter;
+      inventoryLoadedQuery = query || '';
       inventoryProducts = result.products.map(mapProduct);
-      if (page === 'inventory') store.products = inventoryProducts.slice();
+      if (page === 'inventory' && stockFilter === 'all' && !query) store.products = inventoryProducts.slice();
       store.movements = result.movements.map(function (movement) { return { productId: movement.productId, type: movement.type, delta: Number(movement.delta), reason: movement.reason, createdAt: movement.createdAt }; });
       inventorySummary = result.summary;
       purchasePacksSupported = result.purchasePacksSupported === true;
@@ -2073,12 +2093,23 @@
     }
   }
 
+  function mapFinancePurchase(row) {
+    return { id: row.id, number: row.purchase_number, purchaseOrderNumber: row.purchase_order_number || '', status: row.status, note: row.note || '', totalVnd: String(row.total_vnd || '0'), supplierId: row.supplier_id, supplierName: row.supplier_name || '', receivedAt: row.received_at, items: Array.isArray(row.lines) ? row.lines : [] };
+  }
+
+  function mapFinancePurchaseOrder(row) {
+    return { id: row.id, number: row.purchase_order_number, status: row.status, version: Number(row.version) || 1, note: row.note || '', totalVnd: String(row.total_vnd || '0'), supplierId: row.supplier_id, supplierName: row.supplier_name || '', warehouseId: row.warehouse_id || '', warehouseName: row.warehouse_name || '', createdAt: row.created_at, orderedAt: row.ordered_at, completedAt: row.completed_at, cancelledAt: row.cancelled_at, items: Array.isArray(row.lines) ? row.lines : [] };
+  }
+
   async function loadFinancePage() {
     if (!authSession || !store.id) return;
     const requestNumber = ++financeRequestNumber;
+    const requestSession = authSession;
+    const requestStore = store.id;
+    const current = () => requestNumber === financeRequestNumber && authSession === requestSession && store.id === requestStore;
     financeLoading = true;
     financeError = '';
-    if (page === 'finance') render();
+    if (page === 'finance' && !financeDataReady) refreshFinanceBody();
     try {
       const [result, register] = await Promise.all([
         apiRequest(`/api/stores/${encodeURIComponent(store.id)}/finance`),
@@ -2086,17 +2117,13 @@
           ? Promise.resolve({ session: null, lastClosed: null, recentClosed: [], canOperate: false, canOpen: false, canClose: false })
           : apiRequest(`/api/stores/${encodeURIComponent(store.id)}/cash-register`),
       ]);
-      if (requestNumber !== financeRequestNumber) return;
+      if (!current()) return;
       store.cashbook = result.movements.map(function (row) {
-        return { id: row.source_id, sourceType: row.source_type, local: row.offline_pending === true, type: row.direction, category: row.category, amountVnd: row.amount_vnd, note: row.note, method: row.method, actorName: row.actor_name, cashSessionId: row.cash_session_id, cashSessionOpenedAt: row.cash_session_opened_at, createdAt: row.occurred_at };
+        return { id: row.source_id, movementId: row.movement_id || [row.source_id, row.method, row.direction].join(':'), orderId: row.order_id, orderNumber: row.order_number, counterparty: row.counterparty, sourceType: row.source_type, local: row.offline_pending === true, type: row.direction, category: row.category, amountVnd: row.amount_vnd, note: row.note, method: row.method, actorName: row.actor_name, cashSessionId: row.cash_session_id, cashSessionOpenedAt: row.cash_session_opened_at, createdAt: row.occurred_at };
       });
       store.suppliers = result.suppliers.map(function (row) { return { id: row.id, name: row.name, debtVnd: String(row.balance_vnd || '0'), lastActivityAt: row.last_activity_at, local: row.offline_pending === true }; });
-      purchaseHistory = (result.purchases || []).map(function (row) {
-        return { id: row.id, number: row.purchase_number, purchaseOrderNumber: row.purchase_order_number || '', status: row.status, note: row.note || '', total: Number(row.total_vnd) || 0, supplierName: row.supplier_name || '', receivedAt: row.received_at, items: Array.isArray(row.lines) ? row.lines : [] };
-      });
-      purchaseOrders = (result.purchaseOrders || []).map(function (row) {
-        return { id: row.id, number: row.purchase_order_number, status: row.status, version: Number(row.version) || 1, note: row.note || '', totalVnd: String(row.total_vnd || '0'), supplierId: row.supplier_id, supplierName: row.supplier_name || '', warehouseId: row.warehouse_id || '', warehouseName: row.warehouse_name || '', createdAt: row.created_at, orderedAt: row.ordered_at, completedAt: row.completed_at, cancelledAt: row.cancelled_at, items: Array.isArray(row.lines) ? row.lines : [] };
-      });
+      purchaseHistory = (result.purchases || []).map(mapFinancePurchase);
+      purchaseOrders = (result.purchaseOrders || []).map(mapFinancePurchaseOrder);
       financeTopCustomers = result.customerDebtors.map(function (row) { return { id: row.id, name: row.name, phone: row.phone, debt: String(row.balance_vnd) }; });
       financeSummary = {
         todayInVnd: result.summary ? String(result.summary.todayInVnd) : '0', todayOutVnd: result.summary ? String(result.summary.todayOutVnd) : '0',
@@ -2107,15 +2134,15 @@
       cashRegisterState = register;
       cashRegisterError = '';
       financeLoading = false;
-      if (page === 'finance') render();
+      financeDataReady = true;
+      if (page === 'finance') refreshFinanceBody();
     } catch (error) {
-      if (requestNumber !== financeRequestNumber) return;
+      if (!current()) return;
       financeLoading = false;
       financeError = error.message;
       cashRegisterError = error.message;
       if (error.status === 401) return showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
-      toast('Chưa tải được sổ thu chi', error.message, 'error');
-      if (page === 'finance') render();
+      if (page === 'finance') refreshFinanceBody();
     }
   }
 
@@ -2471,7 +2498,7 @@
     list.outerHTML = product ? renderProductList() : renderInventoryList();
     count.textContent = product
       ? (productLoading ? 'Đang tải…' : productError || `${number(productTotal)} sản phẩm`)
-      : (inventoryLoading ? 'Đang tải…' : inventoryError || `${number(inventoryTotal)} mặt hàng`);
+      : (inventoryLoading ? 'Đang tải…' : inventoryError ? 'Chưa tải được' : `${number(inventoryTotal)} mặt hàng`);
     if (!product) root.querySelectorAll('[data-inventory-stat]').forEach(value => { value.textContent = inventoryStatText(value.dataset.inventoryStat); });
     enhanceRecordLists(root.querySelector(`[data-${kind}-result-list]`));
   }
@@ -2831,28 +2858,34 @@
     return key === 'stockValueVnd' ? money(inventorySummary.stockValueVnd) : number(inventorySummary[key]);
   }
 
+  function warehouseOptionName(warehouse) {
+    return warehouse.name + (warehouse.is_default && warehouse.name.trim().toLocaleLowerCase('vi') !== 'kho chính' ? ' · Kho chính' : '');
+  }
+
   function renderInventory() {
-    const currentWarehouse = inventoryWarehouseId === selectedWarehouseId;
+    const currentWarehouse = inventoryWarehouseId === selectedWarehouseId && inventoryLoadedFilter === inventoryStockFilter && inventoryLoadedQuery === searchTerms.inventory;
     const total = currentWarehouse ? inventoryTotal : 0;
     const canCount = ['owner', 'manager', 'stockkeeper'].includes(store.role);
     const canReceive = ['owner', 'manager', 'stockkeeper', 'accountant'].includes(store.role);
     const canManageWarehouse = ['owner', 'manager'].includes(store.role);
-    const warehouseOptions = warehouses.map(function (warehouse) { return `<option value='${esc(warehouse.id)}' ${warehouse.id === selectedWarehouseId ? 'selected' : ''}>${esc(warehouse.name)}${warehouse.is_default ? ' · Kho chính' : ''}</option>`; }).join('');
+    const warehouseOptions = warehouses.map(warehouse => `<option value='${esc(warehouse.id)}' ${warehouse.id === selectedWarehouseId ? 'selected' : ''}>${esc(warehouseOptionName(warehouse))}</option>`).join('');
     const defaultWarehouseSelected = warehouses.some(function (warehouse) { return warehouse.id === selectedWarehouseId && warehouse.is_default; });
-    const advanced = `${canCount ? `<button class='btn btn-secondary' data-action='adjust-stock-picker'>Đếm lại hàng</button>` : ''}${canManageWarehouse ? `<button class='btn btn-secondary' data-action='new-warehouse'>Thêm kho</button>` : ''}${canCount ? `<button class='btn btn-secondary' data-action='bulk-stock-count'>Kiểm kê bằng tệp</button>` : ''}${canExportData() ? `<button class='btn btn-secondary' data-action='open-export'>Xuất danh sách</button>` : ''}`;
+    const advanced = `${canCount ? `<button class='btn btn-secondary' data-action='adjust-stock-picker'>Đếm lại hàng</button>` : ''}${canManageWarehouse ? `<button class='btn btn-secondary' data-action='new-warehouse'>Thêm kho</button>` : ''}${canCount ? `<button class='btn btn-secondary' data-action='bulk-stock-count'>Kiểm kê bằng tệp</button>` : ''}${canExportData() ? `<button class='btn btn-secondary' data-action='open-export'>Xuất danh sách</button>` : ''}${canManageWarehouse && selectedWarehouseId && !defaultWarehouseSelected ? `<button class='btn btn-secondary' data-action='archive-warehouse' data-id='${esc(selectedWarehouseId)}'>Lưu trữ kho</button>` : ''}${canCount && warehouses.length > 1 ? `<button class='btn btn-secondary' data-action='new-warehouse-transfer'>Điều chuyển kho</button>` : ''}`;
     return pageHeading('Kho hàng', '', `${canReceive ? `<button class='btn btn-primary' data-action='receive-stock' data-tour-target='inventory-receive'>＋ Nhập hàng</button>` : ''}${advanced ? `<details class='catalog-more'><summary class='btn btn-secondary'>Thêm</summary><div>${advanced}</div></details>` : ''}`) +
-      `<div class='toolbar warehouse-toolbar'><div class='toolbar-left'><label class='input-label' for='inventory-warehouse'>Đang xem tại</label><div class='select-wrap'><select class='input' id='inventory-warehouse' aria-label='Chọn kho tồn kho'>${warehouseOptions}</select></div><span class='result-count'>${warehouseLoading ? 'Đang tải kho…' : warehouseError ? esc(warehouseError) : `${number(warehouses.length)} kho đang hoạt động`}</span></div><div class='toolbar-right'>${canManageWarehouse && !defaultWarehouseSelected ? `<button class='btn btn-secondary' data-action='archive-warehouse' data-id='${esc(selectedWarehouseId)}'>Lưu trữ kho</button>` : ''}${canCount && warehouses.length > 1 ? `<button class='btn btn-secondary' data-action='new-warehouse-transfer'>Điều chuyển kho</button>` : ''}</div></div>` +
-      `<div class='stat-grid'><article class='stat-card'><div class='stat-top'><span class='stat-label'>Tổng mặt hàng</span><span class='stat-icon'>${icon('box', 15)}</span></div><div class='stat-value' data-inventory-stat='total'>${inventoryStatText('total')}</div><div class='stat-foot'>Sản phẩm đang theo dõi</div></article><article class='stat-card'><div class='stat-top'><span class='stat-label'>Sắp hết hàng</span><span class='stat-icon'>${icon('alert', 15)}</span></div><div class='stat-value' data-inventory-stat='low'>${inventoryStatText('low')}</div><div class='stat-foot'>Bằng hoặc dưới ngưỡng nhắc</div></article><article class='stat-card'><div class='stat-top'><span class='stat-label'>Hết hàng</span><span class='stat-icon'>${icon('layers', 15)}</span></div><div class='stat-value' data-inventory-stat='out'>${inventoryStatText('out')}</div><div class='stat-foot'>Cần bổ sung trước khi bán</div></article>${store.role !== 'cashier' ? `<article class='stat-card'><div class='stat-top'><span class='stat-label'>Giá trị tồn ước tính</span><span class='stat-icon'>${icon('wallet', 15)}</span></div><div class='stat-value' style='font-size:17px' data-inventory-stat='stockValueVnd'>${inventoryStatText('stockValueVnd')}</div><div class='stat-foot'>Theo giá vốn hiện tại</div></article>` : ''}</div>` +
-      `<div class='toolbar'><div class='toolbar-left'><div class='search-wrap' data-tour-target='inventory-search'><span class='search-symbol'>⌕</span><input class='input' id='inventory-search' type='search' placeholder='Tìm tên, mã hàng hoặc mã vạch…' value='${esc(searchTerms.inventory)}' aria-label='Tìm trong kho'></div><span class='result-count' data-inventory-result-count>${inventoryLoading ? 'Đang tải…' : inventoryError ? esc(inventoryError) : `${number(total)} mặt hàng`}</span></div></div>` + renderInventoryList() + (store.role === 'cashier' ? '' : renderWarehouseTransfers());
+      `<div class='toolbar warehouse-toolbar'><div class='toolbar-left'><label class='input-label' for='inventory-warehouse'>Đang xem tại</label><div class='select-wrap'><select class='input' id='inventory-warehouse' aria-label='Chọn kho tồn kho'>${warehouseOptions}</select></div><span class='result-count'>${warehouseLoading ? 'Đang tải kho…' : warehouseError ? 'Chưa tải được kho' : ''}</span></div></div>` +
+      `<div class='stat-grid inventory-stats'><article class='stat-card'><div class='stat-top'><span class='stat-label'>Tổng mặt hàng</span><span class='stat-icon'>${icon('box', 15)}</span></div><div class='stat-value' data-inventory-stat='total'>${inventoryStatText('total')}</div></article><article class='stat-card'><div class='stat-top'><span class='stat-label'>Sắp hết hàng</span><span class='stat-icon'>${icon('alert', 15)}</span></div><div class='stat-value' data-inventory-stat='low'>${inventoryStatText('low')}</div></article><article class='stat-card'><div class='stat-top'><span class='stat-label'>Hết hàng</span><span class='stat-icon'>${icon('layers', 15)}</span></div><div class='stat-value' data-inventory-stat='out'>${inventoryStatText('out')}</div></article>${store.role !== 'cashier' ? `<article class='stat-card'><div class='stat-top'><span class='stat-label'>Giá trị tồn ước tính</span><span class='stat-icon'>${icon('wallet', 15)}</span></div><div class='stat-value' style='font-size:17px' data-inventory-stat='stockValueVnd'>${inventoryStatText('stockValueVnd')}</div></article>` : ''}</div>` +
+      `<div class='toolbar inventory-search-tools'><div class='toolbar-left'><div class='search-wrap inventory-search-wrap' data-tour-target='inventory-search'><span class='search-symbol' aria-hidden='true'>⌕</span><input class='input' id='inventory-search' type='search' placeholder='Tìm tên, mã hàng hoặc mã vạch…' value='${esc(searchTerms.inventory)}' aria-label='Tìm trong kho'><button class='icon-button inventory-scan' type='button' data-action='inventory-scan' aria-label='Quét mã vạch tìm hàng' title='Quét mã vạch'>${icon('scan', 20)}</button></div><span class='result-count' data-inventory-result-count aria-live='polite'>${inventoryLoading ? 'Đang tải…' : inventoryError ? 'Chưa tải được' : `${number(total)} mặt hàng`}</span></div></div>
+      <div class='inventory-stock-filters' role='group' aria-label='Lọc theo tồn kho'>${[['all', 'Tất cả'], ['low', 'Sắp hết'], ['out', 'Hết hàng']].map(([value, label]) => `<button type='button' data-action='inventory-stock-filter' data-stock='${value}' aria-pressed='${inventoryStockFilter === value}'>${label}</button>`).join('')}</div>` + renderInventoryList() + (store.role === 'cashier' ? '' : renderWarehouseTransfers());
   }
 
   function renderInventoryList() {
-    const currentWarehouse = inventoryWarehouseId === selectedWarehouseId;
+    const currentWarehouse = inventoryWarehouseId === selectedWarehouseId && inventoryLoadedFilter === inventoryStockFilter && inventoryLoadedQuery === searchTerms.inventory;
     const products = currentWarehouse ? inventoryProducts : [];
     const total = currentWarehouse ? inventoryTotal : 0;
     const offset = currentWarehouse ? inventoryOffset : 0;
     const nextOffset = currentWarehouse ? inventoryNextOffset : null;
-    return `<section class='panel' data-inventory-result-list><div class='panel-header'><div><h2>Tồn kho tại ${esc((warehouses.find(function (item) { return item.id === selectedWarehouseId; }) || {}).name || 'kho')}</h2><p>Cập nhật sau đơn bán, phiếu nhập và kiểm kê</p></div></div><div class='table-wrap'><table class='data-table'><thead><tr><th>Sản phẩm</th><th>Danh mục</th><th class='text-right'>Đang có</th><th class='text-right'>Nhắc khi còn</th><th>Biến động gần nhất</th><th>Thay đổi</th><th></th></tr></thead><tbody>${inventoryRows(products) || `<tr><td colspan='7'><div class='empty-state'><strong>${inventoryLoading ? 'Đang tải tồn kho' : inventoryError ? 'Chưa tải được tồn kho' : 'Chưa có sản phẩm trong kho'}</strong><span>${esc(inventoryError || '')}</span></div></td></tr>`}</tbody></table></div><div class='pagination'><span>Hiển thị ${products.length} trên ${number(total)} mặt hàng</span><span class='pagination-actions'>${offset > 0 ? `<button class='page-button' data-action='inventory-page' data-offset='${Math.max(0, offset - 100)}'>‹</button>` : ''}<span class='page-button current'>${Math.floor(offset / 100) + 1}</span>${nextOffset !== null ? `<button class='page-button' data-action='inventory-page' data-offset='${nextOffset}'>›</button>` : ''}</span></div></section>`;
+    const empty = inventoryLoading ? 'Đang tải tồn kho' : inventoryError ? 'Chưa tải được tồn kho' : searchTerms.inventory ? 'Không tìm thấy mặt hàng' : inventoryStockFilter === 'low' ? 'Không có mặt hàng sắp hết' : inventoryStockFilter === 'out' ? 'Không có mặt hàng hết hàng' : 'Chưa có sản phẩm trong kho';
+    return `<section class='panel' data-inventory-result-list><div class='panel-header'><div><h2>Tồn kho tại ${esc((warehouses.find(function (item) { return item.id === selectedWarehouseId; }) || {}).name || 'kho')}</h2></div></div><div class='table-wrap'><table class='data-table'><thead><tr><th>Sản phẩm</th><th>Danh mục</th><th class='text-right'>Đang có</th><th class='text-right'>Nhắc khi còn</th><th>Biến động gần nhất</th><th>Thay đổi</th><th></th></tr></thead><tbody>${inventoryRows(products) || `<tr><td colspan='7'><div class='empty-state'><strong>${empty}</strong>${inventoryError ? `<button type='button' class='link-button' data-action='inventory-page' data-offset='0'>Thử lại</button>` : ''}</div></td></tr>`}</tbody></table></div><div class='pagination'><span>Hiển thị ${products.length} trên ${number(total)} mặt hàng</span><span class='pagination-actions'>${offset > 0 ? `<button class='page-button' data-action='inventory-page' data-offset='${Math.max(0, offset - 100)}'>‹</button>` : ''}<span class='page-button current'>${Math.floor(offset / 100) + 1}</span>${nextOffset !== null ? `<button class='page-button' data-action='inventory-page' data-offset='${nextOffset}'>›</button>` : ''}</span></div></section>`;
   }
 
   function transferStatusName(status) {
@@ -3095,10 +3128,21 @@
     return labels[method] || method || 'Khác';
   }
 
+  function cashMovementTitle(movement) {
+    if (!movement.orderNumber) return movement.category;
+    return (movement.type === 'in' ? 'Thu đơn ' : 'Thối tiền đơn ') + movement.orderNumber;
+  }
+
   function cashRows(rows) {
-    return rows.map(function (movement, index) {
-      const sessionLabel = movement.cashSessionOpenedAt ? `Ca mở ${humanDate(movement.cashSessionOpenedAt, true)}` : movement.cashSessionId ? 'Ca tiền mặt' : 'Ngoài ca';
-      return `<tr><td><span class='product-name-stack'><button type='button' class='link-button' data-action='cash-movement-detail' data-index='${index}'>${esc(movement.category)}</button><small>${esc(movement.note || '')}</small></span></td><td>${humanDate(movement.createdAt, true)}</td><td><span class='product-name-stack'><strong>${esc(movement.actorName || 'Nhân viên')}</strong><small>${esc(sessionLabel)}</small></span></td><td>${esc(cashMethodName(movement.method))}</td><td class='text-right'><strong style='color:${movement.type === 'in' ? '#3c825a' : '#b26450'}'>${movement.type === 'in' ? '+' : '−'}${moneyVndText(movement.amountVnd)}</strong></td></tr>`;
+    return rows.map((movement, index) => {
+      const title = cashMovementTitle(movement);
+      const person = movement.counterparty?.name;
+      const session = movement.cashSessionOpenedAt ? `Ca mở ${humanDate(movement.cashSessionOpenedAt, true)}` : movement.cashSessionId ? 'Ca tiền mặt' : '';
+      const meta = [cashMethodName(movement.method), session, movement.actorName].filter(Boolean).join(' · ');
+      return `<button type='button' class='finance-cash-row' data-action='cash-movement-detail' data-id='${esc(movement.movementId)}' data-index='${index}'>
+        <span><strong>${esc(title)}</strong><small>${esc(meta)}</small>${person ? `<small>${esc(person)}</small>` : ''}</span>
+        <span class='finance-cash-amount'><strong class='finance-amount-${movement.type === 'in' ? 'in' : 'out'}'>${movement.type === 'in' ? '+' : '−'}${moneyVndText(movement.amountVnd)}</strong><small>${humanDate(movement.createdAt, true)}</small></span>
+      </button>`;
     }).join('');
   }
 
@@ -3107,26 +3151,61 @@
     if (!movement) return;
     const direction = movement.type === 'in' ? 'Khoản thu' : 'Khoản chi';
     const sourceId = esc(movement.id || '');
-    const order = movement.id && ['order_payment', 'order_change'].includes(movement.sourceType) && canAccessRoute('orders');
+    const orderId = movement.orderId || (['order_payment', 'order_change'].includes(movement.sourceType) ? movement.id : '');
+    const order = orderId && canAccessRoute('orders');
     const purchase = movement.sourceType === 'purchase_payment' && purchaseHistory.some(row => row.id === movement.id);
-    const source = order ? `<button class='btn btn-primary' data-action='order-detail' data-id='${sourceId}'>Xem đơn bán</button>`
+    const source = order ? `<button class='btn btn-primary' data-action='order-detail' data-id='${esc(orderId)}'>Xem đơn bán</button>`
       : purchase ? `<button class='btn btn-primary' data-action='purchase-detail' data-id='${sourceId}'>Xem phiếu nhập</button>` : '';
     const rows = [['Ngày giờ', humanDate(movement.createdAt, true)], ['Phương thức', cashMethodName(movement.method)], ['Người ghi', movement.actorName || 'Nhân viên']];
     if (movement.cashSessionOpenedAt) rows.push(['Ca mở', humanDate(movement.cashSessionOpenedAt, true)]);
+    if (movement.counterparty?.name) rows.push([movement.type === 'in' ? 'Người nộp tiền' : 'Người nhận tiền', movement.counterparty.name]);
     if (movement.note) rows.push(['Ghi chú', movement.note]);
     if (movement.local) rows.push(['Chứng từ', 'Đã lưu trên máy']);
-    const body = `<div class='checkout-total'><span>${esc(movement.category)}</span><strong>${moneyVndText(movement.amountVnd)}</strong></div>
+    const body = `<div class='checkout-total'><span>${esc(cashMovementTitle(movement))}</span><strong>${moneyVndText(movement.amountVnd)}</strong></div>
       ${rows.map(([label, value]) => `<div class='detail-line'><span>${label}</span><strong>${esc(value)}</strong></div>`).join('')}`;
     showModal(direction, '', body, `<button class='btn btn-secondary' data-action='close-modal'>Đóng</button>${source}`);
   }
 
   function renderReceivables() {
     const rows = financeTopCustomers.map(customer => `<div class='activity-item'><span class='avatar'>${esc(initials(customer.name))}</span>
-      <span class='activity-text'><button type='button' class='link-button' data-action='customer-detail' data-id='${esc(customer.id)}'>${esc(customer.name)}</button><small>${esc(customer.phone)}</small></span>
-      <strong class='activity-amount'>${moneyVndText(customer.debt)}</strong><button type='button' class='link-button' data-action='collect-customer-payment' data-id='${esc(customer.id)}'>Thu tiền</button></div>`).join('');
-    return `<div class='finance-balance'><span>Tổng cần thu</span><strong>${moneyVndText(financeSummary.customerDebtVnd)}</strong></div>
-      <section class='panel'><div class='panel-header'><h2>Khách còn nợ</h2><button type='button' class='link-button' data-action='view-customer-debt'>Xem tất cả</button></div>
-      <div class='activity-list'>${rows || `<div class='empty-state'><strong>${financeLoading ? 'Đang tải công nợ' : financeError ? 'Chưa tải được công nợ' : 'Không có khách còn nợ'}</strong></div>`}</div></section>`;
+      <span class='activity-text'><button type='button' class='link-button' data-action='finance-receivable' data-id='${esc(customer.id)}'>${esc(customer.name)}</button>${customer.phone ? `<small>${esc(customer.phone)}</small>` : ''}</span>
+      <strong class='activity-amount'>${moneyVndText(customer.debt)}</strong></div>`).join('');
+    const empty = !financeDataReady ? (financeError ? 'Chưa tải được công nợ' : 'Đang tải công nợ…') : 'Chưa có khách còn nợ';
+    return `<div class='finance-balance'><span>Tổng cần thu</span><strong>${financeDataReady ? moneyVndText(financeSummary.customerDebtVnd) : '—'}</strong></div>
+      <section class='panel'><div class='panel-header'><h2>Khách còn nợ</h2>${rows ? `<button type='button' class='link-button' data-action='new-debtor'>＋ Thêm khách nợ</button>` : ''}</div>
+      <div class='activity-list'>${rows || `<div class='empty-state finance-debt-empty'><strong>${empty}</strong>${financeDataReady ? `<button type='button' class='btn btn-secondary' data-action='new-debtor'>＋ Thêm khách nợ</button>` : ''}</div>`}</div>
+      ${financeSummary.customerDebtCount > financeTopCustomers.length ? `<button type='button' class='link-button finance-list-more' data-action='view-customer-debt'>Xem tất cả ${number(financeSummary.customerDebtCount)} khách</button>` : ''}</section>`;
+  }
+
+  function openReceivable(id) {
+    const customer = financeTopCustomers.find(item => item.id === id);
+    if (!customer) return;
+    const body = `<div class='checkout-total'><span>Còn phải thu</span><strong>${moneyVndText(customer.debt)}</strong></div>
+      ${customer.phone ? `<div class='detail-line'><span>Số điện thoại</span><strong>${esc(customer.phone)}</strong></div>` : ''}
+      <div class='finance-dialog-links'><button class='link-button' type='button' data-action='customer-detail' data-id='${esc(id)}'>Xem hồ sơ khách hàng</button></div>`;
+    showModal(customer.name, '', body, `<button class='btn btn-secondary' type='button' data-action='finance-reminder' data-id='${esc(id)}'>Nhắc nợ</button><button class='btn btn-primary' type='button' data-action='collect-customer-payment' data-id='${esc(id)}'>Thu bớt tiền</button>`);
+  }
+
+  function openDebtReminder(id) {
+    const customer = financeTopCustomers.find(item => item.id === id);
+    if (!customer) return;
+    const message = `Chào ${customer.name}, ${store.settings.storeName} xin nhắc khoản còn phải thanh toán là ${moneyVndText(customer.debt)}. Nếu bạn đã thanh toán, vui lòng phản hồi để cửa hàng kiểm tra. Cảm ơn bạn!`;
+    const body = `<label class='form-field'><span class='input-label'>Lời nhắc${customer.phone ? ' · ' + esc(customer.phone) : ''}</span><textarea class='input finance-reminder-text' rows='4' data-finance-reminder>${esc(message)}</textarea></label>`;
+    const share = window.SlinkAndroid || typeof navigator.share === 'function' ? `<button class='btn btn-primary' type='button' data-action='share-finance-reminder'>Chia sẻ qua Zalo/SMS</button>` : '';
+    showModal('Nhắc nợ', 'Xem lại lời nhắc rồi chọn người nhận trong ứng dụng nhắn tin.', body, `<button class='btn ${share ? 'btn-secondary' : 'btn-primary'}' type='button' data-action='copy-finance-reminder'>Sao chép</button>${share}`);
+  }
+
+  async function useDebtReminder(share) {
+    const field = modal.querySelector('[data-finance-reminder]');
+    const message = field?.value.trim();
+    if (!message) return;
+    try {
+      if (share && window.SlinkAndroid) await nativeAction({ type: 'share', title: 'Nhắc công nợ', text: message });
+      else if (share && navigator.share) await navigator.share({ title: 'Nhắc công nợ', text: message });
+      else { await navigator.clipboard.writeText(message); toast('Đã sao chép lời nhắc'); }
+    } catch (error) {
+      if (error.name !== 'AbortError') { field.select(); toast('Bạn có thể sao chép lời nhắc trong ô này.'); }
+    }
   }
 
   function renderPayables(canViewFullFinance, canManageSuppliers, canReceivePurchases) {
@@ -3135,17 +3214,20 @@
       const difference = BigInt(b.debtVnd) - BigInt(a.debtVnd);
       return difference > 0n ? 1 : difference < 0n ? -1 : a.name.localeCompare(b.name, 'vi');
     });
-    const rows = list.map(supplier => {
+    const supplierRow = supplier => {
       const due = BigInt(supplier.debtVnd);
       const name = canViewFullFinance ? `<button type='button' class='link-button' data-action='supplier-balance' data-id='${esc(supplier.id)}'>${esc(supplier.name)}</button>` : `<strong>${esc(supplier.name)}</strong>`;
       return `<div class='activity-item'><span class='activity-mark'>${icon('truck', 14)}</span><span class='activity-text'>${name}
         ${canViewFullFinance ? `<small>${due > 0n ? 'Cần trả' : due < 0n ? 'Đã trả trước' : 'Đã đủ'}</small>` : ''}</span>
         ${canViewFullFinance ? `<strong class='activity-amount'>${moneyVndText(due < 0n ? -due : due)}</strong>${due > 0n && !supplier.local ? `<button type='button' class='link-button' data-action='supplier-payment' data-id='${esc(supplier.id)}'>Ghi trả tiền</button>` : ''}` : ''}</div>`;
-    }).join('');
-    const actions = `${canManageSuppliers ? `<button type='button' class='link-button' data-action='new-supplier'>＋ Thêm</button>` : ''}${canReceivePurchases ? `<button type='button' class='link-button' data-action='receive-stock'>＋ Nhập hàng</button>` : ''}`;
-    const total = canViewFullFinance ? `<div class='finance-balance'><span>Tổng cần trả</span><strong>${moneyVndText(financeSummary.supplierPayableVnd)}</strong></div>` : '';
+    };
+    const rows = list.filter(supplier => !canViewFullFinance || BigInt(supplier.debtVnd) > 0n).map(supplierRow).join('');
+    const otherSuppliers = canViewFullFinance ? list.filter(supplier => BigInt(supplier.debtVnd) <= 0n) : [];
+    const actions = `${canManageSuppliers ? `<button type='button' class='link-button' data-action='new-supplier'>＋ Thêm nhà cung cấp</button>` : ''}${canReceivePurchases ? `<button type='button' class='link-button' data-action='receive-stock'>＋ Nhập hàng</button>` : ''}`;
+    const total = canViewFullFinance ? `<div class='finance-balance'><span>Tổng cần trả</span><strong>${financeDataReady ? moneyVndText(financeSummary.supplierPayableVnd) : '—'}</strong></div>` : '';
     return `${total}<section class='panel'><div class='panel-header'><h2>Nhà cung cấp</h2><span>${actions}</span></div>
-      <div class='activity-list'>${rows || `<div class='empty-state'><strong>${financeLoading ? 'Đang tải nhà cung cấp' : financeError ? 'Chưa tải được danh sách' : 'Chưa có nhà cung cấp'}</strong></div>`}</div></section>`;
+      <div class='activity-list'>${rows || `<div class='empty-state'><strong>${!financeDataReady ? (financeError ? 'Chưa tải được danh sách' : 'Đang tải nhà cung cấp…') : canViewFullFinance ? 'Chưa có khoản phải trả' : 'Chưa có nhà cung cấp'}</strong></div>`}</div>
+      ${otherSuppliers.length ? `<details class='work-details' data-finance-fold='other-suppliers'><summary>Nhà cung cấp khác (${otherSuppliers.length})</summary><div class='activity-list'>${otherSuppliers.map(supplierRow).join('')}</div></details>` : ''}</section>`;
   }
 
   async function openSupplierBalance(id) {
@@ -3166,27 +3248,42 @@
     }
     if (!current()) return;
     const due = BigInt(!result || result.offlineCachedAt ? supplier.debtVnd : result.supplier.balance_vnd);
+    const receipts = result?.purchases?.map(mapFinancePurchase) || purchaseHistory.filter(row => row.supplierId === id).slice(0, 8);
+    const orders = result?.purchaseOrders?.map(mapFinancePurchaseOrder) || purchaseOrders.filter(row => row.supplierId === id).slice(0, 8);
+    const documentButton = (kind, item, label) => `<button type='button' class='link-button' data-supplier-document='${kind}' data-id='${esc(item.id)}'>${esc(label)}</button>`;
     const entries = (result?.entries || []).map(entry => {
       const increased = BigInt(entry.increases_payable_vnd);
       const label = increased > 0n ? 'Phát sinh phải trả' : entry.entry_type === 'payment_debit' ? 'Đã trả' : 'Giảm phải trả';
-      const receipt = entry.purchase_id && purchaseHistory.some(row => row.id === entry.purchase_id)
-        ? `<button type='button' class='link-button' data-action='purchase-detail' data-id='${esc(entry.purchase_id)}'>${esc(entry.purchase_number)}</button>` : '';
+      const receipt = entry.purchase_id && receipts.some(row => row.id === entry.purchase_id)
+        ? documentButton('receipt', { id: entry.purchase_id }, entry.purchase_number) : '';
       return `<div class='activity-item'><span class='activity-text'><strong>${label}</strong><small>${humanDate(entry.occurred_at, true)}${entry.note ? ' · ' + esc(entry.note) : ''}</small>${receipt}</span><strong>${moneyVndText(increased > 0n ? increased : entry.decreases_payable_vnd)}</strong></div>`;
     }).join('');
     const body = `<div class='checkout-total'><span>${due < 0n ? 'Đã trả trước' : 'Cần trả'}</span><strong>${moneyVndText(due < 0n ? -due : due)}</strong></div>
-      ${result ? `<section class='activity-list' aria-label='Lịch sử công nợ'><h3>${result.offlineCachedAt ? 'Lịch sử đã tải' : 'Lịch sử gần đây'}</h3>${entries || '<p>Chưa có phát sinh.</p>'}</section>` : `<p class='muted'>${esc(supplier.local ? 'Khoản này đã lưu trên máy.' : issue)}</p>`}`;
+      ${result ? `<section class='activity-list' aria-label='Lịch sử công nợ'><h3>${result.offlineCachedAt ? 'Lịch sử đã tải' : 'Lịch sử gần đây'}</h3>${entries || '<p>Chưa có phát sinh.</p>'}</section>` : `<p class='muted'>${esc(supplier.local ? 'Khoản này đã lưu trên máy.' : issue)}</p>`}
+      ${orders.length || receipts.length ? `<section class='activity-list finance-supplier-documents' data-supplier-documents><h3>Chứng từ gần đây</h3>${receipts.map(row => documentButton('receipt', row, 'Phiếu nhập ' + row.number)).join('')}${orders.map(row => documentButton('order', row, 'Đơn đặt ' + row.number)).join('')}</section>` : ''}`;
     const action = due > 0n && result && !result.offlineCachedAt ? `<button type='button' class='btn btn-primary' data-action='supplier-payment' data-id='${esc(id)}'>Ghi trả tiền</button>` : '';
     if (result && !result.offlineCachedAt) supplier.debtVnd = due.toString();
     showModal(supplier.name, 'Công nợ nhà cung cấp', body, `<button class='btn btn-secondary' data-action='close-modal'>Đóng</button>${action}`);
+    modal.querySelector('.modal-body')?.addEventListener('click', function documentClick(event) {
+      const button = event.target.closest('[data-supplier-document]');
+      if (!button) return;
+      const { id, supplierDocument } = button.dataset;
+      if (supplierDocument === 'receipt') openPurchaseDetail(id, receipts.find(row => row.id === id));
+      else openPurchaseOrderDetail(id, orders.find(row => row.id === id));
+    });
   }
 
-  function renderFinance() {
+  function renderFinanceContent() {
     const isStockkeeper = store.role === 'stockkeeper';
     const canViewFullFinance = ['owner', 'manager', 'accountant'].includes(store.role);
     const canViewCashbook = canViewFullFinance || store.role === 'cashier';
     const canRecord = ['owner', 'manager', 'accountant'].includes(store.role);
     const canManageSuppliers = canRecord || isStockkeeper;
-    const canReceivePurchases = ['owner', 'manager', 'accountant', 'stockkeeper'].includes(store.role);
+    const canReceivePurchases = canManageSuppliers;
+    if (isStockkeeper || (canViewFullFinance && financeTab === 'payables')) {
+      return renderPayables(canViewFullFinance, canManageSuppliers, canReceivePurchases) + `<details class='work-details' data-finance-fold='purchase-history'><summary>Đặt hàng và lịch sử nhập hàng</summary>${purchaseOrderPanel()}${purchaseHistoryPanel()}</details>`;
+    }
+    if (canViewFullFinance && financeTab === 'receivables') return renderReceivables();
     const cashSession = cashRegisterState.session;
     const recentClosed = Array.isArray(cashRegisterState.recentClosed) ? cashRegisterState.recentClosed : [];
     const canOperateCash = Boolean(cashRegisterState.canOperate);
@@ -3196,7 +3293,7 @@
     if (!isStockkeeper) {
       let cashSessionContent = '';
       if (cashRegisterError) {
-        cashSessionContent = `<div class='notice-item'><span>${icon('alert', 18)}</span><span><strong>Chưa tải được trạng thái ca</strong><small>${esc(cashRegisterError)}</small></span></div>`;
+        cashSessionContent = `<div class='notice-item'><span>${icon('alert', 18)}</span><span><strong>Chưa tải được trạng thái ca</strong></span></div>`;
       } else if (cashSession) {
         const closePermissionNote = canCloseCash ? 'Chốt ca sẽ ghi nhận tiền đếm thực tế; nếu lệch, cần nhập lý do và Slink sẽ ghi một bút toán điều chỉnh.' : store.role === 'cashier' ? 'Thu ngân chỉ có thể chốt ca do mình mở. Hãy nhờ người mở ca hoặc quản lý thực hiện.' : 'Vai trò của bạn chỉ xem được ca. Hãy nhờ người mở ca hoặc chủ cửa hàng/quản lý chốt.';
         cashSessionContent = `<div class='cash-session-summary'><div><small>Trạng thái</small><strong>Đang mở · ${esc(cashSession.openedByName || 'Nhân viên')}</strong></div><div><small>Tiền đầu ca</small><strong>${moneyVndText(cashSession.openingFloatVnd)}</strong></div><div><small>Thu bằng tiền mặt</small><strong>${moneyVndText(cashSession.cashInVnd)}</strong></div><div><small>Chi bằng tiền mặt</small><strong>${moneyVndText(cashSession.cashOutVnd)}</strong></div><div><small>Dự kiến trong quầy</small><strong>${moneyVndText(cashSession.expectedCashVnd)}</strong></div></div><div class='modal-note'>Mở lúc ${humanDate(cashSession.openedAt, true)}. ${closePermissionNote}</div>`;
@@ -3212,23 +3309,52 @@
         const varianceLabel = variance === 0n ? 'Khớp số tiền' : variance > 0n ? `Thừa ${moneyVndText(variance)}` : `Thiếu ${moneyVndText(-variance)}`;
         return `<article class='cash-session-history-card'><div class='cash-session-history-top'><div><strong>Chốt ${humanDate(item.closedAt, true)}</strong><small>Mở ${humanDate(item.openedAt, true)} · ${esc(item.openedByName || 'Nhân viên')} → ${esc(item.closedByName || 'Nhân viên')}</small></div><span class='cash-session-variance ${variance === 0n ? 'matched' : 'mismatch'}'>${esc(varianceLabel)}</span></div><div class='cash-session-history-summary'><div><small>Đầu ca</small><strong>${moneyVndText(item.openingFloatVnd)}</strong></div><div><small>Thu tiền mặt</small><strong>${moneyVndText(item.cashInVnd)}</strong></div><div><small>Chi tiền mặt</small><strong>${moneyVndText(item.cashOutVnd)}</strong></div><div><small>Dự kiến</small><strong>${moneyVndText(item.expectedCashVnd)}</strong></div><div><small>Đã đếm</small><strong>${moneyVndText(item.countedCashVnd)}</strong></div><div><small>Chênh lệch</small><strong>${moneyVndText(variance)}</strong></div></div>${item.closeNote ? `<p class='cash-session-history-note'><strong>Lý do:</strong> ${esc(item.closeNote)}</p>` : ''}</article>`;
       }).join('')}</div>` : `<div class='empty-state cash-session-history-empty'><strong>Chưa có ca nào được chốt</strong><span>Lịch sử đối soát sẽ xuất hiện sau khi chốt ca đầu tiên.</span></div>`}</section>`;
-      cashSessionPanel = `<section class='panel' style='margin-bottom:14px'><div class='panel-header'><div><h2>Ca tiền mặt</h2><p>Kiểm tra tiền khi bắt đầu và kết thúc buổi bán.</p></div>${cashSessionAction}</div>${cashSession ? `<details class='work-details'><summary>Tiền đang có trong quầy · ${moneyVndText(cashSession.expectedCashVnd)}</summary>${cashSessionContent}</details>` : cashSessionContent}<details class='work-details'><summary>Xem các ca đã chốt</summary>${cashSessionHistory}</details></section>`;
+      cashSessionPanel = `<section class='panel finance-register-card'><div class='panel-header'><div><h2>Tiền mặt trong quầy</h2><p>${cashSession ? 'Đang mở · ' + esc(cashSession.openedByName || 'Nhân viên') : 'Chưa mở ca'}</p>${cashSession ? `<strong class='finance-register-amount'>${moneyVndText(cashSession.expectedCashVnd)}</strong>` : ''}</div>${cashSessionAction}</div>
+        ${cashRegisterError ? cashSessionContent : cashSession ? `<details class='work-details' data-finance-fold='shift-current'><summary>Chi tiết ca đang mở</summary>${cashSessionContent}</details>` : ''}
+        ${cashSessionHistory ? `<details class='work-details' data-finance-fold='shift-closed'><summary>Xem các ca đã chốt</summary>${cashSessionHistory}</details>` : ''}</section>`;
     }
-    const actions = isStockkeeper
-      ? `${canManageSuppliers ? `<button class='btn btn-secondary' data-action='new-supplier'>＋ Nhà cung cấp</button>` : ''}${canReceivePurchases ? `<button class='btn btn-secondary' data-action='new-purchase-order'>＋ Đặt hàng</button><button class='btn btn-primary' data-action='receive-stock'>＋ Nhập hàng</button>` : ''}`
-      : `${canRecord ? `<button class='btn btn-primary' data-action='new-expense' data-direction='in'>＋ Ghi thu</button><button class='btn btn-secondary' data-action='new-expense' data-direction='out'>− Ghi chi</button>` : ''}${canReceivePurchases ? `<button class='btn btn-secondary' data-action='new-purchase-order'>＋ Đặt hàng</button>` : ''}${canExportData() ? `<button class='btn btn-secondary' data-action='open-export'>Xuất CSV</button>` : ''}`;
-    const heading = pageHeading(isStockkeeper ? 'Nhập hàng' : 'Thu chi', isStockkeeper ? 'Quản lý nhà cung cấp và theo dõi các phiếu hàng đã nhận.' : store.role === 'cashier' ? 'Theo dõi giao dịch trong ca tiền mặt của bạn.' : 'Theo dõi tiền đã thu, đã chi và các khoản còn phải thu.', actions);
-    const metrics = canViewFullFinance ? `<div class='stat-grid finance-today'><article class='stat-card'><div class='stat-label'>${financeSummary.periodDate || offlineState.mode !== 'online' || offlineState.pending ? 'Thu' + (financeSummary.periodDate ? ' ' + financeSummary.periodDate : '') + ' · trên máy' : 'Đã thu hôm nay'}</div><div class='stat-value'>${moneyVndText(financeSummary.todayInVnd)}</div></article><article class='stat-card'><div class='stat-label'>${financeSummary.periodDate || offlineState.mode !== 'online' || offlineState.pending ? 'Chi' + (financeSummary.periodDate ? ' ' + financeSummary.periodDate : '') + ' · trên máy' : 'Đã chi hôm nay'}</div><div class='stat-value'>${moneyVndText(financeSummary.todayOutVnd)}</div></article></div>` : '';
-    const cashbookPanel = canViewCashbook ? `<section class='panel' data-tour-target='finance-register'><div class='panel-header'><div><h2>Sổ thu chi</h2><p>${store.role === 'cashier' ? 'Giao dịch thuộc ca đang mở hoặc ca do bạn mở' : '100 giao dịch gần nhất'}</p></div></div><div class='table-wrap'><table class='data-table'><thead><tr><th>Khoản mục</th><th>Thời gian</th><th>Người ghi nhận / ca</th><th>Phương thức</th><th class='text-right'>Số tiền</th></tr></thead><tbody>${cashRows(store.cashbook) || `<tr><td colspan='5'><div class='empty-state'><strong>${financeLoading ? 'Đang tải sổ thu chi' : 'Chưa có giao dịch'}</strong></div></td></tr>`}</tbody></table></div><div class='pagination'><span>Hiển thị ${store.cashbook.length} trên ${number(financeMovementTotal)} giao dịch</span></div></section>` : '';
-    const tabs = canViewFullFinance ? `<nav class='workspace-tabs finance-tabs' aria-label='Sổ tiền và công nợ'>${[['cashbook', 'Thu chi'], ['receivables', 'Cần thu'], ['payables', 'Cần trả']].map(([value, label]) => `<button type='button' data-action='finance-tab' data-tab='${value}' ${financeTab === value ? `aria-current='page'` : ''}>${label}</button>`).join('')}</nav>` : '';
-    const cashbook = cashbookPanel ? `<details class='finance-cashbook' data-finance-book ${financeBookOpen ? 'open' : ''}><summary>Sổ thu chi <span>${number(store.cashbook.length)} giao dịch gần nhất</span></summary>${cashbookPanel}</details>` : '';
-    const content = isStockkeeper || (financeTab === 'payables' && canViewFullFinance) ? renderPayables(canViewFullFinance, canManageSuppliers, canReceivePurchases) : financeTab === 'receivables' && canViewFullFinance ? renderReceivables() : `${metrics}${cashbook}<details class='work-details'><summary>Tiền mặt trong quầy</summary>${cashSessionPanel}</details>`;
-    return `${heading}${tabs}${financeError ? `<div class='notice-item' role='status'><span><strong>Chưa tải đủ dữ liệu</strong><small>${esc(financeError)}</small></span><button class='link-button' data-action='reload-finance'>Thử lại</button></div>` : ''}${content}`;
+    const metrics = canViewFullFinance ? `<div class='stat-grid finance-today'><article class='stat-card'><div class='stat-label'>${financeSummary.periodDate || offlineState.mode !== 'online' || offlineState.pending ? 'Thu' + (financeSummary.periodDate ? ' ' + financeSummary.periodDate : '') + ' · trên máy' : 'Đã thu hôm nay'}</div><div class='stat-value'>${financeDataReady ? moneyVndText(financeSummary.todayInVnd) : '—'}</div></article><article class='stat-card'><div class='stat-label'>${financeSummary.periodDate || offlineState.mode !== 'online' || offlineState.pending ? 'Chi' + (financeSummary.periodDate ? ' ' + financeSummary.periodDate : '') + ' · trên máy' : 'Đã chi hôm nay'}</div><div class='stat-value'>${financeDataReady ? moneyVndText(financeSummary.todayOutVnd) : '—'}</div></article></div>` : '';
+    const cashbook = canViewCashbook ? `<details class='finance-cashbook' data-finance-book data-tour-target='finance-register' ${financeBookOpen ? 'open' : ''}><summary>Sổ thu chi <span>${number(store.cashbook.length)} giao dịch gần nhất</span></summary>
+      ${canExportData() ? `<div class='finance-cashbook-actions'><button type='button' class='link-button' data-action='open-export'>Xuất CSV</button></div>` : ''}
+      <div class='finance-cash-list'>${cashRows(store.cashbook) || `<div class='empty-state'><strong>${!financeDataReady ? (financeError ? 'Chưa tải được sổ thu chi' : 'Đang tải sổ thu chi…') : 'Chưa có giao dịch'}</strong></div>`}</div>
+      ${financeMovementTotal > store.cashbook.length ? `<div class='pagination'><span>Hiển thị ${store.cashbook.length} trên ${number(financeMovementTotal)} giao dịch</span></div>` : ''}</details>` : '';
+    return `${metrics}${cashSessionPanel}${cashbook}`;
+  }
+
+  function financeBody() {
+    const retry = financeError ? `<div class='notice-item' role='status'><span><strong>Chưa tải đủ dữ liệu</strong></span><button class='link-button' data-action='reload-finance'>Thử lại</button></div>` : '';
+    return retry + renderFinanceContent();
+  }
+
+  function refreshFinanceBody() {
+    const body = root.querySelector('[data-finance-content]');
+    if (!body) return;
+    const active = document.activeElement;
+    const focusAction = body.contains(active) ? active.dataset.action : '';
+    const focusId = focusAction && active.dataset.id;
+    const focusedSummary = body.contains(active) && active.matches('summary') ? active.parentElement : null;
+    const openDetails = new Set(Array.from(body.querySelectorAll('details[data-finance-fold][open]'), node => node.dataset.financeFold));
+    body.innerHTML = financeBody();
+    body.querySelectorAll('details[data-finance-fold]').forEach(node => { node.open = openDetails.has(node.dataset.financeFold); });
+    enhanceRecordLists(body);
+    if (focusAction) Array.from(body.querySelectorAll('[data-action]')).find(node => node.dataset.action === focusAction && node.dataset.id === focusId)?.focus({ preventScroll: true });
+    else if (focusedSummary?.hasAttribute('data-finance-book')) body.querySelector('[data-finance-book] > summary')?.focus({ preventScroll: true });
+    else if (focusedSummary?.dataset.financeFold) Array.from(body.querySelectorAll('details[data-finance-fold]')).find(node => node.dataset.financeFold === focusedSummary.dataset.financeFold)?.querySelector('summary')?.focus({ preventScroll: true });
+  }
+
+  function renderFinance() {
+    const stockkeeper = store.role === 'stockkeeper';
+    const canRecord = ['owner', 'manager', 'accountant'].includes(store.role);
+    const actions = stockkeeper ? `<button class='btn btn-secondary' data-action='new-purchase-order'>＋ Đặt hàng</button><button class='btn btn-primary' data-action='receive-stock'>＋ Nhập hàng</button>`
+      : canRecord ? `<button class='btn btn-primary' data-action='new-expense' data-direction='in'>＋ Thu tiền</button><button class='btn btn-secondary finance-quick-out' data-action='new-expense' data-direction='out'>− Chi tiền</button>` : '';
+    const heading = pageHeading(stockkeeper ? 'Nhập hàng' : 'Thu chi', '', actions);
+    const tabs = canRecord ? `<nav class='workspace-tabs finance-tabs' aria-label='Sổ tiền và công nợ'>${[['cashbook', 'Thu chi'], ['receivables', 'Cần thu'], ['payables', 'Cần trả']].map(([value, label]) => `<button type='button' data-action='finance-tab' data-tab='${value}' ${financeTab === value ? `aria-current='page'` : ''}>${label}</button>`).join('')}</nav>` : '';
+    return `${heading}${tabs}<div data-finance-content>${financeBody()}</div>`;
   }
 
   function purchaseHistoryPanel() {
     const rows = purchaseHistory.map(function (purchase) {
-      return `<tr><td><button class='link-button order-ref' data-action='purchase-detail' data-id='${purchase.id}'>${esc(purchase.number)}</button>${purchase.purchaseOrderNumber ? `<small class='table-subtitle'>Đơn ${esc(purchase.purchaseOrderNumber)}</small>` : ''}</td><td>${esc(purchase.supplierName || 'Không chỉ định')}</td><td>${humanDate(purchase.receivedAt, true)}</td><td>${number(purchase.items.length)} dòng</td><td class='text-right'><strong>${money(purchase.total)}</strong></td></tr>`;
+      return `<tr><td><button class='link-button order-ref' data-action='purchase-detail' data-id='${purchase.id}'>${esc(purchase.number)}</button>${purchase.purchaseOrderNumber ? `<small class='table-subtitle'>Đơn ${esc(purchase.purchaseOrderNumber)}</small>` : ''}</td><td>${esc(purchase.supplierName || 'Không chỉ định')}</td><td>${humanDate(purchase.receivedAt, true)}</td><td>${number(purchase.items.length)} dòng</td><td class='text-right'><strong>${moneyVndText(purchase.totalVnd)}</strong></td></tr>`;
     }).join('');
     return `<section class='panel' style='margin-top:14px'><div class='panel-header'><div><h2>Phiếu nhập gần đây</h2><p>${purchaseHistory.length ? 'Tối đa 50 phiếu mới nhất' : 'Lịch sử nhận hàng của cửa hàng'}</p></div><button class='link-button' data-action='receive-stock'>＋ Nhập hàng</button></div><div class='table-wrap'><table class='data-table'><thead><tr><th>Mã phiếu</th><th>Nhà cung cấp</th><th>Ngày nhận</th><th>Số dòng</th><th class='text-right'>Tổng tiền</th></tr></thead><tbody>${rows || `<tr><td colspan='5'><div class='empty-state'><strong>${financeLoading ? 'Đang tải phiếu nhập' : 'Chưa có phiếu nhập'}</strong><span>Phiếu nhập mới sẽ hiện ở đây.</span></div></td></tr>`}</tbody></table></div></section>`;
   }
@@ -3311,14 +3437,14 @@
     updatePurchaseOrderTotal(modal.querySelector('[data-form="purchase-order"]'));
   }
 
-  function openPurchaseOrderDetail(orderId) {
-    const order = purchaseOrders.find(function (item) { return item.id === orderId; });
+  function openPurchaseOrderDetail(orderId, provided) {
+    const order = provided || purchaseOrders.find(function (item) { return item.id === orderId; });
     if (!order) return;
     const rows = order.items.map(function (item) {
       return `<tr><td><span class='product-name-stack'><strong>${esc(item.productName)}</strong><small>${esc(item.sku)}</small></span></td><td>${number(Number(item.quantityReceived))} / ${number(Number(item.quantityOrdered))} ${esc(item.unit)}</td><td class='text-right'>${moneyVndText(item.unitCostVnd)}</td><td class='text-right'>${moneyVndText(item.totalVnd)}</td></tr>`;
     }).join('');
     const pendingReceipt = loadPendingPurchaseOrderReceipt(order.id);
-    const orderActions = order.status === 'draft' ? `<button class='btn btn-secondary' data-action='edit-purchase-order' data-id='${order.id}'>Sửa nháp</button><button class='btn btn-primary' data-action='place-purchase-order' data-id='${order.id}'>Đánh dấu đã gửi</button>` : pendingReceipt || ['ordered', 'partially_received'].includes(order.status) ? `<button class='btn btn-primary' data-action='receive-purchase-order' data-id='${order.id}'>${pendingReceipt ? 'Kiểm tra lần nhận' : 'Nhận hàng'}</button>` : '';
+    const orderActions = provided ? '' : order.status === 'draft' ? `<button class='btn btn-secondary' data-action='edit-purchase-order' data-id='${order.id}'>Sửa nháp</button><button class='btn btn-primary' data-action='place-purchase-order' data-id='${order.id}'>Đánh dấu đã gửi</button>` : pendingReceipt || ['ordered', 'partially_received'].includes(order.status) ? `<button class='btn btn-primary' data-action='receive-purchase-order' data-id='${order.id}'>${pendingReceipt ? 'Kiểm tra lần nhận' : 'Nhận hàng'}</button>` : '';
     const body = `<div class='summary-banner'><div><strong>${esc(order.supplierName)}</strong><small>${esc(order.warehouseName || 'Kho chính')} · ${esc(purchaseOrderStatus(order.status))} · tạo ${humanDate(order.createdAt, true)}${order.orderedAt ? ` · gửi ${humanDate(order.orderedAt, true)}` : ''}</small></div><strong>${moneyVndText(order.totalVnd)}</strong></div><div class='table-wrap' style='margin-top:14px'><table class='data-table'><thead><tr><th>Sản phẩm</th><th>Đã nhận / Đặt</th><th class='text-right'>Giá dự kiến</th><th class='text-right'>Tổng dự kiến</th></tr></thead><tbody>${rows}</tbody></table></div>${order.note ? `<div class='modal-note'>${esc(order.note)}</div>` : ''}`;
     showModal(`Đơn đặt hàng ${order.number}`, 'Theo dõi số lượng đã nhận so với số lượng đặt.', body, `<button class='btn btn-secondary' data-action='close-modal'>Đóng</button>${orderActions}`, true);
   }
@@ -3539,15 +3665,15 @@
     }
   }
 
-  function openPurchaseDetail(id) {
-    const purchase = purchaseHistory.find(function (item) { return item.id === id; });
+  function openPurchaseDetail(id, provided) {
+    const purchase = provided || purchaseHistory.find(function (item) { return item.id === id; });
     if (!purchase) return;
     const rows = purchase.items.map(function (item) {
       const milli = Math.round(Number(item.quantity) * 1000);
       const estimated = item.pack || BigInt(item.unitCostVnd) * BigInt(milli) !== BigInt(item.totalVnd) * 1000n;
       return `<tr><td><span class='product-name-stack'><strong>${esc(item.productName)}</strong><small>${esc(item.sku)}</small>${item.pack ? `<small>${number(Number(item.pack.quantity))} ${esc(item.pack.name)} × ${number(Number(item.pack.size))} ${esc(item.unit)} · ${moneyVndText(item.pack.unitCostVnd)} / ${esc(item.pack.name)}</small>` : ''}</span></td><td>${number(Number(item.quantity))} ${esc(item.unit)}</td><td class='text-right'>${estimated ? '≈ ' : ''}${moneyVndText(item.unitCostVnd)}</td><td class='text-right'><strong>${moneyVndText(item.totalVnd)}</strong></td></tr>`;
     }).join('');
-    const body = `<div class='summary-banner'><div><strong>${esc(purchase.supplierName || 'Không chỉ định nhà cung cấp')}</strong><small>${humanDate(purchase.receivedAt, true)} · ${esc(purchase.status === 'received' ? 'Đã nhận hàng' : purchase.status)}${purchase.purchaseOrderNumber ? ` · đơn ${esc(purchase.purchaseOrderNumber)}` : ''}</small></div><strong>${money(purchase.total)}</strong></div><div class='table-wrap' style='margin-top:14px'><table class='data-table'><thead><tr><th>Sản phẩm</th><th>Số lượng</th><th class='text-right'>Giá nhập / đơn vị</th><th class='text-right'>Thành tiền</th></tr></thead><tbody>${rows}</tbody></table></div>${purchase.note ? `<div class='modal-note'>${esc(purchase.note)}</div>` : ''}`;
+    const body = `<div class='summary-banner'><div><strong>${esc(purchase.supplierName || 'Không chỉ định nhà cung cấp')}</strong><small>${humanDate(purchase.receivedAt, true)} · ${esc(purchase.status === 'received' ? 'Đã nhận hàng' : purchase.status)}${purchase.purchaseOrderNumber ? ` · đơn ${esc(purchase.purchaseOrderNumber)}` : ''}</small></div><strong>${moneyVndText(purchase.totalVnd)}</strong></div><div class='table-wrap' style='margin-top:14px'><table class='data-table'><thead><tr><th>Sản phẩm</th><th>Số lượng</th><th class='text-right'>Giá nhập / đơn vị</th><th class='text-right'>Thành tiền</th></tr></thead><tbody>${rows}</tbody></table></div>${purchase.note ? `<div class='modal-note'>${esc(purchase.note)}</div>` : ''}`;
     showModal(`Phiếu nhập ${purchase.number}`, 'Chi tiết hàng đã nhận và giá nhập được ghi vào sổ.', body, `<button class='btn btn-secondary' data-action='close-modal'>Đóng</button>`, true);
   }
 
@@ -4131,15 +4257,6 @@
   }
 
   function enhanceWorkspace() {
-    if (page === 'finance' && !root.querySelector('.finance-cashbook')) {
-      const heading = Array.from(root.querySelectorAll('.panel h2')).find(function (item) { return item.textContent === 'Ca tiền mặt'; });
-      const panel = heading?.closest('.panel');
-      if (panel) {
-        const details = document.createElement('details'); details.className = 'work-details cash-session-fold';
-        details.innerHTML = '<summary>Tiền mặt tại quầy</summary>';
-        panel.before(details); details.append(panel);
-      }
-    }
     const actions = root.querySelector('.page-heading .heading-actions');
     if (actions) {
       const extras = Array.from(actions.children).filter(function (node) { return node.tagName === 'BUTTON' && !node.classList.contains('btn-primary') && !(page === 'finance' && node.dataset.action === 'new-expense'); });
@@ -4213,7 +4330,7 @@
     renderShell();
     const renderers = { workspace: renderWorkspace, affiliate: renderAffiliate, dashboard: renderDashboard, products: renderProducts, pos: renderPOS, orders: renderOrders, customers: renderCustomers, inventory: renderInventory, finance: renderFinance, reports: renderReports, settings: renderSettings, channels: renderChannelMappings, staff: renderStaff, audit: renderAudit };
     const pageHtml = renderers[page] ? renderers[page]() : `<section class='panel locked-page'><div class='empty-icon'>${icon('clock', 23)}</div><h2>Đang hoàn thiện</h2><p>Khu vực này đang được kết nối với dữ liệu cửa hàng và quy trình lưu sổ. Các thao tác mẫu đã được khóa để tránh tạo giao dịch không có thật.</p><button class='btn btn-primary' data-route='products'>Mở danh mục sản phẩm</button></section>`;
-    root.innerHTML = page === 'finance' && store.role !== 'cashier' ? pageHtml + `<details class='work-details'><summary>Đặt hàng và lịch sử nhập hàng</summary>${purchaseOrderPanel()}${purchaseHistoryPanel()}</details>` : pageHtml;
+    root.innerHTML = pageHtml;
     enhanceWorkspace();
     drafts.forEach(function (draft) {
       const form = Array.from(root.querySelectorAll('form')).find(function (item) { return item.dataset.form === draft.type; });
@@ -4250,7 +4367,7 @@
     }
   }
 
-  function showModal(title, subtitle, body, footer, wide) {
+  function showModal(title, subtitle, body, footer, wide, options = {}) {
     stopScanCamera();
     if (modal.hidden) {
       const active = document.activeElement;
@@ -4258,8 +4375,10 @@
     }
     modalGeneration += 1;
     modalEditedField = null;
-    modal.className = 'modal' + (wide ? ' wide' : '');
-    modal.innerHTML = `<div class='modal-head'><div><h2 id='modal-title'>${esc(title)}</h2><p id='modal-description'>${esc(subtitle || '')}</p></div><button class='modal-close' data-action='close-modal' aria-label='Đóng'>×</button></div><div class='modal-body'>${body || ''}</div>${footer ? `<div class='modal-footer'>${footer}</div>` : ''}`;
+    modal.className = 'modal' + (wide ? ' wide' : '') + (options.productEditor ? ' product-editor' : '');
+    const close = `<button class='modal-close' type='button' data-action='close-modal' aria-label='Đóng'>×</button>`;
+    const headerActions = options.headerActions ? `<div class='product-editor-actions'>${options.headerActions}${close}</div>` : close;
+    modal.innerHTML = `<div class='modal-head'><div><h2 id='modal-title'>${esc(title)}</h2><p id='modal-description' ${subtitle ? '' : 'hidden'}>${esc(subtitle || '')}</p></div>${headerActions}</div><div class='modal-body'>${body || ''}</div>${footer ? `<div class='modal-footer'>${footer}</div>` : ''}`;
     modal.hidden = false; backdrop.hidden = false; document.body.style.overflow = 'hidden';
     window.SlinkMoneyFields.enhance(modal);
     updateProductHints(modal.querySelector('[data-form="product"],[data-form="quick-product"]'));
@@ -4269,19 +4388,26 @@
     });
   }
 
-  function requestCloseModal() {
+  function requestCloseModal(afterClose) {
     if (modal.hidden) return;
+    closeProductBarcode();
+    const proceed = typeof afterClose === 'function' ? afterClose : dismissModal;
     const form = modal.querySelector('form[data-user-edited="true"]');
     if (activeWrites && form) {
       toast('Đang lưu', 'Chờ ứng dụng xác nhận kết quả.', 'error');
       return;
     }
-    if (!form) return dismissModal();
+    if (!form) return proceed();
     const existing = modal.querySelector('.modal-discard');
     if (existing) { existing.querySelector('[data-action="keep-modal-input"]')?.focus(); return; }
     const actions = document.createElement('section');
     actions.className = 'modal-discard';
     actions.innerHTML = `<p>Giữ nội dung đang nhập?</p><div><button class='btn btn-secondary' type='button' data-action='discard-modal-input'>Bỏ thay đổi</button><button class='btn btn-primary' type='button' data-action='keep-modal-input'>Tiếp tục nhập</button></div>`;
+    actions.querySelector('[data-action="discard-modal-input"]').addEventListener('click', () => {
+      if (activeWrites) return;
+      actions.remove();
+      proceed();
+    });
     const footer = modal.querySelector('.modal-footer');
     if (footer) footer.before(actions);
     else modal.appendChild(actions);
@@ -4312,7 +4438,7 @@
   function keepModalFocus(event) {
     const dialog = modal.hidden ? document.querySelector('#drawer-cart.open') : modal;
     if (!dialog || event.key !== 'Tab') return;
-    const focusable = Array.from(dialog.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]):not([type="hidden"]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'))
+    const focusable = Array.from(dialog.querySelectorAll('a[href],summary,button:not([disabled]),input:not([disabled]):not([type="hidden"]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'))
       .filter(function (element) { return !element.hidden && element.getAttribute('aria-hidden') !== 'true' && element.getClientRects().length > 0; });
     if (!focusable.length) {
       event.preventDefault();
@@ -4905,34 +5031,169 @@
   }
 
   function productPackFields(product) {
-    if(!productPackDefaultsSupported)return "";
-    const pack=product?.purchasePack;
-    return `<details class='work-details product-pack' data-pack-stock='${esc(product?.stock||0)}' ${pack?'open':''}><summary>Quy đổi đơn vị nhập (tùy chọn)</summary><label class='product-pack-toggle'><input type='checkbox' name='usePurchasePack' ${pack?'checked':''}/> Nhập theo hộp, ram hoặc thùng</label><div data-product-pack-fields ${pack?'':'hidden'}><div class='form-grid'><label class='form-field'><span class='input-label'>Đơn vị nhập</span><input class='input' name='packName' maxlength='40' placeholder='Ví dụ: ram' value='${esc(pack?.name||'')}'/></label><label class='form-field'><span class='input-label'>Số <span data-pack-base-unit>${esc(product?.unit||'cái')}</span> trong 1 đơn vị nhập</span><input class='input' name='packSize' type='number' min='1' max='1000000' step='1' inputmode='numeric' value='${esc(pack?.size||'')}'/></label><label class='form-field full'><span class='input-label'>Giá nhập 1 <span data-pack-name-label>${esc(pack?.name||'đơn vị')}</span> (đ)</span><input class='input' name='packCostVnd' type='number' min='0' step='1' value='${esc(pack?.unitCostVnd||'')}'/></label></div><p class='product-pack-equation' data-product-pack-equation aria-live='polite'></p><p class='muted' data-product-pack-stock hidden></p><small>Điền sẵn khi nhập kho. Không thay đổi số hàng đang có.</small></div></details>`;
+    if (!productPackDefaultsSupported) return '';
+    const pack = product?.purchasePack;
+    const name = pack && window.SlinkPurchaseUnits.isPackName(pack.name) ? pack.name : '';
+    return `<div class='product-pack'>
+      <label class='product-pack-toggle'><input type='checkbox' name='usePurchasePack' ${pack ? 'checked' : ''}/> Nhập theo hộp, ram hoặc thùng</label>
+      <div data-product-pack-fields data-legacy-name='${Boolean(pack && !name)}' ${pack ? '' : 'hidden'}>
+        ${pack && !name ? `<p class='editor-field-note' data-legacy-pack-note>Chọn tên như Thùng, Hộp hoặc Ram để dùng lại quy đổi đã lưu.</p>` : ''}
+        <div class='product-pack-ratio'>
+          <label class='form-field'><span class='input-label'>Tên đơn vị nhập</span><span class='product-pack-part'><span aria-hidden='true'>1</span><input class='input' name='packName' list='product-pack-names' maxlength='40' placeholder='Thùng, Hộp, Ram' value='${esc(name)}'/></span></label>
+          <datalist id='product-pack-names'><option value='Thùng'></option><option value='Hộp'></option><option value='Ram'></option><option value='Lốc'></option><option value='Lô'></option></datalist>
+          <span class='product-pack-equals' aria-hidden='true'>=</span>
+          <label class='form-field'><span class='input-label'>Số lượng quy đổi</span><span class='product-pack-part'><input class='input' name='packSize' type='number' min='1' max='1000000' step='1' inputmode='numeric' value='${esc(pack?.size ?? '')}'/><span data-pack-base-unit>${esc(product?.unit || 'cái')}</span></span></label>
+        </div>
+        <label class='form-field product-pack-price'><span class='input-label'>Giá nhập 1 <span data-pack-name-label>${esc(name || 'đơn vị nhập')}</span> (đ)</span><input class='input' name='packCostVnd' type='number' min='0' step='1' value='${esc(pack?.unitCostVnd ?? '')}'/></label>
+        <p class='product-pack-equation' data-product-pack-equation aria-live='polite' hidden></p>
+      </div>
+    </div>`;
+  }
+
+  function unchangedLegacyPack(form) {
+    const { packName, packSize, packCostVnd, unit } = form.elements;
+    return form.querySelector('[data-product-pack-fields]')?.dataset.legacyName === 'true' && !packName.value.trim() &&
+      packSize.value === packSize.defaultValue && moneyInputRaw(packCostVnd.value) === moneyInputRaw(packCostVnd.defaultValue) && unit.value.trim() === unit.defaultValue.trim();
   }
   function readProductPack(form) {
-    if(!form.querySelector('[name="usePurchasePack"]'))return undefined;
-    if(!form.querySelector('[name="usePurchasePack"]')?.checked)return null;
-    return window.SlinkPurchaseUnits.fromPack({name:form.elements.packName.value,size:form.elements.packSize.value,quantity:'1',unitCostVnd:moneyInputRaw(form.elements.packCostVnd.value)}).pack;
+    const { usePurchasePack, packName, packSize, packCostVnd } = form.elements;
+    if (!usePurchasePack) return undefined;
+    if (!usePurchasePack.checked) return null;
+    if (unchangedLegacyPack(form)) return undefined;
+    if (!window.SlinkPurchaseUnits.isPackName(packName.value)) throw new Error('Ghi tên đơn vị nhập, ví dụ Thùng, Hộp hoặc Ram.');
+    return window.SlinkPurchaseUnits.fromPack({ name: packName.value, size: packSize.value, quantity: '1', unitCostVnd: moneyInputRaw(packCostVnd.value) }).pack;
   }
   function moneyInputRaw(value) { return window.SlinkMoneyFields.raw(value); }
   function updateProductHints(form) {
-    if(!form)return;
-    const enabled=Boolean(form.querySelector('[name="usePurchasePack"]')?.checked),fields=form.querySelector('[data-product-pack-fields]');
-    let cost=BigInt(moneyInputRaw(form.querySelector('[name="cost"]')?.value||'0').match(/^\d+$/)?.[0]||'0');
-    if(fields){
-      fields.hidden=!enabled;
-      fields.querySelectorAll('input').forEach(input=>{input.required=enabled;input.disabled=!enabled;});
-      fields.querySelectorAll('.money-shortcut button').forEach(button=>button.disabled=!enabled);
-      const unit=form.querySelector('[name="unit"]')?.value.trim()||'cái',name=form.elements.packName.value.trim()||'đơn vị';
-      fields.querySelector('[data-pack-base-unit]').textContent=unit;
-      fields.querySelector('[data-pack-name-label]').textContent=name;
-      const preview=fields.querySelector('[data-product-pack-equation]');
-      try{const pack=enabled?readProductPack(form):null;if(pack){preview.textContent=`1 ${pack.name} = ${number(Number(pack.size))} ${unit}`;const packCost=window.SlinkPurchaseUnits.fromPack(pack).unitCostVnd;if(packCost>cost)cost=packCost;const stock=Number(form.querySelector('[name=openingQuantity]')?.value||form.querySelector('.product-pack').dataset.packStock||0),stockNote=fields.querySelector('[data-product-pack-stock]');stockNote.hidden=stock<=0;stockNote.textContent=number(stock)+' '+unit+' ≈ '+number(stock/Number(pack.size))+' '+pack.name;}else preview.textContent='';}catch(_){preview.textContent='';}
+    if (!form || form.dataset.saving === 'true') return;
+    const { usePurchasePack, packName, price, unit, inventoryTracked, openingQuantity, minStock } = form.elements;
+    const baseUnit = unit?.value.trim() || 'cái';
+    const saleUnit = form.querySelector('[data-product-sale-unit]');
+    if (saleUnit) saleUnit.textContent = baseUnit;
+    if (openingQuantity) openingQuantity.disabled = !inventoryTracked.checked;
+    if (minStock) minStock.disabled = !inventoryTracked.checked;
+    const trackingNote = form.querySelector('[data-product-tracking-note]');
+    if (trackingNote) trackingNote.hidden = inventoryTracked.checked;
+    const fields = form.querySelector('[data-product-pack-fields]');
+    const rawCost = moneyInputRaw(form.elements.cost?.value || '');
+    const savedCost = /^\d+$/.test(rawCost) ? BigInt(rawCost) : 0n;
+    let packCost = 0n;
+    if (fields) {
+      const enabled = usePurchasePack.checked, validName = window.SlinkPurchaseUnits.isPackName(packName.value);
+      fields.hidden = !enabled;
+      fields.querySelectorAll('input').forEach(input => { input.required = enabled; input.disabled = !enabled; });
+      packName.required = enabled && !unchangedLegacyPack(form);
+      packName.setCustomValidity(enabled && packName.value.trim() && !validName ? 'Nhập tên như Thùng, Hộp hoặc Ram.' : '');
+      fields.querySelectorAll('.money-shortcut button').forEach(button => { button.disabled = !enabled; });
+      fields.querySelector('[data-pack-base-unit]').textContent = baseUnit;
+      fields.querySelector('[data-pack-name-label]').textContent = validName ? packName.value.trim() : 'đơn vị nhập';
+      const note = fields.querySelector('[data-legacy-pack-note]');
+      if (note) note.hidden = validName;
+      const preview = fields.querySelector('[data-product-pack-equation]');
+      preview.hidden = true;
+      try {
+        const pack = enabled ? readProductPack(form) : null;
+        if (pack) {
+          packCost = window.SlinkPurchaseUnits.fromPack(pack).unitCostVnd;
+          const estimated = packCost * BigInt(pack.size) !== BigInt(pack.unitCostVnd);
+          preview.textContent = `1 ${pack.name} = ${number(Number(pack.size))} ${baseUnit} · Giá vốn quy đổi ${estimated ? 'khoảng ' : ''}${moneyVndText(packCost)} / ${baseUnit}`;
+          preview.hidden = false;
+        }
+      } catch (_) { /* Keep the preview hidden until all three fields are valid. */ }
     }
-    const price=form.querySelector('[name="price"]');
-    if(price){price.placeholder=cost>0n&&cost<BigInt(Number.MAX_SAFE_INTEGER)?'Từ '+window.SlinkMoneyFields.format(String(cost+1n))+' đ':'Giá bán';price.title=cost>0n?'Giá nhập cộng 1đ, chưa gồm phí và chi phí khác. Giá bán do bạn chọn.':'';}
+    if (!price) return;
+    const suggestedCost = savedCost > packCost ? savedCost : packCost;
+    price.placeholder = suggestedCost > 0n && suggestedCost < BigInt(Number.MAX_SAFE_INTEGER) ? 'Từ ' + window.SlinkMoneyFields.format(String(suggestedCost + 1n)) + ' đ' : 'Giá bán';
+    price.title = suggestedCost > 0n ? 'Gợi ý dựa trên giá vốn mỗi đơn vị, chưa gồm chi phí khác.' : '';
+    const warning = form.querySelector('[data-product-price-warning]');
+    const priceRaw = moneyInputRaw(price.value);
+    if (warning) {
+      const comparedCost = rawCost ? savedCost : packCost;
+      warning.hidden = comparedCost <= 0n || !/^\d+$/.test(priceRaw) || BigInt(priceRaw) >= comparedCost;
+      price.setAttribute('aria-describedby', warning.hidden ? 'product-sale-unit' : 'product-sale-unit product-price-warning');
+    }
   }
-  function openQuickProduct() {
+  function productEditorCategory(product, grouped) {
+    const selected = product?.category || 'Chưa phân loại';
+    const categories = [...new Set([...store.products.map(item => item.category), selected, 'Chưa phân loại'])].sort((a, b) => a.localeCompare(b, 'vi'));
+    const control = grouped ? `<input class='input' id='product-category' name='category' value='${esc(selected)}' readonly/>` : `<select class='input' id='product-category' name='category' data-product-category>${categories.map(category => `<option value='${esc(category)}' ${category === selected ? 'selected' : ''}>${esc(category)}</option>`).join('')}<option value=''>＋ Thêm danh mục…</option></select>`;
+    return `<div class='form-field'><label class='input-label' for='product-category'>Danh mục</label>${control}${grouped ? '' : `<label class='form-field' data-new-product-category hidden><span class='input-label'>Tên danh mục mới</span><input class='input' name='newCategory' maxlength='120' disabled/></label>`}</div>`;
+  }
+
+  async function loadProductEditorCategories(form) {
+    const select = form.querySelector('[data-product-category]');
+    if (!select) return;
+    try {
+      const { categories } = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/products/categories`);
+      const add = () => {
+        if (!select.isConnected || !Array.isArray(categories)) return;
+        const existing = new Set(Array.from(select.options, option => option.value));
+        for (const category of categories) if (category && !existing.has(category)) {
+          select.add(new Option(category, category), select.options[select.options.length - 1]);
+        }
+      };
+      if (document.activeElement === select) select.addEventListener('blur', add, { once: true });
+      else add();
+    } catch (_) { /* Loaded categories and manual entry still work. */ }
+  }
+
+  function readProductCategory(data) {
+    return String(data.get('category') || data.get('newCategory') || '').trim() || 'Chưa phân loại';
+  }
+
+  function updateProductCategoryField(select, focus = false) {
+    if (!select) return;
+    const field = select.form.querySelector('[data-new-product-category]');
+    const input = field.querySelector('input');
+    const custom = select.value === '';
+    field.hidden = !custom;
+    input.disabled = !custom;
+    input.required = custom;
+    if (custom && focus) input.focus();
+  }
+
+  function newProductSku(key = newIdempotencyKey()) {
+    return `SL-${key.replace(/[^a-z0-9]/gi, '').slice(0, 16).toUpperCase()}`;
+  }
+
+  function productCostField(product) {
+    return `<div class='form-field'><label class='input-label' for='product-unit-cost'>Giá vốn mỗi đơn vị (đ)</label><input class='input' id='product-unit-cost' name='cost' type='number' min='0' step='1' value='${esc(product?.cost ?? '')}' placeholder='Bổ sung sau'/></div>`;
+  }
+
+  function productIdentityFields(product, barcode, grouped, sku = '', includeCost = true) {
+    return `<div class='form-grid'>
+      <div class='form-field'><label class='input-label' for='product-sku'>Mã hàng (SKU)${product ? " <span class='editor-required' aria-hidden='true'>*</span>" : ''}</label><div class='editor-input-action'><input class='input' id='product-sku' name='sku' value='${esc(product?.sku ?? sku)}' placeholder='Để trống, Slink tự tạo' maxlength='80' ${product ? 'required' : ''}/><button class='btn btn-secondary' type='button' data-action='generate-product-sku' aria-label='Tạo mã SKU' title='Tạo mã SKU'>${icon('spark', 19)}</button></div></div>
+      <div class='form-field'><label class='input-label' for='product-barcode'>Mã vạch</label><div class='editor-input-action'><input class='input' id='product-barcode' name='barcode' value='${esc(barcode || '')}' placeholder='Nhập hoặc quét mã' maxlength='80' autocomplete='off'/><button class='btn btn-secondary' type='button' data-action='scan-product-barcode' aria-label='Quét mã vạch' title='Quét mã vạch'>${icon('scan', 19)}</button></div></div>
+      <section class='editor-barcode-camera full' data-scan-surface data-scan-mode='barcode-field' data-scan-target='product-barcode' hidden>
+        <video id='scan-camera-video' playsinline muted hidden aria-label='Khung camera để quét mã vạch'></video>
+        <p id='scan-camera-status' role='status' aria-live='polite'></p>
+        <button class='btn btn-secondary' type='button' data-action='stop-product-barcode'>Đóng camera</button>
+      </section>
+      ${productEditorCategory(product, grouped)}
+      ${includeCost ? productCostField(product) : ''}
+    </div>`;
+  }
+
+  function productSaleFields(product, grouped, includeCost = false) {
+    return `<div class='form-grid editor-sale-fields'>
+      <div class='form-field'><label class='input-label' for='quick-product-price'>Giá bán (đ) <span class='editor-required' aria-hidden='true'>*</span></label><input class='input' id='quick-product-price' name='price' type='number' min='0' step='1' value='${esc(product?.price ?? '')}' required aria-describedby='product-sale-unit product-price-warning'/><small id='product-sale-unit'>Giá của 1 <span data-product-sale-unit>${esc(product?.unit || 'cái')}</span></small></div>
+      <div class='form-field'><label class='input-label' for='product-base-unit'>Đơn vị tính</label><input class='input' id='product-base-unit' name='unit' value='${esc(product?.unit || 'cái')}' list='product-base-units' maxlength='40' ${grouped ? 'readonly' : ''}/><datalist id='product-base-units'><option value='cái'></option><option value='chiếc'></option><option value='tờ'></option><option value='hộp'></option><option value='quyển'></option><option value='kg'></option></datalist></div>
+      ${includeCost ? productCostField(product) : ''}
+      <p class='editor-field-note editor-price-warning full' id='product-price-warning' data-product-price-warning role='status' hidden>Giá bán thấp hơn giá vốn mỗi đơn vị. Kiểm tra lại số tiền trước khi lưu.</p>
+    </div>`;
+  }
+
+  function productTrackingFields(product, adding = false) {
+    const tracked = !product || product.inventoryTracked;
+    const warehouse = (page === 'inventory' || page === 'pos') && warehouses.find(item => item.id === selectedWarehouseId);
+    const stock = product ? `<div class='form-field'><span class='input-label'>Tồn kho hiện tại</span><strong class='editor-stock-value'>${tracked ? `${number(product.stock)} ${esc(product.unit)}` : 'Chưa theo dõi'}</strong>${warehouse && tracked ? `<small>${esc(warehouse.name)}</small>` : ''}</div>` : '';
+    const note = adding ? 'Khi tắt theo dõi, mặt hàng được tạo với tồn bằng 0.' : product?.inventoryTracked ? 'Để tắt theo dõi, tồn kho và lượng đang giữ ở các kho cần về 0.' : '';
+    return `<label class='editor-stock-switch'><span>Theo dõi số lượng trong kho</span><input type='checkbox' role='switch' name='inventoryTracked' ${tracked ? 'checked' : ''}/></label>
+      ${note ? `<p class='editor-field-note' data-product-tracking-note hidden>${note}</p>` : ''}
+      <div class='form-grid editor-stock-fields'>${stock}<div class='form-field'><label class='input-label' for='product-stock-threshold'>Nhắc khi tồn ít</label><input class='input' id='product-stock-threshold' name='minStock' type='number' min='0' step='0.001' value='${esc(product?.minStock ?? 0)}'/></div></div>`;
+  }
+
+  function openQuickProduct(focusName = false) {
     const pending = loadPendingProductImport();
     if (pending) {
       if (pending.storeId !== store.id) return toast('Còn lần nhập đang chờ', 'Hãy chuyển về đúng cửa hàng trước khi tiếp tục lần nhập đó.', 'error');
@@ -4940,25 +5201,22 @@
       return;
     }
     const idempotencyKey = newIdempotencyKey();
-    const body = `<form id='entity-form' data-form='quick-product' data-idempotency-key='${esc(idempotencyKey)}'>
-      ${productPhotoField()}<div class='quick-product-fields'>
-        <div class='form-field full'><label class='input-label' for='quick-product-name'>Tên mặt hàng *</label><input class='input' id='quick-product-name' name='name' required maxlength='240' placeholder='Ví dụ: Áo thun cotton'/></div>
-        <div class='form-field'><label class='input-label' for='quick-product-price'>Giá bán (VND) *</label><input class='input' id='quick-product-price' name='price' type='number' min='0' step='1' required placeholder='0'/></div>
-        <div class='form-field'><label class='input-label' for='quick-product-opening'>Số lượng đang có</label><input class='input' id='quick-product-opening' name='openingQuantity' type='number' min='0' step='0.001' placeholder='Có thể bổ sung sau'/></div>
-      </div>
-      <details class='quick-product-details'><summary>Giá nhập và thông tin khác (tùy chọn)</summary><div class='quick-product-fields'>
-        <div class='form-field'><label class='input-label' for='quick-product-sku'>Mã hàng</label><input class='input' id='quick-product-sku' name='sku' maxlength='80' placeholder='Để trống, Slink tự tạo'/></div>
-        <div class='form-field'><label class='input-label' for='quick-product-barcode'>Mã vạch</label><input class='input' id='quick-product-barcode' name='barcode' maxlength='80' placeholder='Không bắt buộc'/></div>
-        <div class='form-field'><label class='input-label' for='quick-product-category'>Danh mục</label><input class='input' id='quick-product-category' name='category' maxlength='120' placeholder='Chưa phân loại'/></div>
-        <div class='form-field'><label class='input-label' for='quick-product-unit'>Đơn vị</label><input class='input' id='quick-product-unit' name='unit' maxlength='40' placeholder='cái'/></div>
-        <div class='form-field'><label class='input-label' for='quick-product-cost'>Giá vốn mỗi đơn vị (đ)</label><input class='input' id='quick-product-cost' name='cost' type='number' min='0' step='1' placeholder='Bổ sung sau'/><small>Tổng tiền của cả đợt ghi ở Nhập hàng.</small></div>
-        <div class='form-field'><label class='input-label' for='quick-product-threshold'>Nhắc khi còn</label><input class='input' id='quick-product-threshold' name='minStock' type='number' min='0' step='0.001' value='0'/></div>
-        <label class='quick-product-tracking'><input type='checkbox' name='inventoryTracked' checked/><span><strong>Theo dõi số lượng trong kho</strong><small>Bỏ chọn nếu đây là dịch vụ hoặc mặt hàng không quản lý tồn.</small></span></label>
-      </div></details>${productPackFields()}
-      <div class='quick-product-note'>Số lượng đang có là tồn ban đầu.${warehouses.length > 1 ? ` Ghi vào ${esc(warehouses.find(function (warehouse) { return warehouse.id === selectedWarehouseId; })?.name || 'kho chính')}.` : ''} Nếu đang ghi một đợt nhập mới, để trống số lượng rồi vào Nhập hàng.</div>
+    const receiveAt = warehouses.length > 1 ? warehouses.find(warehouse => warehouse.id === selectedWarehouseId)?.name : '';
+    const body = `<form id='entity-form' class='product-editor-form' data-form='quick-product' data-idempotency-key='${esc(idempotencyKey)}'>
+      <section class='product-editor-section' aria-labelledby='product-quick-heading'>
+        <h3 id='product-quick-heading'>Bán hàng nhanh</h3>
+        <div class='product-editor-photo-name'>${productPhotoField()}<div class='form-field'><label class='input-label' for='quick-product-name'>Tên mặt hàng <span class='editor-required' aria-hidden='true'>*</span></label><input class='input' id='quick-product-name' name='name' required maxlength='240' placeholder='Ví dụ: Áo thun cotton'/></div></div>
+        ${productSaleFields()}
+        <div class='form-field editor-opening-stock'><label class='input-label' for='quick-product-opening'>Số lượng đang có</label><input class='input' id='quick-product-opening' name='openingQuantity' type='number' min='0' step='0.001' inputmode='decimal' placeholder='0' aria-describedby='product-opening-hint'/><small id='product-opening-hint'>Dùng để ghi tồn ban đầu${receiveAt ? ` tại ${esc(receiveAt)}` : ''}. Hàng mới nhận thì ghi ở Nhập hàng.</small></div>
+      </section>
+      <details class='product-editor-section editor-identity-details'><summary>Định danh và giá vốn</summary>${productIdentityFields()}</details>
+      <section class='product-editor-section' aria-labelledby='product-stock-heading'><h3 id='product-stock-heading'>Quản lý kho và quy đổi</h3>${productTrackingFields(null, true)}${productPackFields()}</section>
       <div class='auth-message error' data-quick-product-error role='alert' hidden></div>
     </form>`;
-    showModal('Thêm mặt hàng', 'Nhập tên, giá bán và số lượng để bán ngay.', body, `<button class='btn btn-secondary' type='submit' form='entity-form' data-add-another='true'>Lưu và thêm tiếp</button><button class='btn btn-primary' type='submit' form='entity-form'>Lưu mặt hàng</button>`, true);
+    showModal('Thêm mặt hàng', '', body, `<button class='btn btn-secondary' type='submit' form='entity-form' data-add-another='true'>Lưu và thêm tiếp</button><button class='btn btn-primary' type='submit' form='entity-form'>Lưu mặt hàng</button>`, true, { productEditor: true });
+    const form = modal.querySelector('[data-form="quick-product"]');
+    loadProductEditorCategories(form);
+    if (focusName === true) form.elements.name.focus();
   }
 
   function openCatalogNextStep(readyToSell, productId) {
@@ -4985,6 +5243,7 @@
 
   async function saveQuickProduct(form, submitter) {
     if (form.dataset.saving === 'true') return;
+    closeProductBarcode();
     const requestStoreId = store.id;
     const requestSession = authSession;
     const sameContext = function () { return authSession === requestSession && store.id === requestStoreId; };
@@ -5016,7 +5275,7 @@
       if (!quantityPattern.test(openingQuantity)) return reportError('Số lượng đang có phải không âm và tối đa 3 chữ số thập phân.');
       if (!inventoryTracked && Number(openingQuantity) !== 0) return reportError('Mặt hàng không theo dõi tồn cần để số lượng đang có bằng 0.');
       const rawSku = String(formData.get('sku') || '').trim();
-      const sku = rawSku || `SL-${key.replace(/[^a-z0-9]/gi, '').slice(0, 16).toUpperCase()}`;
+      const sku = rawSku || newProductSku(key);
       const rawThreshold = String(formData.get('minStock') || '').trim() || '0';
       if (!quantityPattern.test(rawThreshold)) return reportError('Mức nhắc tồn phải không âm và tối đa 3 chữ số thập phân.');
       let image; try { image = readProductPhoto(form); } catch (error) { return reportError(error.message); }
@@ -5028,7 +5287,7 @@
         sku,
         barcode: String(formData.get('barcode') || '').trim() || null,
         name,
-        category: String(formData.get('category') || '').trim() || 'Chưa phân loại',
+        category: readProductCategory(formData),
         unit: String(formData.get('unit') || '').trim() || 'cái',
         salePriceVnd: price,
         costVnd: cost,
@@ -5054,7 +5313,11 @@
       if (!sameContext()) return;
       clearPendingProductImport();
       const canContinue = requestGeneration === modalGeneration && !modal.hidden;
-      if (canContinue) { closeModal(); resetCatalogFilters(); }
+      if (canContinue) {
+        resetCatalogFilters();
+        if (addAnother) openQuickProduct(true);
+        else closeModal();
+      }
       await loadProductsPage('', 0);
       if (!sameContext()) return;
       const created = result.products?.[0];
@@ -5063,18 +5326,18 @@
       const readyToSell = !(created?.inventory_tracked ?? fallback.inventoryTracked) || Number(created?.on_hand ?? fallback.openingQuantity) > 0;
       const createdName = created?.name || fallback.name || 'Mặt hàng mới';
       toast('Đã thêm mặt hàng', readyToSell ? `${createdName} · có thể bán ngay.` : `${createdName} · ghi số lượng đang có để bắt đầu bán.`);
-      if (canContinue && requestGeneration === modalGeneration && modal.hidden) {
-        if (addAnother) openQuickProduct();
-        else if (page !== 'pos' || !readyToSell) openCatalogNextStep(readyToSell, created?.id);
-      }
     } catch (error) {
       if (!sameContext()) return;
       if (error.status === 401) return showSignedOut('Phiên đăng nhập đã hết hạn. Đăng nhập lại để kiểm tra mặt hàng.', 'error');
       const definitiveFailure = error.status >= 400 && error.status < 500 && !['idempotency_conflict', 'request_in_progress'].includes(error.code);
       if (definitiveFailure) {
         clearPendingProductImport();
+        form.dataset.idempotencyKey = newIdempotencyKey();
         submitButtons.forEach(function (button) { button.disabled = false; });
         form.querySelectorAll('input,select').forEach(function (field) { field.disabled = false; });
+        delete form.dataset.saving;
+        updateProductHints(form);
+        updateProductCategoryField(form.querySelector('[data-product-category]'));
         if (feedback) { feedback.hidden = false; feedback.textContent = error.message; }
         if (submitButton) { submitButton.disabled = false; submitButton.textContent = 'Lưu mặt hàng'; }
       } else {
@@ -5090,6 +5353,7 @@
   function openProduct(id, initial) {
     if (!id && !initial) return openQuickProduct();
     const p = id ? productById(id) : null;
+    if (id && !p) return;
     const scanned = !p && initial && initial.fromScan ? initial : null;
     const rawBarcode = p ? p.barcode : (scanned && scanned.barcode ? scanned.barcode : '');
     const barcode = rawBarcode.length <= 80 ? rawBarcode : '';
@@ -5098,17 +5362,51 @@
       : '';
     const grouped = Boolean(p?.variantGroupId);
     const displayedName = grouped
-      ? `<div class='form-field full'><label class='input-label'>Tên biến thể *</label><input class='input' name='name' value='${esc(p.name)}' required maxlength='240' readonly/><small>Tên được ghép từ nhóm “${esc(p.variantGroupName)}” và thuộc tính bên dưới.</small></div>`
-      : `<div class='form-field full'><label class='input-label'>Tên sản phẩm *</label><input class='input' name='name' value='${esc(p ? p.name : '')}' placeholder='Ví dụ: Cà phê rang xay' required maxlength='240'/></div>`;
+      ? `<div class='form-field'><label class='input-label' for='product-name'>Tên biến thể <span class='editor-required' aria-hidden='true'>*</span></label><input class='input' id='product-name' name='name' value='${esc(p.name)}' required maxlength='240' readonly/><small>Tên được ghép từ nhóm “${esc(p.variantGroupName)}” và thuộc tính bên dưới.</small></div>`
+      : `<div class='form-field'><label class='input-label' for='product-name'>Tên sản phẩm <span class='editor-required' aria-hidden='true'>*</span></label><input class='input' id='product-name' name='name' value='${esc(p?.name || '')}' placeholder='Ví dụ: Cà phê rang xay' required maxlength='240'/></div>`;
     const variantAttributes = grouped
       ? `<div class='form-field full'><label class='input-label' for='product-variant-attributes'>Thuộc tính biến thể *</label><input class='input' id='product-variant-attributes' name='variantAttributesText' value='${esc(Object.entries(p.variantAttributes || {}).map(function (entry) { return `${entry[0]}=${entry[1]}`; }).join('; '))}' placeholder='Màu=Đỏ; Kích cỡ=M' required/><small>Giữ nguyên tên thuộc tính của nhóm; bạn có thể sửa giá trị. Thuộc tính không làm thay đổi tồn kho.</small></div>` : '';
     const scanPhoto = scanned && scanned.photo ? `<img class='scan-photo-preview product-scan-reference' src='${esc(scanned.photo)}' alt='Ảnh vừa chụp để đối chiếu khi nhập sản phẩm'/>` : '';
     const scanNote = scanned
       ? `<div class='notice-item product-scan-note' role='status'><span>${scanned.barcode ? icon('check', 18) : 'i'}</span><span><strong>${scanned.barcode ? 'Chưa có mã này trong danh mục' : 'Chưa đọc được mã'}</strong><small>${scanned.barcode ? 'Mã vạch đã điền sẵn; mã SKU được điền theo mã nếu phù hợp, nếu không Slink tạo mã tạm. Hãy kiểm tra, nhập tên và giá.' : 'Nhập tên và giá bán. Mã SKU tạm đã tạo và có thể sửa; ảnh chỉ để xem lúc này, chưa được lưu vào sản phẩm.'} Thông tin khác không tự tra cứu. Tồn mới bắt đầu từ 0; cần ghi nhận số lượng trong kho trước khi bán.</small></span></div>`
       : '';
-    const form = `<form id='entity-form' data-form='product' data-from-scan='${scanned ? 'true' : 'false'}' data-id='${p ? p.id : ''}' data-version='${p ? p.version : ''}'>${productPhotoField(p)}${scanPhoto}${scanNote}<div class='form-grid'>${displayedName}${variantAttributes}<div class='form-field'><label class='input-label'>Mã SKU *</label><input class='input' name='sku' value='${esc(p ? p.sku : suggestedSku)}' placeholder='VD: CF-250' required maxlength='80'/></div><div class='form-field'><label class='input-label'>Mã vạch</label><input class='input' name='barcode' value='${esc(barcode)}' placeholder='Nhập mã vạch nếu có' maxlength='80'/></div><div class='form-field'><label class='input-label'>Danh mục</label><input class='input' name='category' list='categories' value='${esc(p ? p.category : scanned ? 'Chưa phân loại' : '')}' placeholder='Chọn hoặc nhập mới' ${grouped ? 'readonly' : ''}/><datalist id='categories'>${Array.from(new Set(store.products.map(function (x) { return x.category; }))).map(function (x) { return `<option value='${esc(x)}'></option>`; }).join('')}</datalist></div><div class='form-field'><label class='input-label'>Đơn vị tính</label><input class='input' name='unit' value='${esc(p ? p.unit : 'cái')}' placeholder='cái, hộp, kg' maxlength='40' ${grouped ? 'readonly' : ''}/></div><div class='form-field'><label class='input-label'>Giá bán (VND) *</label><input class='input' name='price' type='number' min='0' step='1' value='${p ? p.price : ''}' placeholder='0' required/></div><div class='form-field'><label class='input-label' for='product-unit-cost'>Giá vốn mỗi đơn vị (đ)</label><input class='input' id='product-unit-cost' name='cost' type='number' min='0' step='1' value='${p ? p.cost : ''}' placeholder='0'/></div><div class='form-field'><label class='input-label'>Nhắc khi còn</label><input class='input' name='minStock' type='number' min='0' step='0.001' value='${p ? p.minStock : '5'}'/></div>${p ? `<div class='form-field'><label class='input-label'>Tồn kho hiện tại</label><div class='input' aria-readonly='true'>${number(p.stock)} ${esc(p.unit)}</div></div>` : `<div class='form-field full'><div class='modal-note'>Sản phẩm mới bắt đầu với tồn kho bằng 0. Số lượng chỉ thay đổi qua nghiệp vụ kho.</div></div>`}</div>${productPackFields(p)}<label class='install-hint' style='display:flex;align-items:flex-start;gap:9px;grid-column:1/-1'><input type='checkbox' name='inventoryTracked' ${!p || p.inventoryTracked ? 'checked' : ''} style='margin-top:2px;flex:none'/><span><strong>Theo dõi tồn kho</strong><small style='display:block;margin-top:4px'>Tắt cho dịch vụ hoặc mặt hàng không quản lý số lượng. Trước khi tắt, cần điều chỉnh tồn và lượng đang giữ về 0.</small></span></label></div></form>`;
-    const footer = `<button class='btn btn-secondary' type='button' data-action='close-modal'>Hủy</button>${grouped ? `<button class='btn btn-secondary' type='button' data-action='add-product-to-existing-variant-group' data-id='${p.id}'>Thêm SKU vào nhóm</button>` : ''}${p && ['owner', 'manager', 'stockkeeper'].includes(store.role) ? `<button class='btn btn-secondary' type='button' data-action='adjust-stock' data-id='${p.id}'>Kiểm kê tồn</button>` : ''}${p && ['owner', 'manager', 'stockkeeper', 'accountant'].includes(store.role) ? `<button class='btn btn-secondary' type='button' data-action='product-price-history' data-id='${p.id}'>Lịch sử giá</button>` : ''}${p ? `<button class='btn btn-danger' type='button' data-action='archive-product' data-id='${p.id}'>Lưu trữ</button>` : ''}<button class='btn btn-primary' type='submit' form='entity-form'>${p ? 'Lưu thay đổi' : 'Thêm sản phẩm'}</button>`;
-    showModal(p ? 'Cập nhật sản phẩm' : 'Thêm sản phẩm mới', p ? 'Chỉnh sửa thông tin sản phẩm. Tồn kho được theo dõi riêng.' : 'Thêm một mặt hàng vào danh mục cửa hàng.', form, footer, true);
+    const form = `<form id='entity-form' class='product-editor-form' data-form='product' data-from-scan='${scanned ? 'true' : 'false'}' data-id='${esc(p?.id || '')}' data-version='${esc(p?.version || '')}'>
+      <section class='product-editor-section' aria-labelledby='product-identity-heading'><h3 id='product-identity-heading'>Thông tin cơ bản</h3>
+        <div class='product-editor-photo-name'>${productPhotoField(p)}${displayedName}</div>${scanPhoto}${scanNote}
+        ${variantAttributes}${productIdentityFields(p, barcode, grouped, suggestedSku, false)}
+      </section>
+      <section class='product-editor-section' aria-labelledby='product-prices-heading'><h3 id='product-prices-heading'>Giá và đơn vị tính</h3>${productSaleFields(p, grouped, true)}</section>
+      <section class='product-editor-section' aria-labelledby='product-stock-heading'><h3 id='product-stock-heading'>Quản lý kho</h3>${productTrackingFields(p)}</section>
+      ${productPackDefaultsSupported ? `<section class='product-editor-section' aria-labelledby='product-pack-heading'><h3 id='product-pack-heading'>Quy đổi đơn vị nhập</h3>${productPackFields(p)}</section>` : ''}
+      <div class='auth-message error' data-product-editor-error role='alert' hidden></div>
+    </form>`;
+    const footer = `<button class='btn btn-secondary' type='button' data-action='close-modal'>Hủy</button><button class='btn btn-primary' type='submit' form='entity-form'>${p ? 'Lưu thay đổi' : 'Thêm sản phẩm'}</button>`;
+    const actions = p ? [
+      p.inventoryTracked && ['owner', 'manager', 'stockkeeper'].includes(store.role) ? ['adjust-stock', 'Kiểm kê tồn kho'] : null,
+      ['owner', 'manager', 'stockkeeper', 'accountant'].includes(store.role) ? ['product-price-history', 'Lịch sử giá'] : null,
+      grouped ? ['add-product-to-existing-variant-group', 'Thêm SKU vào nhóm'] : null,
+      ['owner', 'manager', 'stockkeeper'].includes(store.role) ? ['archive-product', 'Lưu trữ sản phẩm'] : null,
+    ].filter(Boolean) : [];
+    const headerActions = actions.length ? `<details class='product-editor-more' data-product-editor-more><summary class='btn btn-secondary' aria-label='Thao tác sản phẩm' title='Thao tác sản phẩm'>${icon('more', 21)}</summary><div class='product-editor-more-panel'>${actions.map(([action, label]) => `<button type='button' data-action='${action}' data-id='${esc(p.id)}' ${action === 'archive-product' ? "class='editor-danger'" : ''}>${label}</button>`).join('')}</div></details>` : '';
+    showModal(p ? 'Cập nhật sản phẩm' : 'Thêm sản phẩm mới', '', form, footer, true, { productEditor: true, headerActions });
+    loadProductEditorCategories(modal.querySelector('[data-form="product"]'));
+  }
+
+  function closeProductBarcode() {
+    const surface = modal.querySelector('[data-scan-mode="barcode-field"]:not([hidden])');
+    if (!surface) return false;
+    stopScanCamera();
+    surface.hidden = true;
+    scanCodeInput(surface)?.focus({ preventScroll: true });
+    return true;
+  }
+
+  function closeProductEditorMenu() {
+    const menu = modal.querySelector('[data-product-editor-more][open]');
+    if (!menu) return false;
+    menu.open = false;
+    menu.querySelector('summary').focus({ preventScroll: true });
+    return true;
   }
 
   function openProductVariantAdd(productId) {
@@ -5224,15 +5522,15 @@
     }
   }
 
-  function openCustomer(id) {
+  function openCustomer(id, { debt = false } = {}) {
     const c = id ? customerById(id) : null;
     const pending = !c ? loadPendingCustomer() : null;
     const saved = pending ? pending.payload : c;
     const disabled = pending ? 'disabled' : '';
     const canSetOpeningBalance = ['owner', 'manager', 'accountant'].includes(store.role);
-    const openingField = !c && canSetOpeningBalance ? `<div class='form-field full'><label class='input-label' for='customer-opening-balance'>Công nợ ban đầu (VND)</label><input class='input' id='customer-opening-balance' name='openingBalanceVnd' type='number' inputmode='numeric' min='0' step='1' value='${esc(saved ? saved.openingBalanceVnd : '0')}' ${disabled}/><small>Số khách còn nợ trước khi bắt đầu dùng Slink. Đây là bút toán công nợ, không ghi tiền vào sổ thu chi.</small></div>` : '';
+    const openingField = !c && canSetOpeningBalance ? `<div class='form-field full'><label class='input-label' for='customer-opening-balance'>${debt ? 'Số tiền đang nợ (đ) *' : 'Công nợ ban đầu (đ)'}</label><input class='input' id='customer-opening-balance' name='openingBalanceVnd' type='number' inputmode='numeric' min='${debt ? 1 : 0}' step='1' value='${esc(saved ? saved.openingBalanceVnd : debt ? '' : '0')}' ${debt ? 'required' : ''} ${disabled}/><small>Số khách còn nợ trước khi bắt đầu dùng Slink. Đây là bút toán công nợ, không ghi tiền vào sổ thu chi.</small></div>` : '';
     const form = `<form id='entity-form' data-form='customer' data-id='${c ? c.id : ''}' data-version='${c ? c.version : ''}'><div class='form-grid'><div class='form-field'><label class='input-label'>Tên khách hàng *</label><input class='input' name='name' value='${esc(saved ? saved.name : '')}' required maxlength='160' placeholder='Họ và tên' ${disabled}/></div><div class='form-field'><label class='input-label'>Số điện thoại</label><input class='input' name='phone' value='${esc(saved ? saved.phone : '')}' inputmode='tel' placeholder='09xx xxx xxx' ${disabled}/></div><div class='form-field full'><label class='input-label'>Email (không bắt buộc)</label><input class='input' type='email' name='email' value='${esc(saved ? saved.email : '')}' placeholder='Email của khách' ${disabled}/></div>${openingField}<div class='form-field full'><label class='input-label'>Ghi chú</label><textarea class='input' name='note' rows='2' placeholder='Lưu ý khi chăm sóc' style='height:auto;padding:10px' ${disabled}>${esc(saved ? saved.note || '' : '')}</textarea></div></div></form>`;
-    modalForm(pending ? 'Kiểm tra khách hàng đang chờ' : c ? 'Cập nhật khách hàng' : 'Thêm khách hàng', pending ? 'Gửi lại đúng nội dung đã lưu trên thiết bị để máy chủ xác nhận, tránh tạo trùng.' : 'Lưu thông tin để theo dõi lịch sử mua và công nợ.', form, pending ? 'Gửi lại khách hàng' : c ? 'Lưu thay đổi' : 'Lưu khách hàng');
+    modalForm(pending ? 'Kiểm tra khách hàng đang chờ' : c ? 'Cập nhật khách hàng' : debt ? 'Thêm khách nợ' : 'Thêm khách hàng', pending ? 'Gửi lại đúng nội dung đã lưu trên thiết bị để máy chủ xác nhận, tránh tạo trùng.' : 'Lưu thông tin để theo dõi lịch sử mua và công nợ.', form, pending ? 'Gửi lại khách hàng' : c ? 'Lưu thay đổi' : 'Lưu khách hàng');
   }
 
   function customerFilterCriteria() {
@@ -5536,7 +5834,8 @@
         const automatic = query && result.nextOffset == null && result.offlineCachedCount === undefined
           ? (exact.length === 1 ? exact[0] : Number(result.total) === 1 ? products[0] : null)
           : null;
-        const selected = automatic || products.find(product => product.id === previousId);
+        const selected = automatic || products.find(product => product.id === previousId) || (!query && productById(previousId));
+        if (selected && !products.some(product => product.id === selected.id)) products.unshift(selected);
         const placeholder = products.length ? 'Chọn mặt hàng…' : 'Không tìm thấy sản phẩm';
         select.innerHTML = `<option value=''>${placeholder}</option>` + products.map(function (product) {
           return `<option value='${esc(product.id)}'>${esc(product.name)} · ${esc(product.sku)}</option>`;
@@ -5547,8 +5846,11 @@
           if (position === -1) store.products.push(product);
           else store.products[position] = product;
         }
+        if (result.purchasePacksSupported === true) purchasePacksSupported = true;
+        const needsPackOptions = purchasePacksSupported && !row.querySelector('[data-purchase-mode]');
+        if (needsPackOptions) select.closest('label').insertAdjacentHTML('afterend', renderReceivePackControls(row.dataset.index, selected?.unit || 'cái'));
         // Repeating a search must not replace a price or pack the user edited.
-        if (select.value !== previousId) {
+        if (select.value !== previousId || (needsPackOptions && !row.querySelector('[data-purchase-cost]').value)) {
           setReceivePackMode(row, selected, true);
         }
         updateReceivePurchaseTotal(input.form);
@@ -5560,10 +5862,14 @@
     }, 250);
   }
 
-  function openReceive(productId) {
-    if (!store.products.length) return toast('Chưa có sản phẩm để nhập', 'Hãy tạo sản phẩm trước, rồi ghi phiếu nhận hàng để cập nhật tồn kho.');
-    const suppliers = store.suppliers.map(function (s) { return `<option value='${esc(s.name)}'>${esc(s.name)}</option>`; }).join('');
+  async function openReceive(productId) {
     const pending = loadPendingPurchase();
+    if (!warehouses.length && !pending?.payload.warehouseId) {
+      const generation = modalGeneration, session = authSession, openedOn = page;
+      await loadWarehouses({ includeTransfers: false });
+      if (generation !== modalGeneration || session !== authSession || openedOn !== page) return;
+      if (!warehouses.length) return toast('Chưa tải được kho', 'Thử lại khi danh sách kho đã sẵn sàng.', 'error');
+    }
     const pendingItems = pending
       ? (Array.isArray(pending.payload.items) ? pending.payload.items : [{ productId: pending.payload.productId, quantity: pending.payload.quantity, unitCostVnd: pending.payload.unitCostVnd }])
       : null;
@@ -5572,29 +5878,94 @@
     const disabled = pending ? 'disabled' : '';
     const defaultWarehouseId = (warehouses.find(function (item) { return item.is_default; }) || {}).id || '';
     const receiveWarehouseId = pending ? (pending.payload.warehouseId || defaultWarehouseId) : (selectedWarehouseId || defaultWarehouseId);
-    const receiveWarehouseOptions = warehouses.map(function (warehouse) { return `<option value='${esc(warehouse.id)}' ${warehouse.id === receiveWarehouseId ? 'selected' : ''}>${esc(warehouse.name)}${warehouse.is_default ? ' · Kho chính' : ''}</option>`; }).join('');
+    const receiveWarehouseOptions = warehouses.map(function (warehouse) { return `<option value='${esc(warehouse.id)}' ${warehouse.id === receiveWarehouseId ? 'selected' : ''}>${esc(warehouseOptionName(warehouse))}</option>`; }).join('');
     const warehouseField = warehouses.length > 1
       ? `<div class='form-field full'><label class='input-label' for='purchase-warehouse'>Kho nhận hàng *</label><div class='select-wrap'><select class='input' id='purchase-warehouse' name='warehouseId' required ${disabled}>${receiveWarehouseOptions}</select></div></div>`
       : `<input type='hidden' name='warehouseId' value='${esc(receiveWarehouseId)}'/>`;
-    const form = `<form id='entity-form' data-form='receive'><div class='form-grid'>${warehouseField}<div class='form-field full'><div class='panel-header'><div><h2>Hàng vừa nhận</h2><p>Tối đa 50 mặt hàng trên một phiếu</p></div>${pending ? '' : `<button class='btn btn-secondary' type='button' data-action='add-purchase-line'>＋ Thêm mặt hàng</button>`}</div><div id='purchase-lines'>${renderReceivePurchaseLines(initialItems, disabled)}</div><div class='purchase-total'><span>Tổng tiền hàng</span><strong id='purchase-total'>—</strong><small id='purchase-total-note' role='status' aria-live='polite'>Chọn hàng, nhập số lượng và giá.</small></div></div><div class='form-field full'><label class='input-label' for='receive-payment-state'>Tiền hàng</label><select class='input' id='receive-payment-state' name='paymentState' ${disabled}><option value='unpaid' ${!pending || Number(pending.payload.amountPaidVnd || 0) === 0 ? 'selected' : ''}>Chưa trả tiền</option><option value='full'>Đã trả đủ</option><option value='partial' ${pending && Number(pending.payload.amountPaidVnd || 0) > 0 ? 'selected' : ''}>Nhập số tiền đã trả</option></select></div><div class='form-field full' id='receive-paid-field' ${pending && Number(pending.payload.amountPaidVnd || 0) > 0 ? '' : 'hidden'}><label class='input-label'>Đã trả (VND)</label><input class='input' name='paid' type='number' min='0' step='1' value='${pending ? esc(pending.payload.amountPaidVnd ?? '0') : '0'}' ${disabled}/></div><div class='form-field full' id='receive-supplier-field'><label class='input-label'>Mua của ai?</label><input class='input' name='supplierName' list='suppliers' value='${pending ? esc(pending.payload.supplierName || '') : ''}' placeholder='Nhập tên nếu còn nợ' ${disabled}/><datalist id='suppliers'>${suppliers}</datalist></div><details class='work-details full' ${pending ? 'open' : ''}><summary>Cách trả tiền và ghi chú</summary><div class='form-grid'><div class='form-field full'><label class='input-label'>Trả bằng</label><select class='input' name='method' ${disabled}><option value='cash'>Tiền mặt</option><option value='bank_transfer' ${pending && pending.payload.method === 'bank_transfer' ? 'selected' : ''}>Chuyển khoản</option><option value='bank_qr' ${pending && pending.payload.method === 'bank_qr' ? 'selected' : ''}>QR ngân hàng</option></select></div><div class='form-field full'><label class='input-label'>Ghi chú</label><input class='input' name='note' maxlength='500' value='${pending ? esc(pending.payload.note || '') : ''}' placeholder='Không bắt buộc' ${disabled}/></div></div></details></div>${pending ? `<div class='modal-note'>Phiếu nhập đang chờ xác nhận. Gửi lại cùng nội dung để tránh cộng tồn kho hai lần.</div>` : `<div class='modal-note'>Số lượng sẽ cộng vào kho. Chưa trả đủ tiền? Ghi người giao hàng để theo dõi khoản nợ.</div>`}</form>`;
-    showModal(pending ? 'Kiểm tra phiếu nhập đang chờ' : 'Nhận hàng vào kho', 'Chọn hàng đã nhận, ghi số lượng rồi lưu.', form, `<button class='btn btn-secondary' type='button' data-action='close-modal'>${pending ? 'Để sau' : 'Hủy'}</button><button class='btn btn-primary' type='submit' form='entity-form'>${pending ? 'Thử lại phiếu nhập' : 'Xác nhận nhập kho'}</button>`, true);
-    updateReceivePurchaseTotal(modal.querySelector('[data-form="receive"]'));
+    const paid = pending?.payload.amountPaidVnd || 0;
+    const form = `<form id='entity-form' data-form='receive' class='receive-receipt'>${warehouses.length > 1 ? `<div class='form-grid'>${warehouseField}</div>` : warehouseField}
+      <section class='receive-section' aria-labelledby='receive-items-heading'><h3 id='receive-items-heading'>Hàng vừa nhận</h3>
+        <div id='purchase-lines'>${renderReceivePurchaseLines(initialItems, disabled)}</div>
+        ${pending ? '' : `<button class='btn btn-secondary' type='button' data-action='add-purchase-line'>＋ Thêm mặt hàng</button>`}</section>
+      <section class='receive-section' aria-labelledby='receive-payment-heading'><h3 id='receive-payment-heading'>Thanh toán và nhà cung cấp</h3>
+        <div class='purchase-total'><span>Tổng tiền hàng</span><strong id='purchase-total'>—</strong><small id='purchase-total-note' role='status' hidden></small></div>
+        <div class='form-grid'>
+          <label class='form-field'><span class='input-label'>Tình trạng thanh toán</span><select class='input' id='receive-payment-state' name='paymentState' ${disabled}><option value='unpaid'>Chưa thanh toán · Ghi nợ</option><option value='full'>Đã thanh toán</option><option value='partial' ${Number(paid) > 0 ? 'selected' : ''}>Đã trả một phần</option></select></label>
+          <label class='form-field' id='receive-paid-field' hidden><span class='input-label'>Số tiền đã trả (đ)</span><input class='input' name='paid' type='number' min='0' step='1' value='${esc(paid)}' ${disabled}/></label>
+          <label class='form-field' data-receive-method><span class='input-label'>Hình thức trả</span><select class='input' name='method' ${disabled}>${['cash', 'bank_transfer', 'bank_qr', 'card', 'other'].filter(value => ['cash', 'bank_transfer'].includes(value) || value === pending?.payload.method).map(value => `<option value='${value}' ${pending?.payload.method === value ? 'selected' : ''}>${esc(cashMethodName(value))}</option>`).join('')}</select></label>
+          <div class='form-field full' id='receive-supplier-field'><label class='input-label' for='receive-supplier-name'>Nhà cung cấp <span data-receive-supplier-required hidden>*</span></label><input id='receive-supplier-name' class='input' name='supplierName' type='search' maxlength='160' value='${esc(pending?.payload.supplierName || '')}' placeholder='Tìm theo tên hoặc thêm mới' autocomplete='off' ${disabled}/><div class='finance-party-options' data-receive-suppliers hidden></div></div>
+          <label class='form-field full'><span class='input-label'>Ghi chú</span><input class='input' name='note' maxlength='500' value='${esc(pending?.payload.note || '')}' placeholder='Không bắt buộc' ${disabled}/></label>
+        </div></section>
+      ${pending ? '<p class="modal-note">Phiếu nhập đang chờ xác nhận. Gửi lại cùng nội dung để tránh cộng tồn hai lần.</p>' : ''}</form>`;
+    showModal(pending ? 'Kiểm tra phiếu nhập đang chờ' : 'Nhận hàng vào kho', '', form, `<button class='btn btn-secondary' type='button' data-action='close-modal'>${pending ? 'Để sau' : 'Hủy'}</button><button class='btn btn-primary' type='submit' form='entity-form'>${pending ? 'Thử lại phiếu nhập' : 'Xác nhận nhập kho'}</button>`, true);
+    const element = modal.querySelector('[data-form="receive"]');
+    if (!pending) {
+      setupReceiveSuppliers(element);
+      if (!store.products.length || !purchasePacksSupported) searchReceiveProducts(element.querySelector('[data-purchase-search]'));
+      element.elements.paid.addEventListener('input', event => event.target.setCustomValidity(''));
+      element.elements.paymentState.addEventListener('change', () => {
+        element.elements.paid.setCustomValidity('');
+        element.elements.supplierName.setCustomValidity('');
+      });
+    }
+    updateReceivePurchaseTotal(element);
+  }
+
+  function setupReceiveSuppliers(form) {
+    const field = form.elements.supplierName;
+    const list = form.querySelector('[data-receive-suppliers]');
+    const nameKey = name => name.trim().normalize('NFKC').toLocaleLowerCase('vi');
+    let suppliers = store.suppliers.slice();
+    function showChoices() {
+      const name = field.value.trim();
+      const query = nameKey(name);
+      const matches = suppliers.filter(item => nameKey(item.name).includes(query));
+      list.innerHTML = matches.slice(0, 8).map(item => `<button type='button' class='link-button' data-receive-supplier='${esc(item.id)}'>${esc(item.name)}</button>`).join('') +
+        (name && !matches.some(item => nameKey(item.name) === query) ? `<button type='button' class='link-button' data-receive-supplier-new>＋ Thêm “${esc(name)}”</button>` : '');
+      list.hidden = !list.children.length;
+    }
+    field.addEventListener('focus', () => { if (!form.receiveSupplier) showChoices(); });
+    field.addEventListener('input', () => { form.receiveSupplier = null; field.setCustomValidity(''); showChoices(); });
+    form.querySelector('#receive-supplier-field').addEventListener('focusout', event => { if (!event.currentTarget.contains(event.relatedTarget)) list.hidden = true; });
+    list.addEventListener('click', event => {
+      const button = event.target.closest('[data-receive-supplier], [data-receive-supplier-new]');
+      if (!button) return;
+      const saved = suppliers.find(item => item.id === button.dataset.receiveSupplier);
+      form.receiveSupplier = { id: saved?.local ? '' : saved?.id || '', name: saved?.name || field.value.trim() };
+      field.value = form.receiveSupplier.name;
+      field.setCustomValidity('');
+      list.hidden = true;
+      field.focus();
+    });
+    apiRequest(`/api/stores/${encodeURIComponent(store.id)}/purchase-suppliers`).then(result => {
+      if (!form.isConnected) return;
+      const knownNames = new Set(result.suppliers.map(item => nameKey(item.name)));
+      suppliers = [...result.suppliers, ...suppliers.filter(item => item.local && !knownNames.has(nameKey(item.name)))];
+      if (document.activeElement === field && !form.receiveSupplier && !field.disabled) showChoices();
+    }).catch(() => {});
+  }
+
+  function renderReceivePackControls(index, unit, pack, disabled = '') {
+    const packed = Boolean(pack);
+    return `<div class='form-field full'><label class='input-label' for='purchase-mode-${index}'>Cách nhận hàng</label><select class='input' id='purchase-mode-${index}' data-purchase-mode ${disabled}><option value='loose' ${packed ? '' : 'selected'}>Nhận từng ${esc(unit)}</option><option value='pack' ${packed ? 'selected' : ''}>Nhận theo lô, hộp hoặc thùng</option></select></div><div class='form-field full' data-purchase-pack-fields ${packed ? '' : 'hidden'}><div class='form-grid'><label class='form-field'><span class='input-label'>Tên đơn vị nhập</span><input class='input' data-pack-name value='${esc(pack?.name || 'lô')}' placeholder='Lô, hộp, thùng…' maxlength='40' ${packed ? 'required' : ''} ${disabled}/></label><label class='form-field'><span class='input-label'>Mỗi đơn vị có bao nhiêu ${esc(unit)}?</span><input class='input' data-pack-size type='number' min='1' max='1000000' step='1' inputmode='numeric' value='${esc(pack?.size || '')}' ${packed ? 'required' : ''} ${disabled}/></label></div><small>Nhớ cách nhập này cho lần sau.</small></div>`;
   }
 
   function renderReceivePurchaseLines(items, disabled) {
     return items.map(function (item, index) {
       const product = productById(item.productId);
-      const pack = item.pack || (item.packMode !== false && product?.purchasePack ? { ...product.purchasePack, quantity: item.quantity || '1' } : null);
+      const savedPack = window.SlinkPurchaseUnits.isPackName(product?.purchasePack?.name) ? product.purchasePack : null;
+      const pack = item.pack || (item.packMode !== false && savedPack ? { ...savedPack, quantity: item.quantity || '1' } : null);
       const packed = Boolean(pack);
       const unit = product?.unit || 'cái';
       const priceMode = packed || item.priceMode === 'unit' || (!item.priceMode && item.unitCostVnd != null) ? 'unit' : 'total';
-      const costLabel = priceMode === 'total' ? 'Tổng tiền nhập' : 'Giá 1 ' + (pack?.name || unit);
+      const packName = packed ? (window.SlinkPurchaseUnits.isPackName(pack.name) ? pack.name : 'đơn vị nhập') : unit;
+      const costLabel = priceMode === 'total' ? 'Tổng tiền nhập' : 'Giá 1 ' + packName;
       const amount = pack?.unitCostVnd ?? (priceMode === 'total' ? item.lineTotalVnd : item.unitCostVnd) ?? '';
       const priceField = `<div class='form-field'><label class='form-field' for='purchase-price-${index}'><span class='input-label' data-purchase-cost-label>${esc(costLabel)} (đ)</span><input class='input' id='purchase-price-${index}' data-purchase-cost type='number' min='0' step='1' value='${esc(amount)}' required ${disabled}/></label>${disabled ? '' : `<button class='link-button' type='button' data-action='toggle-receive-price' ${packed ? 'hidden' : ''}>${priceMode === 'total' ? 'Dùng giá từng ' + esc(unit) : 'Dùng tổng tiền'}</button>`}</div>`;
       const options = store.products.map(candidate => `<option value='${candidate.id}' ${candidate.id === item.productId ? 'selected' : ''}>${esc(candidate.name)} · ${esc(candidate.sku)}</option>`).join('');
       const selected = item.productId && !product ? `<option value='${esc(item.productId)}' selected>Sản phẩm trên phiếu đang chờ</option>` : '';
-      const packControls = purchasePacksSupported || packed ? `<div class='form-field full'><label class='input-label' for='purchase-mode-${index}'>Cách nhận hàng</label><select class='input' id='purchase-mode-${index}' data-purchase-mode ${disabled}><option value='loose' ${packed ? '' : 'selected'}>Nhận từng ${esc(unit)}</option><option value='pack' ${packed ? 'selected' : ''}>Nhận theo lô, hộp hoặc thùng</option></select></div><div class='form-field full' data-purchase-pack-fields ${packed ? '' : 'hidden'}><div class='form-grid'><label class='form-field'><span class='input-label'>Tên đơn vị nhập</span><input class='input' data-pack-name value='${esc(pack?.name || 'lô')}' placeholder='Lô, hộp, thùng…' maxlength='40' ${packed ? 'required' : ''} ${disabled}/></label><label class='form-field'><span class='input-label'>Mỗi đơn vị có bao nhiêu ${esc(unit)}?</span><input class='input' data-pack-size type='number' min='1' max='1000000' step='1' inputmode='numeric' value='${esc(pack?.size || '')}' ${packed ? 'required' : ''} ${disabled}/></label></div><small>Nhớ cách nhập này cho lần sau.</small></div>` : '';
-      return `<article class='purchase-line-card' data-purchase-line data-index='${index}' data-price-mode='${priceMode}' data-total-price='${esc(item.lineTotalVnd ?? '')}' data-unit-price='${esc(item.unitCostVnd ?? '')}'><div class='purchase-line-head'><strong>Mặt hàng ${number(index + 1)}</strong>${!disabled && items.length > 1 ? `<button class='link-button' type='button' data-action='remove-purchase-line' data-index='${index}'>Xóa dòng</button>` : ''}</div><div class='form-grid'><details class='receive-search full'><summary>Tìm theo tên hoặc mã hàng</summary><label class='form-field'><span class='input-label'>Tìm sản phẩm</span><input class='input' data-purchase-search data-index='${index}' type='search' placeholder='Tên hoặc mã SKU…' ${disabled}/></label></details><label class='form-field full'><span class='input-label'>Sản phẩm *</span><select class='input' name='productId' data-purchase-product data-index='${index}' required ${disabled}><option value=''>Chọn mặt hàng…</option>${selected}${options}</select></label>${packControls}<label class='form-field'><span class='input-label' data-purchase-quantity-label>${packed ? 'Số ' + esc(pack.name) + ' nhận' : 'Số lượng nhận (' + esc(unit) + ')'}</span><input class='input' data-purchase-quantity name='quantity' type='number' min='0.001' step='0.001' value='${esc(pack?.quantity || item.quantity || '1')}' required ${disabled}/></label>${priceField}<p class='muted full' data-pack-preview hidden aria-live='polite'></p></div></article>`;
+      const packControls = purchasePacksSupported || packed ? renderReceivePackControls(index, unit, pack, disabled) : '';
+      return `<article class='purchase-line-card' data-purchase-line data-index='${index}' data-price-mode='${priceMode}' data-total-price='${esc(item.lineTotalVnd ?? '')}' data-unit-price='${esc(item.unitCostVnd ?? '')}'>${items.length > 1 ? `<div class='purchase-line-head'><strong>Mặt hàng ${number(index + 1)}</strong>${disabled ? '' : `<button class='link-button' type='button' data-action='remove-purchase-line' data-index='${index}'>Xóa dòng</button>`}</div>` : ''}<div class='form-grid'>${disabled ? '' : `<label class='form-field full receive-search'><span class='input-label'>Tìm mặt hàng</span><input class='input' data-purchase-search data-index='${index}' type='search' placeholder='Tên, mã hàng hoặc mã vạch…' autocomplete='off'/></label>`}<label class='form-field full'><span class='input-label'>Sản phẩm *</span><select class='input' name='productId' data-purchase-product data-index='${index}' required ${disabled}><option value=''>Chọn mặt hàng…</option>${selected}${options}</select><small data-receive-product-cost hidden></small></label>${packControls}<label class='form-field'><span class='input-label' data-purchase-quantity-label>${packed ? 'Số ' + esc(pack.name) + ' nhận' : 'Số lượng nhận (' + esc(unit) + ')'}</span><input class='input' data-purchase-quantity name='quantity' type='number' min='0.001' step='0.001' value='${esc(pack?.quantity || item.quantity || '1')}' required ${disabled}/></label>${priceField}<p class='muted full' data-pack-preview hidden aria-live='polite'></p></div></article>`;
     }).join('');
   }
 
@@ -5615,8 +5986,10 @@
 
   function setReceivePackMode(row, product, useSaved) {
     const mode = row.querySelector('[data-purchase-mode]');
-    if (useSaved && mode) mode.value = product?.purchasePack ? 'pack' : 'loose';
-    const packed = mode?.value === 'pack', saved = product?.purchasePack;
+    const saved = product?.purchasePack;
+    const named = window.SlinkPurchaseUnits.isPackName(saved?.name);
+    if (useSaved && mode) mode.value = named ? 'pack' : 'loose';
+    const packed = mode?.value === 'pack';
     const fields = row.querySelector('[data-purchase-pack-fields]');
     if (fields) {
       fields.hidden = !packed;
@@ -5624,7 +5997,7 @@
       const size = row.querySelector('[data-pack-size]');
       size.closest('label').querySelector('.input-label').textContent = 'Mỗi đơn vị có bao nhiêu ' + (product?.unit || 'cái') + '?';
       if (useSaved) {
-        row.querySelector('[data-pack-name]').value = saved?.name || 'lô';
+        row.querySelector('[data-pack-name]').value = named ? saved.name : (saved ? '' : 'lô');
         size.value = saved?.size || '';
       }
     }
@@ -5646,7 +6019,8 @@
     input.focus();
   }
 
-  function normalizeReceivePurchaseLine(item) {
+  function normalizeReceivePurchaseLine(item, allowLegacyPack = false) {
+    if (item.pack && !allowLegacyPack && !window.SlinkPurchaseUnits.isPackName(item.pack.name)) throw new Error('Ghi tên đơn vị nhập, ví dụ Thùng, Hộp hoặc Ram.');
     const packed = item.pack ? window.SlinkPurchaseUnits.fromPack(item.pack) : null;
     const quantity = packed?.quantity || item.quantity;
     if (!/^(0|[1-9]\d{0,9})(?:\.\d{1,3})?$/.test(quantity) || Number(quantity) <= 0 || Number(quantity) > 1_000_000_000) {
@@ -5681,8 +6055,11 @@
     let incomplete = false;
     const seenProducts = new Set();
     receivePurchaseItemsFromForm(form).forEach((item, index) => {
-      const row = rows[index], unit = productById(item.productId)?.unit || 'cái';
-      const packName = item.pack?.name || 'lô';
+      const row = rows[index], product = productById(item.productId), unit = product?.unit || 'cái';
+      const lastCost = row.querySelector('[data-receive-product-cost]');
+      lastCost.hidden = !product;
+      if (product) lastCost.textContent = `Đơn vị ${unit} · Giá vốn hiện tại ${moneyVndText(product.cost)} / ${unit}`;
+      const packName = window.SlinkPurchaseUnits.isPackName(item.pack?.name) ? item.pack.name : 'đơn vị nhập';
       const totalMode = item.priceMode === 'total' && !item.pack;
       const mode = row.querySelector('[data-purchase-mode]');
       if (mode) mode.options[0].textContent = 'Nhận từng ' + unit;
@@ -5698,7 +6075,7 @@
       try {
         if (!item.productId || seenProducts.has(item.productId)) throw new Error('incomplete');
         seenProducts.add(item.productId);
-        const line = normalizeReceivePurchaseLine(item);
+        const line = normalizeReceivePurchaseLine(item, row.querySelector('[data-purchase-product]').disabled);
         total += line.total;
         const rounded = line.total * 1000n !== line.unitCost * line.milli;
         if (item.pack) preview.textContent = `Nhận ${number(Number(line.payload.quantity))} ${unit} · ${moneyVndText(line.total)}`;
@@ -5709,13 +6086,21 @@
     });
     const mode = form.querySelector('[name="paymentState"]')?.value;
     const paid = form.querySelector('[name="paid"]');
-    const supplierField = form.querySelector('#receive-supplier-field');
-    if (supplierField) supplierField.hidden = mode === 'full';
+    paid?.setCustomValidity('');
+    const methodField = form.querySelector('[data-receive-method]');
+    if (methodField) methodField.hidden = mode === 'unpaid';
+    const supplierRequired = form.querySelector('[data-receive-supplier-required]');
+    if (supplierRequired) supplierRequired.hidden = mode === 'full';
     const paidField = form.querySelector('#receive-paid-field');
     if (paidField) paidField.hidden = mode !== 'partial';
     const tooLarge = total > BigInt(Number.MAX_SAFE_INTEGER);
-    if (paid && mode === 'unpaid') paid.value = '0';
-    if (paid && mode === 'full') paid.value = incomplete || tooLarge ? '' : window.SlinkMoneyFields.format(String(total));
+    if (paid) {
+      if (form.receivePaymentMode === 'partial' && mode !== 'partial') form.partialPaid = paid.value;
+      if (mode === 'unpaid') paid.value = '0';
+      else if (mode === 'full') paid.value = incomplete || tooLarge ? '' : window.SlinkMoneyFields.format(String(total));
+      else if (form.receivePaymentMode && form.receivePaymentMode !== 'partial') paid.value = form.partialPaid || '';
+      form.receivePaymentMode = mode;
+    }
     if (incomplete || tooLarge) {
       explain(tooLarge ? 'Số tiền quá lớn. Chia thành phiếu nhỏ hơn.' : 'Chọn hàng, nhập số lượng và số tiền.');
       return;
@@ -5762,12 +6147,81 @@
     showModal(pending ? 'Kiểm tra khoản thanh toán đang chờ' : 'Thanh toán nhà cung cấp', `Số dư hiện tại · ${moneyVndText(due)}`, form, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Để sau</button><button class='btn btn-primary' type='submit' form='entity-form'>${pending ? 'Thử lại khoản thanh toán' : 'Ghi nhận thanh toán'}</button>`);
   }
 
+  function voucherCategories(direction, current) {
+    const names = direction === 'in' ? ['Thu khác', 'Góp vốn', 'Hoàn lại chi phí'] : ['Vận hành', 'Điện nước', 'Thuê mặt bằng', 'Nhập hàng', 'Hoàn tiền', 'Chi khác'];
+    if (current && !names.includes(current)) names.push(current);
+    return names.map(name => `<option ${current === name ? 'selected' : ''}>${esc(name)}</option>`).join('');
+  }
+
   function openExpense(direction) {
     const pending = loadPendingCash();
     const disabled = pending ? 'disabled' : '';
     const payload = pending ? pending.payload : { direction: direction === 'in' ? 'in' : 'out', amountVnd: '', category: direction === 'in' ? 'Thu khác' : 'Vận hành', method: 'cash', note: '' };
-    const form = `<form id='entity-form' data-form='cash'><div class='form-grid'><div class='form-field'><label class='input-label'>Loại giao dịch</label><div class='select-wrap'><select class='input' name='type' ${disabled}><option value='out' ${payload.direction === 'out' ? 'selected' : ''}>Phiếu chi</option><option value='in' ${payload.direction === 'in' ? 'selected' : ''}>Phiếu thu khác</option></select></div></div><div class='form-field'><label class='input-label'>Số tiền (VND) *</label><input class='input' name='amount' type='number' min='1' step='1' required value='${esc(payload.amountVnd)}' placeholder='0' ${disabled}/></div><div class='form-field'><label class='input-label'>Khoản mục</label><div class='select-wrap'><select class='input' name='category' ${disabled}>${['Vận hành', 'Điện nước', 'Thuê mặt bằng', 'Nhập hàng', 'Thu khác', 'Hoàn tiền'].map(function (name) { return `<option ${payload.category === name ? 'selected' : ''}>${name}</option>`; }).join('')}</select></div></div><div class='form-field'><label class='input-label'>Phương thức</label><div class='select-wrap'><select class='input' name='method' ${disabled}><option value='cash' ${payload.method === 'cash' ? 'selected' : ''}>Tiền mặt</option><option value='bank_transfer' ${payload.method === 'bank_transfer' ? 'selected' : ''}>Chuyển khoản</option><option value='bank_qr' ${payload.method === 'bank_qr' ? 'selected' : ''}>QR ngân hàng</option><option value='card' ${payload.method === 'card' ? 'selected' : ''}>Thẻ</option><option value='other' ${payload.method === 'other' ? 'selected' : ''}>Khác</option></select></div></div><div class='form-field full'><label class='input-label'>Nội dung</label><input class='input' name='note' maxlength='300' value='${esc(payload.note)}' placeholder='Ghi chú cho giao dịch này' ${disabled}/></div></div>${pending ? `<div class='modal-note'>Phiếu đang chờ xác nhận. Hãy gửi lại cùng nội dung để tránh ghi sổ hai lần.</div>` : ''}</form>`;
-    showModal(pending ? 'Kiểm tra phiếu đang chờ' : 'Ghi phiếu thu / chi', 'Ghi lại giao dịch để đối soát sổ quỹ.', form, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Hủy</button><button class='btn btn-primary' type='submit' form='entity-form'>${pending ? 'Thử lại phiếu' : 'Lưu giao dịch'}</button>`);
+    const party = payload.counterparty;
+    const form = `<form id='entity-form' data-form='cash'><div class='form-grid'>
+      <label class='form-field full'><span class='input-label'>Số tiền (đ) *</span><input class='input finance-voucher-amount' name='amount' type='number' min='1' step='1' required value='${esc(payload.amountVnd)}' placeholder='0' ${disabled}/></label>
+      <label class='form-field'><span class='input-label'>Loại giao dịch</span><select class='input' name='type' ${disabled}><option value='in' ${payload.direction === 'in' ? 'selected' : ''}>Phiếu thu</option><option value='out' ${payload.direction === 'out' ? 'selected' : ''}>Phiếu chi</option></select></label>
+      <label class='form-field'><span class='input-label'>Khoản mục</span><select class='input' name='category' ${disabled}>${voucherCategories(payload.direction, payload.category)}</select></label>
+      <label class='form-field'><span class='input-label'>Phương thức</span><select class='input' name='method' ${disabled}>${['cash', 'bank_transfer', 'bank_qr', 'card', 'other'].filter(value => ['cash', 'bank_transfer'].includes(value) || value === payload.method).map(value => `<option value='${value}' ${payload.method === value ? 'selected' : ''}>${esc(cashMethodName(value))}</option>`).join('')}</select></label>
+      <label class='form-field'><span class='input-label' data-voucher-party-label>${payload.direction === 'in' ? 'Người nộp tiền' : 'Người nhận tiền'}</span><select class='input' name='partyKind' ${disabled}><option value=''>Không chọn</option>${[['customer', 'Khách hàng'], ['supplier', 'Nhà cung cấp'], ['staff', 'Nhân viên']].map(([value, label]) => `<option value='${value}' ${party?.kind === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+      <div class='form-field full finance-party' data-voucher-party ${party ? '' : 'hidden'}><input class='input' id='voucher-party-search' name='partySearch' type='search' maxlength='80' autocomplete='off' aria-label='Tìm theo tên' placeholder='Tìm theo tên' value='${esc(party?.name || '')}' ${disabled}/><div class='finance-party-options' data-voucher-options></div></div>
+      <label class='form-field full'><span class='input-label'>Ghi chú</span><textarea class='input finance-reminder-text' name='note' rows='2' maxlength='300' placeholder='Không bắt buộc' ${disabled}>${esc(payload.note)}</textarea></label></div>
+      ${pending ? `<p class='modal-note'>Phiếu đang chờ xác nhận. Gửi lại cùng nội dung để tránh ghi hai lần.</p>` : '<p class="modal-note">Để thu hoặc trả nợ, dùng mục Cần thu hoặc Cần trả.</p>'}</form>`;
+    showModal(pending ? 'Kiểm tra phiếu đang chờ' : payload.direction === 'in' ? 'Thu tiền' : 'Chi tiền', '', form, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Hủy</button><button class='btn btn-primary' type='submit' form='entity-form'>${pending ? 'Thử lại phiếu' : 'Lưu phiếu'}</button>`);
+    const element = modal.querySelector('[data-form="cash"]');
+    const kind = element.elements.partyKind;
+    const search = element.elements.partySearch;
+    const results = element.querySelector('[data-voucher-options]');
+    element.cashCounterparty = party;
+    if (pending) return;
+    let timer, sequence = 0;
+    function findPeople() {
+      clearTimeout(timer);
+      const request = ++sequence;
+      const type = kind.value;
+      const query = search.value.trim();
+      element.cashCounterparty = null;
+      search.setCustomValidity('');
+      element.querySelector('[data-voucher-party]').hidden = !type;
+      results.replaceChildren();
+      if (!type) return;
+      function renderPeople(people, empty = '') {
+        results.innerHTML = people.map(person => `<button type='button' class='link-button' data-voucher-option='${esc(person.id)}'>${esc(person.name)}${person.detail ? `<small>${esc(person.detail)}</small>` : ''}</button>`).join('') || (empty ? `<small role='status'>${empty}</small>` : '');
+        results.people = people;
+      }
+      const cached = type === 'customer' ? [...store.customers, ...financeTopCustomers] : type === 'supplier' ? store.suppliers : staffState.members;
+      const matchText = text => text.normalize('NFKC').toLocaleLowerCase('vi');
+      const local = Array.from(new Map(cached.filter(person => (type === 'staff' ? person.user_id : person.id) && !String(person.id).startsWith('local:'))
+        .map(person => ({ id: type === 'staff' ? person.user_id : person.id, name: person.name || person.display_name, detail: person.phone }))
+        .filter(person => person.name && matchText(person.name + ' ' + (person.detail || '')).includes(matchText(query))).map(person => [person.id, person])).values()).slice(0, 20);
+      renderPeople(local);
+      const current = () => request === sequence && element.isConnected && !element.cashCounterparty && !search.disabled;
+      timer = setTimeout(async () => {
+        try {
+          const data = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/finance/people?kind=${type}&q=${encodeURIComponent(query)}`);
+          if (current()) renderPeople(data.people, 'Không tìm thấy người phù hợp.');
+        } catch (_) {
+          if (current() && !local.length) renderPeople([], 'Chưa tải được danh sách. Bạn có thể bỏ chọn người hoặc thử lại.');
+        }
+      }, 180);
+    }
+    kind.addEventListener('change', () => { search.value = ''; findPeople(); if (kind.value) search.focus(); });
+    search.addEventListener('input', findPeople);
+    results.addEventListener('click', event => {
+      const person = results.people?.find(row => row.id === event.target.closest('[data-voucher-option]')?.dataset.voucherOption);
+      if (!person) return;
+      element.cashCounterparty = { kind: kind.value, id: person.id, name: person.name };
+      search.value = person.name;
+      search.setCustomValidity('');
+      results.replaceChildren();
+      search.focus();
+    });
+    element.elements.type.addEventListener('change', event => {
+      const incoming = event.target.value === 'in';
+      element.elements.category.innerHTML = voucherCategories(event.target.value);
+      element.querySelector('[data-voucher-party-label]').textContent = incoming ? 'Người nộp tiền' : 'Người nhận tiền';
+      modal.querySelector('#modal-title').textContent = incoming ? 'Thu tiền' : 'Chi tiền';
+    });
   }
 
   function openCashSessionForm(returnFlow) {
@@ -6219,11 +6673,12 @@
     const pending = loadPendingCustomerPayment(customerId);
     const due = BigInt(customer.balance_vnd || '0');
     if (due <= 0n && !pending) return toast('Khách hàng không còn nợ', 'Không có khoản công nợ cần thu.');
-    const payload = pending ? pending.payload : { amountVnd: due.toString(), method: 'cash', note: '' };
+    const fromFinance = openedOnPage === 'finance';
+    const payload = pending ? pending.payload : { amountVnd: fromFinance ? '' : due.toString(), method: 'cash', note: '' };
     const disabled = pending ? 'disabled' : '';
     const max = due > BigInt(Number.MAX_SAFE_INTEGER) ? Number.MAX_SAFE_INTEGER : Number(due);
     const body = `<form id='entity-form' data-form='customer-payment' data-customer-id='${esc(customerId)}'><div class='checkout-total'><span>Còn phải thu · ${esc(customer.name)}</span><strong>${moneyVndText(customer.balance_vnd || '0')}</strong></div><div class='form-grid'><div class='form-field'><label class='input-label'>Số tiền nhận (VND) *</label><input class='input' name='amountVnd' type='number' min='1' max='${max}' step='1' value='${esc(payload.amountVnd)}' required ${disabled}/></div><div class='form-field'><label class='input-label'>Phương thức nhận tiền</label><div class='select-wrap'><select class='input' name='method' ${disabled}><option value='cash' ${payload.method === 'cash' ? 'selected' : ''}>Tiền mặt</option><option value='bank_transfer' ${payload.method === 'bank_transfer' ? 'selected' : ''}>Chuyển khoản</option><option value='bank_qr' ${payload.method === 'bank_qr' ? 'selected' : ''}>QR ngân hàng</option><option value='card' ${payload.method === 'card' ? 'selected' : ''}>Thẻ</option><option value='other' ${payload.method === 'other' ? 'selected' : ''}>Khác</option></select></div></div><div class='form-field full'><label class='input-label'>Ghi chú</label><input class='input' name='note' maxlength='300' value='${esc(payload.note || '')}' placeholder='Ghi chú không bắt buộc' ${disabled}/></div></div><div class='modal-note'>Khoản thu được tự động phân bổ vào các đơn còn nợ cũ nhất trước, sau đó mới trừ công nợ đầu kỳ. Thanh toán không tiền mặt được nhân viên xác nhận thủ công.</div>${pending ? `<div class='modal-note'>Yêu cầu thu tiền đang chờ xác nhận. Gửi lại cùng nội dung để tránh ghi nhận hai lần.</div>` : ''}</form>`;
-    showModal(pending ? 'Kiểm tra khoản thu đang chờ' : 'Thu công nợ khách hàng', 'Slink tự phân bổ khoản thu theo thứ tự đơn cũ trước.', body, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Quay lại hồ sơ</button><button class='btn btn-primary' type='submit' form='entity-form'>${pending ? 'Thử lại khoản thu' : 'Lưu khoản thu'}</button>`);
+    showModal(pending ? 'Kiểm tra khoản thu đang chờ' : 'Thu công nợ khách hàng', 'Slink tự phân bổ khoản thu theo thứ tự đơn cũ trước.', body, `<button class='btn btn-secondary' type='button' data-action='close-modal'>${fromFinance ? 'Hủy' : 'Quay lại hồ sơ'}</button><button class='btn btn-primary' type='submit' form='entity-form'>${pending ? 'Thử lại khoản thu' : 'Lưu khoản thu'}</button>`);
   }
 
   async function saveCustomerPayment(form) {
@@ -6255,7 +6710,6 @@
       await Promise.all([refreshList, loadFinancePage()]);
       toast('Đã ghi nhận khoản thu', `${moneyVndText(result.payment.amountVnd)} · còn nợ ${moneyVndText(result.payment.customerBalanceVnd)}`);
       if (canFinishHere && page === 'customers' && modalGeneration === generation && !modal.hidden) await openCustomerDetail(customerId);
-      if (page === 'finance') render();
     } catch (error) {
       if (error.status === 401) showSignedOut('Phiên đăng nhập đã hết hạn. Đăng nhập lại để kiểm tra khoản thu.', 'error');
       else if (error.status >= 400 && error.status < 500 && !['idempotency_conflict', 'request_in_progress'].includes(error.code)) {
@@ -6533,6 +6987,36 @@
     startScanCamera(modal.querySelector('[data-action="start-camera-scan"]'));
   }
 
+  function openInventoryBarcode() {
+    const body = `<form id='entity-form' data-form='inventory-scan'>
+      <div class='scan-camera-panel' data-scan-surface data-scan-mode='warehouse-search' data-scan-target='inventory-scan-code'>
+        <div class='scan-camera-stage'><div class='scan-camera-prompt' aria-hidden='true'>${icon('scan', 28)}<strong>Đặt mã vạch vào khung</strong></div>
+          <video id='scan-camera-video' class='scan-camera-video' playsinline muted hidden aria-label='Camera quét mã vạch'></video>
+          <div class='scan-viewfinder' aria-hidden='true'><i></i><i></i><i></i><i></i></div></div>
+        <p id='scan-camera-status' class='scan-camera-status' role='status'></p>
+        <button class='btn btn-secondary' type='button' data-action='start-camera-scan'>Mở camera</button>
+        <label class='form-field'><span class='input-label'>Nhập mã vạch</span><input id='inventory-scan-code' class='input' maxlength='80' required autocomplete='off' inputmode='text' placeholder='Mã in trên sản phẩm'/></label>
+      </div></form>`;
+    showModal('Quét mã tìm hàng', '', body, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button><button class='btn btn-primary' type='submit' form='entity-form'>Tìm trong kho</button>`);
+    const form = modal.querySelector('[data-form="inventory-scan"]');
+    form.addEventListener('submit', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      searchInventoryBarcode(form.querySelector('#inventory-scan-code').value);
+    });
+    startScanCamera(form.querySelector('[data-action="start-camera-scan"]'));
+  }
+
+  function searchInventoryBarcode(value) {
+    const code = value.trim();
+    if (!code || page !== 'inventory') return;
+    closeModal();
+    inventoryStockFilter = 'all';
+    searchTerms.inventory = code;
+    root.querySelectorAll('[data-stock]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.stock === 'all')));
+    loadInventoryPage(code, 0, { keepSearch: true });
+  }
+
   function openProductFromScan(barcode, photo, sku) {
     closeModal();
     if (!['owner', 'manager', 'stockkeeper'].includes(store.role)) {
@@ -6650,12 +7134,18 @@
     const image = surface?.querySelector('#scan-photo-preview');
     const captureButton = surface?.querySelector('[data-action="capture-scan-photo"]');
     const form = modal.querySelector('form[data-form="scan"]');
-    if (!surface || !video || !codeInput || (surface.dataset.scanMode !== 'order' && !form)) return;
+    const warehouseSearch = surface?.dataset.scanMode === 'warehouse-search';
+    const inlineBarcode = surface?.dataset.scanMode === 'barcode-field' || warehouseSearch;
+    if (!surface || !video || !codeInput || (!inlineBarcode && surface.dataset.scanMode !== 'order' && !form)) return;
     if (!window.isSecureContext || !navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
       setScanCameraStatus('Camera cần kết nối HTTPS và trình duyệt cho phép sử dụng camera. Bạn vẫn có thể nhập mã thủ công.', true);
       return;
     }
     const Detector = window.BarcodeDetector;
+    if (inlineBarcode && typeof Detector !== 'function') {
+      setScanCameraStatus('Thiết bị này chưa hỗ trợ tự đọc mã qua camera. Bạn có thể nhập mã vạch.', true);
+      return;
+    }
     scanCameraStarting = true;
     const requestedFormats = surface.dataset.scanMode === 'order'
       ? ['qr_code', 'ean_13', 'ean_8', 'code_128', 'code_39', 'upc_a', 'upc_e', 'itf']
@@ -6667,6 +7157,7 @@
         let supportedFormats = [];
         if (typeof Detector.getSupportedFormats === 'function') supportedFormats = await Detector.getSupportedFormats();
         if (requestGeneration !== scanCameraGeneration || modal.hidden) return;
+        if (inlineBarcode && typeof Detector.getSupportedFormats === 'function' && !supportedFormats.length) throw new Error('Không có định dạng hỗ trợ');
         const formats = supportedFormats.length ? requestedFormats.filter(function (format) { return supportedFormats.includes(format); }) : requestedFormats;
         if (!formats.length) throw new Error('Trình duyệt không hỗ trợ định dạng mã này.');
         scanCameraDetector = new Detector({ formats });
@@ -6674,6 +7165,11 @@
     } catch (error) {
       if (requestGeneration !== scanCameraGeneration) return;
       scanCameraDetector = null;
+      if (inlineBarcode) {
+        scanCameraStarting = false;
+        setScanCameraStatus('Thiết bị này chưa hỗ trợ tự đọc mã qua camera. Bạn có thể nhập mã vạch.', true);
+        return;
+      }
       setScanCameraStatus('Không thể tự đọc mã trên trình duyệt này. Mình sẽ mở camera để chụp ảnh mã cho bạn xem.');
     }
     if (requestGeneration !== scanCameraGeneration || modal.hidden) return;
@@ -6703,12 +7199,12 @@
       scanCameraStarting = false;
       if (button) button.textContent = 'Đang quét…';
       if (captureButton) captureButton.disabled = false;
-      setScanCameraStatus(scanCameraDetector
+      setScanCameraStatus(inlineBarcode ? 'Đưa mã vạch vào khung và giữ yên.' : scanCameraDetector
         ? `Đưa mã ${surface.dataset.scanMode === 'order' ? 'đơn' : 'mặt hàng'} vào giữa khung và giữ yên. Slink tự đọc mã; nếu chưa đọc được sau 10 giây, Slink sẽ chụp ảnh để tiếp tục.`
         : surface.dataset.scanMode === 'order'
           ? 'Trình duyệt này chưa tự đọc mã. Sau 10 giây, Slink chụp ảnh để bạn nhìn lại rồi nhập mã đơn.'
           : 'Trình duyệt này chưa tự đọc mã. Sau 10 giây, Slink chụp ảnh rồi mở biểu mẫu để bạn nhập thông tin mặt hàng.');
-      scanPhotoFallbackTimer = window.setTimeout(function () {
+      if (!inlineBarcode) scanPhotoFallbackTimer = window.setTimeout(function () {
         if (scanCameraRunning && requestGeneration === scanCameraGeneration && !modal.hidden) captureScanPhoto();
       }, 10000);
       const detectFrame = async function () {
@@ -6720,6 +7216,19 @@
             const detected = codes.find(function (code) { return typeof code.rawValue === 'string' && code.rawValue.trim(); });
             const rawValue = detected ? detected.rawValue.trim() : '';
             if (rawValue) {
+              if (inlineBarcode) {
+                if (rawValue.length < 3 || rawValue.length > codeInput.maxLength) {
+                  stopScanCamera();
+                  setScanCameraStatus('Mã đọc được không hợp lệ. Thử quét lại hoặc nhập mã vạch.', true);
+                } else if (warehouseSearch) {
+                  searchInventoryBarcode(rawValue);
+                } else {
+                  codeInput.value = rawValue;
+                  codeInput.dispatchEvent(new Event('input', { bubbles: true }));
+                  closeProductBarcode();
+                }
+                return;
+              }
               stopScanCamera();
               codeInput.value = rawValue;
               if (surface.dataset.scanMode === 'order') {
@@ -6733,6 +7242,11 @@
             }
           } catch (error) {
             if (requestGeneration !== scanCameraGeneration) return;
+            if (inlineBarcode) {
+              stopScanCamera();
+              setScanCameraStatus('Chưa đọc được mã. Thử quét lại hoặc nhập mã vạch.', true);
+              return;
+            }
             setScanCameraStatus('Chưa đọc được mã. Mình sẽ chụp ảnh để bạn xem lại…');
             await captureScanPhoto();
             return;
@@ -7236,18 +7750,23 @@
   }
 
   async function saveProduct(form) {
+    if (form.dataset.saving === 'true') return;
+    closeProductBarcode();
     const data = new FormData(form); const id = form.dataset.id; const old = id ? productById(id) : null;
+    const feedback = form.querySelector('[data-product-editor-error]');
+    const report = message => { feedback.textContent = message; feedback.hidden = false; feedback.scrollIntoView({ block: 'nearest' }); };
+    feedback.hidden = true;
     let image; try { image = readProductPhoto(form); } catch (error) { return toast('Chưa lưu được mặt hàng', error.message, 'error'); }
     const payload = {
       image,
       name: String(data.get('name')).trim(),
       sku: String(data.get('sku') || '').trim(),
       barcode: String(data.get('barcode') || '').trim() || null,
-      category: String(data.get('category') || 'Chưa phân loại').trim(),
+      category: readProductCategory(data),
       unit: String(data.get('unit') || 'cái').trim(),
       salePriceVnd: Number(data.get('price')),
       costVnd: Number(data.get('cost') || 0),
-      lowStockThreshold: Number(data.get('minStock') || 0),
+      lowStockThreshold: Number(data.get('minStock') ?? old?.minStock ?? 0),
       inventoryTracked: data.get('inventoryTracked') === 'on',
     };
     if (old?.variantGroupId) {
@@ -7257,16 +7776,22 @@
     }
     try { const pack=readProductPack(form); if(pack!==undefined)payload.purchasePack=pack;if(!old&&pack&&!String(data.get('cost')||'').trim())payload.costVnd=Number(window.SlinkPurchaseUnits.fromPack(pack).unitCostVnd); } catch(error) { return toast('Kiểm tra quy đổi nhập hàng',error.message,'error'); }
     if (old) payload.version = Number(form.dataset.version);
+    form.dataset.saving = 'true';
+    const submit = modal.querySelector('.modal-footer [type="submit"]');
+    submit.disabled = true;
     try {
       const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/products${old ? `/${encodeURIComponent(old.id)}` : ''}`, {
         method: old ? 'PUT' : 'POST', body: payload,
       });
-      closeModal();
+      if (modal.contains(form)) closeModal();
       toast(old ? 'Đã cập nhật sản phẩm' : 'Đã thêm sản phẩm', result.product.name);
       if (page === 'inventory') await loadInventoryPage(searchTerms.inventory, inventoryOffset);
       else await loadProductsPage(searchTerms.products, productOffset);
     } catch (error) {
-      toast('Chưa lưu được sản phẩm', error.message, 'error');
+      if (modal.contains(form)) report(error.message);
+    } finally {
+      delete form.dataset.saving;
+      if (submit.isConnected) submit.disabled = false;
     }
   }
 
@@ -7418,6 +7943,7 @@
       closeModal();
       toast(old ? 'Đã cập nhật khách hàng' : 'Đã thêm khách hàng', `${customer.name}${!old && Number(payload.openingBalanceVnd) > 0 ? ` · công nợ ban đầu ${money(Number(payload.openingBalanceVnd))}` : ''}`);
       if (page === 'pos') cartCustomerId = customer.id;
+      if (page === 'finance') return await loadFinancePage();
       if (page === 'pos') await loadPosCustomers('');
       else await loadCustomersPage(searchTerms.customers, customerOffset);
       if (page === 'pos' && !store.customers.some(function (row) { return row.id === customer.id; })) store.customers.unshift(customer);
@@ -7525,14 +8051,28 @@
       }
       if (total > BigInt(Number.MAX_SAFE_INTEGER)) return toast('Tổng tiền quá lớn', 'Chia thành phiếu nhỏ hơn.', 'error');
       const paymentState = data.get('paymentState');
-      const amountPaidVnd = paymentState === 'full' ? Number(total) : paymentState === 'partial' ? Number(data.get('paid') || 0) : 0;
+      const amountPaidVnd = paymentState === 'full' ? Number(total) : paymentState === 'partial' ? Number(moneyInputRaw(data.get('paid'))) : 0;
       if (!Number.isSafeInteger(amountPaidVnd) || amountPaidVnd < 0) return toast('Số tiền không hợp lệ', 'Số tiền thanh toán phải là VND nguyên không âm.', 'error');
+      if (paymentState === 'partial' && (amountPaidVnd <= 0 || BigInt(amountPaidVnd) >= total)) {
+        const paid = form.elements.paid;
+        paid.setCustomValidity('Nhập số tiền lớn hơn 0 và nhỏ hơn tổng tiền hàng, hoặc đổi tình trạng thanh toán.');
+        paid.reportValidity();
+        return;
+      }
+      const supplierName = String(data.get('supplierName') || '').trim();
+      if ((supplierName && !form.receiveSupplier) || (BigInt(amountPaidVnd) < total && !supplierName)) {
+        const supplier = form.elements.supplierName;
+        supplier.setCustomValidity(supplierName ? 'Chọn tên trong danh sách hoặc bấm Thêm nhà cung cấp.' : 'Chọn nhà cung cấp để ghi nợ.');
+        supplier.reportValidity();
+        return;
+      }
       pending = {
         storeId: store.id,
         key: newIdempotencyKey(),
         payload: { _slinkOfflineVersion: 1,
           items: normalizedItems,
-          amountPaidVnd: amountPaidVnd, supplierName: String(data.get('supplierName') || '').trim(),
+          amountPaidVnd, supplierName,
+          ...(form.receiveSupplier?.id ? { supplierId: form.receiveSupplier.id } : {}),
           note: String(data.get('note') || '').trim(), method: String(data.get('method') || 'cash'),
           warehouseId: String(data.get('warehouseId') || selectedWarehouseId || ''),
         },
@@ -7607,8 +8147,14 @@
     let pending = loadPendingCash();
     if (!pending) {
       const data = new FormData(form);
-      const amountVnd = Number(data.get('amount'));
+      const amountVnd = Number(moneyInputRaw(data.get('amount')));
       if (!Number.isSafeInteger(amountVnd) || amountVnd <= 0) return toast('Số tiền không hợp lệ', 'Nhập số tiền bằng VND nguyên dương.', 'error');
+      if (data.get('partyKind') && !form.cashCounterparty) {
+        const search = form.elements.partySearch;
+        search.setCustomValidity('Chọn một người trong danh sách hoặc chọn Không chọn.');
+        search.reportValidity();
+        return;
+      }
       pending = {
         storeId: store.id,
         key: newIdempotencyKey(),
@@ -7618,11 +8164,12 @@
           category: String(data.get('category') || 'Vận hành'),
           method: String(data.get('method') || 'cash'),
           note: String(data.get('note') || '').trim(),
+          ...(form.cashCounterparty ? { counterparty: form.cashCounterparty } : {}),
         },
       };
     }
     if (!savePendingCash(pending)) return pendingSaveFailed();
-    form.querySelectorAll('input,select').forEach(function (field) { field.disabled = true; });
+    form.querySelectorAll('input,select,textarea,button').forEach(function (field) { field.disabled = true; });
     const submitButton = modal.querySelector('button[type="submit"][form="entity-form"]');
     if (submitButton) submitButton.disabled = true;
     try {
@@ -7632,13 +8179,12 @@
       clearPendingCash();
       closeModal();
       await loadFinancePage();
-      render();
       toast(result.offlineQueued ? 'Đã lưu thu chi trên máy' : (pending.payload.direction === 'in' ? 'Đã ghi phiếu thu' : 'Đã ghi phiếu chi'), money(Number(result.movement.amountVnd)));
     } catch (error) {
       if (error.status === 401) showSignedOut('Phiên đăng nhập đã hết hạn. Đăng nhập lại để kiểm tra phiếu thu chi.', 'error');
       else if (error.status >= 400 && error.status < 500 && !['idempotency_conflict', 'request_in_progress'].includes(error.code)) {
         clearPendingCash();
-        form.querySelectorAll('input,select').forEach(function (field) { field.disabled = false; });
+        form.querySelectorAll('input,select,textarea,button').forEach(function (field) { field.disabled = false; });
       }
       toast('Chưa lưu được phiếu thu chi', error.message, 'error');
       if (submitButton && !modal.hidden) submitButton.disabled = false;
@@ -8307,7 +8853,7 @@
       Promise.all(dashboardLoads).then(render);
     }
     else if (page === 'inventory') loadWarehouses().then(function () { return loadInventoryPage(searchTerms.inventory, 0); });
-    else if (page === 'finance') loadFinancePage();
+    else if (page === 'finance') { render(); loadFinancePage(); }
     else if (page === 'reports') loadAnalytics(chartRange === '30 ngày' ? 30 : 7);
     else if (page === 'settings') { if (store.id) loadStoreProfile(); loadAccountSecurity(); }
     else if (page === 'affiliate') loadAffiliateLinks(0);
@@ -8493,10 +9039,36 @@
   window.addEventListener('scroll', guidedTourViewportChanged, { passive: true, capture: true });
 
   document.addEventListener('click', function (event) {
+    const editorMenu = modal.querySelector('[data-product-editor-more][open]');
+    if (editorMenu && !editorMenu.contains(event.target)) editorMenu.open = false;
     const route = event.target.closest('[data-route]');
     if (route) { routeTo(route.dataset.route); return; }
     const button = event.target.closest('[data-action]'); if (!button) return;
     const action = button.dataset.action; const id = button.dataset.id;
+    if (editorMenu?.contains(button)) {
+      editorMenu.open = false;
+      if (modal.querySelector('form[data-saving="true"]')) return;
+      const open = { 'adjust-stock': openStockAdjust, 'product-price-history': openProductPriceHistory, 'add-product-to-existing-variant-group': openProductVariantAdd, 'archive-product': archiveProduct }[action];
+      if (open) requestCloseModal(() => open(id));
+      return;
+    }
+    if (action === 'generate-product-sku') {
+      const field = button.form.elements.sku;
+      if (field.disabled || button.form.dataset.saving === 'true') return;
+      field.value = newProductSku();
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+      field.focus();
+      return;
+    }
+    if (action === 'scan-product-barcode') {
+      if (button.form.elements.barcode.disabled || button.form.dataset.saving === 'true') return;
+      const surface = button.form.querySelector('[data-scan-mode="barcode-field"]');
+      surface.hidden = false;
+      surface.querySelector('button').focus({ preventScroll: true });
+      startScanCamera();
+      return;
+    }
+    if (action === 'stop-product-barcode') { closeProductBarcode(); return; }
     if (action === 'settings-area') { selectSettingsArea(Number(button.dataset.index)); return; }
     if (action === 'remove-product-photo') { removeProductPhoto(button); return; }
     if (action === 'quick-channel-status') { channelState.orderStatus = button.dataset.status || ''; loadChannelOrders(0); return; }
@@ -8544,7 +9116,16 @@
     else if (action === 'account-logout') showModal('Đăng xuất tài khoản?', 'Các việc đã lưu trên thiết bị được giữ lại cho đúng tài khoản.', '', `<button class='btn btn-secondary' data-action='close-modal'>Ở lại</button><button class='btn btn-primary' data-action='logout'>Đăng xuất</button>`);
     else if (action === 'discard-settings') { root.querySelectorAll('form[data-dirty]').forEach(form => delete form.dataset.dirty); routeTo(button.dataset.next); }
     else if (action === 'reload-finance') loadFinancePage();
-    else if (action === 'finance-tab') { financeTab = button.dataset.tab; render(); }
+    else if (action === 'finance-tab') {
+      financeTab = button.dataset.tab;
+      button.parentElement.querySelector('[aria-current]')?.removeAttribute('aria-current');
+      button.setAttribute('aria-current', 'page');
+      refreshFinanceBody();
+    }
+    else if (action === 'new-debtor') openCustomer(null, { debt: true });
+    else if (action === 'finance-receivable') openReceivable(id);
+    else if (action === 'finance-reminder') openDebtReminder(id);
+    else if (action === 'share-finance-reminder' || action === 'copy-finance-reminder') useDebtReminder(action === 'share-finance-reminder');
     else if (action === 'cash-movement-detail') openCashMovement(Number(button.dataset.index));
     else if (action === 'view-customer-debt' || action === 'customer-quick-filter') {
       customerSegmentFilter = action === 'view-customer-debt' ? 'owing' : button.dataset.segment || '';
@@ -8556,11 +9137,17 @@
     else if (action === 'revoke-session') revokeAccountSession(id);
     else if (action === 'retry-pos-catalog') loadWarehouses().then(function () { return loadProductsPage('', 0); });
     else if (action === 'products-page') loadProductsPage(searchTerms.products, Number(button.dataset.offset) || 0);
-    else if (action === 'inventory-page') loadInventoryPage(searchTerms.inventory, Number(button.dataset.offset) || 0);
+    else if (action === 'inventory-page') loadInventoryPage(searchTerms.inventory, Number(button.dataset.offset) || 0, { keepSearch: true });
+    else if (action === 'inventory-stock-filter' && button.dataset.stock !== inventoryStockFilter) {
+      inventoryStockFilter = button.dataset.stock;
+      button.parentElement.querySelector('[aria-pressed="true"]')?.setAttribute('aria-pressed', 'false');
+      button.setAttribute('aria-pressed', 'true');
+      loadInventoryPage(searchTerms.inventory, 0, { keepSearch: true });
+    }
+    else if (action === 'inventory-scan') openInventoryBarcode();
     else if (action === 'customers-page') loadCustomersPage(searchTerms.customers, Number(button.dataset.offset) || 0).then(render);
     else if (action === 'orders-page') loadOrdersPage(searchTerms.orders, Number(button.dataset.offset) || 0).then(render);
     else if (action === 'close-modal') requestCloseModal();
-    else if (action === 'discard-modal-input') { if (!activeWrites) dismissModal(); }
     else if (action === 'keep-modal-input') {
       button.closest('.modal-discard')?.remove();
       if (modalEditedField?.isConnected) modalEditedField.focus({ preventScroll: true });
@@ -8944,7 +9531,8 @@
 
   document.addEventListener('change', function (event) {
     if (!event.target.matches('[data-purchase-search]')) cancelReceiveProductSearch(event.target.closest('[data-purchase-line]'));
-    if(event.target.name==="usePurchasePack")updateProductHints(event.target.form);
+    if (event.target.matches('[data-product-category]')) updateProductCategoryField(event.target, true);
+    if (event.target.closest('.product-editor-form')) updateProductHints(event.target.form);
     if (event.target.id === 'register-workspace') { const field = event.target.form.querySelector('[data-shop-registration]'); const shop = event.target.value === 'shop'; field.hidden = !shop; field.querySelector('input').required = shop; field.querySelector('input').disabled = !shop; return; }
     if (event.target.matches('[data-product-photo-input]')) { selectProductPhoto(event.target); return; }
     if (event.target.name === 'businessProfile' && event.target.closest('#business-profile-onboarding')) {
@@ -9346,9 +9934,15 @@
   });
 
   backdrop.addEventListener('click', requestCloseModal);
+  modal.addEventListener('invalid', function (event) {
+    const details = event.target.closest('.editor-identity-details');
+    if (details) details.open = true;
+  }, true);
   document.addEventListener('keydown', function (event) {
     keepModalFocus(event);
+    if (event.key === 'Enter' && event.target.id === 'product-barcode') event.preventDefault();
     if (event.key === 'Escape') {
+      if (closeProductBarcode() || closeProductEditorMenu()) { event.preventDefault(); return; }
       if (!modal.hidden) requestCloseModal();
       else if (document.querySelector('#drawer-cart.open')) setCartDrawerOpen(false);
     }
@@ -9394,6 +9988,7 @@
   });
   document.addEventListener('visibilitychange', function () { if (document.hidden) stopScanCamera(); else if (authSession) { offlineRowsChanged(false).catch(() => {}); startOfflineSync(); } });
   window.SlinkHandleBack = function () {
+    if (closeProductBarcode() || closeProductEditorMenu()) return true;
     if (!modal.hidden) { requestCloseModal(); return true; }
     if (document.getElementById('drawer-cart')?.classList.contains('open')) { setCartDrawerOpen(false); return true; }
     const home = taskFocusRoute || defaultTaskFocusRoute();

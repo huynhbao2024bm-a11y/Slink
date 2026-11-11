@@ -37,5 +37,8 @@
     const quantity = BigInt(quantityMilli);
     return (BigInt(totalVnd) * 1000n + quantity / 2n) / quantity;
   }
-  return { fromPack, unitCostFromTotal };
+  function isPackName(value) {
+    return typeof value === 'string' && /\p{L}/u.test(value);
+  }
+  return { fromPack, unitCostFromTotal, isPackName };
 });

@@ -111,7 +111,11 @@
 
   function moneyEntry(state, operation, direction, amountVnd, method, category, sourceType) {
     if (amountVnd === 0n) return;
-    state.moneyEntries.push({ source_id: 'local:' + operation.key, source_type: sourceType, direction, amount_vnd: String(amountVnd), method, category, note: operation.payload.note || '', actor_name: operation.actorName || 'Bạn', occurred_at: operation.payload.offline?.occurredAt || operation.queuedAt, cash_session_id: state.session?.id || null, offline_pending: true });
+    const localId = 'local:' + operation.key;
+    state.moneyEntries.push({ source_id: localId, source_type: sourceType, direction, amount_vnd: String(amountVnd), method, category, note: operation.payload.note || '', actor_name: operation.actorName || 'Bạn', occurred_at: operation.payload.offline?.occurredAt || operation.queuedAt, cash_session_id: method === 'cash' ? state.session?.id || null : null, cash_session_opened_at: method === 'cash' ? state.session?.openedAt : null, offline_pending: true,
+      ...(operation.kind === 'cash' && operation.payload.counterparty ? { counterparty: operation.payload.counterparty } : {}),
+      ...(operation.kind === 'sale' ? { order_id: localId, order_number: 'TẠM-' + String(operation.sequence).padStart(4, '0') } : {}),
+    });
     if (method === 'cash' && state.session && operation.kind !== 'shift-close') {
       const field = direction === 'in' ? 'cashInVnd' : 'cashOutVnd';
       state.session[field] = String(BigInt(state.session[field] || 0) + amountVnd);
@@ -190,14 +194,18 @@
         const amounts = purchaseLineAmounts(item, milli);
         total += amounts.total; move(state, operation, product, milli, validate);
         const version = Number(product.version || 1) + 1;
-        for (const peer of state.products.values()) if (peer.id === product.id) { peer.cost_vnd = String(amounts.unitCost); peer.version = version; if (amounts.pack) peer.purchase_pack = amounts.pack; }
+        for (const peer of state.products.values()) if (peer.id === product.id) { peer.cost_vnd = String(amounts.unitCost); peer.version = version; if (purchaseUnits.isPackName(amounts.pack?.name)) peer.purchase_pack = amounts.pack; }
       }
       const paid = amount(body.amountPaidVnd || 0);
       if (paid > total) throw problem('offline_overpaid_purchase', 'Tiền trả không được lớn hơn phiếu nhập.');
       if (paid < total && !String(body.supplierName || '').trim()) throw problem('supplier_required', 'Nhập tên nhà cung cấp để theo dõi khoản còn phải trả.');
       if (body.method === 'cash') cash(state, operation, -paid, validate);
       moneyEntry(state, operation, 'out', paid, body.method || 'cash', 'Nhập hàng', 'purchase_payment');
-      if (paid < total) { const name = body.supplierName.trim().toLocaleLowerCase('vi-VN'); state.supplierDebtChanges.set(name, { name: body.supplierName.trim(), amount: (state.supplierDebtChanges.get(name)?.amount || 0n) + total - paid, key: operation.key }); }
+      if (paid < total) {
+        const name = body.supplierName.trim();
+        const supplierKey = body.supplierId || name.toLocaleLowerCase('vi-VN');
+        state.supplierDebtChanges.set(supplierKey, { id: body.supplierId, name, amount: (state.supplierDebtChanges.get(supplierKey)?.amount || 0n) + total - paid, key: operation.key });
+      }
       return state;
     }
     if (operation.kind === 'stock-count') {
@@ -238,18 +246,36 @@
 
   function projectResponse(url, value, responses, operations, userId) {
     const queued = operations.filter(row => row.state !== 'acknowledged');
-    if (!queued.length) return value;
+    if (!queued.length && !value.offlineStockCandidates) return value;
     const result = JSON.parse(JSON.stringify(value)), state = derive(responses, queued);
     const query = new URL(url, 'https://offline.invalid'), warehouseId = query.searchParams.get('warehouseId');
     if (/\/(products|inventory)$/.test(query.pathname)) {
+      const byProduct = new Map();
+      for (const item of state.products.values()) {
+        if (warehouseId && item.warehouseId !== warehouseId) continue;
+        if (!byProduct.has(item.id)) byProduct.set(item.id, []);
+        byProduct.get(item.id).push(item);
+      }
       result.products = (result.products || []).map(row => {
-        const candidates = Array.from(state.products.values()).filter(item => item.id === row.id && (!warehouseId || item.warehouseId === warehouseId));
-        if (!candidates.length) return row;
+        const candidates = byProduct.get(row.id);
+        if (!candidates) return row;
         return { ...row, on_hand: String(candidates.reduce((sum, item) => sum + item.milli, 0) / 1000), inventory_version: Math.max(...candidates.map(item => Number(item.inventory_version || 1))), cost_vnd: candidates[0].cost_vnd, purchase_pack: candidates[0].purchase_pack || null, version: Math.max(...candidates.map(item => Number(item.version || row.version || 1))) };
       });
       if (query.pathname.endsWith('/inventory')) {
         const products = Array.from(state.products.values()).filter(row => row.inventory_tracked && (!warehouseId || row.warehouseId === warehouseId));
-        result.summary = { total: products.length, low: products.filter(row => row.milli <= quantity(row.low_stock_threshold || 0)).length, out: products.filter(row => row.milli <= 0).length, stockValueVnd: products.some(row => row.cost_vnd == null) ? null : String(products.reduce((sum, row) => sum + lineTotal(row.cost_vnd, Math.max(0, row.milli)), 0n)) };
+        if (queued.length) result.summary = { total: products.length, low: products.filter(row => row.milli > 0 && row.milli <= quantity(row.low_stock_threshold || 0)).length, out: products.filter(row => row.milli === 0).length, stockValueVnd: products.some(row => row.cost_vnd == null) ? null : String(products.reduce((sum, row) => sum + lineTotal(row.cost_vnd, Math.max(0, row.milli)), 0n)) };
+        if (result.offlineStockCandidates) {
+          const stock = query.searchParams.get('stock');
+          const filtered = result.products.filter(row => stock === 'out'
+            ? Number(row.on_hand) === 0
+            : Number(row.on_hand) > 0 && Number(row.on_hand) <= Number(row.low_stock_threshold));
+          const offset = Math.max(0, Number(query.searchParams.get('offset')) || 0);
+          const limit = Math.max(1, Math.min(100, Number(query.searchParams.get('limit')) || 100));
+          result.products = filtered.slice(offset, offset + limit);
+          result.total = filtered.length;
+          result.nextOffset = offset + limit < filtered.length ? offset + limit : null;
+          delete result.offlineStockCandidates;
+        }
         result.movements = state.movements.filter(row => !warehouseId || row.warehouseId === warehouseId).map(row => ({ productId: row.productId, type: row.kind === 'purchase' ? 'purchase_receipt' : row.kind === 'sale' ? 'sale' : 'adjustment', delta: String(row.quantity), reason: 'Chờ đồng bộ', createdAt: row.queuedAt })).concat(result.movements || []);
       }
     }
@@ -274,11 +300,13 @@
           if (after > 0n) (result.customerDebtors ||= []).push({ ...known, balance_vnd: String(after), offline_pending: true });
         } else result.offlineCustomerDebtUnverified = true;
       }
-      for (const [name, change] of state.supplierDebtChanges) {
-        const supplier = (result.suppliers || []).find(row => row.name.toLocaleLowerCase('vi-VN') === name);
-        if (supplier) supplier.balance_vnd = String(BigInt(supplier.balance_vnd || 0) + change.amount);
-        else (result.suppliers ||= []).push({ id: 'local:' + change.key, name: change.name, balance_vnd: String(change.amount), offline_pending: true });
-        supplierDebt += change.amount;
+      for (const change of state.supplierDebtChanges.values()) {
+        const supplier = (result.suppliers || []).find(row => change.id ? row.id === change.id : row.name.toLocaleLowerCase('vi-VN') === change.name.toLocaleLowerCase('vi-VN'));
+        const before = BigInt(supplier?.balance_vnd || 0);
+        const after = before + change.amount;
+        if (supplier) supplier.balance_vnd = String(after);
+        else (result.suppliers ||= []).push({ id: change.id || 'local:' + change.key, name: change.name, balance_vnd: String(after), offline_pending: true });
+        supplierDebt += (after > 0n ? after : 0n) - (before > 0n ? before : 0n);
       }
       if (result.summary) {
         result.summary.customerDebtVnd = String(BigInt(result.summary.customerDebtVnd || 0) + customerDebt);

@@ -6,7 +6,7 @@ const { UUID_PATTERN, withStore } = require('./db');
 const { findAccessibleWarehouse } = require('./warehouse-access');
 const { lockActiveCashSession } = require('./cash-register');
 const { normalizeOffline, beginOffline, recordOffline } = require('./offline-operations');
-const { fromPack, unitCostFromTotal } = require('../purchase-units');
+const { fromPack, unitCostFromTotal, isPackName } = require('../purchase-units');
 
 const PURCHASE_ROLES = new Set(['owner', 'manager', 'stockkeeper', 'accountant']);
 const METHODS = new Set(['cash', 'bank_transfer', 'bank_qr', 'card', 'other']);
@@ -91,12 +91,15 @@ function registerPurchaseRoutes(app, { pool, env }) {
     const requestedWarehouseId = warehouseIdInput?.toLowerCase() || null;
     const paidVnd = amount(body.amountPaidVnd ?? 0, 'Số tiền đã thanh toán');
     const supplierName = typeof body.supplierName === 'string' ? body.supplierName.trim() : '';
+    const supplierInput = body.supplierId ?? null;
+    if (supplierInput !== null && (typeof supplierInput !== 'string' || !UUID_PATTERN.test(supplierInput))) throw new ApiError(400, 'validation_error', 'Nhà cung cấp không hợp lệ.');
+    const requestedSupplierId = supplierInput?.toLowerCase() || null;
     const note = typeof body.note === 'string' ? body.note.trim() : '';
     const method = body.method || 'cash';
     if (supplierName.length > 160 || note.length > 500) throw new ApiError(400, 'validation_error', 'Tên nhà cung cấp hoặc ghi chú vượt giới hạn.');
     if (!METHODS.has(method)) throw new ApiError(400, 'validation_error', 'Phương thức thanh toán không hợp lệ.');
     if (paidVnd > total) throw new ApiError(400, 'validation_error', 'Số tiền thanh toán không được vượt tổng phiếu nhập.');
-    if (paidVnd < total && !supplierName) throw new ApiError(409, 'supplier_required', 'Nhập tên nhà cung cấp để theo dõi khoản còn phải trả.');
+    if (paidVnd < total && !supplierName && !requestedSupplierId) throw new ApiError(409, 'supplier_required', 'Chọn nhà cung cấp để theo dõi khoản còn phải trả.');
     const value = Array.isArray(body.items) ? {
       items: items.map((item) => ({ productId: item.productId, quantityMilli: item.quantity.toString(), unitCostVnd: item.unitCostVnd.toString(), ...(item.pack ? { pack: item.pack } : {}), ...(item.hasExactTotal ? { lineTotalVnd: item.lineTotalVnd.toString() } : {}) })),
       totalVnd: total.toString(), paidVnd: paidVnd.toString(), supplierName, note, method,
@@ -110,6 +113,7 @@ function registerPurchaseRoutes(app, { pool, env }) {
     if (requestedWarehouseId) value.warehouseId = requestedWarehouseId;
     if (!Array.isArray(body.items) && items[0].pack) value.pack = items[0].pack;
     if (!Array.isArray(body.items) && items[0].hasExactTotal) value.lineTotalVnd = items[0].lineTotalVnd.toString();
+    if (requestedSupplierId) value.supplierId = requestedSupplierId;
     if (offline) { value.offline = offline; value.offlineVersions = offlineVersions; }
     const digest = createHash('sha256').update(JSON.stringify(value)).digest();
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
@@ -150,13 +154,20 @@ function registerPurchaseRoutes(app, { pool, env }) {
       }
 
       // Take the store lock before the cash-session and supplier locks, matching supplier cash payments.
-      if (supplierName) await client.query('SELECT id FROM stores WHERE id = $1 FOR UPDATE', [storeId]);
+      if (supplierName || requestedSupplierId) await client.query('SELECT id FROM stores WHERE id = $1 FOR UPDATE', [storeId]);
       const cashSessionId = paidVnd > 0n && method === 'cash'
         ? await lockActiveCashSession(client, storeId, { cashOutVnd: paidVnd })
         : null;
 
       let supplierId = null;
-      if (supplierName) {
+      if (requestedSupplierId) {
+        const existing = await client.query(
+          "SELECT id FROM suppliers WHERE store_id = $1 AND status = 'active' AND id = $2 FOR UPDATE",
+          [storeId, requestedSupplierId]
+        );
+        if (!existing.rowCount) throw new ApiError(404, 'supplier_not_found', 'Nhà cung cấp không còn trong danh sách của cửa hàng.');
+        supplierId = existing.rows[0].id;
+      } else if (supplierName) {
         const existing = await client.query(
           `SELECT id FROM suppliers WHERE store_id = $1 AND status = 'active' AND lower(name) = lower($2) ORDER BY created_at LIMIT 1 FOR UPDATE`,
           [storeId, supplierName]
@@ -199,7 +210,7 @@ function registerPurchaseRoutes(app, { pool, env }) {
         );
         await client.query(
           `UPDATE products SET cost_vnd = $3, purchase_pack = COALESCE($4::jsonb,purchase_pack), version = version + 1, updated_at = now() WHERE store_id = $1 AND id = $2`,
-          [storeId, product.id, item.unitCostVnd.toString(), item.pack ? JSON.stringify(item.pack) : null]
+          [storeId, product.id, item.unitCostVnd.toString(), isPackName(item.pack?.name) ? JSON.stringify(item.pack) : null]
         );
         await client.query(
           `INSERT INTO product_cost_history (store_id, product_id, unit_cost_vnd, source_type, source_id, actor_user_id)
@@ -270,6 +281,16 @@ function registerPurchaseRoutes(app, { pool, env }) {
   app.post('/api/stores/:storeId/purchases', receive);
   // A distinct route keeps older servers from accepting packs as loose items.
   app.post('/api/stores/:storeId/purchase-packs', receive);
+  app.get('/api/stores/:storeId/purchase-suppliers', async request => {
+    const auth = await authenticate(pool, request);
+    const { storeId } = request.params;
+    if (!UUID_PATTERN.test(storeId)) throw new ApiError(400, 'validation_error', 'Cửa hàng không hợp lệ.');
+    return withStore(pool, auth.userId, storeId, async (client, membership) => {
+      if (!PURCHASE_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền nhập hàng.');
+      const result = await client.query("SELECT id, name FROM suppliers WHERE store_id = $1 AND status = 'active' ORDER BY name, id", [storeId]);
+      return { suppliers: result.rows };
+    });
+  });
 }
 
 module.exports = { registerPurchaseRoutes };

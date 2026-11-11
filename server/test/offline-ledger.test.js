@@ -82,6 +82,24 @@ test('offline projection subtracts queued stock once and excludes acknowledged o
   assert.throws(() => ledger.quantity('0.0001'));
 });
 
+test('offline warehouse filters use pending counts before pagination', () => {
+  const url = '/api/stores/store/inventory?warehouseId=warehouse&stock=low&limit=1';
+  const products = [
+    { ...responses[1].value.products[0], low_stock_threshold: '2' },
+    { id: 'empty', name: 'Mặt hàng hết', inventory_tracked: true, on_hand: '0', low_stock_threshold: '5', inventory_version: 1 },
+    { id: 'low', name: 'Mặt hàng sắp hết', inventory_tracked: true, on_hand: '1', low_stock_threshold: '2', inventory_version: 1 },
+  ];
+  const cached = { products, offlineStockCandidates: true, summary: { total: 3, low: 1, out: 1 } };
+  const snapshots = [...responses, { url, value: cached, fetchedAt: '2026-11-03T10:01:00Z' }];
+  const count = operation('stock-count', { warehouseId, productId, count: '2', expectedInventoryVersion: 1 }, 1);
+  const result = ledger.projectResponse(url, cached, snapshots, [count], userId);
+  assert.deepEqual(result.products.map(row => row.id), [productId]);
+  assert.equal(result.total, 2);
+  assert.equal(result.nextOffset, 1);
+  assert.deepEqual(ledger.projectResponse(url.replace('stock=low', 'stock=out'), cached, snapshots, [count], userId).products.map(row => row.id), ['empty']);
+  assert.deepEqual(ledger.projectResponse(url, cached, snapshots, [], userId).products.map(row => row.id), ['low']);
+});
+
 test('warehouse snapshots do not borrow aggregate stock and shared product versions follow receipts', () => {
   const warehouses = { ...responses[0], value: { warehouses: [{ id: warehouseId, is_default: true }, { id: 'other', is_default: false }] } };
   const one = { ...responses[1], value: { products: [{ ...responses[1].value.products[0], version: 2, on_hand: '2', reserved: '1' }] } };
