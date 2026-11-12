@@ -1,0 +1,29 @@
+AoLinks test run: 20261112-143459
+Node: v24.22.0
+Rust: rustc 1.99.1 (58cf8f9c3 2026-10-13)
+   Compiling aolinks-engine v0.1.0 (D:\Slink\AoLinks\rust)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.63s
+     Running unittests src\lib.rs (rust\target\debug\deps\aolinks_engine-422376d9ed508454.exe)
+
+running 4 tests
+test tests::rejects_imprecise_numeric_comparisons_and_non_boolean_exists ... ok
+test tests::mismatched_trigger_does_not_evaluate_conditions_or_plan_actions ... ok
+test tests::matching_dry_run_returns_plan_without_action_configuration ... ok
+test tests::rejects_unsafe_paths_and_duplicate_action_ids ... FAILED
+
+failures:
+
+---- tests::rejects_unsafe_paths_and_duplicate_action_ids stdout ----
+
+thread 'tests::rejects_unsafe_paths_and_duplicate_action_ids' (8224) panicked at C:\Users\Serea\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde_json-1.0.154\src\value\index.rs:72:21:
+cannot access index 1 of JSON array of length 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::rejects_unsafe_paths_and_duplicate_action_ids
+
+test result: FAILED. 3 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+Rust test exit code: 101

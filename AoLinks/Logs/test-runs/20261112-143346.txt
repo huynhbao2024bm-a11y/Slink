@@ -1,0 +1,4 @@
+AoLinks test run: 20261112-143346
+Node: v24.22.0
+Rust: rustc 1.99.1 (58cf8f9c3 2026-10-13)
+Cargo stderr handling interrupted this initial run before a test result was collected.

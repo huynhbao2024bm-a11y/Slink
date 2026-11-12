@@ -1,0 +1,12 @@
+{
+  "name": "aolinks",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Reusable dry-run automation module for Slink",
+  "engines": {
+    "node": ">=24.11 <25"
+  },
+  "scripts": {
+    "test": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-tests.ps1"
+  }
+}

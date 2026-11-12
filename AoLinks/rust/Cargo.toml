@@ -1,0 +1,17 @@
+[package]
+name = "aolinks-engine"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "aolinks_engine"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+napi = { version = "3", features = ["napi8"] }
+napi-derive = "3"
+serde_json = "1"
+
+[build-dependencies]
+napi-build = "2"
