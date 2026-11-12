@@ -1,5 +1,5 @@
-const CACHE_NAME = 'slink-shell-v15';
-const APP_SHELL = ['./', './index.html', './styles.css', './app.js', './register-sw.js', './manifest.webmanifest', './assets/slink-icon.svg', './assets/slink-icon-180.png', './assets/slink-icon-192.png', './assets/slink-icon-512.png', './assets/slink-icon-maskable-512.png'];
+const CACHE_NAME = 'slink-shell-v20';
+const APP_SHELL = ['./', './index.html', './styles.css', './app.js', './privacy.html', './terms.html', './register-sw.js', './manifest.webmanifest', './assets/slink-icon.svg', './assets/slink-icon-180.png', './assets/slink-icon-192.png', './assets/slink-icon-512.png', './assets/slink-icon-maskable-512.png'];
 
 self.addEventListener('install', function (event) {
   event.waitUntil(caches.open(CACHE_NAME).then(function (cache) { return cache.addAll(APP_SHELL); }).then(function () { return self.skipWaiting(); }));

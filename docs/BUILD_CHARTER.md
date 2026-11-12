@@ -1,31 +1,40 @@
 # Slink — Build charter
 
+## Approved UI direction update (2026-11-02)
+
+The user explicitly authorized a complete interface and workflow redesign, prioritizing very simple daily work with few actions. This supersedes earlier instructions to retain the old interface. Use KiotViet and Sapo public workflows as references; separate owner management from a compact cashier POS and stock/accounting workspaces. The tea-shop example illustrates role separation, not an exclusive vertical. Existing transaction, authorization, persistence and release-evidence requirements remain applicable. See UX_REDESIGN_20261102.md.
+
+
 **Purpose:** Keep every implementation decision pointed at the product the user asked for. This is the source of truth for scope and completion. Read it before changing code and update it only when the user changes the goal or verified evidence changes what is possible.
 
 ## User’s end goal
 
-Build **Slink**, a sales and store management product that can be delivered to customers and used for real retail business operations. It must work on iOS and Android 10+ and retain the interface and design direction the user has approved.
+Build **Slink**, a sales and operations product that can be delivered to customers and used for real business operations. The current target is independent modern shops and small selling teams across fashion, cosmetics/personal care, cafés/F&B, online sellers, and hybrid sales. Traditional grocery shops are no longer the default customer, and large supermarkets/chains are not the initial target. The first vertical is still unvalidated. It must work on iOS and Android 10+ and retain the interface and design direction the user has approved.
 
 “Complete” means a customer can onboard a real store, enter or import its catalog, sell and refund goods, track inventory and money accurately, use the product from supported phones, recover data, and get dependable support. A prototype, attractive interface, local demo, or list of planned integrations does not meet this goal.
 
 ## Product promise
 
-Help a Vietnamese small retailer run the daily business in one place:
+Help a Vietnamese independent shop or small selling team start quickly, finish daily work with less repeated entry, and see how every sale, stock movement, and payment was recorded:
 
 - sell in store and record every payment;
 - know what is in stock, what moved, and why;
 - track customers, suppliers, receivables, and payables;
 - reconcile sales, cash, returns, and expenses;
 - retrieve trustworthy reports and records;
-- continue operating safely when connectivity is interrupted and reconcile later.
+- continue operating safely when connectivity is interrupted and reconcile later, only after durable offline behavior is implemented and verified.
 
-The initial target is a small independent retail shop in Vietnam. The owner/manager controls the store; cashiers and stock staff have only the access their role needs. VND, Vietnamese language, local dates, and Vietnamese retail workflows are defaults.
+VND, Vietnamese language, local dates, and Vietnamese business workflows are defaults. The product must separate store business profile, the user's job, server-enforced permissions, and a POS/device mode. A profile may simplify navigation; it does not establish that the associated vertical workflow exists. Choose the launch vertical from field evidence, not from a source-code comparison alone.
 
 ## User-requested product expansion (2026-10-15)
 
 The user has expanded Slink's target scope to include omnichannel commerce operations: multi-marketplace and website connections; product information and channel listings; a shared order workflow; multi-warehouse inventory; carrier fulfillment and COD reconciliation; marketplace finance; CRM, analytics, automation, third-party integrations, security administration, and employee/task utilities. The exact source is [`USER_FEATURE_INVENTORY.md`](USER_FEATURE_INVENTORY.md); the gap comparison and phased scope are in [`MULTICHANNEL_SCOPE.md`](MULTICHANNEL_SCOPE.md).
 
 This expansion is a staged product roadmap, not evidence that these modules exist or a reason to weaken the current retail release gates. Each connector requires a real partner app, granted scopes, credentials, webhook/TLS configuration, and end-to-end reconciliation. Prioritize a reliable core and deliver one marketplace/carrier vertical slice at a time; never show a connection or sync as successful without provider confirmation.
+
+## Customer-direction update (2026-10-31)
+
+The user clarified that the product should focus on modern independent sellers and small teams rather than treating traditional grocery as the default. The candidate groups are cafés/F&B, fashion, cosmetics/personal care, online sellers, and hybrid shops. No opening segment or first vertical has been selected. The product strategy is low-friction onboarding and task-focused workflows with complete operational and financial traceability, not maximum menu count. See [`PROJECT_PLAN.md`](PROJECT_PLAN.md) and [`TARGET_CUSTOMER_WORKFLOWS.md`](TARGET_CUSTOMER_WORKFLOWS.md). This direction does not remove unfinished capabilities; it changes their order and requires validation before committing to a vertical.
 
 ## Non-negotiable product rules
 
@@ -88,4 +97,4 @@ Code and documentation can be built in this workspace. Real cloud deployment, pr
 
 ## Current implementation is not completion evidence
 
-The current workspace includes a PWA shell, authenticated server-backed catalog, sales, returns, customer/order records, inventory adjustment, purchase receiving, customer/supplier debt payments, cashbook, analytics, and store profile settings. The production database and delivery environment are not configured; business workflows and iOS/Android devices have not been accepted. Until the roadmap contains verified gate evidence, describe Slink as in progress and be precise about which flows are real, operator-confirmed, or unavailable.
+The repository contains a PWA shell and server-backed workflows; Render and Supabase have also been configured and a Render deployment is live. These facts do not establish that every workflow is accepted or customer-ready. The latest observed deployment, application migration ledger, security advisory, and remaining evidence are recorded in [`DELIVERY_ROADMAP.md`](DELIVERY_ROADMAP.md). Until every release gate has evidence, describe Slink as in progress and be precise about which flows are real, operator-confirmed, or unavailable.

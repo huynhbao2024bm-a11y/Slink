@@ -90,4 +90,6 @@ Nền tảng cần gửi traffic tới cổng `PORT`, dùng `/api/ready` làm re
 
 ## Trạng thái hiện tại
 
-Ảnh container và bước build CI đã được thêm vào repo, nhưng chưa thể nghiệm thu build Docker tại workspace này vì Docker engine chưa được cài/khả dụng. Chưa có hosting, registry, miền HTTPS, PostgreSQL production, email provider, monitoring hoặc backup/restore được cấp và cấu hình. Không đưa dữ liệu cửa hàng thật vào môi trường này cho tới khi các mục đó và cổng trong [`DELIVERY_ROADMAP.md`](DELIVERY_ROADMAP.md) có bằng chứng.
+Người dùng đã chọn Render + Supabase và trước đây chia sẻ log cho thấy Render phục vụ ứng dụng, nhưng tài liệu workspace không xác nhận SHA đang Live, migration head/role hiện tại của Supabase, hay lần đăng ký/đăng nhập gần nhất. Đối chiếu lại trước mọi migration hoặc thay đổi biến môi trường. Build container trong CI không phải bằng chứng Docker đã được chạy tại máy phát triển; Docker engine ở workspace này chưa được xác nhận.
+
+Chưa có bằng chứng đầy đủ về email production, monitoring/alert, lịch backup ngoài máy và diễn tập restore. Chế độ bỏ xác minh email chỉ dành cho môi trường demo có giới hạn. Không đưa dữ liệu khách thật vào luồng thử cho tới khi các cổng tương ứng trong [`DELIVERY_ROADMAP.md`](DELIVERY_ROADMAP.md) có bằng chứng.

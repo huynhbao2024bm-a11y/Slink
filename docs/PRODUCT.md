@@ -1,19 +1,66 @@
 # Định hướng sản phẩm Slink
 
+## Ngoại tuyến — bản cục bộ 04/11/2026
+
+Nguồn hiện tại đã có lưu bền và đồng bộ cho bán hàng, nhận hàng, kiểm kê một mặt hàng, thu chi và ca tiền. Mã TẠM/việc chờ phải phân biệt với chứng từ đã đồng bộ. Dữ liệu đọc và ảnh là phần đã tải; tác vụ cần lịch sử/phiên bản chung, tài khoản và nhà cung cấp vẫn cần mạng. Chưa phát hành bản này lên Render. Các đoạn mô tả “chỉ cache shell/chưa có offline operations” bên dưới là trạng thái cũ; quy tắc và phạm vi hiện hành ở OFFLINE_OPERATIONS.md.
+
+
+## Bố cục mở — cập nhật 2026-11-02
+
+Bỏ thẻ lồng thẻ và viền bao trang; phân nhóm bằng tiêu đề, khoảng cách và đường kẻ nhẹ. Sản phẩm bán là các vùng chạm không viền, có phản hồi khi chọn; giỏ desktop chỉ ngăn bằng đường dọc, mobile dùng thanh thanh toán liền. Link affiliate thành danh sách thay cho từng hộp. Giữ ô nhập, hành động chính, focus và trạng thái chọn dễ nhận biết, cùng ô doanh thu xanh.
+
+
+## Trọng tâm mới: shop online và affiliate (2026-11-02)
+
+Ưu tiên giảm nhập tay cho affiliate và chủ shop online, xây nền chung TikTok Shop/Shopee. Affiliate là tài khoản cá nhân riêng, không tạo store giả; chủ shop có gian hàng, hàng, nhân viên và xử lý đơn. Ảnh sản phẩm tùy chọn, lưu bền cùng dữ liệu. Lưu link không chứng minh attribution; đơn phát sinh không đồng nghĩa hoa hồng đã nhận. Xem ONLINE_AFFILIATE_FOUNDATION.md; các mô tả UI/ưu tiên cũ phía dưới cần đọc theo hướng mới này.
+
+
+## Giao diện theo công việc — yêu cầu hiện hành 2026-11-02
+
+Dễ sử dụng là tiêu chí số một. Chủ có khu quản lý; nhân viên được mời theo vai trò bán hàng dùng POS gọn; kho và kế toán có việc riêng. Luồng chuẩn chọn hàng → thanh toán → xác nhận, bán xong ở lại POS. Tham khảo KiotViet/Sapo; ví dụ trà sữa không giới hạn ngành. Các mô tả giao diện cũ phía dưới phải được đối chiếu với UX_REDESIGN_20261102.md. Không coi nguyên liệu/công thức, lô/hạn dùng, bàn/bếp hay kết nối sàn là đã tồn tại khi chưa triển khai.
+
+
 > Đây là đặc tả **sản phẩm đích**, không phải mô tả tất cả những gì mã hiện tại đã hoàn thành. Đối chiếu trạng thái thực hiện ở [`DELIVERY_ROADMAP.md`](DELIVERY_ROADMAP.md) và tiêu chí giao khách ở [`BUILD_CHARTER.md`](BUILD_CHARTER.md).
 
 ## Định vị
 
-Trợ lý vận hành cho cửa hàng bán lẻ nhỏ: bán nhanh, biết chính xác còn bao nhiêu hàng, nhớ khách và xem tiền lời trong ngày. Người dùng chính là chủ cửa hàng/thu ngân thao tác trên điện thoại; máy tính là màn hình quản lý rộng hơn.
+Trợ lý vận hành dễ bắt đầu cho cửa hàng và nhóm bán hàng hiện đại: quán cà phê/ăn uống, shop thời trang hoặc mỹ phẩm, người bán online và mô hình vừa bán tại quầy vừa bán qua mạng. Ưu tiên cửa hàng độc lập và nhóm vận hành nhỏ; không lấy tiệm tạp hóa truyền thống làm khách hàng mặc định và chưa nhắm tới vận hành siêu thị lớn. Phân khúc mở màn vẫn cần được kiểm chứng với người dùng thật.
 
 **Phạm vi mở rộng do người dùng yêu cầu (2026-10-15):** tiến tới vận hành đa kênh gồm gian hàng marketplace/website, OMS, PIM, WMS đa kho, vận chuyển/COD, đối soát phí và CRM. Toàn bộ danh sách gốc và bảng đối chiếu được lưu tại [`USER_FEATURE_INVENTORY.md`](USER_FEATURE_INVENTORY.md) và [`MULTICHANNEL_SCOPE.md`](MULTICHANNEL_SCOPE.md). Đây là phạm vi kế hoạch; chỉ các khả năng có bằng chứng trong roadmap mới được coi là đang hoạt động.
+
+## Onboarding theo cách cửa hàng vận hành
+
+Chủ cửa hàng được hỏi cách vận hành một lần khi bắt đầu tài khoản/cửa hàng mới. Chủ của cửa hàng đã tồn tại trước khi có lựa chọn này sẽ được hỏi một lần khi đăng nhập đầu tiên sau cập nhật. Người chưa chắc có thể chọn “Chưa rõ, hướng dẫn tôi”, rồi xác nhận; chỉ đánh dấu hoàn tất sau khi máy chủ lưu thành công. Đóng hộp thoại không tự chọn thay người dùng. Nhân viên được mời không bị hỏi lựa chọn dành cho chủ cửa hàng.
+
+### Hành trình bắt đầu được ưu tiên (2026-10-31)
+
+Đăng ký cửa hàng → chọn loại hình → thêm vài mặt hàng hoặc nhập danh sách → bán hàng → bổ sung thông tin theo nhu cầu. Đây là thay đổi cả giao diện lẫn chức năng; các tác vụ nâng cao không trở thành điều kiện để có đơn đầu tiên.
+
+- POS của cửa hàng chưa có hàng hiện hai đường rõ ràng: thêm mặt hàng và nhập danh sách. Phân biệt chưa có dữ liệu với đang tải/lỗi kết nối. Không dựng bảng bán hàng và giỏ trống cho bước này.
+- Thêm mặt hàng chỉ mở sẵn tên, giá bán, số lượng đang có. Mã hàng được tạo nếu bỏ trống; nhóm hàng, đơn vị, mã vạch, giá nhập và mức nhắc tồn nằm trong phần thông tin thêm. Có thể lưu liên tiếp nhiều mặt hàng.
+- Số lượng đang có là tồn ban đầu, không phải một chuyến nhập hàng mới và không tạo khoản chi giả. Cùng dùng giao dịch nhập danh mục hiện có để lưu sản phẩm, giá và tồn ban đầu; lưu bản chờ theo người/cửa hàng và gửi lại cùng khóa khi chưa rõ kết quả. Không đổi schema cho lát cắt này.
+- Mặt hàng theo dõi tồn nhưng chưa có số lượng được lưu vào danh mục và hướng tới kho, không cho bán vượt tồn. Dịch vụ/mặt hàng không theo dõi tồn có thể để số lượng 0. Giá nhập chưa điền được lưu là 0 theo mô hình hiện tại, có nhắc ngay tại trường nhập; không tuyên bố báo cáo lãi đã chính xác khi thiếu giá vốn, không sửa lại giao dịch quá khứ tự động.
+- Nhập danh sách vẫn dùng CSV có mẫu, xem trước và xác nhận. Chưa hỗ trợ nhập trực tiếp tệp Excel, ảnh hoặc đồng bộ từ nền tảng khác.
+- Trang sản phẩm giữ hai thao tác chính; nhóm màu/cỡ, cập nhật hàng loạt và xuất danh sách nằm trong “Thao tác khác”. Các quyền và API vẫn kiểm tra như trước.
+
+Phạm vi hiện tại là mã nguồn local; chưa nghiệm thu hành trình mới trên điện thoại hoặc cơ sở dữ liệu thật. Hướng dẫn theo ngữ cảnh cho toàn bộ nghiệp vụ và tinh gọn các trang còn lại tiếp tục nằm trong kế hoạch.
+
+Hồ sơ **cửa hàng** quyết định những khu vực nghiệp vụ nào xuất hiện trong menu. Các khu vực không phù hợp được ẩn khỏi menu, không bị xóa khỏi hệ thống và không làm mất dữ liệu. Chủ/quản lý có thể đổi hồ sơ trong Cài đặt để hiện nhóm khu vực khác. Thu chi, Cài đặt và các mục bảo mật cần thiết vẫn dễ tìm để cửa hàng theo dõi tiền và quản lý tài khoản. Mọi thao tác vẫn chịu quyền do máy chủ kiểm tra; ẩn mục trong giao diện không phải cơ chế phân quyền.
+
+“Dễ bắt đầu” dành cho mọi người: từ ngữ quen thuộc, chữ và vùng bấm dễ đọc, ít lựa chọn cùng lúc. Không gắn cách dùng với tuổi hay trình độ công nghệ. Đơn từ sàn/website hiện được ghi nhận thủ công, không tự đồng bộ. Việc chọn quán ăn/quán cà phê hoặc bán buôn không chứng minh Slink đã có bàn, menu/tùy chọn món, bếp, công thức tiêu hao kho hay giá sỉ. Chi tiết phạm vi, ranh giới POS và tiêu chí nghiệm thu nằm trong [`ONBOARDING_AND_ACCESS_PROFILES.md`](ONBOARDING_AND_ACCESS_PROFILES.md); trạng thái thực hiện nằm trong [`DELIVERY_ROADMAP.md`](DELIVERY_ROADMAP.md).
+
+## Cập nhật khách hàng mục tiêu (2026-10-31)
+
+Giữ một lõi chung cho bán hàng, nhận hàng, tồn, thu chi, đổi/trả và lịch sử; trình bày theo việc của từng mô hình. Quán ăn có thể cần bàn/bếp; thời trang cần màu/size và đổi hàng; một số mỹ phẩm cần lô/hạn dùng; người bán online cần đơn, đóng gói, giao hàng và đối soát kênh. Không bật mọi nhóm chức năng cho mọi cửa hàng. Phân biệt lựa chọn mô hình kinh doanh với vai trò công việc và quyền tài khoản.
+
+Camera quét mã hiện đã bị gỡ khỏi workspace theo giả định khách hàng cũ là tiệm tạp hóa; quyết định này được mở lại vì quét mã có thể hữu ích cho shop nhiều SKU. Chưa khôi phục hay đưa camera trở lại. Giữ mã vạch và tìm bằng chữ; chỉ quyết định cách quét sau khi quan sát quầy bán và nhận hàng trong phân khúc thử nghiệm. Quy trình và giả thuyết chọn phân khúc nằm trong [`TARGET_CUSTOMER_WORKFLOWS.md`](TARGET_CUSTOMER_WORKFLOWS.md).
 
 ## Điều hướng
 
 | Khu vực | Việc chính | Kết quả mong muốn |
 | --- | --- | --- |
 | Tổng quan | Xem doanh thu, số đơn, lãi gộp, hàng sắp hết, việc vừa làm | Biết cửa hàng đang vận hành thế nào trong vài giây |
-| Bán hàng | Tìm hoặc quét mặt hàng, thêm giỏ, gắn khách, giảm giá, thu tiền | Hoàn tất đơn tại quầy nhanh, tồn và công nợ cập nhật cùng lúc |
+| Bán hàng | Chạm mặt hàng thường bán hoặc tìm bằng tên/SKU/mã vạch; cách quét đang chờ kiểm chứng theo mô hình | Hoàn tất đơn tại quầy nhanh, tồn và công nợ cập nhật cùng lúc |
 | Sản phẩm | Tạo SKU, giá bán/giá vốn, đơn vị, mức cảnh báo | Tìm được hàng và thấy biên lợi nhuận cơ bản |
 | Đơn hàng | Tìm theo mã đơn, tên/điện thoại khách hoặc SKU; lọc trạng thái trên toàn bộ lịch sử; xem thanh toán, ghi chú nội bộ, gắn nhãn, nhận trả hàng | Truy vết giao dịch và phối hợp nhân viên xử lý đơn |
 | Khách hàng | Hồ sơ, lịch sử mua, nhãn phân loại, công nợ | Lọc nhóm chăm sóc và theo dõi khoản còn thiếu |
@@ -29,6 +76,8 @@ Trợ lý vận hành cho cửa hàng bán lẻ nhỏ: bán nhanh, biết chính
 Mỗi sản phẩm có một dòng thời gian chỉ đọc cho giá bán, ghi nhận giá ban đầu khi tạo hoặc nhập CSV và từng lần đổi giá thủ công hay cập nhật hàng loạt. Mỗi thay đổi lưu giá trước/sau bằng VND nguyên, thời điểm, nguồn thao tác, người thực hiện và mã lô nếu có. Lịch sử được ghi cùng giao dịch với bản ghi sản phẩm; nếu lưu sản phẩm hoặc audit thất bại thì cả thay đổi giá và lịch sử đều rollback. Các dòng không sửa/xóa được. Chủ cửa hàng, quản lý, nhân viên kho và kế toán được xem; thu ngân không được xem lịch sử này. Với sản phẩm đã có trước migration, dòng đầu chỉ chụp giá tại thời điểm bật tính năng; Slink không thể khôi phục các lần đổi giá cũ. API phân trang theo ID để tải lịch sử dài mà không bỏ sót khi có cập nhật mới.
 
 Màn hình **Bảo mật tài khoản** trong Cài đặt liệt kê tối đa 50 phiên còn hiệu lực và 50 sự kiện gần nhất của đúng tài khoản đang đăng nhập. Người dùng có thể thu hồi một phiên khác sau khi xác nhận; phiên hiện tại phải đăng xuất theo luồng thông thường. Nhật ký lưu loại sự kiện và thời điểm, không lưu mật khẩu, mã phiên, địa chỉ IP hoặc vị trí. Migration/API/UI và PGlite acceptance đã được thêm; native PostgreSQL và trình duyệt sau migration vẫn cần nghiệm thu.
+
+Mục **Đổi mật khẩu** trong Cài đặt yêu cầu mật khẩu hiện tại, mật khẩu mới từ 12 đến 128 ký tự và nhập lại khớp. Máy chủ kiểm tra mật khẩu hiện tại, lưu hash mới, vô hiệu hóa liên kết đặt lại chưa dùng và thu hồi các phiên khác; phiên đang dùng được giữ lại. Sau khi lưu, màn hình làm mới danh sách phiên và lịch sử bảo mật. Source đã được thêm; cần xác minh cú pháp, sau đó mới thử API/runtime, database và giao diện. Không khẳng định tính năng đã lên hosting chỉ vì có trong workspace.
 
 ### Nhóm biến thể và thuộc tính sản phẩm
 
@@ -91,6 +140,9 @@ Migrations 0011–0014, API và giao diện đã được thêm. PGlite acceptan
 ## Nguyên tắc giao diện
 
 - Mobile first; thanh điều hướng dưới cùng chỉ giữ các khu vực dùng thường xuyên.
+- Dùng chữ đủ lớn để đọc trên điện thoại; phần giải thích ưu tiên câu ngắn, từ quen thuộc và một việc rõ ràng trên mỗi khu vực. Không lặp số liệu đã có ở báo cáo hoặc trên cùng màn hình.
+- Sau đăng nhập, mặc định mở Bán hàng cho chủ, quản lý và thu ngân để có thể bắt đầu giao dịch ngay; nhân viên kho vào Kho hàng, kế toán vào Thu chi. Nếu còn đơn bán đang chờ gửi, mở lại đơn đó. Tổng quan vẫn mở được từ menu. Cửa hàng chưa có mặt hàng thấy hướng dẫn ngắn theo mô hình và vai trò; trợ giúp luôn mở lại được. Người dùng sẽ tự thử các luồng thực tế và gửi lỗi/log để xử lý tiếp.
+- Kho chính tự được chọn khi bán, nhập hàng và ghi nhận đơn online. Chỉ hiện lựa chọn đổi kho khi có nhiều kho; người dùng chỉ đổi khi đơn thuộc kho khác.
 - Nút thao tác chính lớn, có nhãn; trạng thái kho/công nợ dùng chữ đi kèm màu.
 - Không tạo đơn khi giỏ trống; xác nhận rõ số tiền thu và phần còn nợ.
 - Giá luôn hiển thị theo VND; lãi gộp được ghi là ước tính từ giá vốn đã nhập.
@@ -103,6 +155,8 @@ Các luồng ưu tiên những khả năng quen thuộc của phần mềm bán 
 ### Nghiên cứu tính năng và cách trình bày
 
 Các trang sản phẩm KiotViet liệt kê tồn kho/thẻ kho, nhập và kiểm hàng, chuyển/hủy hàng, công nợ và thanh toán nhà cung cấp, phiếu thu chi, báo cáo theo hàng/khách/nhân viên, và thiết bị quầy như máy quét/máy in ([KiotViet — tính năng quản lý bán lẻ](https://global.kiotviet.vn/)). Đây là danh mục tham khảo, không phải lý do để đưa mọi chức năng vào lần phát hành đầu. Slink ưu tiên một chuỗi dễ hiểu trên điện thoại: **bán hàng → tồn kho/công nợ cập nhật → tìm lại đơn → trả hàng hoặc thu nợ → đối chiếu thu chi và báo cáo**. Các thao tác có tác động tài chính cần nêu số tiền, phương thức và phần còn nợ trước khi xác nhận; tình trạng thanh toán cần phân biệt rõ xác nhận thủ công với giao dịch đã được nhà cung cấp thanh toán xác nhận.
+
+**Ghi chú thay đổi (2026-10-31):** phần mô tả quét camera trong lịch sử tài liệu đã lỗi thời. Workspace hiện không còn camera quét mã mặt hàng hoặc mã đơn; người dùng nhập/tìm mã bằng bàn phím. Mã vạch lưu trên sản phẩm vẫn được hỗ trợ trong ô tìm kiếm.
 
 Hướng dẫn Shopify ghi rõ một số thao tác không khả dụng khi mất mạng, như tìm/tạo khách, trả hàng/void và đồng bộ đơn/tồn; hãng cũng cảnh báo giữ ứng dụng và thiết bị hoạt động để tránh mất đơn đang chờ đồng bộ ([Shopify — hành vi POS ngoại tuyến](https://help.shopify.com/en/manual/sell-in-person/shopify-pos/selling-offline/offline-features)). Vì vậy Slink hiện chỉ mở lại vỏ giao diện offline và khóa hành động cần máy chủ; trước khi tuyên bố bán offline phải có hàng đợi lưu bền, mã giao dịch chống trùng, trạng thái chờ đồng bộ và quy tắc giải quyết xung đột. Google cho biết web app Android có thể được thêm vào màn hình chính nhưng khả năng offline tùy từng app ([Google Chrome Help — web apps](https://support.google.com/chrome/answer/9658361?hl=en)); cài được PWA không đồng nghĩa các giao dịch bán hàng đã hỗ trợ offline.
 

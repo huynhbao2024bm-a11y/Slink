@@ -6,9 +6,11 @@
 | --- | --- | --- |
 | Tiền mặt/chuyển khoản/QR/thẻ tại quầy | Nhân viên ghi nhận phương thức và số tiền; hệ thống chưa nhận xác nhận thanh toán từ ngân hàng/cổng | Chọn luồng đối soát phù hợp cho cửa hàng; tài khoản merchant, sandbox, callback/webhook đã xác minh, retry/idempotency, truy vấn trạng thái, hoàn tiền và đối soát cuối ngày |
 | Hóa đơn điện tử | Chưa phát hành hoặc quản lý trạng thái hóa đơn từ nhà cung cấp | Chọn nhà cung cấp theo điều kiện pháp lý/cửa hàng; tài khoản API sandbox và production, quy tắc lập/điều chỉnh/hủy, mã số thuế và chữ ký/ủy quyền cần thiết; chuyên gia có thẩm quyền xác nhận phạm vi áp dụng |
-| Email đăng nhập/lời mời | Máy chủ có adapter HTTP HTTPS dạng JSON; khi phát triển có thể trả liên kết kiểm tra, production bắt buộc endpoint và bearer token | Chọn dịch vụ gửi thư, xác thực domain người gửi, cấu hình secret, kiểm tra gửi/nhận, bounce/throttle và quy trình xử lý thư thất lạc |
+| Email đăng nhập/lời mời | Máy chủ có adapter HTTPS gửi JSON gồm `to`, `subject`, `text`; source hiện không gửi trường `from`. `DEMO_DISABLE_EMAIL_VERIFICATION` có thể bỏ bước xác minh trong môi trường demo. Log Render trước đây có `email_unavailable`; trạng thái gửi thư hiện tại chưa xác minh | Nếu endpoint được trỏ thẳng tới nhà cung cấp, thêm cấu hình người gửi hợp lệ và kiểm tra hợp đồng request theo tài liệu provider; hoặc dùng gateway riêng có người gửi đã cấu hình. Xác thực domain, lưu token an toàn, thử gửi/nhận, bounce/throttle và quy trình thất lạc thư. Chỉ bật bypass cho demo |
 | Thu phí Slink và gói dịch vụ | Chưa có bảng giá, quyền theo gói, subscription lifecycle hoặc thu phí của chính Slink | Quyết định chủ thể bán hàng, giá/chu kỳ/gia hạn/hủy/hoàn tiền, thuế/hóa đơn, hỗ trợ và điều khoản; chọn đơn vị thanh toán cho giao dịch định kỳ |
-| Hosting và database | Có API PostgreSQL và cấu hình container trung lập nhà cung cấp | Chọn tài khoản cloud, vùng lưu trữ, miền, ngân sách, chính sách mạng, SLA, backup/restore và bên chịu trách nhiệm vận hành |
+| Hosting và database | Người dùng đã chọn Render + Supabase và từng chia sẻ log cho thấy service chạy. SHA Live, migration/role hiện tại, backup ngoài máy và restore chưa được xác nhận trong lần rà soát này | Đối chiếu trạng thái thật; chốt người vận hành, ngân sách, miền riêng nếu cần, chính sách mạng, backup/restore, monitoring và rollback |
+
+**Trạng thái kiểm tra hiện tại:** Có bằng chứng lịch sử rằng người dùng đã triển khai Slink trên Render và kết nối Supabase; chưa có ảnh/log mới xác nhận SHA Live, database role/schema, email thành công hoặc restore. Xem [`DELIVERY_ROADMAP.md`](DELIVERY_ROADMAP.md) trước khi xem lại một tích hợp cũ là đã xong.
 
 ## Nguồn chính thức để lựa chọn
 

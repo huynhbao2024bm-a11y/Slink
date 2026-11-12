@@ -6,7 +6,7 @@ const rateLimit = require('@fastify/rate-limit');
 const staticFiles = require('@fastify/static');
 const { existsSync } = require('node:fs');
 const path = require('node:path');
-const { ApiError, registerAuthRoutes } = require('./auth');
+const { ApiError, emailVerificationDisabled, registerAuthRoutes } = require('./auth');
 const { createPool } = require('./db');
 const { databaseTransportOptions } = require('./database-transport');
 const { registerProductRoutes } = require('./products');
@@ -36,6 +36,8 @@ const ASSETS = new Map([
   ['/index.html', 'index.html'],
   ['/verify', 'index.html'],
   ['/invite', 'index.html'],
+  ['/privacy.html', 'privacy.html'],
+  ['/terms.html', 'terms.html'],
   ['/styles.css', 'styles.css'],
   ['/app.js', 'app.js'],
   ['/register-sw.js', 'register-sw.js'],
@@ -48,26 +50,41 @@ const ASSETS = new Map([
   ['/assets/slink-icon-maskable-512.png', 'assets/slink-icon-maskable-512.png'],
 ]);
 
-function trustedProxies(value) {
-  if (!value) return false;
-  return value.split(',').map((item) => item.trim()).filter(Boolean);
+function trustedProxies(addressesValue, hopsValue) {
+  const addresses = (addressesValue || '').split(',').map((item) => item.trim()).filter(Boolean);
+  const hops = (hopsValue || '').trim();
+  if (addresses.length && hops) {
+    throw new Error('Configure either TRUSTED_PROXY_IPS or TRUSTED_PROXY_HOPS, not both.');
+  }
+  if (addresses.length) return addresses;
+  if (!hops) return false;
+  if (!/^[1-5]$/.test(hops)) {
+    throw new Error('TRUSTED_PROXY_HOPS must be an integer from 1 to 5.');
+  }
+  return Number(hops);
 }
 
 function validateProductionConfig(env) {
+  if (env.DEMO_DISABLE_EMAIL_VERIFICATION && !['true', 'false'].includes(env.DEMO_DISABLE_EMAIL_VERIFICATION)) {
+    throw new Error('DEMO_DISABLE_EMAIL_VERIFICATION must be either true or false.');
+  }
   if (env.NODE_ENV !== 'production') return;
   databaseTransportOptions(env, env.APP_DATABASE_URL, 'APP_DATABASE_URL');
+  const demoBypass = emailVerificationDisabled(env);
   let publicOrigin;
   let deliveryUrl;
   try {
     publicOrigin = new URL(env.PUBLIC_ORIGIN);
-    deliveryUrl = new URL(env.EMAIL_DELIVERY_URL);
+    if (!demoBypass) deliveryUrl = new URL(env.EMAIL_DELIVERY_URL);
   } catch {
-    throw new Error('Production requires valid PUBLIC_ORIGIN and EMAIL_DELIVERY_URL values.');
+    throw new Error(demoBypass
+      ? 'Production demo mode still requires a valid PUBLIC_ORIGIN.'
+      : 'Production requires valid PUBLIC_ORIGIN and EMAIL_DELIVERY_URL values.');
   }
   if (publicOrigin.protocol !== 'https:' || publicOrigin.pathname !== '/' || publicOrigin.search || publicOrigin.hash || publicOrigin.username || publicOrigin.password) {
     throw new Error('Production PUBLIC_ORIGIN must be an HTTPS origin without a path or credentials.');
   }
-  if (deliveryUrl.protocol !== 'https:' || typeof env.EMAIL_DELIVERY_TOKEN !== 'string' || env.EMAIL_DELIVERY_TOKEN.length < 32) {
+  if (!demoBypass && (deliveryUrl.protocol !== 'https:' || typeof env.EMAIL_DELIVERY_TOKEN !== 'string' || env.EMAIL_DELIVERY_TOKEN.length < 32)) {
     throw new Error('Production requires an HTTPS email delivery endpoint and a token of at least 32 characters.');
   }
 }
@@ -85,9 +102,10 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
       },
     } : false,
     bodyLimit: 1024 * 1024,
-    trustProxy: trustedProxies(env.TRUSTED_PROXY_IPS),
+    trustProxy: trustedProxies(env.TRUSTED_PROXY_IPS, env.TRUSTED_PROXY_HOPS),
     routerOptions: { ignoreTrailingSlash: true },
   });
+  app.decorate('slinkEmailVerificationDisabled', emailVerificationDisabled(env));
 
   await app.register(helmet, {
     contentSecurityPolicy: {
@@ -110,7 +128,10 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
     global: true,
     max: env.NODE_ENV === 'test' ? 1000 : 120,
     timeWindow: '1 minute',
-    errorResponseBuilder: () => ({ error: { code: 'rate_limit', message: 'Quá nhiều yêu cầu. Vui lòng thử lại sau.' } }),
+    errorResponseBuilder: () => Object.assign(
+      new Error('Quá nhiều yêu cầu. Vui lòng thử lại sau.'),
+      { statusCode: 429, code: 'rate_limit' }
+    ),
   });
   await app.register(staticFiles, { root: APP_ROOT, prefix: '/', serve: false });
 
@@ -181,8 +202,11 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
   });
 
   app.setErrorHandler((error, request, reply) => {
-    if (!(error instanceof ApiError)) request.log.error({ route: request.routeOptions.url || '/api/:unmatched', err: error }, 'Request failed');
-    const statusCode = Number.isInteger(error.statusCode) && error.statusCode >= 400 && error.statusCode < 500 ? error.statusCode : 500;
+    const isRateLimitError = error?.code === 'rate_limit';
+    if (!(error instanceof ApiError) && !isRateLimitError) request.log.error({ route: request.routeOptions.url || '/api/:unmatched', err: error }, 'Request failed');
+    const statusCode = isRateLimitError
+      ? 429
+      : (Number.isInteger(error.statusCode) && error.statusCode >= 400 && error.statusCode < 500 ? error.statusCode : 500);
     return reply.code(statusCode).send({
       error: {
         code: statusCode === 500 ? 'internal_error' : (error.code || 'request_error'),
@@ -201,8 +225,15 @@ async function main() {
   validateProductionConfig(process.env);
   const pool = createPool();
   const app = await buildServer({ pool });
+  if (emailVerificationDisabled(process.env)) {
+    app.log.warn('Demo mode is enabled: store-owner sign-up skips email verification. Turn it off after the demonstration.');
+  }
   const port = Number(process.env.PORT || 3000);
-  const host = process.env.HOST || '127.0.0.1';
+  // Render's proxy cannot reach a listener bound only to loopback, even if HOST
+  // was set to 127.0.0.1 in the service dashboard.
+  const host = process.env.RENDER === 'true'
+    ? '0.0.0.0'
+    : (process.env.HOST || '127.0.0.1');
   await app.listen({ port, host });
   app.log.info({ address: `http://${host}:${port}` }, 'Slink API listening');
   const shutdown = async () => {

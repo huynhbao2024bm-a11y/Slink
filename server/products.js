@@ -356,10 +356,13 @@ function registerProductRoutes(app, { pool, env }) {
                 p.updated_at, COUNT(*) OVER()::int AS total_count
          FROM products p
          LEFT JOIN LATERAL (
-           SELECT SUM(b.on_hand) FILTER (WHERE ($6::uuid IS NULL OR b.warehouse_id = $6) AND ($7::uuid[] IS NULL OR b.warehouse_id = ANY($7))) AS on_hand,
-                  SUM(b.reserved) FILTER (WHERE ($6::uuid IS NULL OR b.warehouse_id = $6) AND ($7::uuid[] IS NULL OR b.warehouse_id = ANY($7))) AS reserved,
-                  MAX(b.version) FILTER (WHERE ($6::uuid IS NULL OR b.warehouse_id = $6) AND ($7::uuid[] IS NULL OR b.warehouse_id = ANY($7))) AS version
-           FROM inventory_balances b WHERE b.store_id = p.store_id AND b.product_id = p.id
+           SELECT SUM(b.on_hand) AS on_hand,
+                  SUM(b.reserved) AS reserved,
+                  MAX(b.version) AS version
+           FROM inventory_balances b
+           WHERE b.store_id = p.store_id AND b.product_id = p.id
+             AND ($6::uuid IS NULL OR b.warehouse_id = $6)
+             AND ($7::uuid[] IS NULL OR b.warehouse_id = ANY($7))
          ) i ON true
          WHERE p.status = $1 AND ($2 = '' OR p.name ILIKE '%' || $2 || '%' OR p.variant_group_name ILIKE '%' || $2 || '%'
            OR p.variant_attributes::text ILIKE '%' || $2 || '%' OR p.sku_normalized LIKE '%' || lower($2) || '%' OR p.barcode = $2)

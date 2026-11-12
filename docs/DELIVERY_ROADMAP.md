@@ -1,10 +1,149 @@
 # Slink — Delivery roadmap and evidence ledger
 
+## Bản offline đã lên production — 05/11/2026
+
+**Mục đích và phạm vi.** Phát hành 25 tệp của PR #38 để cửa hàng lưu và đồng bộ sáu nhóm thao tác khi mất mạng. Bản phát hành cũng sửa bố cục ở các kích thước màn hình đã thử.
+
+**Phụ thuộc đã đạt.** Bản sao lưu Supabase mã hóa lúc 19:04 ngày 05/11 đã được xác minh lại, 684.414 byte, SHA-256 bắt đầu bằng `bfbc35b146da`. GitHub Actions [42024846890](https://github.com/huynhbao2024bm-a11y/Slink/actions/runs/42024846890) chạy thành công từ commit `7cdb820`. Truy vấn Supabase xác nhận migration `0027_offline_operations.sql` khớp SHA-256 trong mã. Bảng receipt bật và bắt buộc RLS. Role ứng dụng có quyền đọc và thêm, không có quyền sửa, xóa hoặc xóa toàn bộ bảng.
+
+**Bằng chứng phát hành.** [PR #38](https://github.com/huynhbao2024bm-a11y/Slink/pull/38) gộp vào main tại `427ed78`. Cây mã trùng với bản đã qua hai kiểm tra của GitHub. Render deploy `dep-dbm77kavcj2c7386ogb0` lên live khoảng 19:18 giờ Việt Nam. `/api/ready` trả 200 với `status: ready`. Trang chính và ba tệp đồng bộ khớp mã trên main, service worker trả phiên bản `slink-offline-8710e2ac4a850eb522d4`. Truy vấn log trong khoảng 19:17–19:22 không thấy lỗi mức error.
+
+**Phần còn mở.** Kiểm tra production mới xác nhận triển khai, kết nối và tải tài nguyên. Giao dịch, đồng bộ khi mất mạng và xử lý xung đột trên điện thoại thật vẫn cần nghiệm thu. Bước tiếp theo là ca thử trên thiết bị thật và diễn tập khôi phục bản sao lưu ở môi trường riêng. Giữ ưu tiên xử lý xung đột offline cho chủ cửa hàng trước khi giao khách dùng làm hệ thống duy nhất.
+
+## Phát hành và đánh giá lại — 04/11/2026
+
+**Mục đích:** đưa bản offline/responsive đã kiểm tra lên GitHub và đánh giá khả năng vận hành, không chỉ giao diện. **Phạm vi phát hành:** commit `7cdb820`, [PR #38](https://github.com/huynhbao2024bm-a11y/Slink/pull/38), 25 tệp mã/kiểm tra/deploy; không gồm `docs/`, dữ liệu local hoặc thông tin đăng nhập. Nhánh đã đồng bộ từ main `99d6573` trước commit. [CI 41844000885](https://github.com/huynhbao2024bm-a11y/Slink/actions/runs/41844000885) đạt cả API/schema và container.
+
+**Phụ thuộc và trạng thái:** Supabase thật còn `0026`, chưa có bảng receipt `0027`. Đang chờ người dùng chạy backup mới (mật khẩu nhập riêng trên máy), sau đó dispatch workflow migration từ đúng nhánh/SHA, xác minh schema/role rồi mới gộp main. Render auto-deploy main; đưa runtime mới lên trước schema sẽ làm startup guard từ chối. Bản đang live là `99d6573`, readiness 200; lần đọc đầu 32,6s và lần sau 811ms, chưa cô lập nguyên nhân. Không có giao dịch production thử trong đợt rà soát. Các mục cũ bên dưới là ảnh chụp bằng chứng tại ngày tương ứng, không thay trạng thái mới nhất này.
+
+**Đánh giá mới:** [OPERATIONAL_REVIEW_20261104.md](OPERATIONAL_REVIEW_20261104.md). Có thể pilot bán lẻ đơn giản/một quầy có kiểm soát; chưa đủ giao làm hệ thống vận hành duy nhất. Điểm P1 mới: xung đột offline được giữ an toàn nhưng chưa có quy trình cho chủ xử lý giá/tồn/ca đã đổi để tiếp tục cả hàng đợi. Online chưa khép đơn–giao–hoàn–tiền; affiliate chỉ là sổ link. Đổi hàng liền mạch/trả nhà cung cấp còn thiếu; FnB nguyên liệu/bếp, lô/hạn và nhiều quầy là khoảng trống theo ngành. Đối chiếu với hướng dẫn chính thức KiotViet/Sapo ngày 04/11, không suy ra năng lực từ quy mô hoặc marketing.
+
+**Việc tiếp theo hiện tại:** (1) hoàn tất backup → migration0027 → main/Render và xác minh; (2) thiết kế/kiểm chứng xử lý ngoại lệ offline và đổi/trả nguồn nhập; (3) ca vận hành hai điện thoại thật và restore bản mới; (4) một luồng online đầu-cuối với quyền API thật, sau đó mở ngành theo khách hàng. Mỗi việc vẫn cần scope/phụ thuộc/evidence; 56/56 test và 3/3 PostgreSQL local không đóng toàn bộ cổng giao khách.
+
+
+## Offline và responsive — kiểm cục bộ đạt (2026-11-04)
+
+**Mục đích:** tiếp tục việc bán/kho/tiền khi mạng gián đoạn và sửa bố cục gây khó thao tác trên phone/tablet. **Phạm vi:** cache theo danh tính/kho, sáu nhóm write lưu trước trên thiết bị, tự gửi/chống trùng/kiểm conflict, ca local, giỏ nháp, ảnh, receipt TẠM, sổ chờ và shell cùng phiên bản; tên/giá/tồn có làn riêng, giữ panel/focus/scroll khi async và lựa chọn loại cửa hàng khi mở lại offline.
+
+**Bằng chứng:**56/56 Node API/schema/domain;3/3 PostgreSQL18.6 thật với role migrator/app và concurrent sale (tồn12, hai đơn8 chỉ nhận1, tồn4/tiền740k); ca UI offline7ops rồi đóng mở/tự sync khớp2đơn/tồn14/ca200k lệch0. Lost response sau commit không trùng, price conflict giữ nguyên giá/key và chặn hàng sau, IDB2tab/lease/quota/atomic ack đạt. Browser restart offline giữ ảnh và tìm hàng thứ130. Đăng ký demo nhớ tài khoản ngay, loại cửa hàng không hỏi lại và bán được offline.115 tổ hợp giao diện ở9độ rộng không tràn/chồng theo phép đo; giỏ30dòng giữ cuộn/focus và background response không đóng giỏ. Docker runtime build và kiểm tệp chạy đạt. Chi tiết/giới hạn ở OFFLINE_OPERATIONS.md; artifact private ở .local-data/offline-evidence và offline-layout-evidence.
+
+**Phụ thuộc trước release:** đăng nhập/chuẩn bị dữ liệu trên thiết bị, lưu trữ trình duyệt, migration0027 có backup và role đúng; điện thoại iOS/Android thật chưa nghiệm thu. Lịch sử offline là phần đã tải, không phải toàn bộ lịch sử server. Trả/hủy/nợ/điều chuyển/danh mục chung, tài khoản và provider vẫn cần server. **Trạng thái:** triển khai và nghiệm thu cục bộ đạt trong phạm vi trên; chưa commit/push/merge/migrate Supabase/deploy, không gọi sản phẩm hoàn thiện. User chưa yêu cầu phát hành đợt này. Các cổng còn lại vẫn mở.
+
+
+## Tạm dừng theo yêu cầu người dùng (2026-11-03)
+
+Đã lưu nhánh offline cục bộ, chưa phát hành. Sáu kiểm tra ledger/backend/schema đạt; ca UI mất mạng/đồng bộ đầu cuối chưa hoàn thành. Người dùng bổ sung yêu cầu sửa các chỗ lệch giao diện ở nhiều cỡ màn hình. Chi tiết mã đang sửa, môi trường thử, bằng chứng và việc tiếp theo ở OFFLINE_IMPLEMENTATION_NOTES.md. Đã tiếp tục ngày04/11; xem mục mới nhất phía trên.
+
+
+## Yêu cầu mới: làm việc khi mất mạng (2026-11-03)
+
+Người dùng yêu cầu ứng dụng vẫn làm được việc khi mất kết nối, chỉ tác vụ thật sự phụ thuộc server/provider cần mạng. Bắt đầu nhánh codex/offline-operations-20261103 từ main2d6be6e, giữ docs cũ. Đọc OFFLINE_OPERATIONS.md: cần lưu bền, sổ chờ, phục hồi, đồng bộ có chống trùng/xung đột và bằng chứng nghiệp vụ. Đợt offline chưa phát hành; không gọi cache shell hiện có là offline operations.
+
+
+## Đã phát hành #36 và đánh giá vận hành (2026-11-03)
+
+Main 2d6be6e đã gộp PR #36; CI41619226438 đạt API/schema và container. Render dep-dbkrelcs728c7391ca10 live đúng commit, readiness và tài nguyên mới trả200; cửa sổ log sau deploy không có error. Bản mới gồm12 tệp, không có docs/dữ liệu thử. Không có migration mới.
+
+Đã đo và giảm chi phí handler giỏ trên cùng danh mục100 hàng/CPU slowdown4x; phản hồi chuyển trang không chờ API xong. Giữ giao diện ít mục nhưng đưa lại xanh thương hiệu/nền POS phân cấp theo phản hồi người dùng. Một ca UI local nhập→trả/hoàn→kiểm kê→chi→chốt khớp40.000đ, lệch0; báo cáo sau hoàn khớp0. Phát hiện P1: offline với danh mục đã tải vẫn hiện hàng cũ, lỗi chỉ có toast tiếng Anh; chưa có bằng chứng bán offline/đồng bộ. Online/affiliate vẫn là nền thủ công, chưa đủ tự động hóa mục tiêu. Xem [OPERATIONAL_REVIEW_20261103.md](OPERATIONAL_REVIEW_20261103.md) cho kết luận theo nhóm khách, bằng chứng, phụ thuộc và thứ tự tiếp theo. Chưa đủ giao làm hệ thống vận hành duy nhất; không suy ra mọi giao dịch production đã nghiệm thu từ HTTP200.
+
+
+## Bản giao diện theo công việc và sửa đăng nhập (2026-11-03) — Evidence passed trong phạm vi ghi dưới đây
+
+Người dùng đã gộp PR #35; main/Render hiện ở 3994e39. Đăng nhập lỗi vì schema còn 0024, log xác nhận thiếu users.workspace_mode. Workflow production-migrate 41609650950 áp dụng 0025/0026 và kiểm tra quyền thành công; người dùng xác nhận đăng nhập được. Tham chiếu backup đã verify ngày 2026-10-26, checksum archive còn khớp; không phải backup mới hôm nay.
+
+Đợt redesign mới đang ở codex/calm-workspace-20261103 từ main3994e39: ba mục chính, khu quản lý thu gọn, POS/thu ngân riêng, cài đặt từng phần giữ nội dung khi tải chậm, chữ lớn và biểu đồ không có số liệu trang trí. Có guard kiểm tra schema trước khi máy chủ production nhận lưu lượng. 49/49 test API/schema đạt; Playwright 44 tổ hợp trang/cỡ màn hình đạt, bán ba thao tác và tồn12→11, luồng ảnh/affiliate/vai trò đạt. Danh mục trống/130 mặt hàng, biểu đồ30 ngày và phản hồi hồ sơ chậm đã kiểm tra thêm. Taste lint và inspector trang đăng nhập ba cỡ màn hình không có finding; trang cần đăng nhập được đo bằng Playwright, không gộp với bằng chứng inspector. Chi tiết/phụ thuộc ở [UX_CALM_REDESIGN_20261103.md](UX_CALM_REDESIGN_20261103.md).
+
+Đợt mới chưa push/merge/deploy, chưa build container mới; iOS/Android thật và đo hiệu năng vẫn mở. Chứng cứ local .local-data/calm-redesign. Các ghi nhận ngày trước bên dưới là lịch sử, không thay trạng thái mới nhất này.
+
+## Đưa bản nâng cấp lên GitHub (2026-11-03)
+
+Đã commit 84da57d và đẩy codex/easy-operations-20261102, mở PR #35: https://github.com/huynhbao2024bm-a11y/Slink/pull/35. Đúng 15 tệp mã nguồn/test/lockfile và hai migration mới; không gồm docs, dữ liệu local, ảnh thử hoặc skill cài trên máy. Toàn bộ pnpm test đạt 48/48 trên local; kiểm tra cú pháp và cài dependency frozen offline đạt. Main vẫn e0eb1fc. Chưa merge, migration production hoặc deploy. Cần chạy 0025/0026 bằng workflow production-migrate với backup đã verify trước khi triển khai phiên bản mới; không gọi việc lưu link là kết nối API sàn. CI run 41608423640 đã đạt cả API and schema acceptance và Production container build. Đây là bằng chứng CI của commit, không phải migration production hoặc nghiệm thu triển khai.
+
+## Tinh gọn khung giao diện (2026-11-02) — Evidence passed cho phạm vi local
+
+Bỏ khung panel, thẻ thống kê, khung tìm kiếm lồng ngoài và thẻ link affiliate; nền trắng liền, danh sách dùng đường phân cách. Giỏ desktop ngăn bằng một đường dọc, thanh thanh toán mobile không còn hộp nổi. Giữ khối doanh thu xanh và dấu hiệu chọn/focus. Edge local kiểm tra lại 34 tổ hợp trang/kích thước 320/360/390/768/1024/1440px: không tràn ngang toàn trang, đúng thanh/giỏ theo cỡ màn hình, tăng/giảm không đóng giỏ, lưu sale rồi ở lại POS, nhập hàng trả đủ và đối chiếu tồn 12→11→10→15. Luồng ảnh và affiliate cũng đạt lại sau đổi bố cục. Bằng chứng ở .local-data/open-layout-evidence và .local-data/open-layout-affiliate-evidence. Kiểm tra cú pháp/diff đạt. Preview 3011 đã khởi động bằng mã mới, áp dụng 0025/0026 vào PGlite local riêng; không phải migration production. Chưa có bằng chứng iOS/Android thật, chưa đo hiệu năng và chưa đẩy GitHub/deploy. Nền chung API sàn vẫn ở trạng thái chưa kết nối theo ONLINE_AFFILIATE_FOUNDATION.md.
+
+
+## Ảnh và nền online/affiliate (2026-11-02) — In progress
+
+Local đã có ảnh sản phẩm lưu transaction cùng sản phẩm/tồn (0025), tài khoản affiliate không cần store, lưu link cá nhân TikTok/Shopee và chuyển khu làm việc của chủ (0026). Chủ online mở vào đơn cần xử lý. 33 test thuộc API/biến thể, ảnh, affiliate và shell/readiness đạt; kiểm tra Edge local qua upload/đổi/bỏ/đọc ảnh ở phiên khác, lưu link hai sàn/tải lại và vào đúng khu theo chế độ. Ảnh và kết quả ở .local-data/media-affiliate-evidence. Chưa đẩy/deploy hoặc áp dụng migration production. Tự lấy sản phẩm/đơn/hoa hồng/đối soát từ sàn chưa triển khai/cấp quyền; registry hiện not_connected và earnings=null. Phạm vi, phụ thuộc và lộ trình chính ở ONLINE_AFFILIATE_FOUNDATION.md.
+
+
+## Nâng cấp theo công việc (2026-11-02) — In progress
+
+Bản main #34 đã được gộp ở e0eb1fc, hai kiểm tra GitHub đạt; chưa xác minh deploy Render. Đợt giao diện tiếp theo đang làm riêng tại D:/Slink/.local-data/first-sale-release trên nhánh codex/easy-operations-20261102. Thay đổi shell/điều hướng, POS giữ ở màn bán sau khi lưu, nhập hàng có chọn trạng thái trả tiền, thu gọn quản lý tiền và bảng di động, phân màn bán theo cashier. Không thay schema. Kiểm tra cú pháp đạt; hai kiểm tra server shell/readiness đạt. Trình duyệt chạy 31 màn hình/kích thước và luồng thêm–bán–nhập trên PGlite riêng, tồn 12→11→10→15; không tràn ngang toàn trang. Ảnh và kết quả ở .local-data/easy-ui-evidence. Chưa nghiệm thu điện thoại thật, production, đồng thời hoặc hiệu năng. Phạm vi theo ngành, công việc còn lại và nguồn tham khảo ở UX_REDESIGN_20261102.md. Luồng mời cashier, đăng ký/xác nhận email, vào POS, lưu sale và giữ giỏ khi tăng/giảm đã đạt trên local. Thử gọi API tạo sản phẩm và xem analytics bằng cashier trả 403. Không đánh dấu toàn bộ sản phẩm đạt; chưa phát hành đợt này.
+
+
 **Purpose:** Keep work ordered, specific, and verifiable. Each milestone exists to close a real customer risk. Update this file after each milestone; do not mark a status complete without its evidence.
 
 Status labels: **Not started**, **In progress**, **Blocked by external dependency**, **Evidence passed**. “Evidence passed” applies only to the named milestone, never to the whole product by implication.
 
-## Verified baseline (2026-10-20)
+## Local first-sale journey revision (2026-10-31) — In progress
+
+- **Purpose:** implement the owner's new path in both UI and behavior: register → choose business type → add a few products or import a list → sell → enrich data when needed.
+- **Implemented locally:** explicit one-time business-profile confirmation; empty POS catalog with add/import choices instead of empty cart scaffolding; quick product form with generated SKU and opening quantity; save-and-add-another; CSV instructions with a template and collapsed detail; next-step links to sales/inventory; less prominent advanced catalog/POS controls; updated starter help and touch-sized fields.
+- **Persistence:** quick creation calls the existing transactional `POST /products/import` API with one row, a stable idempotency key and user/store-scoped pending record. Existing server code validates editor membership, warehouse, product fields, records prices/opening movements and returns the persisted product. Reusing this endpoint does not need a new migration. Existing price-history source remains `csv_import`; its UI label now says “Thêm vào danh mục” to cover both file and single-product entry.
+- **Failure handling reviewed:** external submit buttons are disabled correctly; duplicate submits are guarded; ambiguous outcomes keep the pending request for replay; async completion checks store/session before changing local state; stale search is cleared after a confirmed save; load errors are distinguished from an empty catalog. Product reload callbacks also check the request's store/session. Existing edits from earlier work remain preserved.
+- **Evidence this slice:** `node --check app.js` passed; `git diff --check` for the edited application/styles/product and planning documents passed (Git emitted existing line-ending normalization warnings). Source review checked quick-create payload against `validateImportRows`, transaction and response. This is syntax/static evidence only: no new browser, device, production database or first-sale end-to-end result is claimed. No automated test suite was run in this slice.
+- **Limitations:** stock-tracked products with zero quantity cannot be sold until stock is recorded; omitted cost remains 0 and is disclosed in the form; actual profit cannot be assumed correct while cost is missing. Import remains CSV, not direct Excel/photo import. Detailed contextual guidance across every workflow and broader operations simplification are still open in `EXECUTION_PLAN.md`.
+- **Next acceptance evidence:** save/reload business choice; single product + opening balance, multi-row import and actual sale with reconciled stock/money; double-submit, rejected input, ambiguous timeout/retry, store switch and permissions; touch/keyboard and small screens. Update status only after these flows are evidenced.
+- **Publishing:** local only. No GitHub branch/PR/merge or Render deployment was made for this slice; wait for the owner's next publishing request. Shell cache version advanced locally for the next release.
+
+## Current production snapshot (2026-10-31; read-only provider checks)
+
+- **Render:** service `Slink` is configured on repository `huynhbao2024bm-a11y/Slink`, branch `main`, auto-deploy on commit, Node runtime, Singapore, Free plan, URL `https://slink-xny3.onrender.com`. Latest deploy returned by Render is `live` at commit `819f38698e8a6bd398fe446fe36b66ae6631f356` (deploy `dep-dbi8s2o473hc73eq7rh0`, created 2026-10-30). Service metadata has no health-check path. Cost/availability suitability of the Free plan and signup, login, sales and mobile acceptance were not tested in this check.
+- **Supabase application schema:** read-only query of `public.schema_migrations` returned `0024_store_business_profile.sql` as the latest application migration. The Supabase migrations API returned an empty list; that API result does not replace Slink's own `schema_migrations` ledger. Supabase table inventory showed the expected Slink business tables, but this is not evidence that the app's authorization and transaction flows pass.
+- **Security advisory (owner-managed):** Supabase issued a **critical** advisory that RLS is disabled on six internal tables, including account/session/token data. The project owner said they will manage this risk. No database setting, schema or row was changed; investigate only if evidence shows the advisory prevents the app from running.
+- **Workspace vs deployed code:** the current local branch is `codex/production-container-ci` and has pre-existing modified/untracked files. Those workspace edits are not proof of what Render serves. Do not push or deploy the entire dirty branch as a shortcut.
+- **Responsibility and code priority:** the project owner said they will handle Supabase security-risk decisions and real-world acceptance. The advisory remains recorded but does not block unrelated code work; investigate it further only if logs show it prevents the application from running. The engineering queue follows [`EXECUTION_PLAN.md`](EXECUTION_PLAN.md); strategy and release stages are in [`PROJECT_PLAN.md`](PROJECT_PLAN.md).
+
+## Theo dõi hiệu năng danh sách hàng (2026-10-31; workspace only)
+
+- Mẫu log Render gần nhất đang có cho `GET /api/stores/:storeId/products` là 4 lượt, trung vị 579 ms, cao nhất 594 ms. Mẫu nhỏ, không kiểm soát thiết bị/tải và chưa phải phép đo trước–sau trực tiếp; dùng làm tín hiệu để chọn điểm cần xem, không coi là kết luận hiệu năng.
+- Workspace sửa truy vấn tồn kho của danh sách hàng để áp bộ lọc kho được chọn và phạm vi kho của vai trò ngay trong truy vấn con trước khi cộng tồn. Kết quả nghiệp vụ dự kiến giữ nguyên; không đổi schema hay dữ liệu.
+- Chưa có số đo sau sửa và chưa có bằng chứng Render đang chạy mã này. Khi người dùng yêu cầu đưa bản lên, cần so cùng endpoint, cửa hàng, kho và tải gần tương đương trước khi kết luận tối ưu có hiệu quả.
+## Điều chỉnh khách hàng mục tiêu và quy trình (2026-10-31; workspace only)
+
+- Người dùng làm rõ tiệm tạp hóa truyền thống không còn là khách hàng mặc định. Hướng cần nghiên cứu là cửa hàng/nhóm bán hàng hiện đại: quán cà phê/ăn uống, shop thời trang, mỹ phẩm, người bán online và mô hình phối hợp tại quầy với online; giai đoạn đầu không nhắm vận hành siêu thị lớn.
+- Tài liệu hiện hành [`TARGET_CUSTOMER_WORKFLOWS.md`](TARGET_CUSTOMER_WORKFLOWS.md) tổng hợp quy trình theo ngành và vai trò, đối chiếu hướng dẫn công khai KiotViet/Sapo, bản đồ khoảng trống workspace và giả thuyết phân khúc mở màn. Chưa phỏng vấn người bán, chưa chốt phân khúc và chưa có nghiệm thu nghiệp vụ.
+- Nghiên cứu cũ riêng cho tiệm tạp hóa được giữ tại [`OPERATIONS_SIMPLIFICATION_RESEARCH.md`](OPERATIONS_SIMPLIFICATION_RESEARCH.md) như lịch sử; không dùng làm yêu cầu hiện hành.
+- Camera quét mã đã bị gỡ khỏi workspace trong lần tối ưu trước. Vì lý do gỡ dựa trên giả định tiệm tạp hóa và shop nhiều SKU có thể cần quét nhanh, quyết định sản phẩm được mở lại. Chưa khôi phục, chưa đưa lên GitHub/Render; tìm bằng chữ và dữ liệu mã vạch vẫn được giữ. Cần kiểm chứng theo phân khúc và thiết bị.
+- Quan sát Render ngày 2026-10-30 vẫn có giá trị giới hạn: tài khoản trống phải tạo sản phẩm riêng trước khi nhập; lần quan sát không có giao dịch nào được ghi. Đây là một vấn đề onboarding/nhập hàng cần xem lại theo nhóm khách hàng đã chỉnh, không phải bằng chứng workflow của mọi ngành.
+- Các tài liệu nghiên cứu mới chưa kèm thay đổi nghiệp vụ hay hiệu năng được nghiệm thu; chưa đo tốc độ và chưa thử thiết bị thật. Bản Render live được ghi riêng trong `Current production snapshot`; việc trạng thái live không đồng nghĩa các thay đổi workspace đã được đưa lên GitHub hoặc deploy.
+
+## Cập nhật 2026-10-31 — mở app theo công việc và tải dữ liệu theo trang (workspace only)
+
+- Chủ/quản lý/thu ngân vào thẳng Bán hàng; nhân viên kho vào Kho hàng; kế toán vào Thu chi. Giỏ đang chờ gửi được khôi phục trước khi tải danh mục. Hồ sơ nhiều kho được thêm lối vào Bán hàng để người có nhiều kho vẫn bán được.
+- Lúc đăng nhập chỉ tải dữ liệu cần cho màn hình đầu; màn Bán hàng không tải trước toàn bộ lịch sử đơn. Thông tin hàng, khách và kho vẫn được tải cho tác vụ POS; trang Kho/Thu chi dùng luồng tải riêng.
+- Chữ mô tả hồ sơ cửa hàng không còn lấy tạp hóa truyền thống làm ví dụ mặc định.
+- **Bằng chứng/giới hạn:** thay đổi mới trong workspace; chưa đưa GitHub/Render, chưa thử giao dịch thật, trình duyệt hay thiết bị. Người dùng sẽ tự kiểm tra vận hành; chưa chạy kiểm thử tự động theo phạm vi lượt này.
+
+## UX and legal information update (2026-10-29; workspace only)
+
+- The dashboard was simplified to remove repeated financial cards and confusing date-range detail; the clearer overview keeps today's sales, common actions, stock alerts and recent orders. Larger type and more readable touch targets have been applied to common navigation, text, forms and tables.
+- Privacy and terms pages are being added in plain Vietnamese and linked from sign-in and Settings. They are **trial drafts**, not legal approval or proof of compliance. Before public production use, the operator must confirm the responsible legal entity/contact, email provider, database location, retention periods, and a workable access/correction/deletion request process.
+- Workspace source now includes a role/profile-aware start page with short direct links for empty stores, larger type, and default primary-warehouse selection. Product scanning captures a temporary local frame after 10 seconds without a match and retries detection if the browser supports it; otherwise the preview helps the user enter a code manually. The online-channel order form also offers barcode capture into the order reference without closing the form. That photo is only a temporary on-device preview; the user still enters/checks the other order fields. No live browser or phone acceptance was performed for these newest changes. Online-order OCR, durable image attachment and image-to-ledger conversion remain absent; photo capture alone must not be represented as a saved order.
+- No live browser, phone, or production acceptance was performed for this update. Keep accessibility, device fit, role-based visibility, and user comprehension open until checked with actual users/devices.
+
+## Operational review against KiotViet (2026-10-29; source/document review only)
+
+- Added [`OPERATIONAL_REVIEW_KIOTVIET.md`](OPERATIONAL_REVIEW_KIOTVIET.md), comparing day-to-day workflows rather than company size. The strongest Slink foundation in source is basic retail sales, inventory, purchasing, customer records, cashbook and manually recorded online orders. This does not certify these workflows on production or mobile devices.
+- The review identifies operational gaps to prioritize: linked-order dependence for customer returns, no verified supplier-return workflow, no confirmed lot/expiry/serial handling, incomplete supplier-order suggestions/progress evidence, no verified cash reconciliation on real store data, and no actual marketplace/carrier/COD synchronization. Restaurant profiles currently filter navigation; they do not establish table/kitchen/recipe workflows.
+- KiotViet comparison is limited to publicly available official user guides checked on 2026-10-29. It is a workflow scope comparison, not a feature-by-feature certification of either product.
+- No milestone is marked complete by this review. Continue to require production database, device and representative-user evidence in each relevant release gate.
+
+## Historical snapshot (2026-10-26; superseded by the provider checks above)
+
+- **Product direction:** New-store onboarding, five store-operation profiles, prioritized navigation and account password change are merged to GitHub `main` at `2dd182973eefeb4a1d0f232e608baa571c70f060` via PR #22. The PR contains only `app.js`, `server/auth.js`, `server/db.js`, `server/settings.js`, `styles.css`, `sw.js`, and migration `0024_store_business_profile.sql`; `docs/`, POS and hosting changes were excluded. GitHub Actions run `40255695349` passed both API/schema acceptance and production-container build. Latest Render logs show a runtime querying the new profile column, but do not identify its SHA; migration 0024 has not been confirmed on production. Keep store workflow profile, employee permission role, personal display preference and POS device/session as separate concepts.
+- **POS:** GitHub `main` contains the reported cart update in commit `93caaef719b9bbfbf2904c82afe714b54dddc56b`. The user later said the drawer problem was okay. That is user-reported evidence only: no device acceptance record or current Render SHA has been captured. Keep the mobile release gate open until the build and device are recorded.
+- **Hosting and account flow:** Latest user-provided Render logs on 2026-10-26 show `POST /api/auth/login` returning 500 with PostgreSQL `42703`, `column "business_profile" does not exist`, while `createUserSession` reads the store profile. This confirms the database serving the current app request does not have migration 0024's column; it is a schema/version mismatch, not a wrong password. The logs do not identify the exact Render commit SHA. The user subsequently created and verified an encrypted Supabase snapshot on 2026-10-26 (`2026-10-26T02-25-11-627Z-bda9e809-0017-461d-9c11-742f3be0a202.slinkbackup.manifest.json`); the backup is local and has not had a restore rehearsal. Migration 0024 has not been confirmed applied. Use the reviewed production migration workflow and verify its postflight checks before deploying/testing again.
+- **Demo email mode:** `DEMO_DISABLE_EMAIL_VERIFICATION` is supported by source and defaults to `false` in `.env.example`. The user requested it only to make the contest/demo flow usable. Its Render value and post-deploy signup/login behavior are not verified here; keep it limited to a controlled demo environment.
+- **Email delivery blocker:** current source sends JSON fields `to`, `subject`, and `text`; it has no `EMAIL_FROM` field. A prior production log reported `email_unavailable`. If Render points directly to a provider endpoint that requires `from`, that integration needs a sender-aware adapter/gateway and an end-to-end delivery check. Do not treat an HTTP 200 from `/api/ready` as evidence that email works.
+- **Business and access profiles:** Source has store staff roles (`owner`, `manager`, `cashier`, `stockkeeper`, `accountant`) plus store-operation profiles. GitHub `main` still only prioritizes navigation and exposes “Tất cả chức năng”; the workspace now filters visible business modules by selected profile, with finance/settings kept common and role checks unchanged. This focused navigation change is local only and still needs review/runtime/device acceptance. Separate POS device identity is still not implemented.
+- **Unfinished work:** core transactional acceptance, production migration/role reconciliation, email sender, backup restore, real-device accessibility, offline transaction recovery and provider integrations remain release work. [`EXECUTION_PLAN.md`](EXECUTION_PLAN.md) is the current ordered queue; this document preserves detailed dated evidence. The top snapshot overrides earlier statements that conflict with it.
+- **Release dependency:** Render blueprint has `autoDeployTrigger: off`, so merging into `main` does not by itself deploy. A fresh encrypted Supabase backup was created and verified locally on 2026-10-26 as `2026-10-26T02-25-11-627Z-bda9e809-0017-461d-9c11-742f3be0a202.slinkbackup` (archive 654,720 bytes); the older 2026-10-21 backup predates production migrations through 0023 and is not the current preflight copy. The latest backup script reported no schema/data changes. Current logs confirm a Render service is running, but not its exact source SHA; production migration 0024 remains unconfirmed.
+
+## Historical verified baseline (2026-10-20; superseded where noted below)
 
 | Area | Current evidence | Status / consequence |
 | --- | --- | --- |
@@ -179,7 +318,7 @@ Supporting decision: [`decisions/0001-runtime-and-storage.md`](decisions/0001-ru
 
 **PIM uniqueness correction (2026-10-15; isolated PGlite/API acceptance):** batch SKU/barcode conflict checking evaluates the resulting values across all selected and external products. To work with immediate unique constraints, rows whose SKU/barcode changes are moved to transaction-local temporary values first, then assigned final values; rollback keeps temporary values invisible. The API test passed a SKU swap and barcode clear/reassignment and rejected a duplicate final SKU. Native PostgreSQL and concurrent-writer acceptance remain open.
 
-## Execution plan — follow in order; keep open until every release gate passes
+## Historical execution plan snapshot (written 2026-10-20; use `EXECUTION_PLAN.md` for the current queue)
 
 This is the work order for continuing Slink. At each step, finish the work possible in this workspace, record evidence and limitations here, then continue to the next independent item. A feature is not accepted because its screen or route exists or because syntax is valid. Never seed customer stores with demo sales, store money as floating point, claim provider success from operator input, or call the product ready while any release gate lacks evidence.
 
@@ -194,7 +333,7 @@ This is the work order for continuing Slink. At each step, finish the work possi
 
 **Required cadence:** inspect current runtime and records before business-data work; choose the highest-priority open item; preserve user-approved design; implement server-side validation and transactional writes for business changes; use existing project policy for checks; update roadmap status and evidence immediately; carry exact external dependencies forward. If only static checks were possible, label them static and leave the relevant gate open.
 
-## Current next action
+## Historical next-action notes (position at 2026-10-20; superseded by the current snapshot and plan)
 
 **Current position (2026-10-20):** Slink is an active build between an early usable retail MVP and a customer-ready product, not a finished commercial release. Recent source work now covers variant-group creation, adding SKUs to an existing group, editing variant attributes, and CSV preview/import with opening stock. The full Node/PGlite suite passes 32/32, including replay, duplicate/tenant checks, no-write preview, atomic inventory/audit, and rollback. This is isolated test evidence, not native PostgreSQL, browser, phone or retailer acceptance. The local `slink` database is recorded through migration 0017; 0018–0020 remain unapplied there. A read-only preflight from this execution session returned EACCES for the Windows PostgreSQL socket, so no native migration is claimed. The internal 9-slide v2 deck at [`../pitch/Slink_Pitch_Vietnamese_2026-10-20-v2.pptx`](../pitch/Slink_Pitch_Vietnamese_2026-10-20-v2.pptx) remains unreviewed; the user has separate introduction material and asked not to make a duplicate.
 
@@ -377,3 +516,252 @@ This is the work order for continuing Slink. At each step, finish the work possi
 | 2026-10-20 | The guarded local migration workflow created and verified encrypted backup `2026-10-20T10-31-18-475Z-d1231683-4737-4cca-8b65-04f3019f08e2.slinkbackup.manifest.json`, applied `0017_customer_saved_segments.sql` to the real `slink` database, and passed all 32 migration/application-role and RLS checks. The API restarted as PID 8264; `/api/ready` returned `ready`, with PostgreSQL on 127.0.0.1:5433 and API on 127.0.0.1:3000. No customer, order or financial records were changed. | Saved CRM segments are available in the real local schema. Authenticated UI behavior, nonempty customer results and mobile acceptance still need evidence; backup restore remains deferred. |
 | 2026-10-20 | Implemented an OMS hand-entry flow for external channel orders. Migration 0022 adds tenant-scoped order, immutable line and append-only status history tables; app-role updates are limited to fulfillment columns. The API validates channel SKU mappings, warehouses, quantities and integer VND, prevents duplicate external references and overselling, reserves stock atomically, records a single stock issue on shipment, releases reservation on pre-shipment cancellation, and keeps the payment-status snapshot out of Slink sales/payment/debt/cash ledgers. The responsive channel screen supports manual capture, order detail/history and pack/ship/deliver/cancel actions, with explicit copy that no marketplace sync exists. Invalid status/shop filters are rejected. Channel-order CSV exports each item line by date and warehouse, escapes text, records export audit and enforces the stockkeeper warehouse scope. All 23 Node/PGlite API cases passed, including channel RLS/grants, tenant denial, duplicate/replay/stale version, oversell rollback, reservation, shipment ledger, cancellation, CSV content and finance isolation. Syntax checks and `git diff --check` passed (with only the existing CRLF normalization warning). The isolated native PostgreSQL acceptance runner now exercises the same flow and export, but has not yet been run against migrations 0021–0022. The user reports all preceding current steps passed; exact migration output was not supplied, so this is recorded as user-reported rather than independently verified. | The source behavior is implemented and disposable evidence passes. Next: run the updated backup-gated migration and isolated PostgreSQL acceptance on the user's Windows cluster, then review the authenticated browser and phone; marketplace connectors, shipping provider APIs and COD reconciliation remain separate external work. |
 | 2026-10-20 | Added migration 0023 for immutable recipient phone/address snapshots on manually recorded channel orders. The API validates and stores the contact details in the order's idempotent creation payload, returns them from list/detail/status flows, supports phone search, and includes them in warehouse-scoped CSV. The order detail now prints an A4 internal packing slip from the saved order and item snapshots, with no prices; it clearly says it is not a carrier label, invoice or COD confirmation. Role checks explicitly deny updating the recipient fields after creation. Focused channel-order PGlite acceptance passed; the full repository Node/PGlite/schema suite passed (34/34, including 23/23 API workflows), with recipient validation, persistence, phone search, CSV and role boundaries. JavaScript syntax and `git diff --check` passed; the PWA app-shell cache version was bumped to refresh the client. The native PostgreSQL runner now also exercises the new migration and recipient data, but has not run on Windows yet. No real store data was changed. | Run backup-gated migrations 0021–0023 and isolated PostgreSQL acceptance in the user's Windows session. Browser print-dialog and physical-printer behavior still need real-device review. Next internal OMS scope is audited, warehouse-safe bulk order processing. |
+
+## Cập nhật 2026-10-20 — độ dễ đọc, tài khoản và chuẩn bị hosting
+
+**Mục tiêu:** Hoàn thiện thao tác tài khoản, giúp giao diện dễ nhìn hơn trên màn hình rộng và nhỏ, đồng thời chuẩn bị artefact phát hành mà không triển khai dịch vụ thật.
+
+- Avatar trên thanh bên và thanh đầu trang mở menu tài khoản; menu hiển thị người dùng/cửa hàng, có lối vào cài đặt, còn đăng xuất là nút riêng. Chưa có nghiệm thu thao tác trực tiếp trên trình duyệt trong lượt này.
+- Chữ, khoảng cách và một số thẻ/chỉ số/bảng/điều khiển được tăng nhẹ, có điều chỉnh riêng cho màn hình hẹp. Cần xem lại trực tiếp trên trình duyệt và thiết bị iOS/Android trước khi chốt.
+- Đã chuẩn bị mẫu biến môi trường, quy trình GHCR theo thẻ phiên bản và workflow migration thủ công có yêu cầu tham chiếu backup cùng GitHub Environment production. Không có image nào được phát hành; workflow migration không được chạy; không tạo cloud resource và không deploy theo yêu cầu người dùng.
+- Workflow migration chỉ áp schema và kiểm tra role sau khi người vận hành đã tạo, xác minh backup và cấu hình secret MIGRATION_DATABASE_URL; database/provider cần cho phép slink_migrator không phải superuser nhưng có BYPASSRLS và quyền tạo schema.
+- Bằng chứng hiện tại: full Node/PGlite/API suite đạt 34/34; node --check app.js, node --check scripts/postgres-role-check.js và git diff --check đạt. Bộ PostgreSQL acceptance cô lập ở lượt trước đã pass nghiệp vụ qua migration 0023, nhưng đây không phải dữ liệu cửa hàng và không chứng minh DB thật đã áp 0021–0023. Không có bằng chứng mới về render UI, thiết bị thật, nhà cung cấp email hay hosting.
+- Đã đẩy hai commit 3bb0a58 và 625b3b4 lên codex/production-container-ci. Chúng gồm source, workflow và cấu hình cần thiết; loại toàn bộ docs/, thư mục local .vscode/ và doctor-*.json.
+
+**Còn mở:** xem avatar và cỡ chữ trên browser/mobile; theo dõi CI của nhánh; người dùng chọn host, PostgreSQL, domain/DNS, email provider và cách cấp quyền/secret trước khi bắt đầu deploy. Không tạo hạ tầng hay phát hành image trước thời điểm đó.
+
+## Đánh giá runtime 2026-10-21
+
+**Mục đích:** Tách khả năng chạy được của lõi nghiệp vụ khỏi các release gate chưa có bằng chứng thực tế.
+
+- PostgreSQL cục bộ và API được khởi động; readiness trả `ready`. `slink_app` vượt preflight chỉ đọc trên database cửa hàng. Schema hiện ở migration 0023; kiểm tra role/RLS đạt. Không chạy migration hoặc ghi nghiệp vụ vào database cửa hàng.
+- Node/PGlite/API suite hiện tại đạt 34/34. Bộ native PostgreSQL acceptance trên cơ sở dữ liệu tạm áp migrations 0001–0023, kiểm tra role/RLS và chạy các luồng bán, hoàn, nhập hàng, tồn kho, thu chi/công nợ, CRM, phân quyền đa cửa hàng, CSV và đơn kênh bán thủ công; toàn bộ đạt và database tạm được dọn.
+- API runtime ghi nhận HTTP 200 cho `/api/auth/me` và các GET của sản phẩm, khách hàng, đơn, kho/chuyển kho, tồn kho, báo cáo, phân khúc khách hàng, tài chính, ca tiền mặt và danh mục kênh. Các màn hình tương ứng tải được trong browser thật.
+- Database cửa hàng hiện rỗng về sản phẩm/khách/đơn; tồn bằng 0 và chưa có ca tiền mặt. Màn hình Kênh bán ghi rõ chưa kết nối sàn, có 0 gian hàng và 0 ánh xạ SKU. Không thêm sản phẩm hoặc tạo giao dịch thật trong lượt đánh giá.
+- **Kết luận milestone:** lõi API và giao dịch có hành vi thật, có persistence và native database evidence; trạng thái bản cục bộ đã chạy được. Khả năng dùng cửa hàng hiện tại để bán chưa được chứng minh vì chưa có danh mục/ca bán và người dùng chưa thực hiện giao dịch nghiệm thu. Chưa đạt customer pilot hoặc release gates.
+- **Còn mở:** đưa dữ liệu demo vào cửa hàng thử được chủ sở hữu đồng ý; kiểm tra thao tác bán/hoàn trực tiếp; người bán xác nhận UX; thử iOS và Android 10+; rehearsal backup/restore; hoàn thiện hosting/HTTPS/giám sát và xác minh từng provider thật. Restore vẫn hoãn theo chỉ đạo người dùng; chưa deploy.
+
+## Cập nhật 2026-10-21 — chuẩn bị hosting GCP trước khi có domain
+
+- Đã chuẩn bị profile Compute Engine + Docker Compose cho API Slink, PostgreSQL 18.6, Caddy HTTPS, Secret Manager, Artifact Registry, GitHub OIDC và backup mã hóa lên bucket riêng. PostgreSQL không mở cổng công khai; firewall chỉ mở web và IAP SSH. Dùng VM đơn để giữ migration role `BYPASSRLS`; đây là host thử nghiệm có giám sát, không phải HA/SLA thương mại.
+- Terraform dùng snapshot lịch hàng ngày cho data disk, bucket private/versioning với vòng đời 35 ngày, giới hạn quyền VM để tạo/đọc backup; release tags của Artifact Registry bất biến. Workflow GitHub chỉ publish thủ công từ `main` sau suite CI; không deploy tự động.
+- Có script khởi tạo host sau khi DNS và secret đã sẵn sàng, deploy release có backup đã xác minh trước migration, kiểm tra role sau migration, và giữ API dừng khi schema không rõ trạng thái. Secret upload tạo mật khẩu/key ngẫu nhiên trên máy, không in giá trị. Terraform có wrapper PowerShell chạy trong Docker để không cần cài Terraform trực tiếp.
+- **Bằng chứng 2026-10-21:** Terraform `fmt -check` và `validate` đạt với Google Provider 6.50.0; Docker Compose `config --quiet` đạt bằng placeholder, không start container; cú pháp shell và PowerShell đạt; Docker build thành công cho image API và image operations; image operations trả Node 24.22, `pg_dump` 18.6, `pg_restore` 18.6. Không chạy suite ứng dụng trong lượt này, không đăng nhập GCP, không chạy plan/apply, không tạo tài nguyên cloud, không push image hoặc deploy.
+- **Còn thiếu từ nhà cung cấp/người vận hành:** project ID, billing account có quyền dùng trial, email tài khoản Google dùng quản trị/IAP, hostname đã mua và quyền DNS, endpoint + bearer token dịch vụ email nhận `POST {to, subject, text}`, cùng đăng nhập Google Cloud CLI/ADC. Gcloud CLI chưa có trong môi trường. Free-trial eligibility do Google xác nhận; budget alert chỉ gửi cảnh báo và không giới hạn chi tiêu. Cần xem plan/chi phí trước khi apply.
+- **Cổng còn mở:** profile chưa được áp dụng lên GCP; image chưa xuất bản; DNS, HTTPS, email xác nhận, đăng nhập tài khoản đầu tiên, backup offsite và restore trên host chưa được thử. Trước pilot cần giám sát, cập nhật hệ điều hành, runbook phục hồi và người bán thử trên iOS/Android 10+.
+- **Bước kế tiếp độc lập:** giữ thay đổi cấu hình trong nhánh làm việc (không đưa `docs/`, `.vscode/` hay `doctor-*.json` lên GitHub), hoàn tất review cấu hình; sau này chỉ cần thông tin GCP/domain/email để lập plan và trình tài nguyên/chi phí trước khi apply. Không tạo hạ tầng cho đến khi người dùng cung cấp các thông tin đó.
+
+## Cập nhật GitHub main 2026-10-21
+
+- PR #4 (`codex/main-sync-no-docs` → `main`) đã được squash-merge sau khi GitHub Actions đạt cả `API and schema acceptance` và `Production container build`.
+- Commit trên `main`: `2f08ee87ce46f4ac7ba9a5b6d99c60cb28120d50`. PR gồm 96 tệp ứng dụng, nghiệp vụ, migration, CI, cấu hình hosting và pitch deck.
+- Đã đối chiếu danh sách tệp của merge commit với `origin/main^`: không có đường dẫn `docs/`; các tài liệu hiện có trên `main` không bị sửa. Nhánh `main` cục bộ đã được cập nhật cùng SHA với `origin/main`.
+- Không có tài nguyên GCP nào được tạo, image nào được phát hành hay dịch vụ nào được deploy. Các cổng hosting, domain, email production, HTTPS, backup/restore trên host và nghiệm thu thiết bị vẫn mở.
+- Các chỉnh sửa docs cục bộ đang có vẫn chưa commit/push theo yêu cầu loại trừ `docs/`.
+
+## Cập nhật hạng mục video giới thiệu 2026-10-21
+
+- Người dùng đã hủy yêu cầu video. Bộ dựng và thư mục đầu ra cục bộ do tác vụ này tạo đã bị xóa theo yêu cầu.
+- Video chưa được xuất. Pitch deck có sẵn tại thư mục pitch được giữ nguyên.
+- Không có thay đổi nào được đẩy lên GitHub; phần ghi nhận này chỉ nằm trong roadmap cục bộ.
+
+## Cập nhật 2026-10-21 — chuyển mục tiêu hosting sang Render
+
+- Theo yêu cầu mới nhất, Render.com là đích hosting tiếp theo. Đã xác nhận frontend và backend vốn chạy chung: `server/index.js` phục vụ cả giao diện tĩnh và API trên cùng origin, vì vậy chỉ cần một Web Service Node.js; không cần tách static site hay thiết lập CORS.
+- Đã thêm `render.yaml` cho Web Service trên nhánh `main`, vùng Singapore, Node 24.22.0, bind `0.0.0.0`, cổng `PORT` do Render cấp, health check `/api/ready`, và `autoDeployTrigger: off`. Cấu hình secret chỉ khai báo tên, không chứa giá trị. Chưa chạy Render CLI validate, chưa kết nối repo, chưa tạo tài nguyên, nhập secret hay deploy.
+- Cấu hình Render tin cậy một proxy hop để Fastify lấy IP client thực cho rate limit sau load balancer; cấu hình proxy bằng IP hiện tại của các môi trường khác vẫn giữ nguyên.
+- **Blocker mới:** không khai báo Render Postgres trong Blueprint. Slink cần `slink_migrator` có `BYPASSRLS` cho backfill bảng bật forced RLS và công cụ backup cần vai trò backup thấy đủ các tenant. Render Postgres không cấp superuser; PostgreSQL yêu cầu superuser để tạo/cấp `BYPASSRLS`. Vì vậy không thể dùng Render Postgres với hợp đồng migration/backup đang có mà không thiết kế lại. Không dùng tài khoản mặc định của nhà cung cấp làm app role.
+- Hai hướng cần chọn trước khi có database hosting: (1) thiết kế lại migration/backups để an toàn với managed PostgreSQL không có `BYPASSRLS`, rồi mới thêm Render Postgres; hoặc (2) dùng PostgreSQL do chủ dự án kiểm soát quyền superuser ở một host tương thích, kết nối tới Render qua TLS và tường lửa phù hợp.
+- Biến production cần có: HTTPS `PUBLIC_ORIGIN`, `APP_DATABASE_URL` dành riêng cho `slink_app`, endpoint/token gửi email. `MIGRATION_DATABASE_URL` chỉ ở GitHub Environment/workflow migration, không trong service Node.
+- Nguồn nhà cung cấp đã tra ngày 2026-10-21: [Render Web Services](https://render.com/docs/web-services), [Render Blueprint](https://render.com/docs/blueprint-spec), [Render Postgres credentials](https://render.com/docs/postgresql-credentials), [Render Postgres connection/TLS](https://render.com/docs/postgresql-creating-connecting), và [PostgreSQL role attributes](https://www.postgresql.org/docs/18/role-attributes.html). Đây là tài liệu nhà cung cấp hiện hành, không phải bằng chứng tài nguyên đã tạo.
+- **Tiến độ hosting:** cấu hình ứng dụng Render đã chuẩn bị trong workspace; database-compatible deployment chưa sẵn sàng. HTTPS, email, secret, migrations, backup/restore trên host, domain, runtime, browser/device acceptance và mọi release gate vẫn chưa được nghiệm thu trên Render.
+- **Tiếp theo:** hoàn tất đường dẫn database tương thích trước khi tạo Blueprint; xem giá và tài nguyên trước khi xác nhận tạo dịch vụ. Không deploy hoặc tạo dịch vụ cho tới khi người dùng cung cấp/duyệt thông tin hosting theo chỉ đạo trước.
+
+## Cập nhật 2026-10-21 — sửa Render không nhận cổng
+
+- **Bằng chứng mới từ log Render của người dùng:** build thành công; Node server chạy và trả HTTP 200 cho `HEAD /`, nhưng listener được mở trên `127.0.0.1:10000`, sau đó Render báo không tìm thấy cổng công khai. Điều này xác nhận lỗi bind loopback, không phải lỗi build hay kết nối HTTP nội bộ.
+- Đã sửa `server/index.js` trong workspace: khi biến môi trường Render `RENDER=true`, bind host luôn là `0.0.0.0`, kể cả khi biến `HOST` trong Dashboard còn đặt localhost. Cổng vẫn lấy từ `PORT`. Cấu hình triển khai và README Render được cập nhật đồng bộ.
+- Render ghi rõ web service phải bind `0.0.0.0` và cổng `PORT`; nguồn: [Render Web Services](https://render.com/docs/web-services), [Render Troubleshooting Deploys](https://render.com/docs/troubleshooting-deploys), [Render Default Environment Variables](https://render.com/docs/environment-variables). Đây là đối chiếu với yêu cầu nhà cung cấp; chưa phải bằng chứng bản sửa đã chạy trên Render.
+- GitHub xác nhận `main` ở `80e6b53` (đã có PR #6). So sánh nội dung cho thấy phần source ứng dụng của nhánh `codex/production-container-ci` đã hiện diện trên `main`; các chênh lệch cũ chủ yếu là tài liệu hoặc cấu hình hosting cũ. Không cần đưa lại 28 commit lịch sử vào PR sửa lỗi.
+- PR #7 (`codex/full-project-main-sync` → `main`) đã squash-merge sau khi hai check bắt buộc `API and schema acceptance` và `Production container build` đều đạt. Commit main mới: `b57be8658a44459b0c47c376de4ceb153570a779`. PR chỉ gồm `server/index.js` và README Render; không gồm `docs/`, `.vscode/` hay `doctor-*.json`.
+- **Bằng chứng sau merge:** Render tự triển khai commit `b57be86` thành công và hiển thị trạng thái **Live**. Log xác nhận listener công khai trên `0.0.0.0:10000` (cổng `PORT` Render cấp), `HEAD /` và `GET /` trả HTTP 200. URL dịch vụ: `https://slink-xny3.onrender.com`.
+- Bằng chứng này xác nhận dịch vụ Node.js được khởi động và trang gốc truy cập công khai được. Chưa xác nhận `/api/ready` trên Render, kết nối PostgreSQL production, email xác minh, đăng nhập hoặc các luồng nghiệp vụ trên môi trường hosting.
+- **Trạng thái:** sửa lỗi bind cổng đã merge vào `main` và deploy Render thành công. Hosting đã chạy ở mức web service; release/pilot vẫn chưa đạt cho đến khi cấu hình database tương thích, TLS/secrets/email và các luồng dữ liệu thật được nghiệm thu.
+
+## Cập nhật 2026-10-21 — Render không kết nối được PostgreSQL
+
+- **Bằng chứng từ log Render:** `POST /api/auth/login` và `POST /api/register` lỗi `connect ENETUNREACH 2406:da14:25a:5800::6bfe:5432`. DNS đã phân giải sang IPv6 nhưng dịch vụ không có đường mạng tới địa chỉ đó; request tới API trả HTTP 500. Đây là lỗi kết nối mạng DB, chưa phải kết quả kiểm tra mật khẩu hay xử lý đăng nhập.
+- **Đã xác nhận qua ảnh Dashboard:** `APP_DATABASE_URL` dùng Supabase direct host `db.…supabase.co:5432`, khớp với IPv6 trong log. Ảnh cũng để lộ database password. Coi mật khẩu cũ là đã lộ; reset ngay tại Supabase Database > Settings rồi cập nhật các biến dùng credential này. Không lưu hoặc lặp lại giá trị mật khẩu trong tài liệu/chat.
+- Tài liệu Supabase hiện hành ghi Render là môi trường IPv4-only; direct endpoint dùng IPv6 mặc định, còn Shared Pooler Session mode dùng IPv4. Sau khi reset mật khẩu, trong **Connect** chọn **Session pooler** rồi thay `APP_DATABASE_URL` ở Render bằng URI Session mới (host `*.pooler.supabase.com`, thường port 5432), giữ `PG_SSL=true`, rồi redeploy. Không tự ghép host/username; lấy nguyên connection string từ Dashboard và mã hóa ký tự đặc biệt trong mật khẩu nếu cần.
+- Tài liệu tham chiếu: [Supabase — Connect to your database](https://supabase.com/docs/guides/database/connecting-to-postgres), [Supabase — IPv4 address](https://supabase.com/docs/guides/platform/ipv4-address). Đối với backend chạy lâu dài trên mạng IPv4, Supabase khuyến nghị Shared Pooler Session mode; transaction mode có giới hạn trạng thái phiên và không phù hợp để chọn mặc định cho Slink.
+- **Chưa được xác nhận:** credential mới; kết nối qua pooler; role ứng dụng; schema Slink/migrations; `/api/ready`; đăng nhập/đăng ký end-to-end. Một bảng tạo thủ công không thay thế schema nghiệp vụ và role của Slink. Không đưa URI hay password database vào chat.
+- **Tiếp theo:** chủ dự án reset mật khẩu database bị lộ, thay `APP_DATABASE_URL` sang Session Pooler và triển khai lại. Sau đó kiểm tra log kết nối và `/api/ready`. Nếu kết nối được nhưng báo thiếu role/bảng, xử lý migration/role phù hợp với nhà cung cấp trước khi thử đăng ký.
+
+## Cập nhật 2026-10-21 — TLS CA trên Supabase Session Pooler
+
+- **Bằng chứng mới từ Render:** đăng ký lỗi `SELF_SIGNED_CERT_IN_CHAIN` khi Node.js/`pg` xác minh chứng chỉ PostgreSQL. Đây là lỗi xác minh chuỗi CA sau khi kết nối TCP; không tắt xác minh TLS để né lỗi.
+- Mã Slink đã có chế độ `PG_SSL=ca-file`, yêu cầu `PG_SSL_CA_FILE` là đường dẫn tuyệt đối tới PEM CA, đọc certificate và giữ `rejectUnauthorized: true`. Mẫu cấu hình có ở `deploy/production.env.example`; logic ở `server/database-transport.js`.
+- **Bước cấu hình còn thiếu trên Render:** tải CA certificate của Supabase trong **Database > Settings > SSL Configuration**; đưa tệp PEM công khai vào bundle ứng dụng (ví dụ `deploy/render/supabase-ca.crt`) rồi đặt `PG_SSL=ca-file` và `PG_SSL_CA_FILE=/opt/render/project/src/deploy/render/supabase-ca.crt`. Nếu connection URI có query `sslmode`/`sslrootcert`, bỏ các tham số đó vì Slink cấp CA qua `PG_SSL_CA_FILE`. Giữ host Session Pooler và port do Supabase cung cấp; không tắt TLS verification.
+- Sau redeploy, xác nhận `/api/ready` và log không còn `SELF_SIGNED_CERT_IN_CHAIN`. Kết nối thành công chưa chứng minh đăng ký/login được: role `slink_app`, migrations/schema và luồng nghiệp vụ production vẫn cần xác minh riêng.
+
+### Cập nhật sau khi nhận CA Supabase
+
+- Người dùng cung cấp `prod-ca-2021.crt`; chứng chỉ được đọc theo X.509 là `Supabase Root 2021 CA`, tự ký, hết hạn 2031-04-26 và không có private key. Đây là CA công khai, không phải credential.
+- Đã đưa bản sao vào `deploy/render/supabase-ca.crt`; `render.yaml` và mẫu môi trường dùng `PG_SSL=ca-file` cùng đường dẫn `/opt/render/project/src/deploy/render/supabase-ca.crt`. README Render hướng dẫn đổi `APP_DATABASE_URL` sang URI Session pooler và giữ xác minh máy chủ.
+- Đây mới là thay đổi trong workspace. Chưa có commit/merge/deploy mới trên Render, chưa đổi biến môi trường dịch vụ và chưa thử kết nối bằng database credential. Không chạy migration hay ghi dữ liệu production.
+- **Bước chờ:** đưa đúng các tệp hosting (không gồm `docs/`) lên `main`; sau khi Render có commit chứa CA, đặt `PG_SSL=ca-file`, `PG_SSL_CA_FILE=/opt/render/project/src/deploy/render/supabase-ca.crt`, cập nhật `APP_DATABASE_URL` bằng URI Session pooler lấy từ Supabase, rồi redeploy. Cần xem `/api/ready` và log; nếu lỗi kế tiếp là quyền/bảng thì xử lý schema và role theo đúng khả năng của Supabase trước khi đăng ký.
+- **Tiến độ truyền lên GitHub:** nhánh `codex/render-supabase-ca` được tạo qua phiên GitHub trên trình duyệt và hiện có cập nhật `render.yaml` cùng `deploy/render/README.md`; chưa tạo PR. GitHub connector chỉ có quyền đọc (`push=false`), CLI token hết hiệu lực, còn local browser automation đang bị tắt trong Work settings nên chưa thể thêm chứng chỉ/các tệp còn lại hoặc mở PR. Các thay đổi workspace vẫn giữ nguyên để tiếp tục, không đưa `docs/` lên GitHub. Người dùng đã cho phép tạo PR, chưa cho phép merge.
+
+## Cập nhật 2026-10-21 — database production chưa có schema Slink
+
+- **Bằng chứng runtime:** log Render sau khi sửa kết nối chuyển sang `relation "users" does not exist` (`42P01`) ở bước đăng ký. Điều này cho thấy request đã tới PostgreSQL nhưng bảng ứng dụng chưa được tạo; chưa được thử đăng ký tiếp trước khi áp dụng migrations.
+- **Bằng chứng role:** query chạy trong Supabase Dashboard báo `current_user=postgres`, `rolsuper=false`, `rolcreaterole=true`, `rolbypassrls=true`, `can_create_public=true`. Query lọc `slink_migrator` và `slink_app` trước đó trả “Success. No rows returned”. Chưa tạo role mới hoặc đặt password trong bằng chứng hiện có.
+- **GitHub:** PR #8 đã merge trước đó. Sau đó đã mở PR [#9](https://github.com/huynhbao2024bm-a11y/Slink/pull/9) từ nhánh `codex/supabase-ca-migration` vào `main`. PR có đúng `.github/workflows/production-migrate.yml` (dùng `PG_SSL=ca-file` và đường dẫn CA trong runner) cùng `deploy/render/supabase-ca.crt` (CA công khai người dùng cung cấp); `docs/` và bí mật không có trong diff. Hai check PR (`API and schema acceptance`, `Production container build`) đã thành công; PR chưa gộp.
+- **Phạm vi, phụ thuộc và cổng:** review/gộp PR #9; tạo role migration/API với đặc quyền riêng; tạo backup trước migration; cất URI migration trong GitHub Environment `production`; áp dụng migrations; chạy role-check; rồi chuyển Render `APP_DATABASE_URL` khỏi `postgres` sang `slink_app`. Không tạo bảng bằng Table Editor và không dùng role postgres làm role chạy ứng dụng.
+- **Bằng chứng cần để qua:** CA có trên nhánh được workflow checkout; workflow migration chạy tới cùng; role/RLS checks pass; database ghi nhận hết migrations; Render `/api/ready` pass bằng `slink_app`; sau đó mới thử đăng ký/login thử. Chưa xác nhận backup, migration production, app-role kết nối hay giao dịch.
+- **Việc kế tiếp:** sau khi PR #9 được review/gộp, tạo role và đặt mật khẩu an toàn, xác minh quyền thật; tạo và xác minh backup trước migration; cất `MIGRATION_DATABASE_URL` trong GitHub Environment `production`; chạy migration workflow kèm tham chiếu backup; xác nhận role-check; cấu hình Render CA và `APP_DATABASE_URL` cho `slink_app`; rồi kiểm tra `/api/ready`. Không ghi credential vào chat, mã nguồn, SQL history hoặc log. Chứng chỉ CA là public; database password và URI chứa password là bí mật.
+
+## Cập nhật 2026-10-21 — secret migration đã lưu, backup production còn chờ
+
+- Người dùng xác nhận các role Supabase đã được tạo và đặt mật khẩu trong phiên `psql`; ảnh trước đó cho thấy `slink_migrator` có `BYPASSRLS`, `slink_app` không có `BYPASSRLS`, cả hai không phải superuser.
+- Ảnh GitHub Environment `production` xác nhận secret tên `MIGRATION_DATABASE_URL` đã được lưu. Giá trị bí mật không được đọc hoặc hiển thị; kết nối workflow vẫn chưa được chứng minh.
+- Theo trạng thái GitHub đã kiểm tra trong phiên làm việc này, PR #9 đã được merge vào `main` (merge commit `55c7cbab9433dd7c3c6c5d5a950ab7189312fb64`); CA Supabase và migration workflow có mặt trên `main`.
+- Đã thêm cục bộ `scripts/postgres-backup-supabase.ps1`. Script dùng khóa mã hóa Slink trong ACL-protected `.env`, hỏi mật khẩu Supabase bằng ô nhập ẩn, rồi gọi công cụ hiện có để tạo và xác minh dump mã hóa chỉ đọc qua Session Pooler với TLS `verify-full` và CA. Script chưa chạy; chưa tạo backup Supabase, chưa chạy migration hay sửa database production.
+- **Còn chờ đầu vào:** người dùng chạy script trong PowerShell và nhập mật khẩu tại prompt ẩn. Không gửi mật khẩu hoặc URI kết nối vào chat. Chỉ dùng manifest làm tham chiếu sau khi script báo xác minh thành công.
+- **Bước kế tiếp:** từ `D:\Slink`, chạy `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\postgres-backup-supabase.ps1`; sau khi có manifest đã xác minh, dispatch workflow migration với đúng tham chiếu đó. Chưa có migration production nào được áp dụng.
+
+## Cập nhật 2026-10-21 — backup Supabase đã xác minh
+
+- Người dùng nhập mật khẩu trực tiếp tại prompt ẩn trong PowerShell; script không lưu hoặc in mật khẩu.
+- `scripts/postgres-backup-supabase.ps1` tạo snapshot mã hóa chỉ đọc qua Supabase Session Pooler, dùng TLS `verify-full` và CA, rồi công cụ Slink xác minh manifest.
+- Bằng chứng: `Backup verified: 2026-10-21T15-58-28-754Z-88008f05-81ec-4a75-bd96-14725b0c4141.slinkbackup`; manifest nằm tại `D:\Slink\.local-data\backups\supabase\2026-10-21T15-58-28-754Z-88008f05-81ec-4a75-bd96-14725b0c4141.slinkbackup.manifest.json`; archive 369,436 bytes. Gói và khóa mã hóa còn ở máy người dùng; cần giữ cả hai để có thể xác minh/khôi phục.
+- Script xác nhận không đổi schema hoặc dữ liệu nghiệp vụ. Migration workflow chưa chạy.
+- **Trạng thái chặn:** local browser control bị tắt trong Work settings; GitHub CLI token của hai tài khoản cục bộ không hợp lệ. Trang GitHub Actions đã được mở trong Codex, nhưng dispatch workflow chưa thực hiện được từ công cụ hiện có.
+- **Bước kế tiếp:** trên GitHub Actions > Prepare production database, chọn branch `main`, nhập đường dẫn manifest ở trên vào `verified_backup_reference`, rồi chạy workflow. Sau đó đọc job log và role-check trước khi đổi Render sang `slink_app`. Không đưa `docs/` lên GitHub.
+
+## Cập nhật 2026-10-21 — production migration đã tạo schema, bước cấp quyền thất bại
+
+- **Bằng chứng GitHub Actions:** run [39633713095](https://github.com/huynhbao2024bm-a11y/Slink/actions/runs/39633713095) trên `main` (commit `c8daf18134ce55ff81c322f26b947a67f9dc30fe`) kết nối Supabase qua CA thành công và áp dụng/ghi nhận migrations `0001_core.sql` đến `0023_channel_order_recipient.sql`. Bước cấp quyền tiếp theo thất bại với `permission denied for table slink_data`; role-boundary check bị bỏ qua.
+- Đây là **thay đổi schema production có thật**, trái với trạng thái “migration chưa chạy” ở các ghi chú phía trên; các ghi chú đó được giữ làm lịch sử. Workflow chưa qua cổng quyền và chưa xác nhận ứng dụng. Không xóa hoặc khởi tạo lại bảng; giữ backup đã xác minh để có thể phục hồi nếu cần.
+- **Nguyên nhân từ mã nguồn:** `server/migrate.js` cấp quyền bằng `ON ALL TABLES/SEQUENCES IN SCHEMA public`, bao gồm cả đối tượng Supabase mà migration role không sở hữu. Mã trong workspace đã được sửa để chỉ cấp quyền trên bảng và sequence trong `public` do chính `slink_migrator` sở hữu; các quyền hạn chế cho bảng sổ sự kiện, lịch sử giá, đơn kênh bán và bảng migration vẫn được áp dụng sau đó.
+- **Trạng thái thay đổi:** mới là bản sửa trong workspace, chưa kiểm tra, chưa đẩy lên GitHub và chưa chạy lại trên production. GitHub connector hiện chỉ đọc; điều khiển trình duyệt cục bộ bị tắt trong Work settings. Không dùng cách khác để vượt qua giới hạn này.
+- **Bước tiếp theo:** bật quyền Local browser use trong Work settings để tiếp tục thao tác GitHub trực tiếp. Đưa riêng bản sửa migration (không gồm `docs/` theo yêu cầu trước đó) vào nhánh review, merge vào `main`, rồi chạy lại workflow với cùng tham chiếu backup. Vì migrations `0001–0023` đã được ghi nhận, lần chạy đúng sẽ bỏ qua chúng, hoàn tất cấp quyền giới hạn và tiếp tục role-boundary check. Chỉ chuyển Render sang URI `slink_app` sau khi hai bước này pass.
+
+## Cập nhật 2026-10-22 — rà soát lỗi đăng ký production
+
+- **Bằng chứng người dùng cung cấp:** Render ghi nhận `POST /api/auth/register` trả `500`; lần đăng ký lại trả `409`; đăng nhập trả `401`; gửi lại email ghi cảnh báo `email_unavailable`. `409` xác nhận email đã có bản ghi; nó không phải bằng chứng lần đầu chưa lưu dữ liệu.
+- **Nguyên nhân đã xác định trong source:** `server/auth.js` commit người dùng, cửa hàng, membership và token xác nhận ở trạng thái pending trước khi gọi nhà cung cấp email. Khi gửi thư thất bại, `deliverEmail` phát sinh `ApiError(503, 'email_unavailable', ...)`; error handler trong `server/index.js` chỉ giữ nguyên mã 4xx nên đổi lỗi 503 dự kiến thành 500. Đăng nhập chỉ cho tài khoản active đã xác nhận email nên tài khoản pending nhận 401.
+- **Sửa mã trong nhánh review mới:** giữ nguyên 503 cho `ApiError` có mã an toàn; giao diện báo rõ tài khoản đã tạo nhưng thư xác nhận chưa gửi được và hướng người dùng tới gửi lại email. Kiểm tra cú pháp Node và khoảng trắng Git đạt; chưa có kiểm tra runtime hoặc deploy cho sửa đổi này. PR #12 đã được gộp vào `main` để sửa rate limit 429 và hướng dẫn email đã tồn tại; chưa có bằng chứng Render đã triển khai commit đó.
+- **Giới hạn còn lại:** log hiện chỉ ghi `email_unavailable`, không cho biết endpoint email trả HTTP status nào hoặc vì sao từ chối payload. Sửa mã sẽ loại bỏ 500 sai và tránh người dùng tưởng cần đăng ký lại; không thể làm nhà cung cấp gửi thư thành công nếu URL/token/payload hoặc cấu hình nhà cung cấp vẫn lỗi. Không xóa tài khoản hoặc chạy SQL sửa dữ liệu.
+- **Việc kế tiếp:** đưa đúng hai tệp `app.js` và `server/index.js` lên nhánh review, không gồm `docs/`; chờ CI và review. Sau khi Render dùng mã mới, sửa tích hợp email theo lỗi nhà cung cấp, rồi dùng “Gửi lại email xác nhận” cho tài khoản đang pending; không tiếp tục tạo tài khoản cùng email.
+
+## Cập nhật 2026-10-22 — xác định thiếu người gửi Resend
+
+- PR #13 đã được merge vào `main` tại commit `0ccf315a0f032dae43969346c61dd5adb62685ec`; sửa status 503 và thông báo cho tài khoản đã lưu nhưng chưa gửi được email. Chưa có bằng chứng Render đã triển khai commit này.
+- Rà soát toàn bộ luồng đăng ký, gửi lại xác nhận, đặt lại mật khẩu, cấu hình Render và gửi thư nhân viên. Mã hiện gọi API email với `to`, `subject`, `text` nhưng thiếu trường `from`; ảnh cấu hình Render người dùng cung cấp cũng không có `EMAIL_FROM`. Tài liệu API chính thức Resend quy định `from` là trường bắt buộc. Đây là nguyên nhân mã nguồn đã xác nhận nếu endpoint Render đang dùng Resend; token/domain còn phải kiểm tra qua trạng thái phản hồi sau khi sửa.
+- Tài khoản đầu tiên được lưu `pending` trước lúc gửi thư. Vì vậy đăng ký lại cùng email trả 409 và đăng nhập trả 401 cho tới khi xác minh; không tạo tài khoản mới. Route gửi lại đổi token xác nhận trước khi gửi, nên chỉ bấm lại sau khi cấu hình đã sửa.
+- Bản sửa cách ly thêm `EMAIL_FROM`, gửi người gửi trong payload, log riêng HTTP status của nhà cung cấp mà không ghi email/token/nội dung, cập nhật Render/GCP config và thêm kiểm tra hồi quy. Toàn bộ 44 kiểm tra Node/PGlite cùng kiểm tra cú pháp và `git diff --check` đã đạt; không gọi nhà cung cấp email thật.
+- **Trạng thái phát hành:** commit `8c44b92` đã được đẩy lên nhánh `codex/fix-resend-email-sender`; chỉ chứa 9 tệp liên quan, không có `docs/`. Theo yêu cầu người dùng, PR chưa được mở; chưa có CI/Render deploy hoặc gửi email production để xác minh. Render blueprint đặt `autoDeployTrigger: off`, nên sau khi PR được merge cần đặt `EMAIL_FROM` (địa chỉ thuộc domain đã xác minh với Resend) rồi deploy commit mới nhất thủ công. Sau deploy, dùng “Gửi lại email xác nhận” cho email đang pending; kiểm tra `providerStatus` trong log hoặc log email trong Resend nếu vẫn thất bại. Không đưa `docs/` lên GitHub.
+
+## Cập nhật 2026-10-22 — chế độ demo tạm bỏ xác minh email
+
+- Theo yêu cầu người dùng, thêm biến `DEMO_DISABLE_EMAIL_VERIFICATION` (mặc định `false`). Khi đặt `true`, đăng ký chủ cửa hàng tạo phiên đăng nhập ngay, tài khoản chủ đang pending có thể đăng nhập bằng đúng mật khẩu để kích hoạt, và ứng dụng không cần email provider để khởi động. Trạng thái `email_verified_at` vẫn để trống; không giả ghi là email đã được xác minh.
+- Chế độ này không bỏ xác minh lời mời nhân viên hoặc luồng đặt lại mật khẩu. Render Blueprint giữ mặc định `false`; người vận hành phải đổi biến riêng trong Environment, lưu và deploy thủ công. Khi bật, email bất kỳ có thể được khai báo nên chỉ dùng cho trình diễn với dữ liệu demo, không dùng cho cửa hàng/khách thật.
+- `resend-verification` và bước xác nhận được mở rộng để tài khoản demo đang active nhưng chưa xác minh có thể hoàn tất xác minh sau này khi email provider hoạt động.
+- **Bằng chứng hiện tại:** sửa source và hướng dẫn đã được thực hiện trong workspace. Chưa chạy kiểm thử, chưa khởi động runtime, chưa dùng trình duyệt, chưa triển khai lên Render và chưa thay đổi dữ liệu Supabase. Cần kiểm tra luồng đăng ký/login trên môi trường demo sau khi mã được đưa lên và deploy.
+- **Bước kế tiếp:** kiểm tra cú pháp và diff; sau khi có bản phát hành trên Render, đặt `DEMO_DISABLE_EMAIL_VERIFICATION=true`, nhập thông tin mới hoặc đăng nhập tài khoản pending bằng mật khẩu cũ. Sau cuộc thi, cấu hình domain/email, gửi lại xác minh, rồi đặt biến thành `false` và deploy lại.
+
+## Cập nhật 2026-10-22 — blocker trải nghiệm POS trên màn hình hẹp
+
+- Đã xem phiên web đang đăng nhập: Tổng quan, Bán hàng, Đơn hàng, Kho hàng và Sản phẩm tải được. Đơn hàng đang trống; kho có hai mặt hàng. Bảng tồn phải cuộn ngang; trên vùng nhìn hẹp, tiêu đề/dãy nút Sản phẩm chiếm nhiều hàng. Đây là quan sát trình duyệt; chưa phải nghiệm thu iOS/Android.
+- Chạm thẻ sản phẩm cập nhật giỏ bản nháp, nhưng không thấy lối mở giỏ/thu tiền trong vùng nhìn. Đối chiếu CSS xác nhận `.pos-mobile-cart` bị `display:none` mặc định và media query hẹp không bật lại; đồng thời `.cart-panel` bị ẩn. Đây là blocker có thể giải thích trực tiếp việc người dùng không thể bán trên điện thoại.
+- Không hoàn tất thanh toán hoặc ghi đơn. Giỏ bản nháp được giữ vì chưa biết chắc trạng thái trước thao tác. Không sửa mã, không thay đổi dữ liệu cửa hàng.
+- **Ưu tiên tiếp theo:** P0 khôi phục nút giỏ/checkout ở điện thoại và kiểm tra drawer; P1 sửa bố cục header/bảng ở màn hẹp; P2 tăng khả năng đọc/phản hồi; P3 nghiệm thu giao dịch bằng người bán trên môi trường demo được cho phép. Chi tiết purpose, scope, dependency và evidence nằm cuối `docs/EXECUTION_PLAN.md`.
+- Release gate UX trên iOS/Android vẫn mở. Mọi bản sửa giao diện phải được người bán thử trực tiếp; chỉ kiểm tra dữ liệu/bảo mật bằng kiểm chứng kỹ thuật phù hợp. Ghi nhận này chỉ ở workspace, chưa đưa `docs/` lên GitHub.
+
+## Cập nhật 2026-10-22 — sửa cục bộ luồng giỏ bán hàng trên màn hẹp
+
+- **Mục đích:** Khôi phục thao tác chọn hàng và mở giỏ trên điện thoại, đồng thời giữ bộ chọn kho rõ ràng trên các kích thước màn hình.
+- **Phạm vi đã sửa trong workspace:** `app.js` tự mở drawer khi chạm sản phẩm trên điện thoại; thêm nút Giỏ hàng ở đầu trang, nút đóng và “Thêm sản phẩm” trong drawer để quay lại danh sách sản phẩm. `styles.css` bật thanh giỏ cố định, xử lý vùng safe-area, bố trí drawer cuộn được, và xếp nhóm tìm kiếm/quét mã riêng với bộ chọn kho ở hàng dưới trên tablet/điện thoại.
+- **Phụ thuộc:** Không cần dịch vụ ngoài. Chỉ dùng cửa hàng/dữ liệu demo được cho phép để thử thao tác; không ghi đơn thật trong lúc rà giao diện.
+- **Trạng thái/bằng chứng:** PR #19 đã được gộp vào `main`; Render xác nhận tự triển khai thành công commit `b683923` với trạng thái Live ngày 2026-10-22. Người dùng sau đó báo bảng giỏ vẫn đóng khi bấm tăng/giảm số lượng. P0 vẫn **In progress**; release gate iOS/Android vẫn mở.
+- **Bước tiếp theo và bằng chứng cần:** Khắc phục việc giữ drawer mở khi giao diện vẽ lại sau khi đổi số lượng; sau đó người dùng thử trên desktop, tablet và điện thoại: chọn nhiều sản phẩm, mở/đóng drawer, tăng/giảm hoặc xóa dòng mà bảng không tự đóng, xác nhận tổng tiền cập nhật, nút “Thêm sản phẩm” quay lại danh sách, và bộ chọn kho không chồng lên ô tìm kiếm. Chỉ xác nhận bố cục khi được thử ở trình duyệt/app thật; chưa cần gửi giao dịch để kiểm tra giao diện.
+
+## Cập nhật 2026-10-22 — giữ giỏ hàng mở khi chỉnh số lượng
+
+- **Bằng chứng:** Người dùng xác nhận lỗi vẫn còn và gửi ảnh drawer đóng khi đổi số lượng. Đọc `app.js` trên nhánh `main` của GitHub xác nhận `setCartQty()` vẫn gọi `render()`, còn `render()` thay toàn bộ nội dung trang mà không giữ trạng thái drawer. Bản sửa trước chỉ nằm trong workspace nên chưa ảnh hưởng bản đang chạy.
+- **Sửa trong workspace:** `setCartQty()` cập nhật riêng hai khung giỏ, tổng tiền, số lượng và nút mở giỏ; không dựng lại trang nên lớp drawer đang mở còn nguyên. Sửa số lượng qua hộp thoại cũng dùng cập nhật cục bộ. `styles.css` bổ sung bố cục tablet nhỏ, điều hướng dưới, giỏ dạng bảng trượt, form/bảng co giãn và hỗ trợ safe-area/màn hình ngang ngắn.
+- **Phạm vi:** Chỉ thay đổi trạng thái giao diện. API, tồn kho, số lượng tồn được phép, giá trị đơn và luồng thanh toán không đổi.
+- **Trạng thái/bằng chứng:** `node --check app.js`, `git diff --check` và bộ `pnpm test` đạt (40/40; bộ này không kiểm tra hành vi giao diện). Chưa có kiểm thử trình duyệt/thiết bị thật. `main` và Render vẫn chứa hành vi cũ cho tới khi bản sửa được đưa lên và triển khai. P0 vẫn **In progress**; chưa có thay đổi nào được tải lên GitHub trong lượt này.
+- **Bước kế tiếp:** Người dùng xác nhận trên điện thoại rằng tăng/giảm vẫn giữ drawer mở, tổng tiền đổi đúng, xóa dòng cuối vẫn cho thấy giỏ trống trong drawer, và “Thêm sản phẩm” vẫn đóng drawer để chọn hàng.
+
+## Cập nhật 2026-10-22 — đối chiếu phản ánh lỗi với GitHub
+
+- **Đính chính trạng thái mã nguồn:** GitHub `main` hiện có commit `93caaef719b9bbfbf2904c82afe714b54dddc56b`, tiêu đề `Fix POS cart quantity controls and responsive layout (#20)`. Diff của commit thêm `refreshCartPanels()` và đổi `setCartQty()` sang gọi hàm này; thao tác sửa số lượng cũng cập nhật riêng phần giỏ khi đang ở POS. Vì vậy, ghi chú phía trên nói `main` vẫn chứa hành vi cũ/chưa tải lên đã lỗi thời.
+- **Rà luồng trong source:** handler `cart-qty` chỉ gọi `setCartQty()`. Hàm này không gọi `render()`; `refreshCartPanels()` thay riêng hai phần `.cart-panel`, giữ nguyên wrapper `#drawer-cart` và class `open`, đồng thời cập nhật tổng tiền/số lượng. Không thấy nhánh `+ / −` nào khác gọi dựng lại toàn trang.
+- **Giới hạn:** Chưa đọc được trạng thái deploy hiện tại của Render và chưa thử tương tác trên điện thoại sau commit này. Người dùng vẫn báo lỗi; chưa kết luận đó là cache hay deploy cũ khi chưa có SHA của bản Render đang chạy.
+- **Việc tiếp theo:** Đối chiếu SHA của deploy Live trên Render với `93caaef`. Nếu khác, triển khai commit mới nhất của `main` rồi tải lại ứng dụng. Nếu đã đúng SHA mà thao tác vẫn đóng giỏ, ghi nhận video ngắn hoặc log runtime trên phiên bản đó để tìm lỗi còn sót. P0 và nghiệm thu iOS/Android vẫn **In progress**.
+
+## Cập nhật 2026-10-22 — hồ sơ cửa hàng, cách dùng đơn giản và vai trò POS
+
+- **Yêu cầu mới:** Sau tạo tài khoản/đăng nhập, người dùng muốn chọn cách vận hành để thấy ngay những chức năng phù hợp: bán trực tiếp kiểu cửa hàng truyền thống; cửa hàng vừa bán trực tiếp vừa ghi nhận đơn online; hoặc quản lý kho/nhiều điểm bán. Quán cà phê/quán ăn là ví dụ ngành hàng, không phải yêu cầu để khẳng định đã có nghiệp vụ F&B.
+- **Phân tích sản phẩm:** Tách lựa chọn này khỏi vai trò chủ/quản lý/thu ngân/kho/kế toán và khỏi danh tính máy bán hàng. Hồ sơ chỉ cấu hình điều hướng, lối tắt và hướng dẫn; không thay quyền phía máy chủ. “Dễ bắt đầu” là cách hiển thị cho mọi lứa tuổi. Đơn online hiện vẫn nhập tay. Nhân viên được mời không chọn lại hồ sơ chủ cửa hàng.
+- **Tài liệu hóa:** Tạo [`ONBOARDING_AND_ACCESS_PROFILES.md`](ONBOARDING_AND_ACCESS_PROFILES.md) với lựa chọn, phạm vi lát cắt, ranh giới quyền, chế độ thu ngân, tiêu chí nghiệm thu và các quyết định còn mở; hợp nhất hàng việc còn dở trong [`EXECUTION_PLAN.md`](EXECUTION_PLAN.md). Chưa thay đổi mã nguồn, schema, quyền hoặc dữ liệu.
+- **POS:** Ghi nhận lời người dùng mới nhất là giỏ hiện ổn. Chưa có biên bản xác nhận thiết bị thật hay SHA deploy, vì vậy chỉ cập nhật trạng thái phản ánh người dùng; cổng thiết bị vẫn mở.
+- **Bước tiếp theo:** Trước khi code onboarding, đối chiếu phiên bản Render/Supabase hiện chạy và tình trạng đăng nhập demo; sau đó chốt các quyết định ngắn ở cuối tài liệu hồ sơ rồi triển khai một lát cắt nhỏ bằng các màn hiện có.
+
+## Cập nhật 2026-10-26 — onboarding, mật khẩu và cài đặt tài khoản trong workspace
+
+- **Đã thêm trong workspace:** Migration 0024 thêm hồ sơ vận hành và thời điểm hoàn tất onboarding cho cửa hàng. Chủ mới được hỏi một lần; lựa chọn “Để sau” lưu trạng thái “chưa rõ”. Năm hồ sơ sắp xếp điều hướng desktop/mobile; mục “Tất cả chức năng” vẫn giữ các màn mà vai trò hiện tại được phép dùng. API chỉ cho chủ/quản lý đổi hồ sơ và ghi nhật ký; lựa chọn không cấp quyền, không thay số liệu. Nhân viên nhận lời mời không bị đưa qua onboarding chủ.
+- **Tài khoản:** Trường mật khẩu khi đăng nhập, đăng ký, nhận lời mời và đặt lại có nút hiện/ẩn; form tạo mật khẩu kiểm tra nhập lại. Cài đặt có form đổi mật khẩu: xác minh mật khẩu hiện tại, lưu hash mới, vô hiệu liên kết đặt lại còn hiệu lực, thu hồi phiên khác nhưng giữ phiên hiện tại, ghi sự kiện bảo mật và tải lại danh sách phiên.
+- **Kiểm tra đã thực hiện:** `node --check` đạt cho `app.js`, `server/auth.js`, `server/settings.js` và `server/db.js`. `git diff --check` không báo lỗi whitespace; chỉ có cảnh báo Git chuẩn hóa CRLF trong các tệp đã sửa.
+- **Giới hạn bằng chứng:** Chưa chạy bộ kiểm thử, chưa khởi động API hoặc trình duyệt, chưa áp migration 0024 lên database nào, chưa đổi mật khẩu tài khoản thật, và chưa deploy hay cập nhật GitHub. Vì vậy đây là mã có trong workspace, chưa phải tính năng đã được nghiệm thu/đang chạy.
+- **Việc tiếp theo:** Kiểm tra migration và quyền ứng dụng trên database tách biệt; nghiệm thu onboarding cho chủ mới/cũ và nhân viên; thử đổi mật khẩu đúng/sai, nhập lại không khớp, phiên đang dùng và phiên khác; xem giao diện trên điện thoại/bàn phím/trình đọc màn hình. Chỉ sau đó mới cân nhắc đưa mã lên GitHub và triển khai theo quy trình riêng.
+
+## Cập nhật 2026-10-26 — PR #22 đã gộp, chờ backup mới trước khi phát hành Render
+
+- **GitHub:** PR #22 `Add store onboarding profiles and password management` đã squash-merge vào `main`; merge commit là `2dd182973eefeb4a1d0f232e608baa571c70f060`. PR giữ đúng 7 tệp mã nguồn/migration đã duyệt, không gồm `docs/`, POS hoặc hosting. Nhánh làm việc cũ không bị sửa.
+- **CI:** GitHub Actions run `40255695349` hoàn tất thành công: API/schema acceptance và production container build đều xanh. Đây chưa phải nghiệm thu trên Supabase, Render, trình duyệt hay điện thoại.
+- **Backup/migration:** backup local đã xác minh `2026-10-21T15-58-28-754Z-88008f05-81ec-4a75-bd96-14725b0c4141` được tạo trước lần chạy production migrations 0001–0023 được ghi ở trên nên không dùng làm preflight mới. Lệnh backup đã được chuẩn bị nhưng dừng trước khi nhập mật khẩu vì phiên terminal không hiển thị cho người dùng. Chưa có backup mới và chưa chạy migration 0024.
+- **Render:** cấu hình `render.yaml` đặt `autoDeployTrigger: off`; do vậy merge vào `main` chưa cập nhật service Live. Chưa deploy commit `2dd1829`.
+- **Bước kế tiếp:** người dùng chạy `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\postgres-backup-supabase.ps1` trong một cửa sổ PowerShell nhìn thấy được tại `D:\Slink`; nhập mật khẩu ở prompt ẩn và chỉ chia sẻ tên manifest/thông báo thành công, không gửi mật khẩu. Sau khi có manifest mới, chạy workflow migration trên `main` với tên/tham chiếu manifest, kiểm tra postflight role checks thành công, rồi mới deploy thủ công commit merge trên Render. Sau deploy, xác nhận `/api/ready`, onboarding chủ mới, điều hướng theo hồ sơ, đổi mật khẩu và thu hồi phiên khác. Chưa đánh dấu nghiệm thu sản phẩm cho tới khi các luồng runtime/thiết bị được kiểm tra.
+
+## Cập nhật 2026-10-26 — Render login lỗi do thiếu migration 0024
+
+- **Bằng chứng mới do người dùng gửi:** Render log của `POST /api/auth/login` có mã PostgreSQL `42703` và thông báo `column "business_profile" does not exist`; stack đi qua `createUserSession` trong `server/auth.js` và truy vấn trong `server/db.js`. API trả HTTP 500.
+- **Kết luận:** mã ứng dụng đang chạy truy vấn cột hồ sơ cửa hàng mà database hiện tại chưa có. Migration `0024_store_business_profile.sql` thêm cả `business_profile` và `onboarding_completed_at`. Đây là lỗi thiếu migration/schema, không phải sai mật khẩu hay lỗi giao diện. Log không cho biết chính xác SHA Render đang chạy; chưa tự xác nhận trạng thái cột hoặc migration ledger trực tiếp trên Supabase.
+- **Trạng thái dữ liệu:** chưa có xác nhận backup mới đã tạo; backup ngày 2026-10-21 cũ hơn lần áp dụng migrations 0001–0023 nên không dùng làm pre-migration backup cho 0024. Chưa có bằng chứng migration 0024 đã chạy trên production. Không đăng ký lại, không sửa mật khẩu/URL kết nối và không xóa dữ liệu để thử.
+- **Việc tiếp theo an toàn:** tạo và xác minh backup mới bằng script PowerShell trong cửa sổ người dùng nhìn thấy được; nhập mật khẩu Supabase chỉ tại prompt ẩn. Sau khi backup được xác minh, người vận hành mới dispatch workflow `Prepare production database` từ `main`, cung cấp đúng tên/tham chiếu manifest, rồi kiểm tra migration ledger và role-boundary checks. Lưu ý workflow chỉ ghi lại chuỗi tham chiếu không rỗng; nó không tự mở hay kiểm tra file backup local, nên phải tự chắc chắn script đã báo `Backup verified`. Workflow làm thay đổi schema production; chưa chạy từ phiên này. Sau khi workflow thành công, thử đăng nhập lại trên service Render hiện tại; chỉ cần deploy nếu xác nhận SHA đang chạy chưa có mã tương ứng.
+- **Giới hạn:** đây là chẩn đoán từ log và source/migration đã đọc, chưa phải xác minh trực tiếp database production hoặc kiểm tra đăng nhập sau sửa. P0/P2 và cổng dữ liệu vẫn đang mở.
+
+## Cập nhật 2026-10-26 — backup Supabase chưa qua xác thực
+
+- **Bằng chứng người dùng cung cấp:** chạy script trong PowerShell nhìn thấy được, nhập mật khẩu tại prompt ẩn; công cụ trả `password authentication failed for user "postgres"` khi đọc metadata qua Supabase Session Pooler.
+- **Kết luận:** kết nối bị từ chối trước khi bắt đầu dump. Không có backup mới được tạo/verify, không có migration chạy và không có schema/dữ liệu production nào bị thay đổi. Đây chưa phải lỗi khóa mã hóa backup hoặc lỗi migration.
+- **Bước tiếp theo:** đối chiếu host/port/database/user hiện tại trong Supabase Connect → Session pooler; xác nhận user khớp project ref và nhập đúng database password hiện hành. Thử kết nối chỉ-đọc bằng `psql` với cùng host/user/port/TLS trước; nếu thất bại thì xử lý credential trong Supabase, không reset hay gửi password qua chat. Nếu `psql` thành công nhưng script vẫn thất bại, so sánh output `current_user` và script `-Username` trước khi thử lại.
+
+## Cập nhật 2026-10-26 — xác nhận kết nối Session Pooler bằng psql
+
+- **Bằng chứng người dùng cung cấp:** `psql` với host `aws-0-ap-northeast-1.pooler.supabase.com`, cổng 5432, user `postgres.giuraqrlmqdocrvwaqna` và TLS `verify-full` trả về `current_user = postgres`, `current_database = postgres`.
+- **Kết luận:** thông tin kết nối và database password vừa dùng được Supabase chấp nhận. Điều này không chứng minh backup đã được tạo; script backup chưa được chạy lại sau lần xác thực thành công. Không có migration hoặc thay đổi dữ liệu.
+- **Bước kế tiếp:** chạy lại `scripts/postgres-backup-supabase.ps1` trong PowerShell nhìn thấy được, nhập cùng database password tại prompt ẩn, rồi chỉ tiếp tục khi script báo backup đã verify và in manifest. Chỉ sau đó mới chạy workflow production migration.
+
+## Cập nhật 2026-10-26 — psql thành công nhưng backup Node vẫn bị từ chối
+
+- **Bằng chứng mới do người dùng gửi:** `psql` trên Session Pooler trả về một hàng (`current_user = postgres`, `current_database = postgres`), nhưng lần chạy ngay sau đó của script backup vẫn nhận `password authentication failed for user "postgres"` từ bước Node `pg` đọc metadata.
+- **Kết luận/giới hạn:** kết nối pooler đã thành công ít nhất một lần; backup vẫn chưa được tạo. Log không phân biệt giữa mật khẩu nhập khác ở prompt script, thay đổi mật khẩu gần đây với cache xác thực tạm thời của pooler, hoặc khác biệt ở đường kết nối Node. Không đổi/reset mật khẩu thêm lần nữa cho tới khi kiểm tra có kiểm soát; không có thay đổi schema/dữ liệu.
+- **Bước kế tiếp:** nếu database password vừa được đổi, đợi vài phút rồi thử một lần nữa với cùng giá trị đã dùng thành công ở `psql`; nếu không vừa đổi, cũng bảo đảm nhập đúng cùng giá trị mà không gửi nó qua chat. Nếu script vẫn lỗi, giữ lại lỗi không chứa bí mật để rà cách `pg` nhận kết nối so với `psql` trước khi thử tiếp.
+
+## Cập nhật 2026-10-26 — backup Supabase mới đã xác minh
+
+- **Bằng chứng người dùng cung cấp:** `scripts/postgres-backup-supabase.ps1` hoàn tất; tạo archive mã hóa 654,720 bytes và báo `Backup verified`. Manifest: `D:\Slink\.local-data\backups\supabase\2026-10-26T02-25-11-627Z-bda9e809-0017-461d-9c11-742f3be0a202.slinkbackup.manifest.json`.
+- **Phạm vi:** script kết nối chỉ đọc tới Supabase Session Pooler, kiểm tra manifest/archive và báo không đổi schema hoặc dữ liệu. Giữ archive, manifest và khóa backup trong vùng riêng an toàn; không đưa backup lên GitHub.
+- **Trạng thái:** đã có backup mới phù hợp làm preflight trước migration 0024. Chưa chạy production migration, chưa xác minh postflight role checks và chưa thử lại đăng nhập.
+- **Bước tiếp theo:** chủ dự án chạy thủ công workflow GitHub Actions `Prepare production database` trên branch `main`, nhập đúng manifest làm `verified_backup_reference`; sau khi kết thúc phải xem migration 0024 và toàn bộ role-boundary checks thành công. Sau đó thử lại đăng nhập trên Render hiện tại; deploy thủ công chỉ khi xác minh SHA đang chạy chưa chứa mã mới.
+
+## Cập nhật 2026-10-26 — lọc menu theo hồ sơ cửa hàng
+
+- **Yêu cầu người dùng:** chỉ hỏi chủ cửa hàng mới một lần; cửa hàng đã có trước cập nhật và chưa chọn sẽ được hỏi đúng một lần. Sau khi chọn, chỉ hiện nhóm chức năng phù hợp với cách vận hành; ẩn các mục khác để dễ dùng, nhưng không xóa dữ liệu hay đổi quyền. Mục tiêu là dễ hiểu, thân thiện với mọi người; không gắn cách dùng với tuổi.
+- **Đối chiếu mã:** onboarding trước đó đã hỏi một lần theo `onboarding_completed_at`, áp dụng với chủ và không với nhân viên mời; nhưng chỉ ưu tiên menu, giữ “Tất cả chức năng”, nên chưa đáp ứng yêu cầu lọc.
+- **Thay đổi trong workspace:** bỏ nút toàn bộ chức năng trên desktop; trên điện thoại, “Khác” chỉ liệt kê phần còn lại thuộc hồ sơ đã chọn. Các mục theo hồ sơ vẫn giao với quyền vai trò; thu chi và Cài đặt giữ làm mục chung để bảo toàn khả năng xem tiền và quản lý tài khoản. Cài đặt giải thích các mục khác bị ẩn chứ không xóa, và cho chủ/quản lý đổi hồ sơ. Không thêm migration mới.
+- **Trạng thái/bằng chứng:** thay đổi chỉ ở workspace, chưa chạy kiểm tra tự động hoặc trình duyệt, chưa đưa lên GitHub hay deploy. Không có thay đổi database. Kiểm tra menu từng hồ sơ/role, lối tắt trong trang và khả năng mobile vẫn còn trước khi coi lát cắt này đạt.

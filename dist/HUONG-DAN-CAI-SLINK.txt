@@ -1,0 +1,14 @@
+SLINK 0.3.0 — BẢN CÀI THỬ ANDROID
+
+1. Chép Slink-0.3.0-preview.apk sang điện thoại Android 10 trở lên.
+2. Mở tệp APK, cho phép cài từ ứng dụng mở tệp nếu Android hỏi, rồi chọn Cài đặt.
+3. Mở Slink và đăng nhập khi có mạng trong lần đầu.
+4. Khi đã tải dữ liệu, các thao tác offline được hỗ trợ có thể tiếp tục. Việc cần máy chủ vẫn cần mạng.
+
+Không gỡ app hoặc xóa dữ liệu ứng dụng khi còn chứng từ chưa gửi.
+Bánh răng cạnh dấu hỏi mở cài đặt. Dữ liệu > Xem dữ liệu đã lưu để kiểm tra chứng từ trên máy.
+
+Đã kiểm tra trên máy giả lập Android 15: đăng nhập, bán hàng, biên nhận, chia sẻ, lưu tệp, Quay lại, cài đặt, đóng mở khi mất mạng và đối soát sau khi có mạng.
+Đây là bản hybrid đóng gói giao diện trong ứng dụng, dùng API Slink. Chưa nghiệm thu điện thoại thật hoặc phát hành Google Play. Hiện dùng chữ ký debug để cài thử.
+
+SHA-256 APK: 90baa71cda7c3d73f7c7405660736f75b7524ac8b5ce7c6bc9f173b761b9eb6b

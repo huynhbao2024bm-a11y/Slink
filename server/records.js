@@ -210,6 +210,10 @@ function registerRecordRoutes(app, { pool, env }) {
     const { storeId } = request.params;
     if (!UUID_PATTERN.test(storeId)) throw new ApiError(400, 'validation_error', 'Cửa hàng không hợp lệ.');
     const { limit, offset, search } = pageArgs(request.query);
+    const pickerView = request.query?.view;
+    if (pickerView !== undefined && (typeof pickerView !== 'string' || pickerView !== 'picker')) {
+      throw new ApiError(400, 'validation_error', 'Cách xem danh sách khách hàng không hợp lệ.');
+    }
     const phoneSearch = search.replace(/\D/g, '');
     let segment = '';
     if (request.query?.segment !== undefined) {
@@ -230,6 +234,17 @@ function registerRecordRoutes(app, { pool, env }) {
     }
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
       if (!CUSTOMER_VIEW_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền xem hồ sơ khách hàng.');
+      if (pickerView === 'picker') {
+        const result = await client.query(
+          `SELECT c.id, c.name, c.phone
+           FROM customers c
+           WHERE c.store_id = $1 AND c.status = 'active'
+             AND ($2 = '' OR c.name ILIKE '%' || $2 || '%' OR ($3 <> '' AND COALESCE(c.phone_normalized, '') LIKE '%' || $3 || '%'))
+           ORDER BY c.name, c.id LIMIT $4 OFFSET $5`,
+          [storeId, search, phoneSearch, limit, offset]
+        );
+        return { customers: result.rows };
+      }
       const result = await client.query(
         `SELECT c.id, c.name, c.phone, c.email, c.note, c.status, c.version,
                 customer_balance.balance_vnd::text AS balance_vnd,
