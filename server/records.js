@@ -53,6 +53,20 @@ function validateCustomer(input, { partial = false } = {}) {
     if (note.length > 1000) throw new ApiError(400, 'validation_error', 'Ghi chú tối đa 1.000 ký tự.');
     values.note = note;
   }
+  if (!partial || source.shippingAddress !== undefined) {
+    const address = typeof source.shippingAddress === 'string' ? source.shippingAddress.trim() : '';
+    if (address.length > 500) throw new ApiError(400, 'validation_error', 'Địa chỉ tối đa 500 ký tự.');
+    values.shippingAddress = address;
+  }
+  if (!partial || source.customerType !== undefined) {
+    const type = source.customerType || 'retail';
+    if (!['retail', 'wholesale', 'vip'].includes(type)) throw new ApiError(400, 'validation_error', 'Nhóm khách hàng không hợp lệ.');
+    values.customerType = type;
+  }
+  if (!partial || source.creditLimitVnd !== undefined) {
+    values.creditLimitVnd = source.creditLimitVnd === '' || source.creditLimitVnd == null
+      ? null : nonNegativeVnd(source.creditLimitVnd, 'Hạn mức nợ').toString();
+  }
   return values;
 }
 
@@ -246,7 +260,7 @@ function registerRecordRoutes(app, { pool, env }) {
         return { customers: result.rows };
       }
       const result = await client.query(
-        `SELECT c.id, c.name, c.phone, c.email, c.note, c.status, c.version,
+        `SELECT c.id, c.name, c.phone, c.email, c.note, c.shipping_address, c.customer_type, c.credit_limit_vnd::text AS credit_limit_vnd, c.status, c.version,
                 customer_balance.balance_vnd::text AS balance_vnd,
                 customer_activity.order_count,
                 customer_activity.total_spent_vnd::text AS total_spent_vnd,
@@ -446,7 +460,7 @@ function registerRecordRoutes(app, { pool, env }) {
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
       if (!CUSTOMER_VIEW_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền xem hồ sơ khách hàng.');
       const customerResult = await client.query(
-        `SELECT c.id, c.name, c.phone, c.email, c.note, c.status, c.version, c.created_at,
+        `SELECT c.id, c.name, c.phone, c.email, c.note, c.shipping_address, c.customer_type, c.credit_limit_vnd::text AS credit_limit_vnd, c.status, c.version, c.created_at,
                 COALESCE((SELECT SUM(l.debit_vnd - l.credit_vnd) FROM customer_ledger_entries l
                           WHERE l.store_id = c.store_id AND l.customer_id = c.id), 0)::text AS balance_vnd,
                 COALESCE((SELECT COUNT(*) FROM orders o WHERE o.store_id = c.store_id AND o.customer_id = c.id AND o.status <> 'voided'), 0)::int AS order_count,
@@ -713,10 +727,10 @@ function registerRecordRoutes(app, { pool, env }) {
         }
       }
       const inserted = await client.query(
-        `INSERT INTO customers (store_id, name, phone, phone_normalized, email, note, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         RETURNING id, name, phone, email, note, status, version, created_at, updated_at`,
-        [storeId, customer.name, customer.phone, customer.phoneNormalized, customer.email, customer.note, auth.userId]
+        `INSERT INTO customers (store_id, name, phone, phone_normalized, email, note, shipping_address, customer_type, credit_limit_vnd, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING id, name, phone, email, note, shipping_address, customer_type, credit_limit_vnd::text AS credit_limit_vnd, status, version, created_at, updated_at`,
+        [storeId, customer.name, customer.phone, customer.phoneNormalized, customer.email, customer.note, customer.shippingAddress, customer.customerType, customer.creditLimitVnd, auth.userId]
       );
       const created = inserted.rows[0];
       let openingBalanceEntryId = null;
@@ -775,13 +789,17 @@ function registerRecordRoutes(app, { pool, env }) {
         phoneNormalized: fields.phoneNormalized !== undefined ? fields.phoneNormalized : current.phone_normalized,
         email: fields.email !== undefined ? fields.email : current.email,
         note: fields.note ?? current.note,
+        shippingAddress: fields.shippingAddress ?? current.shipping_address,
+        customerType: fields.customerType ?? current.customer_type,
+        creditLimitVnd: fields.creditLimitVnd !== undefined ? fields.creditLimitVnd : current.credit_limit_vnd,
       };
       const updated = await client.query(
         `UPDATE customers SET name = $3, phone = $4, phone_normalized = $5, email = $6, note = $7,
+             shipping_address = $9, customer_type = $11, credit_limit_vnd = $10,
              version = version + 1, updated_at = now()
          WHERE store_id = $1 AND id = $2 AND version = $8
-         RETURNING id, name, phone, email, note, status, version, updated_at`,
-        [storeId, customerId, next.name, next.phone, next.phoneNormalized, next.email, next.note, expectedVersion]
+         RETURNING id, name, phone, email, note, shipping_address, customer_type, credit_limit_vnd::text AS credit_limit_vnd, status, version, updated_at`,
+        [storeId, customerId, next.name, next.phone, next.phoneNormalized, next.email, next.note, expectedVersion, next.shippingAddress, next.creditLimitVnd, next.customerType]
       );
       await client.query(
         `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, metadata)

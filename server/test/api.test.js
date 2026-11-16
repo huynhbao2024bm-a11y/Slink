@@ -1765,21 +1765,14 @@ test('customer debt collection allocates across order and opening balances once'
   assert.equal(orderDetail.statusCode, 200, orderDetail.body);
   assert.equal(orderDetail.json().order.payments.reduce((sum, row) => sum + Number(row.amount_vnd), 0), 10000);
 
-  const overpayment = await app.inject({
-    method: 'POST', url: paymentUrl, headers: { ...headers, 'idempotency-key': 'customer-payment-too-much-001' },
-    payload: { amountVnd: '2001', method: 'cash', note: 'Không được vượt công nợ' },
-  });
-  assert.equal(overpayment.statusCode, 409, overpayment.body);
-  assert.equal(overpayment.json().error.code, 'payment_exceeds_due');
-
   const concurrentReceipts = await Promise.all([
     app.inject({
       method: 'POST', url: paymentUrl, headers: { ...headers, 'idempotency-key': 'customer-payment-race-a-001' },
-      payload: { amountVnd: '1500', method: 'bank_transfer', note: 'Thu đồng thời A' },
+      payload: { amountVnd: '1500', method: 'bank_transfer', note: 'Thu đồng thời A', allocations: [{ orderId: 'opening', amountVnd: '1500' }] },
     }),
     app.inject({
       method: 'POST', url: paymentUrl, headers: { ...headers, 'idempotency-key': 'customer-payment-race-b-001' },
-      payload: { amountVnd: '1500', method: 'bank_transfer', note: 'Thu đồng thời B' },
+      payload: { amountVnd: '1500', method: 'bank_transfer', note: 'Thu đồng thời B', allocations: [{ orderId: 'opening', amountVnd: '1500' }] },
     }),
   ]);
   assert.deepEqual(concurrentReceipts.map((response) => response.statusCode).sort(), [201, 409]);
@@ -1807,6 +1800,104 @@ test('customer debt collection allocates across order and opening balances once'
 
   const closeSession = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/cash-register`, headers });
   assert.equal(closeSession.json().session.expectedCashVnd, '16000');
+  const advance = await app.inject({ method: 'POST', url: paymentUrl,
+    headers: { ...headers, 'idempotency-key': 'customer-payment-advance-001' },
+    payload: { amountVnd: '2001', method: 'bank_transfer', note: 'Khách trả trước' } });
+  assert.equal(advance.statusCode, 201, advance.body);
+  assert.equal(advance.json().payment.advanceAmountVnd, '2001');
+  assert.equal(advance.json().payment.customerBalanceVnd, '-2001');
+  const secondProduct = await app.inject({ method: 'POST', url: `/api/stores/${storeId}/products/import`,
+    headers: { ...headers, 'idempotency-key': 'customer-payment-product-0002' },
+    payload: { items: [{ sku: 'CUSTOMER-DEBT-2', name: 'Hàng dùng tiền dư', salePriceVnd: 2000, costVnd: 1000, openingQuantity: '1' }] } });
+  assert.equal(secondProduct.statusCode, 201, secondProduct.body);
+  const usingCredit = await app.inject({ method: 'POST', url: `/api/stores/${storeId}/sales`,
+    headers: { ...headers, 'idempotency-key': 'customer-payment-credit-sale-001' },
+    payload: { customerId, items: [{ productId: secondProduct.json().products[0].id, quantity: 1 }],
+      tenders: [{ method: 'bank_transfer', amountReceivedVnd: '0' }] } });
+  assert.equal(usingCredit.statusCode, 201, usingCredit.body);
+  assert.equal(usingCredit.json().order.paidVnd, '2000');
+  assert.equal(usingCredit.json().order.dueVnd, '0');
+  const afterCredit = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/customers/${customerId}/debts`, headers });
+  assert.equal(afterCredit.statusCode, 200, afterCredit.body);
+  assert.equal(afterCredit.json().balanceVnd, '-1');
+  assert.equal(afterCredit.json().orders.length, 0);
+});
+
+test('customer can choose an opening debt without settling a newer order', async (t) => {
+  const app = await testApp(t);
+  const owner = await registerAndLogin(app, { email: 'chosen-debt@example.com', displayName: 'Chủ cửa hàng', storeName: 'Cửa hàng chọn công nợ' });
+  const storeId = owner.store.id;
+  const headers = { cookie: cookieHeader(owner.cookies), origin, 'x-csrf-token': owner.cookies.slink_csrf };
+  const created = await app.inject({ method: 'POST', url: `/api/stores/${storeId}/customers`,
+    headers: { ...headers, 'idempotency-key': 'chosen-debt-customer-001' }, payload: { name: 'Khách A', shippingAddress: '12 Đường A', customerType: 'vip', creditLimitVnd: '4000', openingBalanceVnd: '3000' } });
+  assert.equal(created.statusCode, 201, created.body);
+  const customerId = created.json().customer.id;
+  const imported = await app.inject({ method: 'POST', url: `/api/stores/${storeId}/products/import`,
+    headers: { ...headers, 'idempotency-key': 'chosen-debt-product-001' },
+    payload: { items: [{ sku: 'CHOSEN-1', name: 'Giấy', salePriceVnd: 2000, costVnd: 1000, openingQuantity: '1' }] } });
+  assert.equal(imported.statusCode, 201, imported.body);
+  const salePayload = { customerId, items: [{ productId: imported.json().products[0].id, quantity: 1 }],
+    tenders: [{ method: 'bank_transfer', amountReceivedVnd: '0' }] };
+  const blocked = await app.inject({ method: 'POST', url: `/api/stores/${storeId}/sales`,
+    headers: { ...headers, 'idempotency-key': 'chosen-debt-sale-blocked' }, payload: salePayload });
+  assert.equal(blocked.statusCode, 409, blocked.body);
+  assert.equal(blocked.json().error.code, 'customer_credit_limit');
+  const revised = await app.inject({ method: 'PUT', url: `/api/stores/${storeId}/customers/${customerId}`, headers,
+    payload: { version: 1, creditLimitVnd: '5000' } });
+  assert.equal(revised.statusCode, 200, revised.body);
+  assert.equal(revised.json().customer.shipping_address, '12 Đường A');
+  assert.equal(revised.json().customer.customer_type, 'vip');
+  const sold = await app.inject({ method: 'POST', url: `/api/stores/${storeId}/sales`,
+    headers: { ...headers, 'idempotency-key': 'chosen-debt-sale-0001' },
+    payload: salePayload });
+  assert.equal(sold.statusCode, 201, sold.body);
+  const debtUrl = `/api/stores/${storeId}/customers/${customerId}/debts`;
+  const before = await app.inject({ method: 'GET', url: debtUrl, headers });
+  assert.equal(before.statusCode, 200, before.body);
+  assert.equal(before.json().balanceVnd, '5000');
+  assert.equal(before.json().openingDueVnd, '3000');
+  assert.equal(before.json().orders[0].due_vnd, '2000');
+  const paymentUrl = `/api/stores/${storeId}/customers/${customerId}/payments`;
+  const keyHeaders = { ...headers, 'idempotency-key': 'chosen-debt-payment-001' };
+  const payload = { amountVnd: '1000', method: 'bank_transfer', allocations: [{ orderId: 'opening', amountVnd: '1000' }] };
+  const paid = await app.inject({ method: 'POST', url: paymentUrl, headers: keyHeaders, payload });
+  assert.equal(paid.statusCode, 201, paid.body);
+  assert.equal(paid.json().payment.allocations.length, 0);
+  const replay = await app.inject({ method: 'POST', url: paymentUrl, headers: keyHeaders, payload });
+  assert.equal(replay.headers['idempotent-replayed'], 'true');
+  const after = await app.inject({ method: 'GET', url: debtUrl, headers });
+  assert.equal(after.json().openingDueVnd, '2000');
+  assert.equal(after.json().orders[0].due_vnd, '2000');
+  const invalid = await app.inject({ method: 'POST', url: paymentUrl,
+    headers: { ...headers, 'idempotency-key': 'chosen-debt-invalid-001' },
+    payload: { amountVnd: '2001', method: 'bank_transfer', allocations: [{ orderId: sold.json().order.id, amountVnd: '2001' }] } });
+  assert.equal(invalid.statusCode, 409, invalid.body);
+  assert.equal((await app.inject({ method: 'GET', url: debtUrl, headers })).json().balanceVnd, '4000');
+  const added = await app.inject({ method: 'POST', url: `/api/stores/${storeId}/customers/${customerId}/opening-debts`,
+    headers: { ...headers, 'idempotency-key': 'chosen-debt-opening-0002' },
+    payload: { amountVnd: '4000', date: '2026-11-01', note: 'Đơn cũ tháng 11' } });
+  assert.equal(added.statusCode, 201, added.body);
+  const addedAgain = await app.inject({ method: 'POST', url: `/api/stores/${storeId}/customers/${customerId}/opening-debts`,
+    headers: { ...headers, 'idempotency-key': 'chosen-debt-opening-0002' },
+    payload: { amountVnd: '4000', date: '2026-11-01', note: 'Đơn cũ tháng 11' } });
+  assert.equal(addedAgain.headers['idempotent-replayed'], 'true');
+  const badDate = await app.inject({ method: 'POST', url: `/api/stores/${storeId}/customers/${customerId}/opening-debts`,
+    headers: { ...headers, 'idempotency-key': 'chosen-debt-invalid-date-001' },
+    payload: { amountVnd: '1000', date: '2026-02-31', note: 'Ngày không tồn tại' } });
+  assert.equal(badDate.statusCode, 400, badDate.body);
+  const itemized = (await app.inject({ method: 'GET', url: debtUrl, headers })).json();
+  assert.equal(itemized.openingItems.length, 2);
+  assert.equal(itemized.openingItems.reduce((sum, item) => sum + Number(item.dueVnd), 0), 6000);
+  const second = itemized.openingItems.find(item => item.note === 'Đơn cũ tháng 11');
+  assert.ok(second);
+  const selectedOpening = await app.inject({ method: 'POST', url: paymentUrl,
+    headers: { ...headers, 'idempotency-key': 'chosen-debt-specific-opening-001' },
+    payload: { amountVnd: '1500', method: 'bank_transfer', allocations: [{ orderId: `opening:${second.id}`, amountVnd: '1500' }] } });
+  assert.equal(selectedOpening.statusCode, 201, selectedOpening.body);
+  const afterSpecific = (await app.inject({ method: 'GET', url: debtUrl, headers })).json();
+  assert.equal(afterSpecific.openingItems.find(item => item.id === second.id).dueVnd, '2500');
+  assert.equal(afterSpecific.openingItems.find(item => item.id !== second.id).dueVnd, '2000');
+  assert.equal(afterSpecific.orders[0].due_vnd, '2000');
 });
 
 test('supplier payments, cash purchases, and return refunds preserve ledgers when the drawer is short', async (t) => {

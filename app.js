@@ -406,6 +406,12 @@
   function clearPendingCustomerPayment(customerId) {
     removePendingRecord('customer-payment', customerId, 'slink-pending-customer-payment-v1:' + store.id + ':' + customerId);
   }
+  function openingDebtPendingKey(customerId) { return 'slink-pending-opening-debt-v1:' + store.id + ':' + customerId; }
+  function loadPendingOpeningDebt(customerId) {
+    return readPendingRecord('opening-debt', customerId, openingDebtPendingKey(customerId), value => value.customerId === customerId && typeof value.key === 'string' && value.payload);
+  }
+  function savePendingOpeningDebt(value) { return savePendingRecord('opening-debt', value.customerId, value, openingDebtPendingKey(value.customerId)); }
+  function clearPendingOpeningDebt(customerId) { removePendingRecord('opening-debt', customerId, openingDebtPendingKey(customerId)); }
 
   function loadPendingPurchase() {
     return readPendingRecord('purchase', '', 'slink-pending-purchase-v1', function (value) {
@@ -610,6 +616,7 @@
   let cachedBootScope = '';
   let cachedBootSnapshot = null;
   let financeTab = 'cashbook';
+  let receivableDetail = null;
   let financeBookOpen = true;
   let offlinePreparation = 0, offlineSender = null, offlineSenderScope = '', offlineRefreshDue = false;
   const offlineOwner = newIdempotencyKey();
@@ -893,7 +900,18 @@
     if (method === 'GET' || method === 'HEAD') return runApiRequest(url, options, method);
     localWriteGeneration += 1;
     activeWrites += 1;
-    try { const result=await runApiRequest(url, options, method);if(url.startsWith('/api/stores/'))freshReadsUntil=Date.now()+5000;return result; }
+    try {
+      const result = await runApiRequest(url, options, method);
+      if (url.startsWith('/api/stores/') && !result?.offlineQueued) {
+        freshReadsUntil = Date.now() + 5000;
+        const scope = activeOfflineScope();
+        if (scope) {
+          try { await offlineDisk.putMeta('cache-stale|' + scope, new Date().toISOString()); }
+          catch (error) { offlineState.storageIssue = error.message || 'Chưa cập nhật được dữ liệu trên máy.'; }
+        }
+      }
+      return result;
+    }
     finally { activeWrites -= 1; }
   }
 
@@ -913,8 +931,12 @@
       }
     }
     if(!options?.preferFresh&&scope&&snapshot&&Date.now()>=freshReadsUntil&&/^\/api\/stores\/[^/]+\/(products|inventory|customers|orders|finance|cash-register|settings|warehouses|analytics)(\/|\?|$)/.test(url)){
-      const saved=await cachedOfflineRead(scope,url,snapshot);
-      if(saved){const previous=await offlineDisk.lookup(scope,url,snapshot);if(previous)refreshCachedRead(url,scope,previous);return saved;}
+      const previous = await offlineDisk.lookup(scope, url, snapshot);
+      const staleAt = await offlineDisk.getMeta('cache-stale|' + scope);
+      if (previous && (!staleAt || previous.fetchedAt > staleAt || !navigator.onLine)) {
+        const saved = await cachedOfflineRead(scope, url, snapshot);
+        if (saved) { if (navigator.onLine) refreshCachedRead(url, scope, previous); return saved; }
+      }
     }
     try {
       if (!navigator.onLine) throw new TypeError('offline');
@@ -1090,6 +1112,9 @@
       phone: row.phone || '',
       email: row.email || '',
       note: row.note || '',
+      shippingAddress: row.shipping_address || '',
+      customerType: row.customer_type || 'retail',
+      creditLimitVnd: row.credit_limit_vnd == null ? '' : String(row.credit_limit_vnd),
       tier: 'Khách hàng',
       points: null,
       balanceVnd: String(row.balance_vnd || '0'),
@@ -3171,19 +3196,72 @@
       <span class='activity-text'><button type='button' class='link-button' data-action='finance-receivable' data-id='${esc(customer.id)}'>${esc(customer.name)}</button>${customer.phone ? `<small>${esc(customer.phone)}</small>` : ''}</span>
       <strong class='activity-amount'>${moneyVndText(customer.debt)}</strong></div>`).join('');
     const empty = !financeDataReady ? (financeError ? 'Chưa tải được công nợ' : 'Đang tải công nợ…') : 'Chưa có khách còn nợ';
+    const detail = receivableDetail && financeTopCustomers.some(row => row.id === receivableDetail.customer.id)
+      ? `<section class='panel finance-debt-detail'><div class='panel-header'><h2>${esc(receivableDetail.customer.name)}</h2><button type='button' class='link-button' data-action='close-receivable'>Đóng</button></div>
+        <div class='finance-balance'><span>Còn nợ</span><strong>${moneyVndText(receivableDetail.balanceVnd)}</strong></div>
+        <div class='finance-debt-actions'><button type='button' class='btn btn-primary' data-action='collect-customer-payment' data-id='${esc(receivableDetail.customer.id)}'>Thu tiền</button><button type='button' class='btn btn-secondary' data-action='add-customer-opening-debt' data-id='${esc(receivableDetail.customer.id)}'>Thêm khoản nợ cũ</button><button type='button' class='btn btn-secondary' data-action='finance-reminder' data-id='${esc(receivableDetail.customer.id)}'>Nhắc nợ</button></div>
+        <h3>Các khoản còn nợ</h3><div class='activity-list'>${receivableDetail.orders.map(row => `<div class='activity-item'><span class='activity-text'><strong>Đơn ${esc(row.order_number)}</strong><small>${humanDate(row.occurred_at)}</small></span><strong>${moneyVndText(row.due_vnd)}</strong></div>`).join('')}${(receivableDetail.openingItems || []).map(row => `<div class='activity-item'><span class='activity-text'><strong>${esc(row.note || 'Nợ cũ')}</strong><small>${humanDate(row.occurredAt)}</small></span><strong>${moneyVndText(row.dueVnd)}</strong></div>`).join('')}</div>
+        <h3>Lịch sử công nợ</h3><div class='activity-list'>${receivableDetail.timeline.map(row => `<div class='activity-item'><span class='activity-text'><strong>${esc(row.note || (BigInt(row.debit_vnd) > 0n ? 'Phát sinh nợ' : 'Đã thu'))}</strong><small>${humanDate(row.occurred_at, true)}</small></span><strong>${BigInt(row.debit_vnd) > 0n ? '+' + moneyVndText(row.debit_vnd) : '−' + moneyVndText(row.credit_vnd)}</strong></div>`).join('')}</div></section>` : '';
     return `<div class='finance-balance'><span>Tổng cần thu</span><strong>${financeDataReady ? moneyVndText(financeSummary.customerDebtVnd) : '—'}</strong></div>
       <section class='panel'><div class='panel-header'><h2>Khách còn nợ</h2>${rows ? `<button type='button' class='link-button' data-action='new-debtor'>＋ Thêm khách nợ</button>` : ''}</div>
       <div class='activity-list'>${rows || `<div class='empty-state finance-debt-empty'><strong>${empty}</strong>${financeDataReady ? `<button type='button' class='btn btn-secondary' data-action='new-debtor'>＋ Thêm khách nợ</button>` : ''}</div>`}</div>
-      ${financeSummary.customerDebtCount > financeTopCustomers.length ? `<button type='button' class='link-button finance-list-more' data-action='view-customer-debt'>Xem tất cả ${number(financeSummary.customerDebtCount)} khách</button>` : ''}</section>`;
+      ${financeSummary.customerDebtCount > financeTopCustomers.length ? `<button type='button' class='link-button finance-list-more' data-action='view-customer-debt'>Xem tất cả ${number(financeSummary.customerDebtCount)} khách</button>` : ''}</section>${detail}`;
   }
 
-  function openReceivable(id) {
+  async function openReceivable(id) {
     const customer = financeTopCustomers.find(item => item.id === id);
     if (!customer) return;
-    const body = `<div class='checkout-total'><span>Còn phải thu</span><strong>${moneyVndText(customer.debt)}</strong></div>
-      ${customer.phone ? `<div class='detail-line'><span>Số điện thoại</span><strong>${esc(customer.phone)}</strong></div>` : ''}
-      <div class='finance-dialog-links'><button class='link-button' type='button' data-action='customer-detail' data-id='${esc(id)}'>Xem hồ sơ khách hàng</button></div>`;
-    showModal(customer.name, '', body, `<button class='btn btn-secondary' type='button' data-action='finance-reminder' data-id='${esc(id)}'>Nhắc nợ</button><button class='btn btn-primary' type='button' data-action='collect-customer-payment' data-id='${esc(id)}'>Thu bớt tiền</button>`);
+    try {
+      const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/customers/${encodeURIComponent(id)}/debts`);
+      if (page !== 'finance' || financeTab !== 'receivables') return;
+      receivableDetail = result;
+      render();
+      root.querySelector('.finance-debt-detail')?.scrollIntoView({ block: 'nearest' });
+    } catch (error) { toast('Chưa tải được công nợ', error.message, 'error'); }
+  }
+
+  function openAddCustomerOpeningDebt(customerId) {
+    const host = root.querySelector('.finance-debt-detail');
+    if (!host || receivableDetail?.customer.id !== customerId) return;
+    host.querySelector('[data-inline-debt-payment]')?.remove();
+    host.querySelector('[data-inline-opening-debt]')?.remove();
+    const pending = loadPendingOpeningDebt(customerId);
+    const value = pending?.payload || {};
+    const disabled = pending ? 'disabled' : '';
+    host.insertAdjacentHTML('beforeend', `<div data-inline-opening-debt><h3>Thêm khoản nợ cũ</h3><p class='muted'>Chỉ ghi khoản khách còn nợ trước khi dùng Slink. Không tạo phiếu thu.</p><form id='opening-debt-form' data-form='customer-opening-debt' data-customer-id='${esc(customerId)}'><div class='form-grid'><label class='form-field'><span class='input-label'>Ngày phát sinh</span><input class='input' type='date' name='date' value='${esc(value.date || new Date().toISOString().slice(0, 10))}' required ${disabled}/></label><label class='form-field'><span class='input-label'>Số tiền (đ)</span><input class='input' name='amountVnd' type='number' min='1' step='1' inputmode='numeric' value='${esc(value.amountVnd || '')}' required ${disabled}/></label><label class='form-field full'><span class='input-label'>Ghi chú khoản nợ</span><input class='input' name='note' maxlength='300' minlength='2' value='${esc(value.note || '')}' placeholder='Ví dụ: Đơn giấy ngày 5/11' required ${disabled}/></label></div></form><div class='finance-debt-actions'><button type='button' class='btn btn-secondary' data-action='close-inline-opening-debt'>Hủy</button><button type='submit' form='opening-debt-form' class='btn btn-primary'>${pending ? 'Thử lại khoản đang chờ' : 'Lưu khoản nợ'}</button></div></div>`);
+    window.SlinkMoneyFields.enhance(host.querySelector('[data-inline-opening-debt]'));
+    host.querySelector('[data-inline-opening-debt]')?.scrollIntoView({ block: 'nearest' });
+  }
+
+  async function saveCustomerOpeningDebt(form) {
+    const customerId = form.dataset.customerId;
+    let pending = loadPendingOpeningDebt(customerId);
+    if (!pending) {
+      const data = new FormData(form);
+      const amountVnd = moneyInputRaw(data.get('amountVnd') || '').trim();
+      if (!/^[1-9]\d*$/.test(amountVnd) || !Number.isSafeInteger(Number(amountVnd))) return toast('Số tiền không hợp lệ', 'Nhập số tiền VND nguyên dương.', 'error');
+      pending = { storeId: store.id, customerId, key: newIdempotencyKey(), payload: { amountVnd, date: String(data.get('date') || ''), note: String(data.get('note') || '').trim() } };
+    }
+    if (!savePendingOpeningDebt(pending)) return pendingSaveFailed();
+    const submit = form.closest('[data-inline-opening-debt]')?.querySelector('button[type="submit"]');
+    if (submit) submit.disabled = true;
+    try {
+      await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/customers/${encodeURIComponent(customerId)}/opening-debts`, {
+        method: 'POST', headers: { 'idempotency-key': pending.key }, body: pending.payload,
+      });
+      clearPendingOpeningDebt(customerId);
+      form.closest('[data-inline-opening-debt]')?.remove();
+      await loadFinancePage();
+      if (page === 'finance' && financeTab === 'receivables') {
+        receivableDetail = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/customers/${encodeURIComponent(customerId)}/debts`);
+        render();
+      }
+      toast('Đã lưu khoản nợ cũ', 'Khoản này đã có ngày và ghi chú riêng trong sổ công nợ.');
+    } catch (error) {
+      if (error.status >= 400 && error.status < 500 && !['idempotency_conflict', 'request_in_progress'].includes(error.code)) clearPendingOpeningDebt(customerId);
+      toast('Chưa lưu được khoản nợ', error.message, 'error');
+      if (submit?.isConnected) submit.disabled = false;
+    }
   }
 
   function openDebtReminder(id) {
@@ -5106,6 +5184,13 @@
     price.placeholder = suggestedCost > 0n && suggestedCost < BigInt(Number.MAX_SAFE_INTEGER) ? 'Từ ' + window.SlinkMoneyFields.format(String(suggestedCost + 1n)) + ' đ' : 'Giá bán';
     price.title = suggestedCost > 0n ? 'Gợi ý dựa trên giá vốn mỗi đơn vị, chưa gồm chi phí khác.' : '';
     const warning = form.querySelector('[data-product-price-warning]');
+    const costConflict = form.querySelector('[data-product-cost-conflict]');
+    if (costConflict) {
+      const saleRaw = moneyInputRaw(price?.value || '');
+      const conflict = Boolean(usePurchasePack?.checked && packCost > 0n && rawCost && /^\d+$/.test(saleRaw) && savedCost > BigInt(saleRaw) && savedCost > packCost);
+      costConflict.hidden = !conflict;
+      if (conflict) costConflict.querySelector('[data-cost-conflict-text]').textContent = `Giá vốn ${moneyVndText(savedCost)} / ${baseUnit} cao hơn giá bán, còn giá nhập quy đổi là ${moneyVndText(packCost)} / ${baseUnit}. Giá trị tồn dùng giá vốn.`;
+    }
     const priceRaw = moneyInputRaw(price.value);
     if (warning) {
       const comparedCost = rawCost ? savedCost : packCost;
@@ -5157,7 +5242,7 @@
   }
 
   function productCostField(product) {
-    return `<div class='form-field'><label class='input-label' for='product-unit-cost'>Giá vốn mỗi đơn vị (đ)</label><input class='input' id='product-unit-cost' name='cost' type='number' min='0' step='1' value='${esc(product?.cost ?? '')}' placeholder='Bổ sung sau'/></div>`;
+    return `<div class='form-field'><label class='input-label' for='product-unit-cost'>Giá vốn mỗi đơn vị (đ)</label><input class='input' id='product-unit-cost' name='cost' type='number' min='0' step='1' value='${esc(product?.cost ?? '')}' placeholder='Bổ sung sau'/><small>Giá trị tồn kho = số lượng đang có × giá vốn này.</small></div>`;
   }
 
   function productIdentityFields(product, barcode, grouped, sku = '', includeCost = true) {
@@ -5180,6 +5265,7 @@
       <div class='form-field'><label class='input-label' for='product-base-unit'>Đơn vị tính</label><input class='input' id='product-base-unit' name='unit' value='${esc(product?.unit || 'cái')}' list='product-base-units' maxlength='40' ${grouped ? 'readonly' : ''}/><datalist id='product-base-units'><option value='cái'></option><option value='chiếc'></option><option value='tờ'></option><option value='hộp'></option><option value='quyển'></option><option value='kg'></option></datalist></div>
       ${includeCost ? productCostField(product) : ''}
       <p class='editor-field-note editor-price-warning full' id='product-price-warning' data-product-price-warning role='status' hidden>Giá bán thấp hơn giá vốn mỗi đơn vị. Kiểm tra lại số tiền trước khi lưu.</p>
+      <div class='editor-field-note editor-price-warning full' data-product-cost-conflict role='status' hidden><span data-cost-conflict-text></span> <button type='button' class='link-button' data-action='use-pack-cost'>Dùng giá nhập quy đổi</button><label><input type='checkbox' name='confirmCostMismatch'/> Giữ giá vốn đã nhập</label></div>
     </div>`;
   }
 
@@ -5281,6 +5367,7 @@
       let image; try { image = readProductPhoto(form); } catch (error) { return reportError(error.message); }
       let purchasePack; try { purchasePack=readProductPack(form); } catch(error) { return reportError(error.message); }
       if(purchasePack&&!String(formData.get('cost')||'').trim())cost=Number(window.SlinkPurchaseUnits.fromPack(purchasePack).unitCostVnd);
+      if (purchasePack && cost > price && cost > Number(window.SlinkPurchaseUnits.fromPack(purchasePack).unitCostVnd) && !formData.get('confirmCostMismatch')) return reportError('Giá vốn cao hơn giá bán và giá nhập quy đổi. Chọn dùng giá quy đổi hoặc xác nhận giữ giá vốn.');
       const items = [{
         ...(purchasePack ? {purchasePack} : {}),
         image,
@@ -5528,8 +5615,9 @@
     const saved = pending ? pending.payload : c;
     const disabled = pending ? 'disabled' : '';
     const canSetOpeningBalance = ['owner', 'manager', 'accountant'].includes(store.role);
-    const openingField = !c && canSetOpeningBalance ? `<div class='form-field full'><label class='input-label' for='customer-opening-balance'>${debt ? 'Số tiền đang nợ (đ) *' : 'Công nợ ban đầu (đ)'}</label><input class='input' id='customer-opening-balance' name='openingBalanceVnd' type='number' inputmode='numeric' min='${debt ? 1 : 0}' step='1' value='${esc(saved ? saved.openingBalanceVnd : debt ? '' : '0')}' ${debt ? 'required' : ''} ${disabled}/><small>Số khách còn nợ trước khi bắt đầu dùng Slink. Đây là bút toán công nợ, không ghi tiền vào sổ thu chi.</small></div>` : '';
-    const form = `<form id='entity-form' data-form='customer' data-id='${c ? c.id : ''}' data-version='${c ? c.version : ''}'><div class='form-grid'><div class='form-field'><label class='input-label'>Tên khách hàng *</label><input class='input' name='name' value='${esc(saved ? saved.name : '')}' required maxlength='160' placeholder='Họ và tên' ${disabled}/></div><div class='form-field'><label class='input-label'>Số điện thoại</label><input class='input' name='phone' value='${esc(saved ? saved.phone : '')}' inputmode='tel' placeholder='09xx xxx xxx' ${disabled}/></div><div class='form-field full'><label class='input-label'>Email (không bắt buộc)</label><input class='input' type='email' name='email' value='${esc(saved ? saved.email : '')}' placeholder='Email của khách' ${disabled}/></div>${openingField}<div class='form-field full'><label class='input-label'>Ghi chú</label><textarea class='input' name='note' rows='2' placeholder='Lưu ý khi chăm sóc' style='height:auto;padding:10px' ${disabled}>${esc(saved ? saved.note || '' : '')}</textarea></div></div></form>`;
+    let openingField = !c && canSetOpeningBalance ? `<div class='form-field full'><label class='input-label' for='customer-opening-balance'>Nợ từ trước (đ, nếu có)</label><input class='input' id='customer-opening-balance' name='openingBalanceVnd' type='number' inputmode='numeric' min='0' step='1' value='${esc(saved ? saved.openingBalanceVnd : '')}' placeholder='Có thể để trống' ${disabled}/><small>Khoản đã có trước khi dùng Slink. Chưa ghi tiền vào sổ thu chi.</small></div>` : '';
+    openingField = `<div class='form-field full'><label class='input-label'>Nhóm khách</label><select class='input' name='customerType' ${disabled}>${[['retail', 'Khách lẻ'], ['wholesale', 'Khách sỉ'], ['vip', 'Khách thân thiết']].map(([value, label]) => `<option value='${value}' ${(!saved && value === 'retail') || saved?.customerType === value ? 'selected' : ''}>${label}</option>`).join('')}</select></div>` + openingField;
+    const form = `<form id='entity-form' data-form='customer' data-id='${c ? c.id : ''}' data-version='${c ? c.version : ''}'><div class='form-grid'><div class='form-field'><label class='input-label'>Tên khách hàng *</label><input class='input' name='name' value='${esc(saved ? saved.name : '')}' required maxlength='160' placeholder='Họ và tên' ${disabled}/></div><div class='form-field'><label class='input-label'>Số điện thoại</label><input class='input' name='phone' value='${esc(saved ? saved.phone : '')}' inputmode='tel' placeholder='09xx xxx xxx' ${disabled}/></div><div class='form-field full'><label class='input-label'>Địa chỉ giao hàng</label><input class='input' name='shippingAddress' value='${esc(saved ? saved.shippingAddress || '' : '')}' maxlength='500' placeholder='Có thể bổ sung sau' ${disabled}/></div><div class='form-field full'><label class='input-label'>Email (không bắt buộc)</label><input class='input' type='email' name='email' value='${esc(saved ? saved.email : '')}' placeholder='Email của khách' ${disabled}/></div><div class='form-field full'><label class='input-label'>Hạn mức nợ (đ)</label><input class='input' name='creditLimitVnd' type='number' min='0' step='1' inputmode='numeric' value='${esc(saved ? saved.creditLimitVnd ?? '' : '')}' placeholder='Để trống nếu không giới hạn' ${disabled}/><small>Slink sẽ chặn đơn mua thiếu khiến tổng nợ vượt mức này.</small></div>${openingField}<div class='form-field full'><label class='input-label'>Ghi chú</label><textarea class='input' name='note' rows='2' placeholder='Lưu ý khi chăm sóc' style='height:auto;padding:10px' ${disabled}>${esc(saved ? saved.note || '' : '')}</textarea></div></div></form>`;
     modalForm(pending ? 'Kiểm tra khách hàng đang chờ' : c ? 'Cập nhật khách hàng' : debt ? 'Thêm khách nợ' : 'Thêm khách hàng', pending ? 'Gửi lại đúng nội dung đã lưu trên thiết bị để máy chủ xác nhận, tránh tạo trùng.' : 'Lưu thông tin để theo dõi lịch sử mua và công nợ.', form, pending ? 'Gửi lại khách hàng' : c ? 'Lưu thay đổi' : 'Lưu khách hàng');
   }
 
@@ -6463,9 +6551,15 @@
       ? `<div class='install-hint order-mutation-pending' role='status'>Thao tác ${pendingMutation.kind === 'note' ? 'ghi chú' : 'nhãn'} đang chờ máy chủ xác nhận. Hãy gửi lại đúng nội dung đã lưu trên thiết bị.<button type='button' class='btn btn-secondary' data-action='retry-order-mutation' data-id='${esc(o.id)}'>Thử lại thao tác</button></div>`
       : '';
     const collaborationPanel = `<section class='panel detail-card order-collaboration-card'><div class='section-title'><h2>Ghi chú nội bộ &amp; nhãn</h2><p>Chỉ nhân viên cửa hàng xem được; lịch sử được giữ lại để truy vết.</p></div>${pendingHint}<div class='order-tags-list'>${tagChips || `<span class='muted'>Chưa có nhãn</span>`}</div>${canCollaborate ? `<form id='order-tag-form' data-form='order-tag' data-id='${esc(o.id)}' class='order-tag-form'><label class='input-label' for='order-tag-input'>Gắn nhãn đơn hàng</label><div><input class='input' id='order-tag-input' name='tag' maxlength='32' autocomplete='off' placeholder='Ví dụ: Giao gấp, Khách VIP' required ${pendingMutation ? 'disabled' : ''}/><button class='btn btn-secondary' type='submit' ${pendingMutation ? 'disabled' : ''}>Gắn nhãn</button></div></form>` : ''}${renderOrderNoteHistory(o.id, o.internalNotesTotal, o.internalNotes)}${canCollaborate ? `<form id='order-note-form' data-form='order-note' data-id='${esc(o.id)}' class='order-note-form'><label class='input-label' for='order-note-input'>Thêm ghi chú nội bộ</label><textarea class='input' id='order-note-input' name='note' rows='3' maxlength='1000' placeholder='Thông tin chỉ dành cho nhân viên cửa hàng…' required ${pendingMutation ? 'disabled' : ''}>${pendingMutation?.kind === 'note' ? esc(pendingMutation.payload.note) : ''}</textarea><button class='btn btn-primary' type='submit' ${pendingMutation ? 'disabled' : ''}>Thêm ghi chú</button></form>` : ''}</section>`;
-    const completeBody = body.replace(/<\/div>$/, `${collaborationPanel}</div>`);
-    const footer = `<button class='btn btn-secondary' data-action='close-modal'>Đóng</button><button class='btn btn-secondary' data-action='print-order' data-id='${o.id}'>In biên nhận</button><button class='btn btn-secondary' data-action='share-order' data-id='${o.id}'>Chia sẻ biên nhận</button>${o.due > 0 && o.customerId && ['owner', 'manager', 'cashier', 'accountant'].includes(store.role) ? `<button class='btn btn-secondary' data-action='collect-payment' data-id='${o.id}'>Ghi nhận thu tiền</button>` : ''}${['owner', 'manager'].includes(store.role) && o.rawStatus === 'completed' && o.paid === 0 && o.returned === 0 ? `<button class='btn btn-danger' data-action='void-order' data-id='${o.id}'>Hủy đơn</button>` : ''}${['owner', 'manager'].includes(store.role) && o.status !== 'Đã hủy' && o.items.some(function (item) { return item.returnedQty < item.qty; }) ? `<button class='btn btn-danger' data-action='return-order' data-id='${o.id}'>Trả hàng</button>` : ''}`;
-    showModal('Chi tiết đơn hàng', 'Kiểm tra sản phẩm, khoản thu, ghi chú nội bộ và lịch sử trả hàng.', completeBody, footer, true);
+    const canCollect = o.due > 0 && o.customerId && ['owner', 'manager', 'cashier', 'accountant'].includes(store.role);
+    const canVoid = ['owner', 'manager'].includes(store.role) && o.rawStatus === 'completed' && o.paid === 0 && o.returned === 0;
+    const canReturn = ['owner', 'manager'].includes(store.role) && o.status !== 'Đã hủy' && o.items.some(item => item.returnedQty < item.qty);
+    const primary = canCollect ? `<button class='btn btn-primary' data-action='collect-payment' data-id='${o.id}'>Thu tiền còn thiếu</button>`
+      : canReturn ? `<button class='btn btn-primary' data-action='return-order' data-id='${o.id}'>Trả hàng</button>` : '';
+    const more = `<details class='order-more-actions'><summary>Thao tác khác</summary><p>Đơn đã ghi được giữ nguyên để đối soát. Chọn thu tiền, trả hàng hoặc hủy đơn khi cần điều chỉnh.</p><div class='order-more-actions-buttons'><button class='btn btn-secondary' data-action='print-order' data-id='${o.id}'>In biên nhận</button><button class='btn btn-secondary' data-action='share-order' data-id='${o.id}'>Chia sẻ biên nhận</button>${canCollect && canReturn ? `<button class='btn btn-secondary' data-action='return-order' data-id='${o.id}'>Trả hàng</button>` : ''}${canVoid ? `<button class='btn btn-danger' data-action='void-order' data-id='${o.id}'>Hủy đơn</button>` : ''}</div>${collaborationPanel}</details>`;
+    const completeBody = body.replace(/<\/div>$/, `${more}</div>`);
+    const footer = `<button class='btn btn-secondary' data-action='close-modal'>Đóng</button>${primary}`;
+    showModal('Chi tiết đơn hàng', 'Hàng đã bán, tiền đã thu và phần còn phải thu.', completeBody, footer, true);
   }
 
   function mergeOrderNotes() {
@@ -6663,22 +6757,49 @@
     const openedOnPage = page;
     const session = authSession;
     const canShow = () => modalGeneration === generation && page === openedOnPage && authSession === session;
-    let customer;
+    let debt;
     try {
-      const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/customers/${encodeURIComponent(customerId)}`);
-      customer = result.customer;
+      debt = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/customers/${encodeURIComponent(customerId)}/debts`);
     } catch (error) { if (canShow()) toast('Chưa tải được công nợ', error.message, 'error'); return; }
     if (!canShow()) return;
-    mapCustomer(customer);
     const pending = loadPendingCustomerPayment(customerId);
-    const due = BigInt(customer.balance_vnd || '0');
-    if (due <= 0n && !pending) return toast('Khách hàng không còn nợ', 'Không có khoản công nợ cần thu.');
-    const fromFinance = openedOnPage === 'finance';
+    const due = BigInt(debt.balanceVnd || '0');
+    const outstanding = due > 0n ? due : 0n;
+    const fromFinance = openedOnPage === 'finance' && receivableDetail?.customer?.id === customerId && !!root.querySelector('.finance-debt-detail');
     const payload = pending ? pending.payload : { amountVnd: fromFinance ? '' : due.toString(), method: 'cash', note: '' };
     const disabled = pending ? 'disabled' : '';
-    const max = due > BigInt(Number.MAX_SAFE_INTEGER) ? Number.MAX_SAFE_INTEGER : Number(due);
-    const body = `<form id='entity-form' data-form='customer-payment' data-customer-id='${esc(customerId)}'><div class='checkout-total'><span>Còn phải thu · ${esc(customer.name)}</span><strong>${moneyVndText(customer.balance_vnd || '0')}</strong></div><div class='form-grid'><div class='form-field'><label class='input-label'>Số tiền nhận (VND) *</label><input class='input' name='amountVnd' type='number' min='1' max='${max}' step='1' value='${esc(payload.amountVnd)}' required ${disabled}/></div><div class='form-field'><label class='input-label'>Phương thức nhận tiền</label><div class='select-wrap'><select class='input' name='method' ${disabled}><option value='cash' ${payload.method === 'cash' ? 'selected' : ''}>Tiền mặt</option><option value='bank_transfer' ${payload.method === 'bank_transfer' ? 'selected' : ''}>Chuyển khoản</option><option value='bank_qr' ${payload.method === 'bank_qr' ? 'selected' : ''}>QR ngân hàng</option><option value='card' ${payload.method === 'card' ? 'selected' : ''}>Thẻ</option><option value='other' ${payload.method === 'other' ? 'selected' : ''}>Khác</option></select></div></div><div class='form-field full'><label class='input-label'>Ghi chú</label><input class='input' name='note' maxlength='300' value='${esc(payload.note || '')}' placeholder='Ghi chú không bắt buộc' ${disabled}/></div></div><div class='modal-note'>Khoản thu được tự động phân bổ vào các đơn còn nợ cũ nhất trước, sau đó mới trừ công nợ đầu kỳ. Thanh toán không tiền mặt được nhân viên xác nhận thủ công.</div>${pending ? `<div class='modal-note'>Yêu cầu thu tiền đang chờ xác nhận. Gửi lại cùng nội dung để tránh ghi nhận hai lần.</div>` : ''}</form>`;
-    showModal(pending ? 'Kiểm tra khoản thu đang chờ' : 'Thu công nợ khách hàng', 'Slink tự phân bổ khoản thu theo thứ tự đơn cũ trước.', body, `<button class='btn btn-secondary' type='button' data-action='close-modal'>${fromFinance ? 'Hủy' : 'Quay lại hồ sơ'}</button><button class='btn btn-primary' type='submit' form='entity-form'>${pending ? 'Thử lại khoản thu' : 'Lưu khoản thu'}</button>`);
+    const chosen = new Map((payload.allocations || []).map(item => [item.orderId, item.amountVnd]));
+    const manual = Boolean(payload.allocations);
+    const dues = debt.orders.map(row => ({ id: row.id, label: `Đơn ${row.order_number} · ${humanDate(row.occurred_at)}`, due: row.due_vnd }));
+    (debt.openingItems || []).forEach(row => dues.push({ id: `opening:${row.id}`, label: `${row.note || 'Nợ cũ'} · ${humanDate(row.occurredAt)}`, due: row.dueVnd }));
+    const dueRows = dues.map(row => `<label class='debt-allocation'><span><strong>${esc(row.label)}</strong><small>Còn ${moneyVndText(row.due)}</small></span><input class='input' data-debt-allocation='${esc(row.id)}' aria-label='Thu cho ${esc(row.label)}' type='number' min='0' max='${esc(row.due)}' step='1' inputmode='numeric' value='${esc(chosen.get(row.id) || '')}' ${disabled}/></label>`).join('');
+    const body = `<form id='entity-form' data-form='customer-payment' data-customer-id='${esc(customerId)}'><div class='checkout-total'><span>${due > 0n ? 'Còn phải thu' : 'Khách đang có dư'} · ${esc(debt.customer.name)}</span><strong>${moneyVndText(due > 0n ? due : -due)}</strong></div><div class='form-grid'><div class='form-field'><label class='input-label'>Số tiền khách trả (đ) *</label><input class='input' name='amountVnd' type='number' min='1' step='1' value='${esc(payload.amountVnd)}' required ${disabled}/></div><div class='form-field'><label class='input-label'>Nhận bằng</label><div class='select-wrap'><select class='input' name='method' ${disabled}><option value='cash' ${payload.method === 'cash' ? 'selected' : ''}>Tiền mặt</option><option value='bank_transfer' ${payload.method === 'bank_transfer' ? 'selected' : ''}>Chuyển khoản</option><option value='bank_qr' ${payload.method === 'bank_qr' ? 'selected' : ''}>QR ngân hàng</option><option value='card' ${payload.method === 'card' ? 'selected' : ''}>Thẻ</option><option value='other' ${payload.method === 'other' ? 'selected' : ''}>Khác</option></select></div></div></div>${outstanding ? `<label class='form-field'><span class='input-label'>Trừ tiền vào</span><select class='input' data-debt-mode ${disabled}><option value='oldest' ${manual ? '' : 'selected'}>Tự trừ khoản cũ nhất</option><option value='selected' ${manual ? 'selected' : ''}>Chọn từng khoản</option></select></label><div data-debt-rows ${manual ? '' : 'hidden'}>${dueRows}</div>` : ''}<p class='editor-field-note' data-debt-summary></p><label class='form-field'><span class='input-label'>Ghi chú</span><input class='input' name='note' maxlength='300' value='${esc(payload.note || '')}' placeholder='Có thể bỏ trống' ${disabled}/></label>${pending ? `<div class='modal-note'>Khoản thu đang chờ xác nhận. Gửi lại đúng nội dung để tránh ghi hai lần.</div>` : ''}</form>`;
+    if (fromFinance) {
+      const host = root.querySelector('.finance-debt-detail');
+      host.querySelector('[data-inline-debt-payment]')?.remove();
+      host.insertAdjacentHTML('beforeend', `<div data-inline-debt-payment><h3>Thu tiền nợ</h3>${body}<div class='finance-debt-actions'><button class='btn btn-secondary' type='button' data-action='close-inline-debt-payment'>Hủy</button><button class='btn btn-primary' type='submit' form='entity-form'>${pending ? 'Thử lại khoản thu' : 'Xác nhận thu tiền'}</button></div></div>`);
+      host.querySelector('[data-inline-debt-payment]')?.scrollIntoView({ block: 'nearest' });
+    } else showModal(pending ? 'Kiểm tra khoản thu đang chờ' : 'Thu tiền nợ', '', body, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Quay lại</button><button class='btn btn-primary' type='submit' form='entity-form'>${pending ? 'Thử lại khoản thu' : 'Xác nhận thu tiền'}</button>`);
+    const form = fromFinance ? root.querySelector('.finance-debt-detail [data-form="customer-payment"]') : modal.querySelector('[data-form="customer-payment"]');
+    window.SlinkMoneyFields.enhance(fromFinance ? form.parentElement : modal);
+    const safeAmount = input => {
+      const raw = moneyInputRaw(input?.value || '');
+      return /^\d+$/.test(raw) ? BigInt(raw) : 0n;
+    };
+    const update = () => {
+      const selectedMode = form.querySelector('[data-debt-mode]')?.value === 'selected';
+      const rows = form.querySelector('[data-debt-rows]');
+      if (rows) rows.hidden = !selectedMode;
+      const total = selectedMode ? Array.from(form.querySelectorAll('[data-debt-allocation]')).reduce((sum, input) => sum + safeAmount(input), 0n) : safeAmount(form.elements.amountVnd);
+      if (selectedMode && !pending) form.elements.amountVnd.value = total ? window.SlinkMoneyFields.format(total.toString()) : '';
+      form.elements.amountVnd.readOnly = selectedMode;
+      form.querySelector('[data-debt-summary]').textContent = total > due
+        ? `Thu ${moneyVndText(total)} · hết nợ, khách còn dư ${moneyVndText(total - due)} để dùng lần mua sau`
+        : `Thu ${moneyVndText(total)} · còn nợ ${moneyVndText(due - total)}`;
+    };
+    form.addEventListener('input', update);
+    form.addEventListener('change', update);
+    update();
   }
 
   async function saveCustomerPayment(form) {
@@ -6689,12 +6810,15 @@
     let pending = loadPendingCustomerPayment(customerId);
     if (!pending) {
       const data = new FormData(form);
-      const amount = String(data.get('amountVnd') || '').trim();
+      const amount = moneyInputRaw(data.get('amountVnd') || '').trim();
       if (!/^[1-9]\d*$/.test(amount) || !Number.isSafeInteger(Number(amount))) return toast('Số tiền không hợp lệ', 'Nhập số tiền bằng VND nguyên dương.', 'error');
-      pending = { storeId: store.id, customerId, key: newIdempotencyKey(), payload: { amountVnd: amount, method: String(data.get('method') || 'cash'), note: String(data.get('note') || '').trim() } };
+      const allocations = form.querySelector('[data-debt-mode]')?.value === 'selected'
+        ? Array.from(form.querySelectorAll('[data-debt-allocation]')).filter(input => /^\d+$/.test(moneyInputRaw(input.value)) && BigInt(moneyInputRaw(input.value)) > 0n)
+          .map(input => ({ orderId: input.dataset.debtAllocation, amountVnd: moneyInputRaw(input.value) })) : undefined;
+      pending = { storeId: store.id, customerId, key: newIdempotencyKey(), payload: { amountVnd: amount, method: String(data.get('method') || 'cash'), note: String(data.get('note') || '').trim(), ...(allocations ? { allocations } : {}) } };
     }
     if (!savePendingCustomerPayment(pending)) return pendingSaveFailed();
-    const submitButton = modal.querySelector('button[type="submit"][form="entity-form"]');
+    const submitButton = form.closest('[data-inline-debt-payment]')?.querySelector('button[type="submit"]') || modal.querySelector('button[type="submit"][form="entity-form"]');
     if (submitButton) submitButton.disabled = true;
     try {
       const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/customers/${encodeURIComponent(customerId)}/payments`, {
@@ -6703,18 +6827,25 @@
       if (authSession !== session) return;
       clearPendingCustomerPayment(customerId);
       const canFinishHere = !modal.hidden && modalGeneration === generation && page === originalPage;
-      if (canFinishHere && page === 'finance') closeModal();
+      if (page === 'finance') {
+        if (form.closest('[data-inline-debt-payment]')) form.closest('[data-inline-debt-payment]').remove();
+        else if (canFinishHere) closeModal();
+      }
       const refreshList = page === 'customers'
         ? loadCustomersPage(searchTerms.customers, customerOffset)
         : Promise.resolve();
       await Promise.all([refreshList, loadFinancePage()]);
+      if (page === 'finance' && financeTab === 'receivables') {
+        receivableDetail = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/customers/${encodeURIComponent(customerId)}/debts`);
+        render();
+      }
       toast('Đã ghi nhận khoản thu', `${moneyVndText(result.payment.amountVnd)} · còn nợ ${moneyVndText(result.payment.customerBalanceVnd)}`);
       if (canFinishHere && page === 'customers' && modalGeneration === generation && !modal.hidden) await openCustomerDetail(customerId);
     } catch (error) {
       if (error.status === 401) showSignedOut('Phiên đăng nhập đã hết hạn. Đăng nhập lại để kiểm tra khoản thu.', 'error');
       else if (error.status >= 400 && error.status < 500 && !['idempotency_conflict', 'request_in_progress'].includes(error.code)) {
         clearPendingCustomerPayment(customerId);
-        if (!modal.hidden) openCollectCustomerPayment(customerId);
+        if (!modal.hidden || form.closest('[data-inline-debt-payment]')) openCollectCustomerPayment(customerId);
       }
       toast('Chưa lưu được khoản thu', error.message, 'error');
       if (submitButton && !modal.hidden) submitButton.disabled = false;
@@ -6838,7 +6969,7 @@
         : '';
       const customerTags = `<section class='panel customer-tags-panel'><div class='panel-header'><div><h2>Phân loại khách hàng</h2><p>Nhãn giúp lọc nhanh nhóm khách trong danh sách. Mỗi hồ sơ tối đa 20 nhãn.</p></div></div>${tagPendingHint}<div class='customer-tag-list'>${tagChips || `<span class='muted'>Chưa có nhãn phân loại</span>`}</div>${canManageTags ? `<form class='customer-tag-form' data-form='customer-tag' data-id='${esc(c.id)}'><label class='input-label' for='customer-tag-input'>Thêm nhãn</label><div><input class='input' id='customer-tag-input' name='tag' maxlength='32' placeholder='Ví dụ: Khách VIP, Mua sỉ' required ${pendingTag ? 'disabled' : ''}/><button class='btn btn-secondary' type='submit' ${pendingTag ? 'disabled' : ''}>Gắn nhãn</button></div></form>` : ''}</section>`;
       const body = `<section class='panel'><div class='customer-header'><span class='avatar'>${esc(initials(c.name))}</span><div><h2>${esc(c.name)}</h2><p>${esc(c.phone)}${c.email ? ' · ' + esc(c.email) : ''}</p></div><span class='badge badge-success' style='margin-left:auto'>${esc(c.tier)}</span></div><div class='customer-stats'><div class='customer-stat'><small>Tổng chi tiêu</small><strong>${money(c.totalSpent)}</strong></div><div class='customer-stat'><small>Số đơn</small><strong>${number(c.orders)}</strong></div><div class='customer-stat'><small>${balance < 0n ? 'Khách trả trước' : 'Cần thu'}</small><strong>${moneyVndText(balance < 0n ? -balance : balance)}</strong></div></div></section>${customerTags}<section style='margin-top:17px'><div class='panel-header' style='padding:0 0 10px'><div><h2>Lịch sử gần đây</h2><p>5 đơn hàng mới nhất</p></div></div><div class='table-wrap'><table class='data-table'><thead><tr><th>Mã đơn</th><th>Ngày</th><th class='text-right'>Tổng tiền</th><th>Trạng thái</th></tr></thead><tbody>${orderRows || `<tr><td colspan='4'><div class='empty-state'><strong>Chưa có đơn mua hàng</strong><span>Khách này chưa phát sinh giao dịch.</span></div></td></tr>`}</tbody></table></div></section><section class='panel customer-payment-history' style='margin-top:17px'><div class='panel-header'><div><h2>Lịch sử thu công nợ</h2><p>20 khoản thu gần nhất, gồm phương thức và phần công nợ được thanh toán.</p></div></div><div class='table-wrap'><table class='data-table'><thead><tr><th>Thời gian</th><th>Số tiền</th><th>Phương thức</th><th>Phân bổ</th><th>Ghi chú</th></tr></thead><tbody>${paymentRows || `<tr><td colspan='5'><div class='empty-state'><strong>Chưa có khoản thu công nợ</strong><span>Khoản thu sẽ xuất hiện tại đây sau khi được lưu.</span></div></td></tr>`}</tbody></table></div></section>${c.debt ? `<div class='summary-banner' style='margin-top:14px'><div><strong>Công nợ hiện tại</strong><small>Khoản chưa thanh toán của khách hàng</small></div><strong>${moneyVndText(balance)}</strong></div>` : ''}`;
-      showModal('Hồ sơ khách hàng', 'Thông tin và lịch sử mua hàng.', body, `<button class='btn btn-secondary' data-action='close-modal'>Đóng</button>${['owner', 'manager', 'cashier'].includes(store.role) ? `<button class='btn btn-secondary' data-action='edit-customer' data-id='${c.id}'>${icon('edit', 14)} Chỉnh sửa</button>` : ''}${Number(c.debt) > 0 && ['owner', 'manager', 'cashier', 'accountant'].includes(store.role) ? `<button class='btn btn-primary' data-action='collect-customer-payment' data-id='${c.id}'>Thu công nợ</button>` : ''}`, true);
+      showModal('Hồ sơ khách hàng', 'Thông tin và lịch sử mua hàng.', body, `<button class='btn btn-secondary' data-action='close-modal'>Đóng</button>${['owner', 'manager', 'cashier'].includes(store.role) ? `<button class='btn btn-secondary' data-action='edit-customer' data-id='${c.id}'>${icon('edit', 14)} Chỉnh sửa</button>` : ''}${['owner', 'manager', 'cashier', 'accountant'].includes(store.role) ? `<button class='btn btn-primary' data-action='collect-customer-payment' data-id='${c.id}'>${Number(c.debt) > 0 ? 'Thu tiền nợ' : 'Nhận tiền trả trước'}</button>` : ''}`, true);
     } catch (error) {
       if (requestNumber !== customerDetailRequestNumber || currentModalGeneration !== modalGeneration || modal.hidden) return;
       if (error.status === 401) return showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
@@ -7775,6 +7906,7 @@
       } catch (error) { return toast('Thuộc tính chưa hợp lệ', error.message, 'error'); }
     }
     try { const pack=readProductPack(form); if(pack!==undefined)payload.purchasePack=pack;if(!old&&pack&&!String(data.get('cost')||'').trim())payload.costVnd=Number(window.SlinkPurchaseUnits.fromPack(pack).unitCostVnd); } catch(error) { return toast('Kiểm tra quy đổi nhập hàng',error.message,'error'); }
+    if (payload.purchasePack && payload.costVnd > payload.salePriceVnd && payload.costVnd > Number(window.SlinkPurchaseUnits.fromPack(payload.purchasePack).unitCostVnd) && !data.get('confirmCostMismatch')) return report('Giá vốn cao hơn giá bán và giá nhập quy đổi. Chọn dùng giá quy đổi hoặc xác nhận giữ giá vốn.');
     if (old) payload.version = Number(form.dataset.version);
     form.dataset.saving = 'true';
     const submit = modal.querySelector('.modal-footer [type="submit"]');
@@ -7915,6 +8047,9 @@
       phone: String(data.get('phone') || '').trim(),
       email: String(data.get('email') || '').trim(),
       note: String(data.get('note') || '').trim(),
+      shippingAddress: String(data.get('shippingAddress') || '').trim(),
+      customerType: String(data.get('customerType') || 'retail'),
+      creditLimitVnd: String(data.get('creditLimitVnd') || '').trim() || null,
     };
     let pending = null;
     if (old) payload.version = Number(form.dataset.version);
@@ -9123,6 +9258,15 @@
       refreshFinanceBody();
     }
     else if (action === 'new-debtor') openCustomer(null, { debt: true });
+    else if (action === 'close-receivable') { receivableDetail = null; render(); }
+    else if (action === 'close-inline-debt-payment') button.closest('[data-inline-debt-payment]')?.remove();
+    else if (action === 'add-customer-opening-debt') openAddCustomerOpeningDebt(id);
+    else if (action === 'close-inline-opening-debt') button.closest('[data-inline-opening-debt]')?.remove();
+    else if (action === 'use-pack-cost') {
+      const form = button.closest('form');
+      try { const pack = readProductPack(form); form.elements.cost.value = window.SlinkPurchaseUnits.fromPack(pack).unitCostVnd; updateProductHints(form); form.elements.cost.focus(); }
+      catch (error) { toast('Chưa dùng được giá nhập', error.message, 'error'); }
+    }
     else if (action === 'finance-receivable') openReceivable(id);
     else if (action === 'finance-reminder') openDebtReminder(id);
     else if (action === 'share-finance-reminder' || action === 'copy-finance-reminder') useDebtReminder(action === 'share-finance-reminder');
@@ -9895,6 +10039,7 @@
       loadAuditEvents(filters, 0);
     }
     else if (type === 'customer') saveCustomer(form);
+    else if (type === 'customer-opening-debt') saveCustomerOpeningDebt(form);
     else if (type === 'customer-saved-segment') saveCustomerSegment(form);
     else if (type === 'customer-saved-segment-delete') deleteCustomerSegment(form);
     else if (type === 'customer-tag') changeCustomerTag(form.dataset.id, 'add', String(new FormData(form).get('tag') || '').trim());
