@@ -399,6 +399,14 @@
 .calm-ui .editor-input-action { display: grid; grid-template-columns: minmax(0, 1fr) 44px; gap: 5px; }
 .calm-ui .editor-input-action .btn { min-height: 44px; padding: 0; }
 .calm-ui .product-editor .editor-price-warning { color: #903f2c; background: #fff5e9; padding: 9px 10px; border-radius: 6px; }
+.finance-debt-detail { margin-top: 16px; }
+.finance-debt-detail h3 { margin: 20px 0 8px; font-size: 1rem; }
+.finance-debt-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+.debt-allocation { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid #e7ece8; }
+.debt-allocation span { display: grid; gap: 3px; min-width: 0; }
+.debt-allocation small { color: #60736d; }
+.debt-allocation input { width: min(42%, 170px); flex: none; text-align: right; }
+@media (max-width: 480px) { .debt-allocation input { width: 40%; } }
 .calm-ui .editor-stock-switch { display: flex; justify-content: space-between; align-items: center; min-height: 44px; gap: 12px; color: var(--ink); font-weight: 600; cursor: pointer; }
 .calm-ui .editor-stock-switch input { appearance: none; position: relative; width: 44px; height: 25px; flex: 0 0 auto; margin: 0; border: 1px solid #67766e; border-radius: 20px; background: #e3e8e3; cursor: pointer; }
 .calm-ui .editor-stock-switch input::after { content: ''; position: absolute; top: 3px; left: 3px; width: 17px; height: 17px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 1px #667a6d; }
@@ -630,3 +638,7 @@
   from { opacity: 0; translate: 0 8px; }
   to { opacity: 1; translate: 0 0; }
 }
+.order-more-actions{margin-top:14px;border-top:1px solid var(--line,#e3e9e5);padding:14px 4px 0}
+.order-more-actions>summary{cursor:pointer;font-weight:700;min-height:40px;display:flex;align-items:center}
+.order-more-actions>p{color:var(--text-muted,#697972);font-size:.9rem;line-height:1.45;margin:4px 0 12px}
+.order-more-actions-buttons{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}

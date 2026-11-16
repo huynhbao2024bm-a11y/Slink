@@ -173,12 +173,14 @@ function registerSalesRoutes(app, { pool, env }) {
       }
 
       await beginOffline(client, offline);
+      let customerCreditLimit = null;
       if (sale.customerId) {
         const customer = await client.query(
-          `SELECT id FROM customers WHERE store_id = $1 AND id = $2 AND status = 'active' FOR UPDATE`,
+          `SELECT id, credit_limit_vnd::text AS credit_limit_vnd FROM customers WHERE store_id = $1 AND id = $2 AND status = 'active' FOR UPDATE`,
           [storeId, sale.customerId]
         );
         if (!customer.rowCount) throw new ApiError(404, 'customer_not_found', 'Không tìm thấy khách hàng đang hoạt động.');
+        customerCreditLimit = customer.rows[0].credit_limit_vnd;
       }
 
       const warehouseResult = sale.warehouseId
@@ -251,6 +253,19 @@ function registerSalesRoutes(app, { pool, env }) {
       const cashApplied = cashReceived < (total - nonCashReceived) ? cashReceived : (total - nonCashReceived);
       const paid = nonCashReceived + cashApplied;
       if (paid < total && !sale.customerId) throw new ApiError(400, 'customer_required', 'Cần chọn khách hàng để ghi nhận phần còn nợ.');
+      let creditUsed = 0n;
+      if (sale.customerId && paid < total) {
+        const creditBalance = await client.query(
+          `SELECT COALESCE(SUM(debit_vnd - credit_vnd), 0)::text AS balance_vnd
+           FROM customer_ledger_entries WHERE store_id = $1 AND customer_id = $2`, [storeId, sale.customerId]
+        );
+        const currentBalance = BigInt(creditBalance.rows[0].balance_vnd);
+        if (customerCreditLimit !== null && currentBalance + total - paid > BigInt(customerCreditLimit)) {
+          throw new ApiError(409, 'customer_credit_limit', 'Khoản nợ mới vượt hạn mức của khách. Thu bớt tiền hoặc đổi hạn mức trong hồ sơ khách.');
+        }
+        const available = -currentBalance;
+        if (available > 0n) creditUsed = available < total - paid ? available : total - paid;
+      }
       const change = sale.amountReceivedVnd - paid;
       const cashSessionId = cashReceived > 0n || change > 0n ? await lockActiveCashSession(client, storeId) : null;
       const appliedTenders = sale.tenders.map((tender) => ({
@@ -325,6 +340,13 @@ function registerSalesRoutes(app, { pool, env }) {
           [storeId, order.id, tender.method, tender.amountVnd.toString(), auth.userId]
         );
       }
+      if (creditUsed > 0n) {
+        await client.query(
+          `INSERT INTO payments (store_id, order_id, method, status, amount_vnd, provider, recorded_by)
+           VALUES ($1, $2, 'other', 'succeeded', $3, 'customer_credit', $4)`,
+          [storeId, order.id, creditUsed.toString(), auth.userId]
+        );
+      }
       for (const tender of sale.tenders) {
         await client.query(
           `INSERT INTO cash_movements (store_id, direction, category, amount_vnd, method, source_type, source_id, note, actor_user_id, cash_session_id)
@@ -366,6 +388,7 @@ function registerSalesRoutes(app, { pool, env }) {
           cashChangeVnd: change.toString(),
           promotion: appliedPromotion ? { code: appliedPromotion.code, discountVnd: promotionDiscountVnd.toString() } : null,
           payments: appliedTenders.map((tender) => ({ method: tender.method, amountVnd: tender.amountVnd.toString() })),
+          customerCreditUsedVnd: creditUsed.toString(),
         })]
       );
       const body = {
@@ -377,11 +400,11 @@ function registerSalesRoutes(app, { pool, env }) {
           discountVnd: order.discount_vnd,
           promotion: appliedPromotion ? { code: appliedPromotion.code, name: appliedPromotion.name, discountVnd: promotionDiscountVnd.toString() } : null,
           totalVnd: order.total_vnd,
-          paidVnd: paid.toString(),
-          dueVnd: (total - paid).toString(),
+          paidVnd: (paid + creditUsed).toString(),
+          dueVnd: (total - paid - creditUsed).toString(),
           cashReceivedVnd: order.cash_received_vnd,
           changeVnd: change.toString(),
-          payments: appliedTenders.map((tender) => ({ method: tender.method, amountVnd: tender.amountVnd.toString() })),
+          payments: appliedTenders.map((tender) => ({ method: tender.method, amountVnd: tender.amountVnd.toString() })).concat(creditUsed > 0n ? [{ method: 'customer_credit', amountVnd: creditUsed.toString() }] : []),
           occurredAt: order.occurred_at,
           items: lines.map((line, index) => ({
             productId: line.product.id,
