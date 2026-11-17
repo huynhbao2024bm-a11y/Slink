@@ -54,6 +54,7 @@ const ASSETS = new Map([
   ['/offline-sync.js', 'offline-sync.js'],
   ['/offline-conflict-ui.js', 'offline-conflict-ui.js'],
   ['/supplier-returns-ui.js', 'supplier-returns-ui.js'],
+  ['/barcode-tools.js', 'barcode-tools.js'],
   ['/register-sw.js', 'register-sw.js'],
   ['/manifest.webmanifest', 'manifest.webmanifest'],
   ['/sw.js', 'sw.js'],

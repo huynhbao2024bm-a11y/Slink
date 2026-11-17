@@ -38,7 +38,7 @@ async function bootTempApp() {
     migrationsDirectory: path.join(__dirname, '..', 'server', 'migrations'),
   });
   const env = {
-    NODE_ENV: 'development',
+    NODE_ENV: 'test',
     PUBLIC_ORIGIN: origin,
     DEMO_DISABLE_EMAIL_VERIFICATION: 'true',
   };
@@ -101,18 +101,18 @@ async function seedProductsAndCashViaBrowserSession(page) {
     const wh = await (await fetch(`/api/stores/${storeId}/warehouses`, { credentials: 'same-origin' })).json();
     const warehouseId = wh.warehouses[0].id;
 
-    const createProd = async (sku, name, salePriceVnd, costVnd) => {
+    const createProd = async (sku, barcode, name, salePriceVnd, costVnd) => {
       const r = await fetch(`/api/stores/${storeId}/products`, {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'content-type': 'application/json', 'x-csrf-token': csrf },
-        body: JSON.stringify({ sku, name, category: 'Đồ uống', unit: 'ly', salePriceVnd, costVnd, lowStockThreshold: 2, inventoryTracked: true }),
+        body: JSON.stringify({ sku, barcode, name, category: 'Đồ uống', unit: 'ly', salePriceVnd, costVnd, lowStockThreshold: 2, inventoryTracked: true }),
       });
       if (!r.ok) throw new Error(`Product create failed: ${r.status}`);
       return (await r.json()).product;
     };
-    const p1 = await createProd('CF-01', 'Cà phê đá E2E', 35000, 12000);
-    const p2 = await createProd('TR-01', 'Trà đào cam sả', 45000, 15000);
+    const p1 = await createProd('CF-01', '8938505974194', 'Cà phê đá E2E', 35000, 12000);
+    const p2 = await createProd('TR-01', '2000000000122', 'Trà đào cam sả', 45000, 15000);
 
     const purRes = await fetch(`/api/stores/${storeId}/purchases`, {
       method: 'POST',
@@ -177,32 +177,115 @@ async function runViewportAudit(browser, origin, viewport, label) {
     serverErrors.length = 0;
     const seeded = await seedProductsAndCashViaBrowserSession(page);
     await page.reload({ waitUntil: 'networkidle' });
+    const skipTour = async () => {
+      const btn = page.locator("[data-action='guided-tour-skip']:visible").first();
+      if (await btn.count()) { await btn.click(); await page.waitForTimeout(150); }
+    };
+    await skipTour();
 
-    for (const route of ['dashboard', 'pos', 'orders', 'inventory', 'finance']) {
+    for (const route of ['dashboard', 'products', 'inventory', 'orders', 'workspace']) {
+      await skipTour();
       const btn = page.locator(`[data-route='${route}']:visible`).first();
       if (await btn.count()) {
         await btn.click();
-        await page.waitForTimeout(300);
+        await page.waitForTimeout(250);
+        await skipTour();
         await assertNoHorizontalOverflow(page, `${label}:${route}`);
       }
     }
 
-    await page.locator(`[data-route='pos']:visible`).first().click();
+    // 1. Verify separated topbar Bán hàng CTA for Owner
+    const topbarPos = page.locator('#topbar-pos-cta:visible');
+    assert.equal(await topbarPos.count(), 1, `${label}: #topbar-pos-cta must be visible for owner`);
+    await topbarPos.click();
     await page.waitForSelector('.pos-product-grid button');
+    await assertNoHorizontalOverflow(page, `${label}:pos-topbar`);
+
+    // 2. Hardware barcode Enter auto-add on #pos-search
+    await page.fill('#pos-search', '8938505974194');
+    await page.press('#pos-search', 'Enter');
+    await page.waitForTimeout(250);
+
+    // 3. Test Bán nhanh (1-tap sale without modal)
+    await page.locator("[data-action='pos-mode'][data-mode='fast']").click();
+    await page.waitForTimeout(150);
+    await assertNoHorizontalOverflow(page, `${label}:pos-fast`);
+    if (await page.locator(".pos-layout > .cart-panel [data-action='fast-pay'][data-method='cash']").isVisible()) {
+      await page.locator(".pos-layout > .cart-panel [data-action='fast-pay'][data-method='cash']").click();
+    } else {
+      await page.locator(".pos-mobile-checkout[data-action='fast-pay']").click();
+    }
+    await page.waitForSelector('.sale-saved');
+
+    // 4. Test Bán giao hàng (real delivery order + customer creation)
+    await page.locator("[data-action='pos-mode'][data-mode='delivery']").click();
     await page.locator('.pos-product-grid button').first().click();
-    await page.waitForTimeout(200);
-    await page.locator("[data-action='checkout']:visible").first().click();
-    await page.waitForSelector('.modal:not([hidden])');
-    await page.locator(".modal button[type='submit'], .modal [data-action='confirm-checkout'], .modal .btn-primary").first().click();
+    await page.waitForTimeout(150);
+    if (!(await page.locator(".pos-layout > .cart-panel [data-delivery-field='receiverName']").isVisible())) {
+      await page.locator("[data-action='open-cart']:visible").first().click();
+      await page.waitForSelector("#drawer-cart.open [data-delivery-field='receiverName']");
+      await page.fill("#drawer-cart [data-delivery-field='receiverName']", 'Khách Giao Hàng E2E');
+      await page.fill("#drawer-cart [data-delivery-field='receiverPhone']", '0901234567');
+      await page.fill("#drawer-cart [data-delivery-field='address']", '12 Nguyễn Huệ, Q1');
+      await page.locator("#drawer-cart [data-action='submit-delivery-sale']").click();
+    } else {
+      await page.fill(".pos-layout > .cart-panel [data-delivery-field='receiverName']", 'Khách Giao Hàng E2E');
+      await page.fill(".pos-layout > .cart-panel [data-delivery-field='receiverPhone']", '0901234567');
+      await page.fill(".pos-layout > .cart-panel [data-delivery-field='address']", '12 Nguyễn Huệ, Q1');
+      await page.locator(".pos-layout > .cart-panel [data-action='submit-delivery-sale']").click();
+    }
     await page.waitForTimeout(450);
-    await assertNoHorizontalOverflow(page, `${label}:pos-after-sale`);
+    await assertNoHorizontalOverflow(page, `${label}:pos-delivery-after`);
+
+    // 5. Switch to Hàng hóa: test barcode print modal (via Thao tác khác)
+    await page.locator("#primary-nav [data-route='products']:visible, #mobile-nav [data-route='products']:visible").first().click();
+    await page.waitForSelector('.catalog-more summary');
+    await page.locator('.catalog-more summary').click();
+    await page.waitForSelector("[data-action='print-barcode-batch']");
+    await page.locator("[data-action='print-barcode-batch']").click();
+    await page.waitForSelector(".modal:not([hidden]) [data-barcode-sheet-preview] svg.barcode-svg");
+    await assertNoHorizontalOverflow(page, `${label}:barcode-print-modal`);
+    await page.locator(".modal [data-action='close-modal']").first().click();
+    await page.waitForSelector('#modal[hidden]', { state: 'attached' });
+
+    // 6. Switch to Kho hàng: test restructured sub-tabs including Trả NCC
+    await page.locator("#primary-nav [data-route='inventory']:visible, #mobile-nav [data-route='inventory']:visible").first().click();
+    await page.waitForSelector("[data-action='inventory-tab']");
+    for (const tab of ['purchases', 'supplier-returns', 'stock-count', 'stock']) {
+      const tabBtn = page.locator(`[data-action='inventory-tab'][data-tab='${tab}']`);
+      if (await tabBtn.count()) {
+        await tabBtn.click();
+        await page.waitForTimeout(250);
+        await assertNoHorizontalOverflow(page, `${label}:inventory-${tab}`);
+      }
+    }
+
+    // 7. Test Order Detail & Đổi hàng (SlinkReturnsExchangeUI)
+    await page.locator("#primary-nav [data-route='orders']:visible, #mobile-nav [data-route='orders']:visible").first().click();
+    await page.waitForSelector("[data-action='order-detail']", { timeout: 15000 });
+    await page.locator("[data-action='order-detail']").first().click();
+    await page.waitForSelector('.modal:not([hidden])');
+    const exchangeBtn = page.locator(".modal [data-action='exchange-order']");
+    if (!(await exchangeBtn.isVisible())) {
+      await page.locator('.modal .order-more-actions summary').click();
+    }
+    await exchangeBtn.click();
+    await page.waitForSelector(".modal [data-form='order-exchange'] .exchange-summary");
+    const [exchangeRes] = await Promise.all([
+      page.waitForResponse((res) => res.url().includes('/exchange') && res.request().method() === 'POST'),
+      page.locator(".modal button[type='submit'][form='entity-form']").click(),
+    ]);
+    assert.equal(exchangeRes.status(), 201, `${label}: order exchange POST must succeed with 201`);
+    await page.waitForTimeout(350);
+    await page.locator(".modal [data-action='close-modal']").first().click().catch(() => {});
 
     const assetsOk = await page.evaluate(async () => {
       const a = await fetch('/offline-conflict-ui.js', { credentials: 'same-origin' });
       const b = await fetch('/supplier-returns-ui.js', { credentials: 'same-origin' });
-      return a.ok && b.ok;
+      const c = await fetch('/barcode-tools.js', { credentials: 'same-origin' });
+      return a.ok && b.ok && c.ok && Boolean(window.SlinkBarcodeTools) && Boolean(window.SlinkOfflineConflictUI) && Boolean(window.SlinkReturnsExchangeUI);
     });
-    assert.equal(assetsOk, true, 'Standalone helper UI bundles must be served HTTP 200');
+    assert.equal(assetsOk, true, 'All standalone commercial UI bundles must be loaded');
     assert.ok(seeded.storeId);
 
     assert.deepEqual(pageErrors, [], `${label} pageErrors: ${pageErrors.join('; ')}`);

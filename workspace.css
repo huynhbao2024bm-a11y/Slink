@@ -98,7 +98,11 @@
 .calm-ui .customer-extra-filters > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; padding: 0 0 20px; }
 .calm-ui .customer-extra-filters .customer-saved-tools, .calm-ui .customer-extra-filters .customer-filter-hint { grid-column: 1/-1; border: 0; padding: 0; background: transparent; }
 .calm-ui .customer-extra-filters :is(.customer-spend-filter span, .customer-saved-select-wrap span, .customer-saved-hint, .customer-filter-hint) { font-size: 13px; line-height: 1.6; color: var(--muted); }
-.calm-ui .topbar { display: none; }
+.calm-ui .topbar { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 12px; height: 58px; padding: 0 32px; background: rgba(255,255,255,.94); border-bottom: 1px solid var(--line); }
+@media (min-width: 1101px) {
+  .calm-ui .topbar .mobile-brand, .calm-ui .topbar .workspace-name { display: none; }
+  .calm-ui .topbar .topbar-left { display: flex; margin-right: auto; }
+}
 .calm-ui .mobile-nav { display: none; }
 .calm-ui .workspace-directory { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 40px; }
 .calm-ui .directory-group h2 { margin: 0 0 8px; color: #5f6c63; font-size: 14px; font-weight: 500; }

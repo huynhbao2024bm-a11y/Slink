@@ -41,6 +41,7 @@
           <button class="mobile-brand" data-route="pos" aria-label="Bán hàng"><span class="brand-mark"><svg viewBox="0 0 32 32"><path d="M8 8.5h16v5H13v2h11v8H8v-5h11v-2H8z" fill="currentColor"/><circle cx="24.5" cy="7.5" r="2.5" fill="#c8f36c"/></svg></span><span class="brand-name">slink<span class="brand-period">.</span></span></button>
           <div class="topbar-left"><span class="crumb" id="crumb">Tổng quan</span><span class="crumb-separator">/</span><span class="crumb-current" id="crumb-current">Hôm nay</span></div>
           <button class="workspace-name" type="button" data-action="store-picker" aria-haspopup="dialog" disabled></button>
+          <button class="topbar-pos-btn" id="topbar-pos-cta" type="button" data-route="pos" aria-label="Bán hàng tại quầy (POS)" hidden><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 4h2l2.2 11.3a2 2 0 0 0 2 1.7h8.5a2 2 0 0 0 2-1.6L21 9H7"/><circle cx="10" cy="20" r="1"/><circle cx="18" cy="20" r="1"/></svg><span>Bán hàng</span></button>
           <div class="topbar-right"><button class="icon-button help-button" type="button" aria-label="Trợ giúp" data-action="help">?</button><button class="icon-button" type="button" aria-label="Cài đặt" data-action="account-settings"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m9.5 3-.5 2-2 .9-1.9-.6-2.4 4.1L4.2 11v2l-1.5 1.6 2.4 4.1 1.9-.6 2 .9.5 2h5l.5-2 2-.9 1.9.6 2.4-4.1-1.5-1.6v-2l1.5-1.6-2.4-4.1-1.9.6-2-.9-.5-2Z"/><circle cx="12" cy="12" r="3"/></svg></button><button class="topbar-avatar" data-action="account-menu" aria-label="Mở menu tài khoản" aria-haspopup="dialog">S</button></div>
         </header>
         <div id="pending-compatibility-warning" class="auth-message error pending-compatibility-warning" role="alert" aria-live="assertive" hidden>
@@ -59,6 +60,9 @@
     <script src="./offline-ledger.js" defer></script>
     <script src="./offline-store.js" defer></script>
     <script src="./offline-sync.js" defer></script>
+    <script src="./offline-conflict-ui.js" defer></script>
+    <script src="./supplier-returns-ui.js" defer></script>
+    <script src="./barcode-tools.js" defer></script>
     <script src="./app.js" defer></script>
     <script src="./register-sw.js" defer></script>
   </body>
