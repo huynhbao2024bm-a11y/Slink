@@ -475,8 +475,8 @@ async function validateRestoreTarget(connection, manifest) {
     if (!target.can_create_schema) fail('The restore role needs CREATE privilege on the target database so it can restore the archived schema.');
     if (target.has_public_schema && !target.can_create_public) fail('The restore role needs CREATE privilege on the existing public schema.');
     if (!target.has_app_role) fail('Create the slink_app role on the target cluster before restoring ACL grants.');
-    if (target.relation_count || target.routine_count || target.type_count || target.operator_count
-      || target.collation_count || target.custom_schema_count) {
+    if (Number(target.relation_count) || Number(target.routine_count) || Number(target.type_count)
+      || Number(target.operator_count) || Number(target.collation_count) || Number(target.custom_schema_count)) {
       fail('Restore target contains objects outside its installed extensions; choose a new, empty disposable database.');
     }
     if (manifest.extensions === undefined) {
