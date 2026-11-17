@@ -9,7 +9,8 @@ function registerAnalyticsRoutes(app, { pool }) {
     const auth = await authenticate(pool, request);
     const { storeId } = request.params;
     if (!UUID_PATTERN.test(storeId)) throw new ApiError(400, 'validation_error', 'Cửa hàng không hợp lệ.');
-    const days = request.query?.days === '30' ? 30 : 7;
+    const requestedDays = Number(request.query?.days);
+    const days = [1, 7, 30].includes(requestedDays) ? requestedDays : 7;
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
       if (!ANALYTICS_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền xem báo cáo tài chính.');
       const queries = [

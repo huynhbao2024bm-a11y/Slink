@@ -1866,7 +1866,7 @@
     selectedWarehouseId = '';
     warehouseLoading = false;
     warehouseError = '';
-    page = taskFocusRoute || (store.role === 'stockkeeper' ? 'inventory' : store.role === 'accountant' ? 'finance' : store.businessProfile === 'online' && canAccessRoute('channels') ? 'channels' : 'pos');
+    page = checkoutPendingPayload ? 'pos' : taskFocusRoute || (store.role === 'stockkeeper' ? 'inventory' : store.role === 'accountant' ? 'finance' : store.role === 'cashier' ? 'pos' : 'dashboard');
     authRoot.hidden = true;
     appShell.hidden = false;
     productLoading = page === 'pos';
@@ -1883,7 +1883,7 @@
       await loadFinancePage();
     } else if (page === 'dashboard') {
       const dashboardLoads = [loadWarehouses({ includeTransfers: false }), loadInventoryPage('', 0)];
-      if (['owner', 'manager', 'accountant'].includes(store.role)) dashboardLoads.push(loadAnalytics(chartRange === '30 ngày' ? 30 : 7), loadOrdersPage('', 0), loadFinancePage());
+      if (['owner', 'manager', 'accountant'].includes(store.role)) dashboardLoads.push(loadAnalytics(1), loadOrdersPage('', 0), loadFinancePage());
       else if (store.role === 'cashier') dashboardLoads.push(loadOrdersPage('', 0));
       else if (store.role === 'stockkeeper') dashboardLoads.push(loadFinancePage());
       await Promise.all(dashboardLoads);
@@ -2288,11 +2288,12 @@
       return;
     }
     const requestNumber = ++analyticsRequestNumber;
+    if (analyticsData?.range?.days !== days) analyticsData = null;
     analyticsLoading = true;
     analyticsError = '';
     if (page === 'dashboard' || page === 'reports') render();
     try {
-      const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/analytics?days=${days === 30 ? 30 : 7}`);
+      const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/analytics?days=${[1, 7, 30].includes(days) ? days : 7}`);
       if (requestNumber !== analyticsRequestNumber) return;
       analyticsData = result;
       analyticsLoading = false;
@@ -8833,15 +8834,17 @@
   function renderDashboard() {
     const canViewMoney = ['owner', 'manager', 'accountant'].includes(store.role);
     const canReceive = ['owner', 'manager', 'accountant', 'stockkeeper'].includes(store.role);
-    const day = analyticsData?.days?.find(function (item) { return item.date === analyticsData.range.to; });
-    const revenue = analyticsData ? moneyVndText(day?.salesVnd || '0') : analyticsError ? 'Chưa tải được' : 'Đang tải…';
+    const todayData = analyticsData?.range?.days === 1 ? analyticsData : null;
+    const day = todayData?.days?.find(function (item) { return item.date === todayData.range.to; });
+    const revenue = todayData ? moneyVndText(day?.salesVnd || '0') : analyticsError ? 'Chưa tải được' : 'Đang tải…';
     const actions = [
       canAccessRoute('pos') ? { label: 'Bán hàng', detail: 'Chọn hàng, nhận tiền', route: 'pos', image: 'cart' } : null,
+      canViewMoney ? { label: 'Thu chi', detail: 'Tiền và công nợ', route: 'finance', image: 'wallet' } : null,
       canReceive ? { label: 'Nhập hàng', detail: 'Ghi hàng vừa nhận', action: 'receive-stock', image: 'box' } : null,
       { label: 'Xem kho', detail: 'Còn bao nhiêu hàng?', route: 'inventory', image: 'layers' }
     ].filter(Boolean);
     return pageHeading('Hôm nay', '', '') +
-      (canViewMoney ? "<section class='today-revenue' data-tour-target='dashboard-revenue'><div><span>Doanh thu hôm nay</span><strong>" + esc(revenue) + "</strong><small>" + (analyticsData ? number(day?.orderCount || 0) + ' đơn bán' : 'Đang lấy số liệu cửa hàng') + "</small></div><button class='btn' data-route='reports'>Xem chi tiết →</button></section>" : "<section class='today-revenue'><div><span>" + esc(store.settings.storeName) + "</span><strong>Sẵn sàng làm việc</strong></div></section>") +
+      (canViewMoney ? "<section class='today-revenue' data-tour-target='dashboard-revenue'><div><span>Doanh thu hôm nay</span><strong>" + esc(revenue) + "</strong><small>" + (todayData ? number(day?.orderCount || 0) + ' đơn bán' : 'Đang lấy số liệu cửa hàng') + "</small></div><button class='btn' data-route='reports'>Xem chi tiết →</button></section>" : "<section class='today-revenue'><div><span>" + esc(store.settings.storeName) + "</span><strong>Sẵn sàng làm việc</strong></div></section>") +
       (analyticsError && canViewMoney ? "<p class='auth-message error' role='alert'>" + esc(analyticsError) + "</p>" : '') +
       "<section class='daily-actions' data-tour-target='dashboard-actions' aria-label='Việc thường làm'>" + actions.map(function (item) { return "<button " + (item.route ? "data-route='" + item.route : "data-action='" + item.action) + "'><span>" + icon(item.image, 24) + "</span><strong>" + esc(item.label) + "</strong><small>" + esc(item.detail) + "</small></button>"; }).join('') + "</section>" +
       "<section class='panel daily-attention'><div class='panel-header'><h2>Cần chú ý</h2><button class='link-button' data-route='inventory'>Xem kho →</button></div><p>" + (inventoryError ? esc(inventoryError) : inventoryLoading ? 'Đang kiểm tra kho…' : Number(inventorySummary.low) ? number(inventorySummary.low) + ' mặt hàng sắp hết. Kiểm tra để nhập thêm khi cần.' : 'Chưa có cảnh báo tồn kho trong dữ liệu đã tải.') + "</p></section>" +
@@ -8979,7 +8982,7 @@
     else if (page === 'dashboard') {
       const dashboardLoads = [loadInventoryPage('', 0)];
       if (['owner', 'manager', 'accountant'].includes(store.role)) {
-        dashboardLoads.push(loadAnalytics(chartRange === '30 ngày' ? 30 : 7), loadOrdersPage('', 0), loadFinancePage());
+        dashboardLoads.push(loadAnalytics(1), loadOrdersPage('', 0), loadFinancePage());
       } else if (store.role === 'cashier') {
         dashboardLoads.push(loadOrdersPage('', 0));
       } else if (store.role === 'stockkeeper') {
