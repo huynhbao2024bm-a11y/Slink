@@ -17,11 +17,13 @@ const { assertRuntimeSchema } = require('./runtime-schema');
 const { registerSalesRoutes } = require('./sales');
 const { registerPromotionRoutes } = require('./promotions');
 const { registerReturnRoutes } = require('./returns');
+const { registerExchangeRoutes } = require('./exchanges');
 const { registerOfflineConflictRoutes } = require('./offline-conflicts');
 const { registerRecordRoutes } = require('./records');
 const { registerStockRoutes } = require('./stock');
 const { registerPaymentRoutes } = require('./payments');
 const { registerPurchaseRoutes } = require('./purchases');
+const { registerSupplierReturnRoutes } = require('./supplier-returns');
 const { registerPurchaseOrderRoutes } = require('./purchase-orders');
 const { registerFinanceRoutes } = require('./finance');
 const { registerAnalyticsRoutes } = require('./analytics');
@@ -51,6 +53,7 @@ const ASSETS = new Map([
   ['/money-inputs.js', 'money-inputs.js'],
   ['/offline-sync.js', 'offline-sync.js'],
   ['/offline-conflict-ui.js', 'offline-conflict-ui.js'],
+  ['/supplier-returns-ui.js', 'supplier-returns-ui.js'],
   ['/register-sw.js', 'register-sw.js'],
   ['/manifest.webmanifest', 'manifest.webmanifest'],
   ['/sw.js', 'sw.js'],
@@ -190,11 +193,13 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
     registerSalesRoutes(app, { pool, env });
     registerPromotionRoutes(app, { pool, env });
     registerReturnRoutes(app, { pool, env });
+    registerExchangeRoutes(app, { pool, env });
     registerOfflineConflictRoutes(app, { pool, env });
     registerRecordRoutes(app, { pool, env });
     registerStockRoutes(app, { pool, env });
     registerPaymentRoutes(app, { pool, env });
     registerPurchaseRoutes(app, { pool, env });
+    registerSupplierReturnRoutes(app, { pool, env });
     registerPurchaseOrderRoutes(app, { pool, env });
     registerFinanceRoutes(app, { pool, env });
     registerAnalyticsRoutes(app, { pool, env });
