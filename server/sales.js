@@ -173,6 +173,16 @@ function registerSalesRoutes(app, { pool, env }) {
       }
 
       await beginOffline(client, offline);
+      if (offline) {
+        await client.query(`SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))`, [storeId, idempotencyKey]);
+        const priorOffline = await client.query(
+          `SELECT entity_id FROM offline_operation_receipts WHERE store_id = $1 AND operation_key = $2 LIMIT 1`,
+          [storeId, idempotencyKey]
+        );
+        if (priorOffline.rowCount) {
+          throw new ApiError(409, 'offline_already_synced', 'Đơn ngoại tuyến này đã được quản lý xử lý hoặc đồng bộ trước đó.');
+        }
+      }
       let customerCreditLimit = null;
       if (sale.customerId) {
         const customer = await client.query(

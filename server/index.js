@@ -17,6 +17,7 @@ const { assertRuntimeSchema } = require('./runtime-schema');
 const { registerSalesRoutes } = require('./sales');
 const { registerPromotionRoutes } = require('./promotions');
 const { registerReturnRoutes } = require('./returns');
+const { registerOfflineConflictRoutes } = require('./offline-conflicts');
 const { registerRecordRoutes } = require('./records');
 const { registerStockRoutes } = require('./stock');
 const { registerPaymentRoutes } = require('./payments');
@@ -49,6 +50,7 @@ const ASSETS = new Map([
   ['/purchase-units.js', 'purchase-units.js'],
   ['/money-inputs.js', 'money-inputs.js'],
   ['/offline-sync.js', 'offline-sync.js'],
+  ['/offline-conflict-ui.js', 'offline-conflict-ui.js'],
   ['/register-sw.js', 'register-sw.js'],
   ['/manifest.webmanifest', 'manifest.webmanifest'],
   ['/sw.js', 'sw.js'],
@@ -188,6 +190,7 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
     registerSalesRoutes(app, { pool, env });
     registerPromotionRoutes(app, { pool, env });
     registerReturnRoutes(app, { pool, env });
+    registerOfflineConflictRoutes(app, { pool, env });
     registerRecordRoutes(app, { pool, env });
     registerStockRoutes(app, { pool, env });
     registerPaymentRoutes(app, { pool, env });
