@@ -500,3 +500,23 @@ body{min-height:100vh;min-height:100dvh;overflow-x:hidden}
 .quick-product-tracking small,.quick-product-note{color:#6d7b72;font-size:13px;line-height:1.55}
 .quick-product-note{margin-top:14px;padding:11px 13px;border-radius:10px;background:#f3f7f3}
 @media(max-width:560px){.pos-empty-start{min-height:220px;padding:21px 15px}.pos-empty-actions{width:100%;flex-direction:column}.pos-empty-actions .btn{width:100%;min-height:46px}.quick-product-fields{grid-template-columns:minmax(0,1fr)}.quick-product-fields .full{grid-column:auto}.quick-product-tracking{grid-column:auto}}
+/* Give people management room to breathe while keeping everyday actions visible. */
+.customer-main-search{margin:16px 0 10px;max-width:560px}
+.customer-main-search .search-wrap{width:100%}
+.customer-main-search .input{min-height:48px;width:100%}
+.customer-more-filters{min-height:44px;padding:0 14px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--forest);font-weight:700}
+.customer-advanced[hidden]{display:none}
+.customer-advanced{margin:14px 0 20px}
+.customer-advanced .customer-filters{grid-template-columns:repeat(3,minmax(0,1fr)) auto;gap:12px}
+.customer-advanced .customer-saved-tools{border:0;border-bottom:1px solid var(--line);border-radius:0;padding:0 0 16px;background:transparent}
+.staff-row{align-items:flex-start;gap:18px;padding:22px 0}
+.staff-person{min-width:0}
+.staff-person>span:last-child{gap:6px}
+.staff-person small{font-size:12px}
+.staff-details{flex:0 0 100%;min-width:0}
+.staff-details summary{display:inline-flex;align-items:center;min-height:44px;color:var(--forest);font-weight:700;cursor:pointer}
+.staff-details .staff-controls{margin:8px 0 16px;flex-wrap:wrap}
+.staff-details .staff-controls .input,.staff-details .staff-controls .btn{min-height:44px}
+.settings-panel{margin-top:20px}
+@media(max-width:900px){.customer-advanced .customer-filters{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:600px){.customer-main-search{max-width:none}.customer-more-filters{width:100%;text-align:left}.customer-advanced .customer-filters{grid-template-columns:1fr}.staff-row{gap:8px;padding:18px 0}.staff-details{width:100%}.staff-details summary{width:100%}.staff-details .staff-controls{grid-template-columns:1fr;display:grid;align-items:stretch}.staff-details .staff-controls label,.staff-details .staff-controls .btn{grid-column:auto;grid-row:auto}.settings-panel{margin-top:18px}}
