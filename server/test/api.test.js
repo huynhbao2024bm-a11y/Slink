@@ -2226,6 +2226,10 @@ test('manager, accountant, and stockkeeper receive different finance and record 
     const analytics = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/analytics?days=7`, headers: staff.headers });
     assert.equal(analytics.statusCode, 200, analytics.body);
     assert.equal(analytics.json().summary.averageTicketVnd, '0', 'an empty report must return integer VND for the average');
+    const today = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/analytics?days=1`, headers: staff.headers });
+    assert.equal(today.statusCode, 200, today.body);
+    assert.equal(today.json().range.days, 1);
+    assert.equal(today.json().days.length, 1);
     const productList = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/products`, headers: staff.headers });
     assert.equal(productList.json().products.find((item) => item.id === productId).cost_vnd, '250');
     const priceHistory = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/products/${productId}/price-history`, headers: staff.headers });
