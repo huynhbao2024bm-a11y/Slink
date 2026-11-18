@@ -4,6 +4,7 @@ const { createHash, randomUUID } = require('node:crypto');
 const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
 const { normalizeOffline, beginOffline, recordOffline } = require('./offline-operations');
+const { insertCashMovement } = require('./cashbook-ledger');
 
 const MAX_BIGINT = 9223372036854775807n;
 const VIEW_ROLES = new Set(['owner', 'manager', 'cashier', 'accountant']);
@@ -264,11 +265,18 @@ function registerCashRegisterRoutes(app, { pool, env }) {
       const adjustmentId = variance === 0n ? null : randomUUID();
       if (adjustmentId) {
         const amountVnd = (variance < 0n ? -variance : variance).toString();
-        await client.query(
-          `INSERT INTO cash_movements (store_id, direction, category, amount_vnd, method, source_type, source_id, note, actor_user_id, cash_session_id)
-           VALUES ($1, $2, 'Chênh lệch chốt ca', $3, 'cash', 'cash_session_reconciliation', $4, $5, $6, $7)`,
-          [storeId, variance > 0n ? 'in' : 'out', amountVnd, sessionId, note, auth.userId, sessionId]
-        );
+        await insertCashMovement(client, {
+          storeId,
+          direction: variance > 0n ? 'in' : 'out',
+          category: 'Chênh lệch chốt ca',
+          amountVnd,
+          method: 'cash',
+          sourceType: 'cash_session_reconciliation',
+          sourceId: sessionId,
+          note,
+          actorUserId: auth.userId,
+          cashSessionId: sessionId,
+        });
       }
       await client.query(
         `UPDATE cash_register_sessions

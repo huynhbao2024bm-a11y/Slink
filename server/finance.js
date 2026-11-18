@@ -6,6 +6,8 @@ const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
 const { allowedWarehouseIds } = require('./warehouse-access');
 const { lockActiveCashSession } = require('./cash-register');
+const { insertCashMovement } = require('./cashbook-ledger');
+const { registerFinanceVoucherRoutes } = require('./finance-vouchers');
 
 const FINANCE_ROLES = new Set(['owner', 'manager', 'accountant']);
 const FINANCE_PAGE_ROLES = new Set([...FINANCE_ROLES, 'cashier', 'stockkeeper']);
@@ -121,16 +123,26 @@ function registerFinanceRoutes(app, { pool, env }) {
       const warehouseIds = allowedWarehouseIds(membership);
       const queries = [
         () => cashbookAccess ? client.query(
-          `SELECT c.id AS movement_id, c.direction, c.category, c.amount_vnd::text AS amount_vnd, c.method, c.source_type, c.source_id,
+          `SELECT c.id AS movement_id, c.voucher_number, c.direction, c.category, c.amount_vnd::text AS amount_vnd,
+                  c.method, c.fund_type, c.movement_kind, c.transfer_group_id, c.reverses_movement_id,
+                  c.include_in_pnl, c.source_type, c.source_id, c.void_reason,
                   c.cash_session_id, s.opened_at AS cash_session_opened_at,
                   c.note, c.occurred_at, u.display_name AS actor_name, o.id AS order_id, o.order_number,
-                  a.metadata->'counterparty' AS counterparty, COUNT(*) OVER()::int AS total_count
+                  rev.id AS reversed_by_movement_id,
+                  COALESCE(
+                    CASE WHEN NULLIF(c.counterparty_name, '') IS NOT NULL
+                      THEN jsonb_build_object('kind', COALESCE(c.counterparty_kind, 'other'), 'id', c.counterparty_id, 'name', c.counterparty_name)
+                    END,
+                    a.metadata->'counterparty'
+                  ) AS counterparty,
+                  COUNT(*) OVER()::int AS total_count
            FROM cash_movements c
            JOIN users u ON u.id = c.actor_user_id
            LEFT JOIN cash_register_sessions s ON s.store_id = c.store_id AND s.id = c.cash_session_id
            LEFT JOIN payments p ON p.store_id = c.store_id AND p.id = c.source_id AND c.source_type = 'order_payment'
            LEFT JOIN orders o ON o.store_id = c.store_id AND o.id = COALESCE(p.order_id, c.source_id)
              AND c.source_type IN ('order_payment', 'order_change')
+           LEFT JOIN cash_movements rev ON rev.store_id = c.store_id AND rev.reverses_movement_id = c.id
            LEFT JOIN LATERAL (
              SELECT metadata FROM audit_events a WHERE $2::boolean AND c.source_type = 'manual_cash_movement'
                AND a.store_id = c.store_id AND a.entity_id = c.source_id AND a.entity_type = 'cash_movement' AND a.action = 'cash_movement.created'
@@ -157,8 +169,10 @@ function registerFinanceRoutes(app, { pool, env }) {
           [storeId]
         ) : Promise.resolve({ rows: [] }),
         () => fullFinanceAccess ? client.query(
-          `SELECT COALESCE(SUM(amount_vnd) FILTER (WHERE direction = 'in' AND occurred_at >= ((date_trunc('day', now() AT TIME ZONE s.timezone)) AT TIME ZONE s.timezone)), 0)::text AS today_in_vnd,
-                  COALESCE(SUM(amount_vnd) FILTER (WHERE direction = 'out' AND occurred_at >= ((date_trunc('day', now() AT TIME ZONE s.timezone)) AT TIME ZONE s.timezone)), 0)::text AS today_out_vnd,
+          `SELECT COALESCE(SUM(CASE WHEN c.movement_kind = 'reversal' THEN -c.amount_vnd ELSE c.amount_vnd END)
+                    FILTER (WHERE COALESCE(orig.direction, c.direction) = 'in' AND c.transfer_group_id IS NULL AND c.occurred_at >= ((date_trunc('day', now() AT TIME ZONE s.timezone)) AT TIME ZONE s.timezone)), 0)::text AS today_in_vnd,
+                  COALESCE(SUM(CASE WHEN c.movement_kind = 'reversal' THEN -c.amount_vnd ELSE c.amount_vnd END)
+                    FILTER (WHERE COALESCE(orig.direction, c.direction) = 'out' AND c.transfer_group_id IS NULL AND c.occurred_at >= ((date_trunc('day', now() AT TIME ZONE s.timezone)) AT TIME ZONE s.timezone)), 0)::text AS today_out_vnd,
                   COALESCE((SELECT SUM(balance) FROM (
                     SELECT SUM(l.debit_vnd - l.credit_vnd) AS balance FROM customer_ledger_entries l
                     WHERE l.store_id = s.id GROUP BY l.customer_id
@@ -171,7 +185,10 @@ function registerFinanceRoutes(app, { pool, env }) {
                     SELECT SUM(l.increases_payable_vnd - l.decreases_payable_vnd) AS balance FROM supplier_ledger_entries l
                     WHERE l.store_id = s.id GROUP BY l.supplier_id
                   ) supplier_balances WHERE balance > 0), 0)::text AS supplier_payable_vnd
-           FROM stores s LEFT JOIN cash_movements c ON c.store_id = s.id WHERE s.id = $1 GROUP BY s.id, s.timezone`,
+           FROM stores s
+           LEFT JOIN cash_movements c ON c.store_id = s.id
+           LEFT JOIN cash_movements orig ON orig.store_id = c.store_id AND orig.id = c.reverses_movement_id
+           WHERE s.id = $1 GROUP BY s.id, s.timezone`,
           [storeId]
         ) : Promise.resolve({ rows: [] }),
         () => fullFinanceAccess ? client.query(
@@ -385,11 +402,21 @@ function registerFinanceRoutes(app, { pool, env }) {
          VALUES ($1, $2, 'payment_debit', $3, 'supplier_payment', $4, $5, $6)`,
         [storeId, supplierId, amount.toString(), paymentId, description, auth.userId]
       );
-      await client.query(
-        `INSERT INTO cash_movements (store_id, direction, category, amount_vnd, method, source_type, source_id, note, actor_user_id, cash_session_id)
-         VALUES ($1, 'out', 'Thanh toán nhà cung cấp', $2, $3, 'supplier_payment', $4, $5, $6, $7)`,
-        [storeId, amount.toString(), method, paymentId, description, auth.userId, cashSessionId]
-      );
+      await insertCashMovement(client, {
+        storeId,
+        direction: 'out',
+        category: 'Thanh toán nhà cung cấp',
+        amountVnd: amount.toString(),
+        method,
+        sourceType: 'supplier_payment',
+        sourceId: paymentId,
+        note: description,
+        actorUserId: auth.userId,
+        cashSessionId,
+        counterpartyKind: 'supplier',
+        counterpartyId: supplierId,
+        counterpartyName: supplier.rows[0].name,
+      });
       await client.query(
         `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, reason, metadata)
          VALUES ($1, $2, 'supplier.payment_recorded', 'supplier', $3, $4, jsonb_build_object('amountVnd', $5::text, 'method', $6::text))`,
@@ -421,14 +448,33 @@ function registerFinanceRoutes(app, { pool, env }) {
     const amount = positiveAmount(body.amountVnd);
     const method = body.method || 'cash';
     if (!METHODS.has(method)) throw new ApiError(400, 'validation_error', 'Phương thức thanh toán không hợp lệ.');
+    const categoryIdInput = body.categoryId ?? null;
+    if (categoryIdInput !== null && (typeof categoryIdInput !== 'string' || !UUID_PATTERN.test(categoryIdInput))) {
+      throw new ApiError(400, 'validation_error', 'Mã khoản mục thu chi không hợp lệ.');
+    }
+    const requestedCategoryId = categoryIdInput ? categoryIdInput.toLowerCase() : null;
     const category = typeof body.category === 'string' ? body.category.trim() : '';
     const note = typeof body.note === 'string' ? body.note.trim() : '';
-    if (!category || category.length > 100 || note.length > 300) throw new ApiError(400, 'validation_error', 'Khoản mục hoặc ghi chú không hợp lệ.');
+    if ((!category && !requestedCategoryId) || category.length > 100 || note.length > 300) throw new ApiError(400, 'validation_error', 'Khoản mục hoặc ghi chú không hợp lệ.');
     const party = body.counterparty;
-    if (party != null && (!validPartyKind(party.kind) || typeof party.id !== 'string' || !UUID_PATTERN.test(party.id))) throw new ApiError(400, 'validation_error', 'Chọn người nộp hoặc nhận tiền trong danh sách.');
+    if (party != null) {
+      if (party.kind === 'other') {
+        const pName = typeof party.name === 'string' ? party.name.trim() : '';
+        if (!pName || pName.length > 120) throw new ApiError(400, 'validation_error', 'Tên đối tượng khác cần từ 1 đến 120 ký tự.');
+      } else if (!validPartyKind(party.kind) || typeof party.id !== 'string' || !UUID_PATTERN.test(party.id)) {
+        throw new ApiError(400, 'validation_error', 'Chọn người nộp hoặc nhận tiền trong danh sách.');
+      }
+    }
+    const explicitIncludeInPnl = typeof body.includeInPnl === 'boolean' ? body.includeInPnl : null;
     const value = { direction, amountVnd: amount.toString(), method, category, note };
     if (offline) value.offline = offline;
-    if (party) value.counterparty = { kind: party.kind, id: party.id.toLowerCase() };
+    if (requestedCategoryId) value.categoryId = requestedCategoryId;
+    if (explicitIncludeInPnl !== null) value.includeInPnl = explicitIncludeInPnl;
+    if (party) {
+      value.counterparty = party.kind === 'other'
+        ? { kind: 'other', name: party.name.trim() }
+        : { kind: party.kind, id: party.id.toLowerCase() };
+    }
     const digest = createHash('sha256').update(JSON.stringify(value)).digest();
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
       if (!FINANCE_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền ghi phiếu thu chi.');
@@ -448,29 +494,77 @@ function registerFinanceRoutes(app, { pool, env }) {
         if (!record.response_body || !record.response_status) throw new ApiError(409, 'request_in_progress', 'Phiếu đang được xử lý. Hãy thử lại sau.');
         return { status: record.response_status, body: record.response_body, replayed: true };
       }
+      let resolvedCategoryName = category;
+      let resolvedCategoryPnl = true;
+      if (requestedCategoryId) {
+        const catRes = await client.query(
+          `SELECT id, name, direction, default_include_in_pnl FROM cash_categories WHERE store_id = $1 AND id = $2 AND status = 'active'`,
+          [storeId, requestedCategoryId]
+        );
+        if (!catRes.rowCount || (catRes.rows[0].direction !== 'both' && catRes.rows[0].direction !== direction)) {
+          throw new ApiError(404, 'category_not_found', 'Khoản mục thu chi không tồn tại hoặc không khớp chiều thu/chi.');
+        }
+        resolvedCategoryName = catRes.rows[0].name;
+        resolvedCategoryPnl = Boolean(catRes.rows[0].default_include_in_pnl);
+      } else if (/góp vốn|gop von|rút vốn|rut von/i.test(resolvedCategoryName)) {
+        resolvedCategoryPnl = false;
+      }
+      const includeInPnl = explicitIncludeInPnl !== null ? explicitIncludeInPnl : resolvedCategoryPnl;
+
       let counterparty;
       if (value.counterparty) {
-        const { kind, id } = value.counterparty;
-        const result = await client.query(`SELECT name FROM (${PARTY_LOOKUP[kind]}) person WHERE id = $2`, [storeId, id]);
-        if (!result.rowCount) throw new ApiError(404, 'counterparty_not_found', 'Người nộp hoặc nhận tiền không còn trong danh sách của cửa hàng.');
-        counterparty = { kind, id, name: result.rows[0].name };
+        if (value.counterparty.kind === 'other') {
+          counterparty = { kind: 'other', id: null, name: value.counterparty.name };
+        } else {
+          const { kind, id } = value.counterparty;
+          const result = await client.query(`SELECT name FROM (${PARTY_LOOKUP[kind]}) person WHERE id = $2`, [storeId, id]);
+          if (!result.rowCount) throw new ApiError(404, 'counterparty_not_found', 'Người nộp hoặc nhận tiền không còn trong danh sách của cửa hàng.');
+          counterparty = { kind, id, name: result.rows[0].name };
+        }
       }
       await beginOffline(client, offline);
       const movementId = randomUUID();
       const cashSessionId = method === 'cash'
         ? await lockActiveCashSession(client, storeId, { cashOutVnd: direction === 'out' ? amount : 0n })
         : null;
-      await client.query(
-        `INSERT INTO cash_movements (store_id, direction, category, amount_vnd, method, source_type, source_id, note, actor_user_id, cash_session_id)
-         VALUES ($1, $2, $3, $4, $5, 'manual_cash_movement', $6, $7, $8, $9)`,
-        [storeId, direction, category, amount.toString(), method, movementId, note, auth.userId, cashSessionId]
-      );
+      const inserted = await insertCashMovement(client, {
+        storeId,
+        direction,
+        category: resolvedCategoryName,
+        amountVnd: amount.toString(),
+        method,
+        sourceType: 'manual_cash_movement',
+        sourceId: movementId,
+        note,
+        actorUserId: auth.userId,
+        cashSessionId,
+        categoryId: requestedCategoryId,
+        includeInPnl,
+        counterpartyKind: counterparty?.kind || null,
+        counterpartyId: counterparty?.id || null,
+        counterpartyName: counterparty?.name || '',
+      });
       await client.query(
         `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, reason, metadata)
          VALUES ($1, $2, 'cash_movement.created', 'cash_movement', $3, $4, $5::jsonb)`,
-        [storeId, auth.userId, movementId, note || category, JSON.stringify({ direction, amountVnd: amount.toString(), ...(counterparty ? { counterparty } : {}) })]
+        [storeId, auth.userId, movementId, note || resolvedCategoryName, JSON.stringify({ direction, voucherNumber: inserted.voucher_number, includeInPnl, amountVnd: amount.toString(), ...(counterparty ? { counterparty } : {}) })]
       );
-      const bodyResult = { movement: { id: movementId, direction, category, amountVnd: amount.toString(), method, note, ...(counterparty ? { counterparty } : {}), occurredAt: offline?.occurredAt || new Date().toISOString() } };
+      const bodyResult = {
+        movement: {
+          id: movementId,
+          movementId: inserted.id,
+          voucherNumber: inserted.voucher_number,
+          fundType: inserted.fund_type,
+          includeInPnl,
+          direction,
+          category: resolvedCategoryName,
+          amountVnd: amount.toString(),
+          method,
+          note,
+          ...(counterparty ? { counterparty } : {}),
+          occurredAt: offline?.occurredAt || inserted.occurred_at,
+        },
+      };
       await recordOffline(client, { storeId, userId: auth.userId, key: idempotencyKey, kind: 'cash', entityId: movementId, metadata: offline });
       await client.query(
         `UPDATE idempotency_records SET response_status = 201, response_body = $4::jsonb, completed_at = now()
@@ -482,6 +576,8 @@ function registerFinanceRoutes(app, { pool, env }) {
     if (outcome.replayed) reply.header('idempotent-replayed', 'true');
     return reply.code(outcome.status).send(outcome.body);
   });
+
+  registerFinanceVoucherRoutes(app, { pool, env });
 }
 
 module.exports = { registerFinanceRoutes, positiveAmount };

@@ -4,6 +4,7 @@ const { createHash, randomUUID } = require('node:crypto');
 const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
 const { lockActiveCashSession } = require('./cash-register');
+const { insertCashMovement } = require('./cashbook-ledger');
 
 const PAYMENT_ROLES = new Set(['owner', 'manager', 'cashier', 'accountant']);
 const METHODS = new Set(['cash', 'bank_transfer', 'bank_qr', 'card', 'other']);
@@ -310,12 +311,21 @@ function registerPaymentRoutes(app, { pool, env }) {
           [storeId, customerId, advance.toString(), receiptId, note || `Tiền khách trả trước: ${customer.rows[0].name}`, auth.userId]
         );
       }
-      await client.query(
-        `INSERT INTO cash_movements (store_id, direction, category, amount_vnd, method, source_type, source_id, note, actor_user_id, cash_session_id)
-         VALUES ($1, 'in', $8, $2, $3, 'customer_payment', $4, $5, $6, $7)`,
-        [storeId, amount.toString(), method, receiptId, note || `Thu tiền khách hàng ${customer.rows[0].name}`, auth.userId, cashSessionId,
-          advance === amount ? 'Khách trả trước' : advance > 0n ? 'Thu nợ và trả trước' : 'Thu công nợ khách hàng']
-      );
+      await insertCashMovement(client, {
+        storeId,
+        direction: 'in',
+        category: advance === amount ? 'Khách trả trước' : advance > 0n ? 'Thu nợ và trả trước' : 'Thu công nợ khách hàng',
+        amountVnd: amount.toString(),
+        method,
+        sourceType: 'customer_payment',
+        sourceId: receiptId,
+        note: note || `Thu tiền khách hàng ${customer.rows[0].name}`,
+        actorUserId: auth.userId,
+        cashSessionId,
+        counterpartyKind: 'customer',
+        counterpartyId: customerId,
+        counterpartyName: customer.rows[0].name,
+      });
       await client.query(
         `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, reason, metadata)
          VALUES ($1, $2, 'customer.payment_recorded', 'customer', $3, $4,
@@ -424,11 +434,20 @@ function registerPaymentRoutes(app, { pool, env }) {
          VALUES ($1, $2, 'payment_credit', $3, 'order_payment', $4, $5, $6)`,
         [storeId, order.customer_id, amount.toString(), payment.rows[0].id, note || `Thu nợ đơn ${order.order_number}`, auth.userId]
       );
-      await client.query(
-        `INSERT INTO cash_movements (store_id, direction, category, amount_vnd, method, source_type, source_id, note, actor_user_id, cash_session_id)
-         VALUES ($1, 'in', 'Thu nợ bán hàng', $2, $3, 'order_payment', $4, $5, $6, $7)`,
-        [storeId, amount.toString(), method, payment.rows[0].id, note || `Thu đơn ${order.order_number}`, auth.userId, cashSessionId]
-      );
+      await insertCashMovement(client, {
+        storeId,
+        direction: 'in',
+        category: 'Thu nợ bán hàng',
+        amountVnd: amount.toString(),
+        method,
+        sourceType: 'order_payment',
+        sourceId: payment.rows[0].id,
+        note: note || `Thu đơn ${order.order_number}`,
+        actorUserId: auth.userId,
+        cashSessionId,
+        counterpartyKind: 'customer',
+        counterpartyId: order.customer_id,
+      });
       await client.query(
         `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, reason, metadata)
          VALUES ($1, $2, 'order.payment_recorded', 'order', $3, $4, jsonb_build_object('amountVnd', $5::text, 'method', $6::text))`,

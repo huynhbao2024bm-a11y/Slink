@@ -4,6 +4,7 @@ const { createHash } = require('node:crypto');
 const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
 const { lockActiveCashSession } = require('./cash-register');
+const { insertCashMovement } = require('./cashbook-ledger');
 const { normalizeOffline, expectedPrices } = require('./offline-operations');
 const { normalizeSale, quantityText, distributeDiscount } = require('./sales');
 const { findAccessibleWarehouse, requireWarehouseAccess } = require('./warehouse-access');
@@ -624,18 +625,36 @@ async function recordResolvedPaymentsAndCash(client, storeId, resolverUserId, or
   }
   for (const tender of sale.tenders) {
     if (tender.amountReceivedVnd <= 0n) continue;
-    await client.query(
-      `INSERT INTO cash_movements (store_id, direction, category, amount_vnd, method, source_type, source_id, note, actor_user_id, cash_session_id)
-       VALUES ($1, 'in', 'Bán hàng', $2, $3, 'order_payment', $4, $5, $6, $7)`,
-      [storeId, tender.amountReceivedVnd.toString(), tender.method, order.id, `Thu đơn ${order.order_number}`, resolverUserId, tender.method === 'cash' ? cashSessionId : null]
-    );
+    await insertCashMovement(client, {
+      storeId,
+      direction: 'in',
+      category: 'Bán hàng',
+      amountVnd: tender.amountReceivedVnd.toString(),
+      method: tender.method,
+      sourceType: 'order_payment',
+      sourceId: order.id,
+      note: `Thu đơn ${order.order_number}`,
+      actorUserId: resolverUserId,
+      cashSessionId: tender.method === 'cash' ? cashSessionId : null,
+      counterpartyKind: sale.customerId ? 'customer' : null,
+      counterpartyId: sale.customerId || null,
+    });
   }
   if (change > 0n) {
-    await client.query(
-      `INSERT INTO cash_movements (store_id, direction, category, amount_vnd, method, source_type, source_id, note, actor_user_id, cash_session_id)
-       VALUES ($1, 'out', 'Tiền thối', $2, 'cash', 'order_change', $3, $4, $5, $6)`,
-      [storeId, change.toString(), order.id, `Thối tiền đơn ${order.order_number}`, resolverUserId, cashSessionId]
-    );
+    await insertCashMovement(client, {
+      storeId,
+      direction: 'out',
+      category: 'Tiền thối',
+      amountVnd: change.toString(),
+      method: 'cash',
+      sourceType: 'order_change',
+      sourceId: order.id,
+      note: `Thối tiền đơn ${order.order_number}`,
+      actorUserId: resolverUserId,
+      cashSessionId,
+      counterpartyKind: sale.customerId ? 'customer' : null,
+      counterpartyId: sale.customerId || null,
+    });
   }
   if (reqData.assignToCurrentCashSession) {
     await client.query(`SELECT set_config('app.offline_occurred_at', $1, true)`, [reqData.offline.occurredAt]);

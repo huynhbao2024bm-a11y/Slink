@@ -638,3 +638,61 @@ body{min-height:100vh;min-height:100dvh;overflow-x:hidden}
 .integration-ready-note{color:#35714e;font-size:10px}
 .order-integration-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:12px}
 @media(max-width:600px){.vietqr-card{flex-direction:column;align-items:flex-start}.integration-webhook-box{flex-direction:column;align-items:stretch}.integration-hardware-actions .btn{flex:1 1 auto}}
+.fv-kpi-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:16px}
+.fv-kpi-grid .stat-card small{display:block;margin-top:4px;font-size:12px;color:var(--muted)}
+.fv-pnl-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-bottom:24px}
+.fv-panel-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.calm-ui .fv-compact-btn{min-height:44px;padding:8px 12px;font-size:14px}
+.fv-fund-switcher{display:inline-flex;flex-wrap:wrap;gap:8px;padding:0 0 14px}
+.fv-fund-pill{min-height:44px;padding:8px 16px;border:1px solid #cbd5ce;border-radius:999px;background:#fff;color:#2e4836;font:inherit;font-size:14px;font-weight:600;cursor:pointer}
+.fv-fund-pill.active{background:#185c46;border-color:#185c46;color:#fff}
+.fv-filter-bar{display:grid;gap:10px;padding:0 0 16px}
+.fv-filter-controls{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.fv-filter-field{display:grid;gap:4px;min-width:0}
+.fv-filter-field span{font-size:12px;color:var(--muted)}
+.fv-badge-stack{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+.fv-badge{display:inline-flex;align-items:center;padding:3px 8px;border-radius:6px;font-size:12px;font-weight:600;line-height:1.3;white-space:nowrap}
+.fv-badge-in{background:#eaf5ee;color:#1b5e38}
+.fv-badge-out{background:#fceee9;color:#8c3621}
+.fv-badge-xfer{background:#ebf2fb;color:#1d4e89}
+.fv-badge-rev{background:#f3f4f6;color:#4b5563}
+.fv-badge-pnl{background:#eef7e6;color:#2f5e1e}
+.fv-badge-voided{background:#fee2e2;color:#991b1b}
+.fv-row-voided{opacity:.68}
+.fv-row-actions{display:flex;gap:10px;align-items:center;white-space:nowrap}
+.fv-danger-link{color:#8c3621 !important}
+.fv-table-wrap{overflow-x:auto}
+.fv-mobile-cards{display:none;gap:10px}
+.fv-mobile-cards.fv-cards-always{display:grid}
+.fv-mobile-card{border:1px solid var(--line);border-radius:10px;background:#fff;overflow:hidden}
+.fv-mobile-card-main{display:grid;gap:6px;width:100%;padding:12px;border:0;background:transparent;text-align:left;color:inherit;font:inherit;cursor:pointer}
+.fv-mobile-card-top{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.fv-mobile-card-title{font-size:15px}
+.fv-mobile-card-meta,.fv-mobile-card-note{display:block;font-size:13px;color:var(--muted);line-height:1.45;overflow-wrap:anywhere}
+.fv-mobile-card-actions{padding:0 12px 12px;display:flex;justify-content:flex-end}
+.calm-ui .fv-void-chip{min-height:44px;padding:6px 12px;font-size:13px;color:#8c3621;border-color:#ead4cb}
+.fv-pager{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:10px;padding:14px 0 4px}
+.fv-pager small{color:var(--muted);font-size:13px}
+.fv-pager-buttons{display:flex;gap:8px}
+.fv-payable-controls{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:0 0 14px}
+.fv-checkbox-inline{display:flex;align-items:center;gap:8px;min-height:44px;font-size:14px;color:var(--ink);cursor:pointer}
+.fv-checkbox-inline input{width:20px;height:20px;accent-color:#185c46}
+.fv-cat-list{display:grid;gap:8px;margin-bottom:16px;max-height:240px;overflow-y:auto}
+.fv-cat-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 10px;border:1px solid var(--line);border-radius:8px}
+.fv-cat-info{display:grid;gap:2px;min-width:0}
+.fv-cat-info small{color:var(--muted);font-size:12px}
+.fv-cat-form{border-top:1px solid var(--line);padding-top:14px}
+.fv-cat-form h3{margin:0 0 10px;font-size:16px}
+@media(max-width:900px){
+  .fv-desktop-table{display:none}
+  .fv-mobile-cards{display:grid}
+  .fv-filter-controls{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .fv-payable-controls{grid-template-columns:minmax(0,1fr)}
+}
+@media(max-width:720px){
+  .fv-kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .fv-pnl-grid{grid-template-columns:minmax(0,1fr)}
+}
+@media(max-width:480px){
+  .fv-filter-controls{grid-template-columns:minmax(0,1fr)}
+}

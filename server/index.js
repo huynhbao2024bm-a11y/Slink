@@ -60,6 +60,7 @@ const ASSETS = new Map([
   ['/vietqr-tools.js', 'vietqr-tools.js'],
   ['/escpos-printer.js', 'escpos-printer.js'],
   ['/integrations-ui.js', 'integrations-ui.js'],
+  ['/finance-vouchers-ui.js', 'finance-vouchers-ui.js'],
   ['/register-sw.js', 'register-sw.js'],
   ['/manifest.webmanifest', 'manifest.webmanifest'],
   ['/sw.js', 'sw.js'],

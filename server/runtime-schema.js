@@ -14,10 +14,12 @@ async function assertRuntimeSchema(pool) {
       AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='purchase_lines' AND column_name='purchase_pack')
       AND to_regclass('public.integration_webhook_events') IS NOT NULL
       AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='stores' AND column_name='bank_bin')
-      AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='orders' AND column_name='einvoice_status') AS compatible
+      AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='orders' AND column_name='einvoice_status')
+      AND to_regclass('public.cash_categories') IS NOT NULL
+      AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='cash_movements' AND column_name='voucher_number') AS compatible
   `);
   if (result.rows[0]?.compatible !== true) {
-    throw new Error('Database schema is behind this application. Apply migrations through 20261118140000_commercial_integrations.sql before deploying.');
+    throw new Error('Database schema is behind this application. Apply migrations through 20261118150000_cashbook_vouchers_pnl.sql before deploying.');
   }
 }
 

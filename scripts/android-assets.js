@@ -11,7 +11,7 @@ const files = [
   'offline-ledger.js', 'purchase-units.js', 'money-inputs.js', 'offline-sync.js',
   'offline-conflict-ui.js', 'supplier-returns-ui.js', 'barcode-tools.js',
   'banks-vn.js', 'vietqr-tools.js', 'escpos-printer.js', 'integrations-ui.js',
-  'register-sw.js', 'sw.js', 'manifest.webmanifest',
+  'finance-vouchers-ui.js', 'register-sw.js', 'sw.js', 'manifest.webmanifest',
   'assets/slink-icon.svg', 'assets/slink-icon-180.png', 'assets/slink-icon-192.png',
   'assets/slink-icon-512.png', 'assets/slink-icon-maskable-512.png',
 ];

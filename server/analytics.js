@@ -30,9 +30,9 @@ function registerAnalyticsRoutes(app, { pool }) {
                AND o.occurred_at >= (b.start_date::timestamp AT TIME ZONE b.timezone)
                AND o.occurred_at < ((b.end_date + 1)::timestamp AT TIME ZONE b.timezone)
            ), margin AS (
-             SELECT COALESCE(SUM(ol.line_total_vnd - COALESCE(r.returned_vnd, 0)
+             SELECT COALESCE(ROUND(SUM(ol.line_total_vnd - COALESCE(r.returned_vnd, 0)
                        - (ol.unit_cost_vnd * ol.quantity)
-                       + COALESCE(r.restocked_cost_vnd, 0)), 0)::text AS gross_profit_vnd
+                       + COALESCE(r.restocked_cost_vnd, 0))), 0)::bigint::text AS gross_profit_vnd
              FROM scoped o JOIN order_lines ol ON ol.store_id = $1 AND ol.order_id = o.id
              LEFT JOIN LATERAL (
                SELECT SUM(rl.refund_vnd)::bigint AS returned_vnd,
@@ -95,12 +95,62 @@ function registerAnalyticsRoutes(app, { pool }) {
            ORDER BY SUM(ol.line_total_vnd - COALESCE(returns.returned_vnd, 0)) DESC, p.name LIMIT 10`,
           [storeId, days]
         ),
+        () => client.query(
+          `WITH bounds AS (
+             SELECT timezone, (now() AT TIME ZONE timezone)::date AS end_date,
+                    ((now() AT TIME ZONE timezone)::date - ($2::int - 1)) AS start_date
+             FROM stores WHERE id = $1
+           ), pnl_rows AS (
+             SELECT COALESCE(orig.direction, c.direction) AS eff_dir,
+                    c.category,
+                    CASE WHEN c.movement_kind = 'reversal' THEN -c.amount_vnd ELSE c.amount_vnd END AS signed_vnd
+             FROM cash_movements c
+             CROSS JOIN bounds b
+             LEFT JOIN cash_movements orig ON orig.store_id = c.store_id AND orig.id = c.reverses_movement_id
+             WHERE c.store_id = $1
+               AND c.include_in_pnl = true
+               AND c.movement_kind <> 'transfer'
+               AND c.occurred_at >= (b.start_date::timestamp AT TIME ZONE b.timezone)
+               AND c.occurred_at < ((b.end_date + 1)::timestamp AT TIME ZONE b.timezone)
+           )
+           SELECT
+             COALESCE(SUM(signed_vnd) FILTER (WHERE eff_dir = 'in'), 0)::text AS other_income_vnd,
+             COALESCE(SUM(signed_vnd) FILTER (WHERE eff_dir = 'out'), 0)::text AS operating_expense_vnd
+           FROM pnl_rows`,
+          [storeId, days]
+        ),
+        () => client.query(
+          `WITH bounds AS (
+             SELECT timezone, (now() AT TIME ZONE timezone)::date AS end_date,
+                    ((now() AT TIME ZONE timezone)::date - ($2::int - 1)) AS start_date
+             FROM stores WHERE id = $1
+           )
+           SELECT c.category,
+                  COALESCE(SUM(CASE WHEN c.movement_kind = 'reversal' THEN -c.amount_vnd ELSE c.amount_vnd END), 0)::text AS amount_vnd
+           FROM cash_movements c
+           CROSS JOIN bounds b
+           LEFT JOIN cash_movements orig ON orig.store_id = c.store_id AND orig.id = c.reverses_movement_id
+           WHERE c.store_id = $1
+             AND c.include_in_pnl = true
+             AND c.movement_kind <> 'transfer'
+             AND COALESCE(orig.direction, c.direction) = 'out'
+             AND c.occurred_at >= (b.start_date::timestamp AT TIME ZONE b.timezone)
+             AND c.occurred_at < ((b.end_date + 1)::timestamp AT TIME ZONE b.timezone)
+           GROUP BY c.category
+           HAVING SUM(CASE WHEN c.movement_kind = 'reversal' THEN -c.amount_vnd ELSE c.amount_vnd END) > 0
+           ORDER BY SUM(CASE WHEN c.movement_kind = 'reversal' THEN -c.amount_vnd ELSE c.amount_vnd END) DESC, c.category
+           LIMIT 10`,
+          [storeId, days]
+        ),
       ];
       // These statements share the transaction-bound client; do not overlap client.query calls.
       const results = [];
       for (const query of queries) results.push(await query());
-      const [summary, daily, topProducts] = results;
+      const [summary, daily, topProducts, pnlSummary, expenseBreakdown] = results;
       const row = summary.rows[0];
+      const pnlRow = pnlSummary.rows[0] || { other_income_vnd: '0', operating_expense_vnd: '0' };
+      const grossProfitVnd = String(row.gross_profit_vnd || '0').split('.')[0] || '0';
+      const netProfitVnd = (BigInt(grossProfitVnd) + BigInt(pnlRow.other_income_vnd || '0') - BigInt(pnlRow.operating_expense_vnd || '0')).toString();
       return {
         range: { from: row.start_date, to: row.end_date, days },
         summary: {
@@ -110,8 +160,12 @@ function registerAnalyticsRoutes(app, { pool }) {
           collectedVnd: row.collected_vnd,
           receivableVnd: row.receivable_vnd,
           averageTicketVnd: row.average_ticket_vnd,
-          grossProfitVnd: row.gross_profit_vnd,
+          grossProfitVnd,
+          otherIncomeVnd: pnlRow.other_income_vnd,
+          operatingExpenseVnd: pnlRow.operating_expense_vnd,
+          netProfitVnd,
         },
+        expenseBreakdown: expenseBreakdown.rows.map((item) => ({ category: item.category, amountVnd: item.amount_vnd })),
         days: daily.rows.map((item) => ({ date: item.day, salesVnd: item.sales_vnd, orderCount: Number(item.order_count) })),
         topProducts: topProducts.rows,
       };

@@ -4,6 +4,7 @@ const { createHash, randomUUID } = require('node:crypto');
 const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
 const { lockActiveCashSession } = require('./cash-register');
+const { insertCashMovement } = require('./cashbook-ledger');
 const { quantityMilli, quantityText, distributeDiscount } = require('./sales');
 
 const MAX_BIGINT = 9223372036854775807n;
@@ -478,19 +479,36 @@ async function recordExchangeSettlementRows(client, storeId, actorUserId, req, r
   }
   for (const tender of req.tenders) {
     if (tender.amountReceivedVnd <= 0n) continue;
-    await client.query(
-      `INSERT INTO cash_movements (store_id, direction, category, amount_vnd, method, source_type, source_id, note, actor_user_id, cash_session_id)
-       VALUES ($1, 'in', 'Đổi hàng - thu thêm', $2, $3, 'order_payment', $4, $5, $6, $7)`,
-      [storeId, tender.amountReceivedVnd.toString(), tender.method, repOrder.id,
-        `Thu thêm đổi hàng ${repOrder.order_number}`, actorUserId, tender.method === 'cash' ? settlement.cashSessionId : null]
-    );
+    await insertCashMovement(client, {
+      storeId,
+      direction: 'in',
+      category: 'Đổi hàng - thu thêm',
+      amountVnd: tender.amountReceivedVnd.toString(),
+      method: tender.method,
+      sourceType: 'order_payment',
+      sourceId: repOrder.id,
+      note: `Thu thêm đổi hàng ${repOrder.order_number}`,
+      actorUserId,
+      cashSessionId: tender.method === 'cash' ? settlement.cashSessionId : null,
+      counterpartyKind: order.customer_id ? 'customer' : null,
+      counterpartyId: order.customer_id || null,
+    });
   }
   if (settlement.cashChangeVnd > 0n) {
-    await client.query(
-      `INSERT INTO cash_movements (store_id, direction, category, amount_vnd, method, source_type, source_id, note, actor_user_id, cash_session_id)
-       VALUES ($1, 'out', 'Tiền thối', $2, 'cash', 'order_change', $3, $4, $5, $6)`,
-      [storeId, settlement.cashChangeVnd.toString(), repOrder.id, `Thối tiền đổi hàng ${repOrder.order_number}`, actorUserId, settlement.cashSessionId]
-    );
+    await insertCashMovement(client, {
+      storeId,
+      direction: 'out',
+      category: 'Tiền thối',
+      amountVnd: settlement.cashChangeVnd.toString(),
+      method: 'cash',
+      sourceType: 'order_change',
+      sourceId: repOrder.id,
+      note: `Thối tiền đổi hàng ${repOrder.order_number}`,
+      actorUserId,
+      cashSessionId: settlement.cashSessionId,
+      counterpartyKind: order.customer_id ? 'customer' : null,
+      counterpartyId: order.customer_id || null,
+    });
   }
   if (settlement.refundPaymentVnd > 0n) {
     await client.query(
@@ -498,12 +516,20 @@ async function recordExchangeSettlementRows(client, storeId, actorUserId, req, r
        VALUES ($1, $2, $3, 'succeeded', $4, $5)`,
       [storeId, returnId, req.refundMethod, settlement.refundPaymentVnd.toString(), actorUserId]
     );
-    await client.query(
-      `INSERT INTO cash_movements (store_id, direction, category, amount_vnd, method, source_type, source_id, note, actor_user_id, cash_session_id)
-       VALUES ($1, 'out', 'Đổi hàng - hoàn chênh lệch', $2, $3, 'return_refund', $4, $5, $6, $7)`,
-      [storeId, settlement.refundPaymentVnd.toString(), req.refundMethod, returnId,
-        `Hoàn chênh lệch đổi hàng ${returnNumber}`, actorUserId, settlement.cashSessionId]
-    );
+    await insertCashMovement(client, {
+      storeId,
+      direction: 'out',
+      category: 'Đổi hàng - hoàn chênh lệch',
+      amountVnd: settlement.refundPaymentVnd.toString(),
+      method: req.refundMethod,
+      sourceType: 'return_refund',
+      sourceId: returnId,
+      note: `Hoàn chênh lệch đổi hàng ${returnNumber}`,
+      actorUserId,
+      cashSessionId: settlement.cashSessionId,
+      counterpartyKind: order.customer_id ? 'customer' : null,
+      counterpartyId: order.customer_id || null,
+    });
   }
 
   if (order.customer_id) {

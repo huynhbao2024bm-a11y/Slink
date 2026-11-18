@@ -5,6 +5,7 @@ const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
 const { findAccessibleWarehouse } = require('./warehouse-access');
 const { lockActiveCashSession } = require('./cash-register');
+const { insertCashMovement } = require('./cashbook-ledger');
 const { normalizeOffline, beginOffline, recordOffline } = require('./offline-operations');
 const { fromPack, unitCostFromTotal, isPackName } = require('../purchase-units');
 
@@ -252,11 +253,21 @@ function registerPurchaseRoutes(app, { pool, env }) {
         }
       }
       if (paidVnd > 0n) {
-        await client.query(
-          `INSERT INTO cash_movements (store_id, direction, category, amount_vnd, method, source_type, source_id, note, actor_user_id, cash_session_id)
-           VALUES ($1, 'out', 'Nhập hàng', $2, $3, 'purchase_payment', $4, $5, $6, $7)`,
-          [storeId, paidVnd.toString(), method, purchaseId, `Nhập ${items.length} mặt hàng · ${purchaseNumber}`, auth.userId, cashSessionId]
-        );
+        await insertCashMovement(client, {
+          storeId,
+          direction: 'out',
+          category: 'Nhập hàng',
+          amountVnd: paidVnd.toString(),
+          method,
+          sourceType: 'purchase_payment',
+          sourceId: purchaseId,
+          note: `Nhập ${items.length} mặt hàng · ${purchaseNumber}`,
+          actorUserId: auth.userId,
+          cashSessionId,
+          counterpartyKind: supplierId ? 'supplier' : null,
+          counterpartyId: supplierId || null,
+          counterpartyName: supplierName || '',
+        });
       }
       await client.query(
         `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, reason, metadata)

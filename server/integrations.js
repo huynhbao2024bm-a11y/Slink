@@ -5,6 +5,7 @@ const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
 const { findBankByBin } = require('../banks-vn');
 const { getIntegrationCatalog } = require('./providers');
+const { insertCashMovement } = require('./cashbook-ledger');
 const { verifyAndParseBankWebhook } = require('./providers/bank-webhook');
 const { issueEinvoice } = require('./providers/einvoice');
 const { createShippingOrder } = require('./providers/shipping');
@@ -255,11 +256,20 @@ function registerIntegrationRoutes(app, { pool, env }) {
                      VALUES ($1, $2, $3, 'bank_transfer', 'succeeded', $4, $5, $6, $7, $8::timestamptz)`,
                     [paymentId, storeId, ord.id, applyVnd.toString(), String(provider).toLowerCase(), scopedRef, storeRow.owner_user_id, evt.occurredAt]
                   );
-                  await client.query(
-                    `INSERT INTO cash_movements (store_id, direction, category, amount_vnd, method, source_type, source_id, note, actor_user_id, occurred_at)
-                     VALUES ($1, 'in', 'Bán hàng (Webhook CK)', $2, 'bank_transfer', 'order_payment', $3, $4, $5, $6::timestamptz)`,
-                    [storeId, applyVnd.toString(), paymentId, `Tự động đối soát ${provider.toUpperCase()} đơn ${ord.order_number}`, storeRow.owner_user_id, evt.occurredAt]
-                  );
+                  await insertCashMovement(client, {
+                    storeId,
+                    direction: 'in',
+                    category: 'Bán hàng (Webhook CK)',
+                    amountVnd: applyVnd.toString(),
+                    method: 'bank_transfer',
+                    sourceType: 'order_payment',
+                    sourceId: paymentId,
+                    note: `Tự động đối soát ${provider.toUpperCase()} đơn ${ord.order_number}`,
+                    actorUserId: storeRow.owner_user_id,
+                    occurredAt: evt.occurredAt,
+                    counterpartyKind: ord.customer_id ? 'customer' : null,
+                    counterpartyId: ord.customer_id || null,
+                  });
                   if (ord.customer_id) {
                     const ordDebit = await client.query(
                       `SELECT 1 FROM customer_ledger_entries WHERE store_id = $1 AND customer_id = $2 AND source_type = 'order' AND source_id = $3 LIMIT 1`,
