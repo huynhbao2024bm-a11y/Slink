@@ -140,6 +140,18 @@ async function seedProductsAndCashViaBrowserSession(page) {
     });
     if (!shiftRes.ok) throw new Error(`Shift open failed: ${shiftRes.status}`);
 
+    // Keep the delivery customer outside the finance summary's top-ten debtors.
+    // The receivables page must still open and remind customers found by search.
+    for (let index = 0; index < 10; index += 1) {
+      const debtorRes = await fetch(`/api/stores/${storeId}/customers`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json', 'x-csrf-token': csrf, 'idempotency-key': crypto.randomUUID() },
+        body: JSON.stringify({ name: `Khách nợ kiểm thử ${index + 1}`, openingBalanceVnd: '1000000' }),
+      });
+      if (!debtorRes.ok) throw new Error(`Debtor create failed: ${debtorRes.status}`);
+    }
+
     const srRes = await fetch(`/api/stores/${storeId}/supplier-returns`, {
       method: 'POST',
       credentials: 'same-origin',
@@ -245,8 +257,8 @@ async function runViewportAudit(browser, origin, viewport, label) {
 
     // 5. Switch to Hàng hóa: test prominent barcode on quick product + Lưu & in tem + CSV import auto-barcode + print modal
     await page.locator("#primary-nav [data-route='products']:visible, #mobile-nav [data-route='products']:visible").first().click();
-    await page.waitForSelector("[data-action='new-product']");
-    await page.locator("[data-action='new-product']").first().click();
+    await page.waitForSelector("[data-action='new-product']:visible");
+    await page.locator("[data-action='new-product']:visible").first().click();
     await page.waitForSelector(".modal:not([hidden]) #product-barcode");
     assert.equal(await page.locator(".modal #product-barcode").isVisible(), true, `${label}: #product-barcode must be immediately visible`);
     await page.fill(".modal [name='name']", 'Trà sữa E2E');
@@ -264,11 +276,24 @@ async function runViewportAudit(browser, origin, viewport, label) {
     await page.waitForSelector(".modal:not([hidden]) [data-form='barcode-print'] [data-barcode-sheet-preview] svg.barcode-svg");
     await page.locator(".modal [data-action='close-modal']").first().click();
     await page.waitForSelector('#modal[hidden]', { state: 'attached' });
+    if (process.env.SLINK_E2E_SCREENSHOT_DIR) {
+      await fs.mkdir(process.env.SLINK_E2E_SCREENSHOT_DIR, { recursive: true });
+      await page.locator('.toast').first().waitFor({ state: 'hidden' });
+      await page.screenshot({ path: path.join(process.env.SLINK_E2E_SCREENSHOT_DIR, `${label}-products.png`) });
+    }
+
+    if (viewport.width <= 640) {
+      const card = page.locator('.product-mobile-card').filter({ hasText: 'Trà sữa E2E' });
+      await card.locator('[data-action="product-card-menu"]').click();
+      assert.equal(await page.locator('.modal [data-action="product-card-choice"]').count(), 4, `${label}: one card menu exposes four non-overlapping actions`);
+      await page.locator('.modal [data-action="close-modal"]').click();
+      await page.waitForSelector('#modal[hidden]', { state: 'attached' });
+      await page.locator('.product-secondary-actions summary').click();
+    }
 
     // 5b. Test CSV import with AUTO + blank barcode -> 1-click fill -> import -> print imported labels
-    await page.locator('.catalog-more summary').click();
-    await page.waitForSelector("[data-action='import-products']");
-    await page.locator("[data-action='import-products']").click();
+    await page.waitForSelector("[data-action='import-products']:visible");
+    await page.locator("[data-action='import-products']:visible").first().click();
     await page.waitForSelector('#product-import-file');
     const csvHeaders = ['Mã SKU', 'Mã vạch', 'Tên sản phẩm', 'Danh mục', 'Đơn vị', 'Giá bán (VND)', 'Giá vốn (VND)', 'Ngưỡng tồn tối thiểu', 'Theo dõi tồn kho (Có/Không)', 'Tồn đầu kỳ', 'Tên nhóm biến thể', 'Thuộc tính biến thể (Tên=Giá trị; ...)'];
     const csvRows = [
@@ -309,6 +334,10 @@ async function runViewportAudit(browser, origin, viewport, label) {
         await page.waitForTimeout(250);
         await assertNoHorizontalOverflow(page, `${label}:inventory-${tab}`);
       }
+    }
+    if (process.env.SLINK_E2E_SCREENSHOT_DIR) {
+      await page.locator('.toast').first().waitFor({ state: 'hidden' });
+      await page.screenshot({ path: path.join(process.env.SLINK_E2E_SCREENSHOT_DIR, `${label}-inventory.png`) });
     }
 
     // 6.5. Creating a second warehouse in Kho hàng must not trap POS into an empty catalog
@@ -354,7 +383,48 @@ async function runViewportAudit(browser, origin, viewport, label) {
     await page.waitForTimeout(350);
     await page.locator(".modal [data-action='close-modal']").first().click().catch(() => {});
 
-    // 8. Test Cài đặt Tích hợp & VietQR SVG offline rendering
+    // 8. Finance separates the actual cashbook, manual vouchers, shifts and debt work.
+    await page.locator("#primary-nav [data-route='workspace']:visible, #mobile-nav [data-route='workspace']:visible").first().click();
+    await page.locator("#view [data-route='finance']").click();
+    await page.waitForSelector("[data-action='finance-tab']");
+    assert.equal(await page.locator("[data-action='finance-tab']").count(), 5, `${label}: owner finance must expose five distinct work areas`);
+    for (const [tab, content] of [
+      ['cashbook', 'Sổ thu chi'],
+      ['vouchers', 'Phiếu thu và phiếu chi'],
+      ['shifts', 'Tiền mặt trong quầy'],
+      ['receivables', 'Tổng cần thu'],
+      ['payables', 'Tổng cần trả'],
+    ]) {
+      await page.locator(`[data-action='finance-tab'][data-tab='${tab}']`).click();
+      await page.locator('[data-finance-content]').getByText(content, { exact: false }).first().waitFor();
+      await assertNoHorizontalOverflow(page, `${label}:finance-${tab}`);
+      if (process.env.SLINK_E2E_SCREENSHOT_DIR && ['cashbook', 'receivables'].includes(tab)) {
+        await page.locator('.toast').first().waitFor({ state: 'hidden' });
+        await page.screenshot({ path: path.join(process.env.SLINK_E2E_SCREENSHOT_DIR, `${label}-finance-${tab}.png`) });
+      }
+    }
+    await page.locator("[data-action='finance-tab'][data-tab='receivables']").click();
+    await page.locator('#finance-receivable-search').fill('Khách Giao Hàng');
+    await page.locator('[data-finance-content] .activity-list [data-action="finance-receivable"]').first().waitFor();
+    await page.getByText('Hiển thị 1 trên 1 khách còn nợ').waitFor();
+    const searchedCustomerId = await page.locator('[data-finance-content] .activity-list [data-action="finance-receivable"]').first().getAttribute('data-id');
+    const inSummary = await page.evaluate(async ({ storeId, customerId }) => {
+      const response = await fetch(`/api/stores/${storeId}/finance`, { credentials: 'same-origin' });
+      const data = await response.json();
+      return data.customerDebtors.some((customer) => customer.id === customerId);
+    }, { storeId: seeded.storeId, customerId: searchedCustomerId });
+    assert.equal(inSummary, false, `${label}: searched debtor must be outside finance summary's top ten`);
+    await skipTour();
+    await page.locator('[data-finance-content] .activity-list [data-action="finance-receivable"]').first().click();
+    await page.locator('.finance-debt-detail').waitFor();
+    await page.locator(".finance-debt-detail [data-action='finance-reminder']").click();
+    await page.locator('.modal [data-finance-reminder]').waitFor();
+    assert.match(await page.locator('.modal [data-finance-reminder]').inputValue(), /Khách Giao Hàng E2E/);
+    await page.locator(".modal [data-action='close-modal']").first().click();
+    await assertNoHorizontalOverflow(page, `${label}:finance-receivable-detail`);
+    assert.equal(await page.locator("[data-action='new-expense'][data-direction='in']:visible").count() > 0, true, `${label}: record income remains reachable`);
+
+    // 9. Test Cài đặt Tích hợp & VietQR SVG offline rendering
     const settingsBtn = page.locator("[data-action='account-settings']:visible, #primary-nav [data-route='settings']:visible").first();
     await settingsBtn.click();
     await page.waitForSelector('#integration-settings-form', { timeout: 15000 });
