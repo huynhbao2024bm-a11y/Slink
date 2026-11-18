@@ -117,7 +117,13 @@
 
     const activeWebhookUrl = settings.bankWebhookProvider && settings.bankWebhookProvider !== 'none'
       ? webhookUrls[settings.bankWebhookProvider] || ''
-      : '';
+      : (webhookUrls.sepay || '');
+    const activeWebhookLabel = settings.bankWebhookProvider && settings.bankWebhookProvider !== 'none'
+      ? String(settings.bankWebhookProvider).toUpperCase()
+      : 'SEPAY (CHỜ DUYỆT / SẴN SÀNG DÁN)';
+    const momoIpnUrl = webhookUrls.momo || '';
+    const ghnWebhookUrl = webhookUrls.ghn || '';
+    const ghnShopId = data?.ghnShopId || '';
 
     const connectorCards = connectors.map((c) => {
       const meta = connectorStatusMeta(c.status);
@@ -165,10 +171,19 @@
           ${activeWebhookUrl ? `<div class='form-field full'>
             <div class='integration-webhook-box'>
               <div>
-                <span class='input-label' style='margin:0 0 4px'>Webhook URL dán vào cổng ${esc(String(settings.bankWebhookProvider).toUpperCase())}</span>
+                <span class='input-label' style='margin:0 0 4px'>Webhook URL gạch nợ ngân hàng (${esc(activeWebhookLabel)})</span>
                 <code>${esc(activeWebhookUrl)}</code>
               </div>
               <button class='btn btn-secondary' type='button' data-action='copy-integration-url' data-copy-value='${esc(activeWebhookUrl)}'>Sao chép URL</button>
+            </div>
+          </div>` : ''}
+          ${momoIpnUrl ? `<div class='form-field full'>
+            <div class='integration-webhook-box'>
+              <div>
+                <span class='input-label' style='margin:0 0 4px'>MoMo IPN Webhook URL (dán vào MoMo Business khi duyệt xong)</span>
+                <code>${esc(momoIpnUrl)}</code>
+              </div>
+              <button class='btn btn-secondary' type='button' data-action='copy-integration-url' data-copy-value='${esc(momoIpnUrl)}'>Sao chép IPN</button>
             </div>
           </div>` : ''}
           <div class='form-field full' id='int-vietqr-preview'>${previewQr}</div>
@@ -189,9 +204,21 @@
             <input class='input' id='int-einvoice-serial' name='einvoiceSerial' value='${esc(settings.einvoiceSerial || '')}' maxlength='40' placeholder='VD: 1C26TYY' ${disabled}/>
           </div>
           <div class='form-field full'>
-            <label class='input-label' for='int-shipping-provider'>Đơn vị vận chuyển mặc định</label>
-            <div class='select-wrap'><select class='input' id='int-shipping-provider' name='shippingProvider' ${disabled}>${shippingOptions}</select></div>
+            <label class='input-label' for='int-shipping-provider'>Đơn vị vận chuyển mặc định ${ghnShopId ? `· GHN Shop #${esc(ghnShopId)}` : ''}</label>
+            <div style='display:flex;gap:8px;flex-wrap:wrap;align-items:center'>
+              <div class='select-wrap' style='flex:1 1 240px'><select class='input' id='int-shipping-provider' name='shippingProvider' ${disabled}>${shippingOptions}</select></div>
+              ${canEdit ? `<button class='btn btn-secondary' type='button' data-action='verify-ghn-token'>Kiểm tra kết nối GHN</button>` : ''}
+            </div>
           </div>
+          ${ghnWebhookUrl ? `<div class='form-field full'>
+            <div class='integration-webhook-box'>
+              <div>
+                <span class='input-label' style='margin:0 0 4px'>GHN Callback Webhook URL (cập nhật trạng thái giao hàng tự động)</span>
+                <code>${esc(ghnWebhookUrl)}</code>
+              </div>
+              <button class='btn btn-secondary' type='button' data-action='copy-integration-url' data-copy-value='${esc(ghnWebhookUrl)}'>Sao chép URL</button>
+            </div>
+          </div>` : ''}
         </div>
         ${canEdit ? `<div class='modal-footer' style='padding:17px 0 0;margin-top:12px'><button class='btn btn-primary' type='submit'>Lưu cấu hình tích hợp</button></div>` : ''}
       </form>
@@ -238,14 +265,18 @@
         ? `<button class='btn btn-secondary' type='button' data-action='create-order-shipping' data-id='${esc(order.id)}'>Tạo vận đơn (GHN/GHTK)</button>`
         : '');
 
+    const momoBtn = (canOperate && order.due > 0 && order.rawStatus !== 'voided')
+      ? `<button class='btn btn-secondary' type='button' data-action='create-order-momo' data-id='${esc(order.id)}'>Thanh toán MoMo</button>`
+      : '';
+
     const serialSupported = Boolean(root.SlinkEscPosPrinter?.capabilities?.().serialSupported);
     const escposBtn = serialSupported
       ? `<button class='btn btn-secondary' type='button' data-action='escpos-print-order' data-id='${esc(order.id)}'>In bill nhiệt ESC/POS</button>`
       : '';
 
-    if (!qrHtml && !einvoiceStatus && !shippingStatus && !escposBtn) return '';
+    if (!qrHtml && !einvoiceStatus && !shippingStatus && !escposBtn && !momoBtn) return '';
 
-    return `${qrHtml}<div class='order-integration-bar'>${escposBtn}${einvoiceStatus}${shippingStatus}</div>`;
+    return `${qrHtml}<div class='order-integration-bar'>${escposBtn}${momoBtn}${einvoiceStatus}${shippingStatus}</div>`;
   }
 
   return {

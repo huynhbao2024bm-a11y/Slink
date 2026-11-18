@@ -2494,44 +2494,114 @@
     }
   }
 
+  function parseOrderDeliveryPrefill(order, customer) {
+    let recName = order.customerName || customer?.name || '';
+    let recPhone = order.customerPhone || customer?.phone || '';
+    let address = customer?.shippingAddress || '';
+    const note = String(order.note || '');
+    if (note.startsWith('[GIAO HÀNG]')) {
+      const segs = note.replace(/^\[GIAO HÀNG\]\s*/, '').split(' · ').map(s => s.trim()).filter(Boolean);
+      if (segs[0] && !recName) recName = segs[0];
+      if (segs[1] && /^[0-9+\s-]{8,15}$/.test(segs[1])) {
+        if (!recPhone) recPhone = segs[1];
+        if (segs[2] && !address) address = segs[2];
+      } else if (segs[1] && !address) {
+        address = segs[1];
+      }
+    }
+    return { recName, recPhone, address };
+  }
+
   function openOrderShippingModal(orderId) {
     const o = store.orders.find(item => item.id === orderId);
     if (!o) return;
     const c = customerById(o.customerId);
-    const recName = o.customerName || c?.name || '';
-    const recPhone = o.customerPhone || c?.phone || '';
+    const prefill = parseOrderDeliveryPrefill(o, c);
     const defaultProv = integrationState.data?.settings?.shippingProvider && integrationState.data.settings.shippingProvider !== 'none'
       ? integrationState.data.settings.shippingProvider : 'ghn';
     const form = `<form id='entity-form' data-form='order-shipping' data-id='${esc(o.id)}'>
       <div class='form-grid'>
         <div class='form-field'><label class='input-label' for='ship-provider'>Đơn vị vận chuyển</label><div class='select-wrap'><select class='input' id='ship-provider' name='provider'><option value='ghn' ${defaultProv === 'ghn' ? 'selected' : ''}>Giao Hàng Nhanh (GHN)</option><option value='ghtk' ${defaultProv === 'ghtk' ? 'selected' : ''}>Giao Hàng Tiết Kiệm (GHTK)</option></select></div></div>
         <div class='form-field'><label class='input-label' for='ship-cod'>Tiền thu hộ COD (VND)</label><input class='input' id='ship-cod' name='codAmountVnd' type='number' min='0' step='1' value='${esc(String(o.due || 0))}'/></div>
-        <div class='form-field'><label class='input-label' for='ship-name'>Tên người nhận *</label><input class='input' id='ship-name' name='receiverName' value='${esc(recName)}' required maxlength='120'/></div>
-        <div class='form-field'><label class='input-label' for='ship-phone'>Số điện thoại *</label><input class='input' id='ship-phone' name='receiverPhone' value='${esc(recPhone)}' required maxlength='30' inputmode='tel'/></div>
-        <div class='form-field full'><label class='input-label' for='ship-address'>Địa chỉ giao hàng *</label><input class='input' id='ship-address' name='address' required maxlength='300' placeholder='Số nhà, đường, phường/xã, quận/huyện, tỉnh/thành'/></div>
+        <div class='form-field'><label class='input-label' for='ship-name'>Tên người nhận *</label><input class='input' id='ship-name' name='receiverName' value='${esc(prefill.recName)}' required maxlength='120'/></div>
+        <div class='form-field'><label class='input-label' for='ship-phone'>Số điện thoại *</label><input class='input' id='ship-phone' name='receiverPhone' value='${esc(prefill.recPhone)}' required maxlength='30' inputmode='tel'/></div>
+        <div class='form-field full'><label class='input-label' for='ship-address'>Địa chỉ giao hàng (Số nhà, đường, Phường/Xã, Quận/Huyện, Tỉnh/Thành) *</label><input class='input' id='ship-address' name='address' value='${esc(prefill.address)}' required maxlength='300' placeholder='VD: 12 Nguyễn Huệ, Phường Bến Nghé, Quận 1, Hồ Chí Minh'/></div>
+        <div class='form-field'><label class='input-label' for='ship-ward'>Phường / Xã</label><input class='input' id='ship-ward' name='wardName' maxlength='80' placeholder='VD: Phường Bến Nghé'/></div>
+        <div class='form-field'><label class='input-label' for='ship-district'>Quận / Huyện</label><input class='input' id='ship-district' name='districtName' maxlength='80' placeholder='VD: Quận 1'/></div>
+        <div class='form-field'><label class='input-label' for='ship-province'>Tỉnh / Thành phố</label><input class='input' id='ship-province' name='provinceName' maxlength='80' placeholder='VD: Hồ Chí Minh'/></div>
         <div class='form-field'><label class='input-label' for='ship-weight'>Khối lượng (gram)</label><input class='input' id='ship-weight' name='weightGram' type='number' min='50' max='500000' value='500'/></div>
       </div>
-      <div class='modal-note'>Cần gắn khóa đối tác GHN/GHTK trong cấu hình máy chủ (.env) để đẩy vận đơn trực tiếp.</div>
+      <div class='modal-note' data-shipping-preview>Bấm "Tính thử phí GHN" để kiểm tra cước và thời gian giao dự kiến trực tiếp từ Giao Hàng Nhanh trước khi tạo vận đơn.</div>
     </form>`;
-    showModal(`Tạo vận đơn · ${o.number}`, 'Điền thông tin người nhận để đẩy sang GHN hoặc GHTK.', form, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Hủy</button><button class='btn btn-primary' type='submit' form='entity-form'>Đẩy vận đơn</button>`);
+    showModal(`Tạo vận đơn · ${o.number}`, 'Điền thông tin người nhận để đẩy sang GHN hoặc GHTK.', form, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Hủy</button><button class='btn btn-secondary' type='button' data-action='preview-order-shipping' data-id='${esc(o.id)}'>Tính thử phí GHN</button><button class='btn btn-primary' type='submit' form='entity-form'>Đẩy vận đơn</button>`);
+  }
+
+  function readShippingFormPayload(form) {
+    const data = new FormData(form);
+    return {
+      provider: String(data.get('provider') || 'ghn'),
+      receiverName: String(data.get('receiverName') || '').trim(),
+      receiverPhone: String(data.get('receiverPhone') || '').trim(),
+      address: String(data.get('address') || '').trim(),
+      wardName: String(data.get('wardName') || '').trim(),
+      districtName: String(data.get('districtName') || '').trim(),
+      provinceName: String(data.get('provinceName') || '').trim(),
+      codAmountVnd: Number(data.get('codAmountVnd') || 0),
+      weightGram: Number(data.get('weightGram') || 500),
+    };
+  }
+
+  async function previewOrderShippingFee(orderId, button) {
+    const form = modal.querySelector("form[data-form='order-shipping']");
+    if (!form) return;
+    const previewBox = form.querySelector('[data-shipping-preview]');
+    if (button) button.disabled = true;
+    try {
+      const payload = readShippingFormPayload(form);
+      const res = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/orders/${encodeURIComponent(orderId)}/shipping/preview`, {
+        method: 'POST',
+        body: payload,
+      });
+      const eta = res.expectedDeliveryTime ? ` · Giao dự kiến: ${humanDate(res.expectedDeliveryTime, false)}` : '';
+      const msg = `Cước GHN dự kiến: ${moneyVndText(res.feeVnd || '0')} (Shop #${res.shopId || ''}${eta})`;
+      if (previewBox) previewBox.textContent = msg;
+      toast('Đã tính cước GHN', msg);
+    } catch (error) {
+      if (error.status === 401) showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
+      else {
+        if (previewBox) previewBox.textContent = error.message;
+        toast('Chưa tính được phí GHN', error.message, 'error');
+      }
+    } finally {
+      if (button?.isConnected) button.disabled = false;
+    }
+  }
+
+  async function verifyGhnIntegrationToken(button) {
+    if (button) button.disabled = true;
+    try {
+      const res = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/integrations/ghn/verify`, {
+        method: 'POST',
+        body: {},
+      });
+      toast('Kết nối GHN thành công', `Shop #${res.shopId} · ${res.shopName || res.phone || 'Đang hoạt động'}`);
+      loadIntegrationStatus(true);
+    } catch (error) {
+      if (error.status === 401) showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
+      else toast('Chưa kết nối được GHN', error.message, 'error');
+    } finally {
+      if (button?.isConnected) button.disabled = false;
+    }
   }
 
   async function saveOrderShipping(form) {
     const orderId = form.dataset.id;
     const submit = modal.querySelector("button[type='submit'][form='entity-form']");
-    const data = new FormData(form);
     if (submit) submit.disabled = true;
     try {
       const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/orders/${encodeURIComponent(orderId)}/shipping`, {
         method: 'POST',
-        body: {
-          provider: String(data.get('provider') || ''),
-          receiverName: String(data.get('receiverName') || '').trim(),
-          receiverPhone: String(data.get('receiverPhone') || '').trim(),
-          address: String(data.get('address') || '').trim(),
-          codAmountVnd: Number(data.get('codAmountVnd') || 0),
-          weightGram: Number(data.get('weightGram') || 500),
-        },
+        body: readShippingFormPayload(form),
       });
       closeModal();
       toast('Đã tạo vận đơn', `Mã vận đơn ${result.trackingCode}`);
@@ -2547,6 +2617,31 @@
     if (!orderId) return;
     if (action === 'create-order-shipping') {
       openOrderShippingModal(orderId);
+      return;
+    }
+    if (action === 'preview-order-shipping') {
+      await previewOrderShippingFee(orderId, button);
+      return;
+    }
+    if (action === 'create-order-momo') {
+      if (button?.disabled) return;
+      if (button) button.disabled = true;
+      try {
+        const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/orders/${encodeURIComponent(orderId)}/momo-payment`, {
+          method: 'POST',
+          body: {},
+        });
+        const rawLink = String(result.payUrl || result.qrCodeUrl || result.deeplink || '').trim();
+        const link = /^(https?:\/\/|momo:\/\/)/i.test(rawLink) ? rawLink : '';
+        const body = `<div class='checkout-total'><span>Thanh toán MoMo · ${esc(result.orderNumber)}</span><strong>${moneyVndText(result.amountVnd)}</strong></div>
+          ${link ? `<div class='integration-webhook-box' style='margin-top:12px'><div><span class='input-label'>Liên kết thanh toán MoMo</span><code>${esc(link)}</code></div><a class='btn btn-primary' href='${esc(link)}' target='_blank' rel='noopener noreferrer'>Mở cổng MoMo</a></div>` : ''}`;
+        showModal('Thanh toán ví MoMo', 'Khách quét mã hoặc mở liên kết MoMo; khi hoàn tất, IPN tự động gạch nợ đơn hàng.', body, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button>`);
+      } catch (error) {
+        if (error.status === 401) showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
+        else toast('Chưa tạo được phiên MoMo', error.message, 'error');
+      } finally {
+        if (button?.isConnected) button.disabled = false;
+      }
       return;
     }
     if (button?.disabled) return;
@@ -11343,12 +11438,13 @@
     else if (action === 'share-order') showDigitalReceipt(id);
     else if (action === 'latest-receipt') openOrder(id, true);
     else if (action === 'reload-integrations') loadIntegrationStatus(true);
+    else if (action === 'verify-ghn-token') verifyGhnIntegrationToken(button);
     else if (action === 'copy-integration-url') {
       const value = button.dataset.copyValue || '';
       if (value) navigator.clipboard?.writeText(value).then(() => toast('Đã sao chép URL webhook', value)).catch(() => toast('Sao chép thủ công', value));
     }
     else if (['escpos-connect', 'escpos-test-print', 'escpos-kick-drawer', 'escpos-print-order'].includes(action)) handleEscPosAction(action, id);
-    else if (['issue-order-einvoice', 'create-order-shipping'].includes(action)) handleOrderIntegrationAction(action, id, button);
+    else if (['issue-order-einvoice', 'create-order-shipping', 'preview-order-shipping', 'create-order-momo'].includes(action)) handleOrderIntegrationAction(action, id, button);
     else if (['receipt-share', 'receipt-copy', 'receipt-download'].includes(action)) useDigitalReceipt(action, button);
     else if (action === 'download-reports-csv') downloadReportsCsv();
     else if (action === 'print-reports-pdf') printReportsPdf();

@@ -13,7 +13,7 @@ function getIntegrationCatalog(env = process.env, storeConfig = {}) {
   const vnpayReady = hasNonEmpty(env, ['VNPAY_TMN_CODE', 'VNPAY_HASH_SECRET']);
   const misaReady = hasNonEmpty(env, ['MISA_EINVOICE_URL', 'MISA_APP_ID', 'MISA_SECRET']);
   const viettelEinvoiceReady = hasNonEmpty(env, ['VIETTEL_EINVOICE_URL', 'VIETTEL_EINVOICE_USER', 'VIETTEL_EINVOICE_PASS']);
-  const ghnReady = hasNonEmpty(env, ['GHN_TOKEN', 'GHN_SHOP_ID']);
+  const ghnReady = hasNonEmpty(env, ['GHN_TOKEN']);
   const ghtkReady = hasNonEmpty(env, ['GHTK_TOKEN']);
   const vtpReady = hasNonEmpty(env, ['VTP_TOKEN']);
   const shopeeReady = hasNonEmpty(env, ['SHOPEE_PARTNER_ID', 'SHOPEE_PARTNER_KEY']);
@@ -80,7 +80,7 @@ function getIntegrationCatalog(env = process.env, storeConfig = {}) {
       readyWithoutVendorKey: false,
       providers: { ghn: ghnReady, ghtk: ghtkReady, viettelpost: vtpReady },
       description: 'Tính cước tự động, đẩy đơn lấy mã vận đơn và cập nhật trạng thái giao / COD.',
-      missingKeys: (ghnReady || ghtkReady || vtpReady) ? [] : ['GHN_TOKEN + GHN_SHOP_ID hoặc GHTK_TOKEN hoặc VTP_TOKEN'],
+      missingKeys: (ghnReady || ghtkReady || vtpReady) ? [] : ['GHN_TOKEN (ShopId tự nhận) hoặc GHTK_TOKEN hoặc VTP_TOKEN'],
     },
     {
       id: 'marketplaces',
