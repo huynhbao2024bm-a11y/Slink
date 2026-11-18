@@ -32,8 +32,15 @@ Hệ thống đã dựng sẵn adapter xác thực chữ ký, route Webhook an t
    Mở **Cài đặt → Tích hợp thương mại** → chọn **Cổng gạch nợ Webhook tự động** → copy đúng đường dẫn `Webhook URL` của cửa hàng (dạng `https://ten-mien-cua-ban/api/webhooks/bank-transfer/sepay/<storeId>`) dán vào trang quản trị SePay/Casso/PayOS.
 4. Khi khách chuyển khoản kèm mã đơn (ví dụ `SLINK ORD-00012` hoặc `ORD00012`), Slink tự ghi nhận `payments`, ghi sổ quỹ `cash_movements` và gạch công nợ khách hàng nguyên tử trong 1 transaction.
 
-### B. Ví điện tử MoMo / VNPAY
-- **MoMo Business (`https://business.momo.vn`):** điền `MOMO_PARTNER_CODE`, `MOMO_ACCESS_KEY`, `MOMO_SECRET_KEY`.
+### B. Ví điện tử MoMo / VNPAY (Đã nối sẵn API Tạo phiên & IPN tự động gạch nợ)
+- **MoMo Business (`https://business.momo.vn`):** khi tài khoản MoMo duyệt xong, dán 3 khóa vào `.env`:
+  ```env
+  MOMO_PARTNER_CODE=...
+  MOMO_ACCESS_KEY=...
+  MOMO_SECRET_KEY=...
+  ```
+- **IPN Webhook URL (copy sẵn trong `Cài đặt → Tích hợp thương mại`):** `https://ten-mien-cua-ban/api/webhooks/momo/<storeId>`.
+- Khi khách thanh toán qua nút **Thanh toán MoMo** trong chi tiết đơn hàng, MoMo gọi IPN về Slink → tự động xác thực HMAC-SHA256, ghi `payments` (`bank_qr`), ghi sổ quỹ Ngân hàng (`PT-xxxx`) và trừ công nợ khách hàng nguyên tử.
 - **VNPAY Merchant (`https://merchant.vnpay.vn`):** điền `VNPAY_TMN_CODE`, `VNPAY_HASH_SECRET`.
 
 ### C. Hóa đơn điện tử NĐ 123/2020 & NĐ 70/2025 (MISA / Viettel)
@@ -41,11 +48,14 @@ Hệ thống đã dựng sẵn adapter xác thực chữ ký, route Webhook an t
 - **Viettel S-Invoice:** điền `VIETTEL_EINVOICE_URL`, `VIETTEL_EINVOICE_USER`, `VIETTEL_EINVOICE_PASS`.
 - Nhập thêm **Mã số thuế**, **Mẫu số**, **Ký hiệu** trong **Cài đặt → Tích hợp thương mại**, sau đó bấm **Xuất hóa đơn điện tử** ngay trong chi tiết đơn hàng.
 
-### D. Vận chuyển (GHN / GHTK / Viettel Post)
-- **GHN (`https://khachhang.ghn.vn`):** điền `GHN_TOKEN`, `GHN_SHOP_ID`.
+### D. Vận chuyển (GHN đã kích hoạt · GHTK / Viettel Post sẵn sàng)
+- **GHN (`https://khachhang.ghn.vn`):**
+  - Đã tích hợp `GHN_TOKEN` vào `.env` cục bộ và tự động nhận diện **`GHN_SHOP_ID=6790898`** qua API `/shiip/public-api/v2/shop/all` (kể cả khi chỉ khai báo `GHN_TOKEN`).
+  - Trong **Cài đặt → Tích hợp thương mại**, bấm **Kiểm tra kết nối GHN** để xác minh trạng thái Shop GHN trực tiếp.
+  - Trong **Chi tiết đơn hàng → Tạo vận đơn (GHN/GHTK)**, bấm **Tính thử phí GHN** để xem trước cước phí (`total_fee`) và thời gian giao dự kiến trước khi bấm **Đẩy vận đơn**.
+  - **Callback Webhook cập nhật trạng thái giao hàng GHN:** copy đường dẫn `https://ten-mien-cua-ban/api/webhooks/shipping/ghn/<storeId>` trong **Cài đặt → Tích hợp thương mại** dán vào cấu hình Webhook của GHN để tự động đồng bộ trạng thái vận đơn (`ready_to_pick`, `delivering`, `delivered`...).
 - **GHTK (`https://khachhang.giaohangtietkiem.vn`):** điền `GHTK_TOKEN`.
 - **Viettel Post:** điền `VTP_TOKEN`.
-- Sau khi gắn token, nút **Tạo vận đơn (GHN/GHTK)** trong chi tiết đơn hàng sẽ đẩy đơn sang hãng và lưu `shipping_tracking_code` vào đơn hàng.
 
 ### E. Email xác nhận & Thông báo (Resend) / Zalo ZNS / Giám sát Sentry
 - **Resend Email (`https://resend.com`):** điền `RESEND_API_KEY` (hoặc `EMAIL_DELIVERY_URL` + `EMAIL_DELIVERY_TOKEN`) và `EMAIL_FROM`.

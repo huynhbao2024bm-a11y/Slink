@@ -1,6 +1,6 @@
 'use strict';
 
-const { createHmac, timingSafeEqual } = require('node:crypto');
+const { createHmac, randomUUID, timingSafeEqual } = require('node:crypto');
 
 function signMomoCreateRequest({ orderId, requestId, amountVnd, orderInfo, redirectUrl, ipnUrl, extraData = '', requestType = 'captureWallet' }, env = process.env) {
   const { MOMO_PARTNER_CODE, MOMO_ACCESS_KEY, MOMO_SECRET_KEY } = env;
@@ -90,4 +90,73 @@ function verifyVnpayIpn(queryObj, env = process.env) {
   return { configured: true, valid: tmnMatch && a.length > 0 && a.length === b.length && timingSafeEqual(a, b) };
 }
 
-module.exports = { signMomoCreateRequest, verifyMomoIpnSignature, buildVnpayPaymentUrl, verifyVnpayIpn };
+async function createMomoPaymentSession({ storeId, orderId, orderNumber, amountVnd, redirectUrl, ipnUrl }, env = process.env) {
+  const requestId = randomUUID();
+  const momoOrderId = `${orderNumber}-${requestId.slice(0, 8)}`;
+  const extraData = Buffer.from(JSON.stringify({ storeId, orderId, orderNumber }), 'utf8').toString('base64');
+  const signed = signMomoCreateRequest({
+    orderId: momoOrderId,
+    requestId,
+    amountVnd: String(amountVnd),
+    orderInfo: `SLINK ${orderNumber}`,
+    redirectUrl,
+    ipnUrl,
+    extraData,
+  }, env);
+  if (!signed.configured) {
+    return {
+      ok: false,
+      statusCode: 503,
+      code: 'integration_not_configured',
+      message: 'Cổng MoMo đang chờ duyệt hoặc chưa gắn khóa MOMO_PARTNER_CODE, MOMO_ACCESS_KEY, MOMO_SECRET_KEY trong .env.',
+    };
+  }
+  let url;
+  try { url = new URL(signed.endpoint); } catch {
+    return { ok: false, statusCode: 503, code: 'integration_not_configured', message: 'Địa chỉ kết nối MoMo không hợp lệ.' };
+  }
+  if (env.NODE_ENV === 'production' && url.protocol !== 'https:') {
+    return { ok: false, statusCode: 503, code: 'integration_not_configured', message: 'MoMo bắt buộc dùng HTTPS trong môi trường vận hành.' };
+  }
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      redirect: 'error',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(signed.payload),
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch {
+    return { ok: false, statusCode: 502, code: 'provider_unreachable', message: 'Không kết nối được tới cổng thanh toán MoMo.' };
+  }
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || Number(json?.resultCode) !== 0 || (!json?.payUrl && !json?.qrCodeUrl)) {
+    return {
+      ok: false,
+      statusCode: 502,
+      code: 'payment_provider_error',
+      message: json?.message ? `MoMo từ chối khởi tạo giao dịch: ${json.message}` : 'MoMo chưa tạo được phiên thanh toán.',
+    };
+  }
+  const sanitizeMomoUri = (val) => {
+    const s = String(val || '').trim();
+    return /^(https?:\/\/|momo:\/\/)/i.test(s) ? s : '';
+  };
+  return {
+    ok: true,
+    requestId,
+    momoOrderId,
+    payUrl: sanitizeMomoUri(json.payUrl),
+    qrCodeUrl: sanitizeMomoUri(json.qrCodeUrl),
+    deeplink: sanitizeMomoUri(json.deeplink),
+  };
+}
+
+module.exports = {
+  signMomoCreateRequest,
+  verifyMomoIpnSignature,
+  createMomoPaymentSession,
+  buildVnpayPaymentUrl,
+  verifyVnpayIpn,
+};

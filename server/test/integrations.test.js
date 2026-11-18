@@ -442,3 +442,214 @@ test('validateProductionConfig accepts RESEND_API_KEY shortcut without EMAIL_DEL
     EMAIL_FROM: 'Slink <no-reply@slink.example.test>',
   }));
 });
+
+test('GHN auto-shop discovery, fee preview, shipment creation, GHN status webhook, and MoMo IPN reconciliation work end-to-end', async (t) => {
+  const http = require('node:http');
+  const mockServer = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', (chunk) => { raw += chunk; });
+    req.on('end', () => {
+      res.setHeader('content-type', 'application/json');
+      if (req.url === '/shiip/public-api/v2/shop/all') {
+        if (req.headers.token !== 'ghn-valid-token') {
+          res.statusCode = 401;
+          return res.end(JSON.stringify({ code: 401, message: 'Token is not valid!' }));
+        }
+        return res.end(JSON.stringify({
+          code: 200,
+          message: 'Success',
+          data: { shops: [{ _id: 6790898, name: '0797385112', phone: '0797385112', address: '' }] },
+        }));
+      }
+      if (req.url === '/shiip/public-api/v2/shipping-order/preview') {
+        const body = JSON.parse(raw || '{}');
+        assert.equal(req.headers.shopid, '6790898');
+        assert.ok(body.from_ward_name && body.to_ward_name && Array.isArray(body.items));
+        return res.end(JSON.stringify({
+          code: 200,
+          message: 'Success',
+          data: { total_fee: 21001, expected_delivery_time: '2026-11-19T16:59:59Z', sort_code: '2x4-G-73-A6' },
+        }));
+      }
+      if (req.url === '/shiip/public-api/v2/shipping-order/create') {
+        assert.equal(req.headers.shopid, '6790898');
+        return res.end(JSON.stringify({
+          code: 200,
+          message: 'Success',
+          data: { order_code: 'GHN889900VN', total_fee: 21001, expected_delivery_time: '2026-11-19T16:59:59Z' },
+        }));
+      }
+      if (req.url === '/v2/gateway/api/create') {
+        return res.end(JSON.stringify({
+          resultCode: 0,
+          message: 'Thành công',
+          payUrl: 'https://test-payment.momo.vn/pay/SLINK123',
+          qrCodeUrl: 'https://test-payment.momo.vn/qr/SLINK123',
+          deeplink: 'momo://app',
+        }));
+      }
+      res.statusCode = 404;
+      res.end(JSON.stringify({ code: 404 }));
+    });
+  });
+  await new Promise((resolve) => mockServer.listen(0, '127.0.0.1', resolve));
+  t.after(() => mockServer.close());
+  const mockOrigin = `http://127.0.0.1:${mockServer.address().port}`;
+
+  const momoAccessKey = 'MOMO_ACC_2026';
+  const momoSecretKey = 'MOMO_SEC_2026';
+  const momoPartnerCode = 'MOMO_PARTNER_2026';
+  const { app } = await setupApp(t, {
+    GHN_TOKEN: 'ghn-valid-token',
+    GHN_ENDPOINT: `${mockOrigin}/shiip/public-api/v2/shipping-order/create`,
+    MOMO_PARTNER_CODE: momoPartnerCode,
+    MOMO_ACCESS_KEY: momoAccessKey,
+    MOMO_SECRET_KEY: momoSecretKey,
+    MOMO_ENDPOINT: `${mockOrigin}/v2/gateway/api/create`,
+  });
+
+  const owner = await registerOwner(app, 'ghn-momo-owner@slink.test', 'Shop GHN MoMo');
+  await app.inject({
+    method: 'PUT',
+    url: `/api/stores/${owner.storeId}/integrations/settings`,
+    headers: owner.headers,
+    payload: { shippingProvider: 'ghn' },
+  });
+
+  // 1) Verify GHN token auto-discovers ShopId 6790898 without GHN_SHOP_ID in env
+  const verifyRes = await app.inject({
+    method: 'POST',
+    url: `/api/stores/${owner.storeId}/integrations/ghn/verify`,
+    headers: owner.headers,
+    payload: {},
+  });
+  assert.equal(verifyRes.statusCode, 200, verifyRes.body);
+  assert.equal(verifyRes.json().shopId, '6790898');
+
+  // 2) Create a credit order
+  const custRes = await app.inject({
+    method: 'POST',
+    url: `/api/stores/${owner.storeId}/customers`,
+    headers: owner.headers,
+    payload: { name: 'Khách GHN MoMo', phone: '0901234567' },
+  });
+  const customerId = custRes.json().customer.id;
+  const prodRes = await app.inject({
+    method: 'POST',
+    url: `/api/stores/${owner.storeId}/products`,
+    headers: owner.headers,
+    payload: { sku: 'SP-GM-1', name: 'Trà Ô Long', unit: 'Hộp', costVnd: 50000, salePriceVnd: 120000, lowStockThreshold: 1, inventoryTracked: false },
+  });
+  const productId = prodRes.json().product.id;
+  const saleRes = await app.inject({
+    method: 'POST',
+    url: `/api/stores/${owner.storeId}/sales`,
+    headers: { ...owner.headers, 'idempotency-key': randomUUID() },
+    payload: { customerId, items: [{ productId, quantity: 1 }], tenders: [], method: 'cash', amountReceivedVnd: 0, note: '[GIAO HÀNG] Khách GHN MoMo · 0901234567 · 12 Nguyễn Huệ, Phường Bến Nghé, Quận 1, Hồ Chí Minh' },
+  });
+  assert.equal(saleRes.statusCode, 201, saleRes.body);
+  const order = saleRes.json().order;
+
+  // 3) Preview GHN shipping fee (read-only)
+  const previewRes = await app.inject({
+    method: 'POST',
+    url: `/api/stores/${owner.storeId}/orders/${order.id}/shipping/preview`,
+    headers: owner.headers,
+    payload: {
+      provider: 'ghn',
+      receiverName: 'Khách GHN MoMo',
+      receiverPhone: '0901234567',
+      address: '12 Nguyễn Huệ, Phường Bến Nghé, Quận 1, Hồ Chí Minh',
+      codAmountVnd: 120000,
+      weightGram: 500,
+    },
+  });
+  assert.equal(previewRes.statusCode, 200, previewRes.body);
+  assert.equal(previewRes.json().feeVnd, '21001');
+  assert.equal(previewRes.json().shopId, '6790898');
+
+  // 4) Create GHN shipping order & receive trackingCode
+  const shipRes = await app.inject({
+    method: 'POST',
+    url: `/api/stores/${owner.storeId}/orders/${order.id}/shipping`,
+    headers: owner.headers,
+    payload: {
+      provider: 'ghn',
+      receiverName: 'Khách GHN MoMo',
+      receiverPhone: '0901234567',
+      address: '12 Nguyễn Huệ, Phường Bến Nghé, Quận 1, Hồ Chí Minh',
+      codAmountVnd: 120000,
+      weightGram: 500,
+    },
+  });
+  assert.equal(shipRes.statusCode, 200, shipRes.body);
+  assert.equal(shipRes.json().trackingCode, 'GHN889900VN');
+  assert.equal(shipRes.json().feeVnd, '21001');
+
+  // 5) Inbound GHN status webhook updates shipping_status on the order & deduplicates replay
+  const ghnHookRes = await app.inject({
+    method: 'POST',
+    url: `/api/webhooks/shipping/ghn/${owner.storeId}`,
+    payload: { OrderCode: 'GHN889900VN', Status: 'delivering', TotalFee: 21001, Time: '2026-11-18T14:00:00Z' },
+  });
+  assert.equal(ghnHookRes.statusCode, 200, ghnHookRes.body);
+  assert.equal(ghnHookRes.json().status, 'processed');
+  assert.equal(ghnHookRes.json().shippingStatus, 'delivering');
+
+  const ghnHookDup = await app.inject({
+    method: 'POST',
+    url: `/api/webhooks/shipping/ghn/${owner.storeId}`,
+    payload: { OrderCode: 'GHN889900VN', Status: 'delivering', TotalFee: 21001, Time: '2026-11-18T14:00:00Z' },
+  });
+  assert.equal(ghnHookDup.statusCode, 200);
+  assert.equal(ghnHookDup.json().status, 'duplicate');
+
+  // 6) Create MoMo payment session for the unpaid order
+  const momoCreateRes = await app.inject({
+    method: 'POST',
+    url: `/api/stores/${owner.storeId}/orders/${order.id}/momo-payment`,
+    headers: owner.headers,
+    payload: {},
+  });
+  assert.equal(momoCreateRes.statusCode, 200, momoCreateRes.body);
+  assert.equal(momoCreateRes.json().amountVnd, '120000');
+  assert.match(momoCreateRes.json().payUrl, /momo\.vn/);
+
+  // 7) MoMo IPN webhook reconciles payment, bank cashbook & customer debt atomically
+  const extraData = Buffer.from(JSON.stringify({ storeId: owner.storeId, orderId: order.id, orderNumber: order.number }), 'utf8').toString('base64');
+  const ipnPayload = {
+    partnerCode: momoPartnerCode,
+    orderId: `${order.number}-momo1`,
+    requestId: 'req-momo-1',
+    amount: 120000,
+    orderInfo: `SLINK ${order.number}`,
+    orderType: 'momo_wallet',
+    transId: '77889900',
+    resultCode: 0,
+    message: 'Successful.',
+    payType: 'qr',
+    responseTime: 1700000000,
+    extraData,
+  };
+  const rawSig =
+    `accessKey=${momoAccessKey}&amount=${ipnPayload.amount}&extraData=${ipnPayload.extraData}` +
+    `&message=${ipnPayload.message}&orderId=${ipnPayload.orderId}&orderInfo=${ipnPayload.orderInfo}` +
+    `&orderType=${ipnPayload.orderType}&partnerCode=${ipnPayload.partnerCode}&payType=${ipnPayload.payType}` +
+    `&requestId=${ipnPayload.requestId}&responseTime=${ipnPayload.responseTime}` +
+    `&resultCode=${ipnPayload.resultCode}&transId=${ipnPayload.transId}`;
+  ipnPayload.signature = createHmac('sha256', momoSecretKey).update(rawSig).digest('hex');
+
+  const momoIpnRes = await app.inject({
+    method: 'POST',
+    url: `/api/webhooks/momo/${owner.storeId}`,
+    payload: ipnPayload,
+  });
+  assert.equal(momoIpnRes.statusCode, 200, momoIpnRes.body);
+  assert.equal(momoIpnRes.json().results[0].status, 'processed');
+
+  // Verify customer debt is now 0 and cashbook recorded bank_qr PT- voucher
+  const debtsAfter = await app.inject({ method: 'GET', url: `/api/stores/${owner.storeId}/customers/${customerId}/debts`, headers: owner.headers });
+  assert.equal(debtsAfter.json().balanceVnd, '0');
+  const cbRes = await app.inject({ method: 'GET', url: `/api/stores/${owner.storeId}/finance/cashbook?fund=bank`, headers: owner.headers });
+  assert.equal(cbRes.json().balances.bank.inVnd, '120000');
+});
