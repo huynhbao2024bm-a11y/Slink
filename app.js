@@ -2210,7 +2210,7 @@
     state.error = '';
     if (page === 'finance' && financeTab === 'receivables') refreshFinanceBody();
     try {
-      const params = new URLSearchParams({ segment: 'owing', limit: '50', offset: String(offset), search: query });
+      const params = new URLSearchParams({ segment: 'owing', limit: '50', offset: String(offset), q: query });
       const result = await apiRequest(`/api/stores/${encodeURIComponent(storeId)}/customers?${params}`);
       if (state.requestNumber !== requestNumber || authSession !== session || store.id !== storeId || state.query !== query) return;
       state.rows = (result.customers || []).map(row => ({ id: row.id, name: row.name, phone: row.phone, debt: String(row.balance_vnd || '0'), creditLimitVnd: String(row.credit_limit_vnd || '0') }));
@@ -3446,7 +3446,8 @@
   }
 
   async function openReceivable(id) {
-    const customer = (financeReceivables.ready ? financeReceivables.rows : financeTopCustomers).find(item => item.id === id);
+    const customer = financeReceivables.rows.find(item => item.id === id)
+      || financeTopCustomers.find(item => item.id === id);
     if (!customer) return;
     try {
       const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/customers/${encodeURIComponent(id)}/debts`);
@@ -3502,7 +3503,8 @@
   }
 
   function openDebtReminder(id) {
-    const customer = financeTopCustomers.find(item => item.id === id);
+    const customer = financeReceivables.rows.find(item => item.id === id)
+      || financeTopCustomers.find(item => item.id === id);
     if (!customer) return;
     const message = `Chào ${customer.name}, ${store.settings.storeName} xin nhắc khoản còn phải thanh toán là ${moneyVndText(customer.debt)}. Nếu bạn đã thanh toán, vui lòng phản hồi để cửa hàng kiểm tra. Cảm ơn bạn!`;
     const body = `<label class='form-field'><span class='input-label'>Lời nhắc${customer.phone ? ' · ' + esc(customer.phone) : ''}</span><textarea class='input finance-reminder-text' rows='4' data-finance-reminder>${esc(message)}</textarea></label>`;
@@ -10952,6 +10954,7 @@
       financeReceivables.query = event.target.value;
       financeReceivables.ready = false;
       financeReceivables.requestNumber += 1;
+      refreshFinanceBody();
       window.clearTimeout(financeReceivableSearchTimer);
       financeReceivableSearchTimer = window.setTimeout(function () {
         if (page === 'finance' && financeTab === 'receivables') loadFinanceReceivables(0);

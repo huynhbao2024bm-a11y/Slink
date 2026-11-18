@@ -140,6 +140,18 @@ async function seedProductsAndCashViaBrowserSession(page) {
     });
     if (!shiftRes.ok) throw new Error(`Shift open failed: ${shiftRes.status}`);
 
+    // Keep the delivery customer outside the finance summary's top-ten debtors.
+    // The receivables page must still open and remind customers found by search.
+    for (let index = 0; index < 10; index += 1) {
+      const debtorRes = await fetch(`/api/stores/${storeId}/customers`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json', 'x-csrf-token': csrf, 'idempotency-key': crypto.randomUUID() },
+        body: JSON.stringify({ name: `Khách nợ kiểm thử ${index + 1}`, openingBalanceVnd: '1000000' }),
+      });
+      if (!debtorRes.ok) throw new Error(`Debtor create failed: ${debtorRes.status}`);
+    }
+
     const srRes = await fetch(`/api/stores/${storeId}/supplier-returns`, {
       method: 'POST',
       credentials: 'same-origin',
@@ -370,8 +382,21 @@ async function runViewportAudit(browser, origin, viewport, label) {
     await page.locator("[data-action='finance-tab'][data-tab='receivables']").click();
     await page.locator('#finance-receivable-search').fill('Khách Giao Hàng');
     await page.locator('[data-finance-content] .activity-list [data-action="finance-receivable"]').first().waitFor();
+    await page.getByText('Hiển thị 1 trên 1 khách còn nợ').waitFor();
+    const searchedCustomerId = await page.locator('[data-finance-content] .activity-list [data-action="finance-receivable"]').first().getAttribute('data-id');
+    const inSummary = await page.evaluate(async ({ storeId, customerId }) => {
+      const response = await fetch(`/api/stores/${storeId}/finance`, { credentials: 'same-origin' });
+      const data = await response.json();
+      return data.customerDebtors.some((customer) => customer.id === customerId);
+    }, { storeId: seeded.storeId, customerId: searchedCustomerId });
+    assert.equal(inSummary, false, `${label}: searched debtor must be outside finance summary's top ten`);
+    await skipTour();
     await page.locator('[data-finance-content] .activity-list [data-action="finance-receivable"]').first().click();
     await page.locator('.finance-debt-detail').waitFor();
+    await page.locator(".finance-debt-detail [data-action='finance-reminder']").click();
+    await page.locator('.modal [data-finance-reminder]').waitFor();
+    assert.match(await page.locator('.modal [data-finance-reminder]').inputValue(), /Khách Giao Hàng E2E/);
+    await page.locator(".modal [data-action='close-modal']").first().click();
     await assertNoHorizontalOverflow(page, `${label}:finance-receivable-detail`);
     assert.equal(await page.locator("[data-action='new-expense'][data-direction='in']:visible").count() > 0, true, `${label}: record income remains reachable`);
 
