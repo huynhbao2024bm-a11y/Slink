@@ -221,29 +221,80 @@ async function runViewportAudit(browser, origin, viewport, label) {
     await page.locator("[data-action='pos-mode'][data-mode='delivery']").click();
     await page.locator('.pos-product-grid button').first().click();
     await page.waitForTimeout(150);
+    let deliverySubmitSelector;
     if (!(await page.locator(".pos-layout > .cart-panel [data-delivery-field='receiverName']").isVisible())) {
       await page.locator("[data-action='open-cart']:visible").first().click();
       await page.waitForSelector("#drawer-cart.open [data-delivery-field='receiverName']");
       await page.fill("#drawer-cart [data-delivery-field='receiverName']", 'Khách Giao Hàng E2E');
       await page.fill("#drawer-cart [data-delivery-field='receiverPhone']", '0901234567');
       await page.fill("#drawer-cart [data-delivery-field='address']", '12 Nguyễn Huệ, Q1');
-      await page.locator("#drawer-cart [data-action='submit-delivery-sale']").click();
+      deliverySubmitSelector = "#drawer-cart [data-action='submit-delivery-sale']";
     } else {
       await page.fill(".pos-layout > .cart-panel [data-delivery-field='receiverName']", 'Khách Giao Hàng E2E');
       await page.fill(".pos-layout > .cart-panel [data-delivery-field='receiverPhone']", '0901234567');
       await page.fill(".pos-layout > .cart-panel [data-delivery-field='address']", '12 Nguyễn Huệ, Q1');
-      await page.locator(".pos-layout > .cart-panel [data-action='submit-delivery-sale']").click();
+      deliverySubmitSelector = ".pos-layout > .cart-panel [data-action='submit-delivery-sale']";
     }
-    await page.waitForTimeout(450);
+    const [deliveryRes] = await Promise.all([
+      page.waitForResponse((res) => res.url().includes('/sales') && res.request().method() === 'POST'),
+      page.locator(deliverySubmitSelector).click(),
+    ]);
+    assert.equal(deliveryRes.status(), 201, `${label}: delivery order POST /sales must succeed with 201`);
+    await page.waitForSelector('.sale-saved');
     await assertNoHorizontalOverflow(page, `${label}:pos-delivery-after`);
 
-    // 5. Switch to Hàng hóa: test barcode print modal (via Thao tác khác)
+    // 5. Switch to Hàng hóa: test prominent barcode on quick product + Lưu & in tem + CSV import auto-barcode + print modal
     await page.locator("#primary-nav [data-route='products']:visible, #mobile-nav [data-route='products']:visible").first().click();
-    await page.waitForSelector('.catalog-more summary');
+    await page.waitForSelector("[data-action='new-product']");
+    await page.locator("[data-action='new-product']").first().click();
+    await page.waitForSelector(".modal:not([hidden]) #product-barcode");
+    assert.equal(await page.locator(".modal #product-barcode").isVisible(), true, `${label}: #product-barcode must be immediately visible`);
+    await page.fill(".modal [name='name']", 'Trà sữa E2E');
+    await page.fill(".modal [name='price']", '38000');
+    await page.locator(".modal [data-action='generate-product-barcode']").click();
+    const generatedQuickCode = await page.locator(".modal #product-barcode").inputValue();
+    assert.match(generatedQuickCode, /^\d{13}$/, `${label}: generated quick-product barcode must be 13-digit EAN-13`);
+    await page.waitForSelector(".modal [data-barcode-field-preview] svg.barcode-svg");
+    await assertNoHorizontalOverflow(page, `${label}:quick-product-barcode`);
+    const [quickSaveRes] = await Promise.all([
+      page.waitForResponse((res) => res.url().includes('/products/import') && !res.url().includes('/preview') && res.request().method() === 'POST'),
+      page.locator(".modal button[type='submit'][data-print-after='true']").click(),
+    ]);
+    assert.equal(quickSaveRes.status(), 201, `${label}: Lưu & in tem must save with 201`);
+    await page.waitForSelector(".modal:not([hidden]) [data-form='barcode-print'] [data-barcode-sheet-preview] svg.barcode-svg");
+    await page.locator(".modal [data-action='close-modal']").first().click();
+    await page.waitForSelector('#modal[hidden]', { state: 'attached' });
+
+    // 5b. Test CSV import with AUTO + blank barcode -> 1-click fill -> import -> print imported labels
     await page.locator('.catalog-more summary').click();
-    await page.waitForSelector("[data-action='print-barcode-batch']");
-    await page.locator("[data-action='print-barcode-batch']").click();
-    await page.waitForSelector(".modal:not([hidden]) [data-barcode-sheet-preview] svg.barcode-svg");
+    await page.waitForSelector("[data-action='import-products']");
+    await page.locator("[data-action='import-products']").click();
+    await page.waitForSelector('#product-import-file');
+    const csvHeaders = ['Mã SKU', 'Mã vạch', 'Tên sản phẩm', 'Danh mục', 'Đơn vị', 'Giá bán (VND)', 'Giá vốn (VND)', 'Ngưỡng tồn tối thiểu', 'Theo dõi tồn kho (Có/Không)', 'Tồn đầu kỳ', 'Tên nhóm biến thể', 'Thuộc tính biến thể (Tên=Giá trị; ...)'];
+    const csvRows = [
+      ['E2E-AUTO-1', 'AUTO', 'Bánh quy bơ E2E', 'Bánh kẹo', 'hộp', '42000', '25000', '2', 'Có', '4', '', ''],
+      ['E2E-BLANK-2', '', 'Nước suối lạnh E2E', 'Đồ uống', 'chai', '10000', '4000', '5', 'Có', '6', '', ''],
+    ];
+    const csvContent = '\uFEFF' + [csvHeaders, ...csvRows].map((r) => r.map((c) => `"${c}"`).join(',')).join('\r\n') + '\r\n';
+    await page.setInputFiles('#product-import-file', { name: 'e2e-barcode-import.csv', mimeType: 'text/csv', buffer: Buffer.from(csvContent, 'utf8') });
+    await page.waitForSelector(".modal [data-action='import-fill-barcodes']");
+    const [repreviewRes] = await Promise.all([
+      page.waitForResponse((res) => res.url().includes('/products/import/preview') && res.request().method() === 'POST'),
+      page.locator(".modal [data-action='import-fill-barcodes']").click(),
+    ]);
+    assert.equal(repreviewRes.status(), 200, `${label}: import-fill-barcodes preview must succeed`);
+    await page.waitForSelector(".modal button[type='submit'][form='entity-form']:not([disabled])");
+    const [importSaveRes] = await Promise.all([
+      page.waitForResponse((res) => res.url().includes('/products/import') && !res.url().includes('/preview') && res.request().method() === 'POST'),
+      page.locator(".modal button[type='submit'][form='entity-form']").click(),
+    ]);
+    assert.equal(importSaveRes.status(), 201, `${label}: CSV import save must return 201`);
+    await page.waitForSelector(".modal [data-action='print-barcode-imported']");
+    await page.locator(".modal [data-action='print-barcode-imported']").click();
+    await page.waitForSelector(".modal:not([hidden]) [data-form='barcode-print'] [data-barcode-sheet-preview] svg.barcode-svg");
+    await page.selectOption('#barcode-paper-size', 'thermal-1up');
+    await page.fill("[data-barcode-filter]", 'Nước suối');
+    await page.waitForTimeout(100);
     await assertNoHorizontalOverflow(page, `${label}:barcode-print-modal`);
     await page.locator(".modal [data-action='close-modal']").first().click();
     await page.waitForSelector('#modal[hidden]', { state: 'attached' });

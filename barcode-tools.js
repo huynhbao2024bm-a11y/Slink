@@ -76,16 +76,32 @@
     return body + computeEan13CheckDigit(body);
   }
 
-  function sanitizeBarcodeValue(raw) {
-    const text = String(raw == null ? '' : raw).trim().replace(/[Đđ]/g, m => (m === 'Đ' ? 'D' : 'd'));
-    if (!text) return '';
-    // Keep printable ASCII 32..126 for crisp Code 128 Set B output; fold accented chars cleanly if user typed SKU
-    return text.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x20-\x7e]/g, '').slice(0, 48);
+  function generateUniqueEan13(existingSet, prefix = '20') {
+    const seen = existingSet instanceof Set ? existingSet : new Set(existingSet || []);
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const candidate = generateEan13(prefix);
+      if (!seen.has(candidate)) {
+        seen.add(candidate);
+        return candidate;
+      }
+    }
+    throw new Error('Không thể tạo mã vạch duy nhất lúc này. Hãy thử lại.');
+  }
+
+  function validateCode128Input(raw) {
+    const text = String(raw == null ? '' : raw).trim();
+    if (!text) return { ok: false, reason: 'Mã vạch trống.' };
+    if (text.length > 80) return { ok: false, reason: 'Mã vượt quá 80 ký tự Code 128.' };
+    if (/[^\x20-\x7e]/.test(text)) {
+      return { ok: false, reason: 'Mã chứa ký tự có dấu hoặc ký tự đặc biệt — nên tạo mã EAN-13 để in chuẩn.' };
+    }
+    return { ok: true, text };
   }
 
   function encodeCode128B(rawText) {
-    const text = sanitizeBarcodeValue(rawText);
-    if (!text) return null;
+    const check = validateCode128Input(rawText);
+    if (!check.ok) return null;
+    const text = check.text;
     const START_B = 104;
     const STOP = 106;
     const codes = [START_B];
@@ -113,9 +129,10 @@
   }
 
   function renderBarcodeSvg(code, options = {}) {
-    const encoded = encodeCode128B(code);
+    const check = validateCode128Input(code);
+    const encoded = check.ok ? encodeCode128B(check.text) : null;
     if (!encoded) {
-      return `<div class='barcode-svg-empty'>Mã không hợp lệ</div>`;
+      return `<div class='barcode-svg-empty'>${escapeHtml(check.reason || 'Mã không hợp lệ')}</div>`;
     }
     const quiet = Number.isFinite(options.quiet) ? options.quiet : 8;
     const barHeight = Number.isFinite(options.barHeight) ? options.barHeight : 38;
@@ -132,11 +149,16 @@
     return `<svg class='barcode-svg' viewBox='0 0 ${vbWidth} ${vbHeight}' role='img' aria-label='Mã vạch ${escapeHtml(encoded.text)}' preserveAspectRatio='xMidYMid meet'><rect x='0' y='0' width='${vbWidth}' height='${vbHeight}' fill='#ffffff'/><g fill='#111111'>${rects}</g>${label}</svg>`;
   }
 
-  function buildBarcodeStickersHtml(items, options = {}) {
+  const MAX_STICKERS = 600;
+  const PAPER_FORMATS = new Set(['a4-65', 'a4-40', 'thermal-2up', 'thermal-1up']);
+
+  function buildBarcodeStickersList(items, options = {}) {
     const showStore = options.showStore !== false;
     const showPrice = options.showPrice !== false;
     const storeName = String(options.storeName || 'Slink').trim();
+    const maxStickers = Number.isFinite(options.maxStickers) && options.maxStickers > 0 ? Math.floor(options.maxStickers) : MAX_STICKERS;
     const stickers = [];
+    let truncated = false;
     for (const item of items || []) {
       const code = String(item.barcode || item.sku || '').trim();
       if (!code) continue;
@@ -151,27 +173,44 @@
           ${showPrice ? `<strong class='barcode-sticker-price'>${escapeHtml(formatVnd(item.priceVnd))}</strong>` : ''}
         </div>
       </article>`;
-      for (let c = 0; c < copies; c += 1) stickers.push(card);
+      for (let c = 0; c < copies; c += 1) {
+        if (stickers.length >= maxStickers) {
+          truncated = true;
+          break;
+        }
+        stickers.push(card);
+      }
+      if (truncated) break;
     }
-    return stickers.join('');
+    return { html: stickers.join(''), truncated, maxStickers };
   }
 
-  function buildBarcodeSheetHtml({ storeName, items, paper = 'a4-65', showStore = true, showPrice = true } = {}) {
-    const safePaper = paper === 'thermal-2up' ? 'thermal-2up' : 'a4-65';
-    const stickersHtml = buildBarcodeStickersHtml(items, { storeName, showStore, showPrice });
-    if (!stickersHtml) {
+  function buildBarcodeStickersHtml(items, options = {}) {
+    return buildBarcodeStickersList(items, options).html;
+  }
+
+  function buildBarcodeSheetHtml({ storeName, items, paper = 'a4-65', showStore = true, showPrice = true, maxStickers = MAX_STICKERS } = {}) {
+    const safePaper = PAPER_FORMATS.has(paper) ? paper : 'a4-65';
+    const built = buildBarcodeStickersList(items, { storeName, showStore, showPrice, maxStickers });
+    if (!built.html) {
       return `<div class='barcode-sheet-empty'>Chưa có sản phẩm nào có mã vạch hoặc mã hàng (SKU) để in tem.</div>`;
     }
-    return `<div class='barcode-print-sheet' data-paper='${safePaper}'>${stickersHtml}</div>`;
+    const note = built.truncated
+      ? `<div class='barcode-sheet-cap-note'>Hiển thị tối đa ${built.maxStickers} tem mỗi lượt in để giữ trình duyệt mượt trên thiết bị di động.</div>`
+      : '';
+    return `${note}<div class='barcode-print-sheet' data-paper='${safePaper}'>${built.html}</div>`;
   }
 
   return {
     computeEan13CheckDigit,
     isValidEan13,
     generateEan13,
+    generateUniqueEan13,
     encodeCode128B,
     renderBarcodeSvg,
     buildBarcodeStickersHtml,
     buildBarcodeSheetHtml,
+    paperFormats: Array.from(PAPER_FORMATS),
+    MAX_STICKERS,
   };
 });
