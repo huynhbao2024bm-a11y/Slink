@@ -405,11 +405,94 @@
     });
   }
 
+  function resolveConflict(scope, id, resolution) {
+    const details = resolution || {};
+    return transaction(['outbox', 'meta', 'cache'], 'readwrite', (tx, done, fail) => {
+      const box = tx.objectStore('outbox'), meta = tx.objectStore('meta'), cache = tx.objectStore('cache');
+      const request = box.get(id);
+      request.onsuccess = () => {
+        const saved = request.result;
+        if (!saved || saved.scope !== scope || saved.state !== 'conflict') {
+          fail(new Error('Chỉ có thể đánh dấu đã xử lý cho chứng từ đang bị xung đột.')); return;
+        }
+        const finish = () => {
+          const nowIso = new Date().toISOString();
+          const record = {
+            ...saved,
+            state: 'acknowledged',
+            result: details.result ? copy(details.result) : saved.result || null,
+            resolution: details.meta ? copy(details.meta) : { resolvedAt: nowIso },
+            issue: null,
+            acknowledgedAt: nowIso,
+          };
+          box.put(record);
+          meta.put({ key: 'epoch|' + scope, value: 'resolved:' + id });
+          meta.delete('lease|' + scope);
+          done(record);
+        };
+        if (Array.isArray(details.freshResponses) && details.freshResponses.length) {
+          if (details.freshResponses.some(row => !row.url?.startsWith('/api/stores/' + encodeURIComponent(saved.storeId) + '/'))) {
+            fail(new Error('Dữ liệu đối chiếu khác cửa hàng.')); return;
+          }
+          const paths = new Set(details.freshResponses.map(row => new URL(row.url, 'https://offline.invalid').pathname));
+          const known = cache.index('scope').getAll(scope);
+          known.onsuccess = () => {
+            known.result.forEach(row => { if (paths.has(new URL(row.url, 'https://offline.invalid').pathname)) cache.delete(row.key); });
+            details.freshResponses.forEach(row => cache.put({ key: scope + '|' + row.url, scope, url: row.url, fetchedAt: row.fetchedAt || new Date().toISOString(), value: copy(row.value) }));
+            finish();
+          };
+          return;
+        }
+        finish();
+      };
+    });
+  }
+
+  function requeueConflict(scope, id, nextSpec) {
+    const spec = nextSpec || {};
+    if (typeof spec.nextKey !== 'string' || spec.nextKey.length < 16 || spec.nextKey.length > 200 || !spec.nextPayload || typeof spec.nextPayload !== 'object') {
+      return Promise.reject(new Error('Thiếu mã thao tác hoặc nội dung mới hợp lệ để xếp lại hàng đợi.'));
+    }
+    return transaction(['outbox', 'meta'], 'readwrite', (tx, done, fail) => {
+      const box = tx.objectStore('outbox'), meta = tx.objectStore('meta');
+      const request = box.get(id);
+      request.onsuccess = () => {
+        const saved = request.result;
+        if (!saved || saved.scope !== scope || saved.state !== 'conflict') {
+          fail(new Error('Chỉ có thể cập nhật và gửi lại chứng từ đang bị xung đột.')); return;
+        }
+        const nextId = scope + '|' + spec.nextKey;
+        const dup = box.get(nextId);
+        dup.onsuccess = () => {
+          if (dup.result && nextId !== id) {
+            fail(new Error('Mã thao tác mới bị trùng với một chứng từ khác trên thiết bị.')); return;
+          }
+          if (nextId !== id) box.delete(id);
+          const nextRecord = {
+            ...saved,
+            id: nextId,
+            key: spec.nextKey,
+            payload: copy(spec.nextPayload),
+            delivery: null,
+            state: 'ready',
+            issue: null,
+            replacedFromKey: saved.key,
+            resolutionNote: typeof spec.note === 'string' ? spec.note.trim() : '',
+          };
+          box.put(nextRecord);
+          meta.put({ key: 'epoch|' + scope, value: 'requeued:' + nextId });
+          meta.delete('lease|' + scope);
+          done(nextRecord);
+        };
+      };
+    });
+  }
+
   async function requestPersistence() {
     try { return Boolean(await globalThis.navigator?.storage?.persist?.()); }
     catch (_) { return false; }
   }
 
   async function close() { const db = await open(); db.close(); databasePromise = null; }
-  return { open, close, scopeKey, getMeta, putMeta, removeMeta, cacheResponse, cachedResponse, responses, clearResponses, lookup, operations, enqueue, claim, settle, confirm, renew, prepareDelivery, acknowledge, acknowledgeConfirmed, replaceResponses, snapshot, release, retry, requestPersistence };
+  return { open, close, scopeKey, getMeta, putMeta, removeMeta, cacheResponse, cachedResponse, responses, clearResponses, lookup, operations, enqueue, claim, settle, confirm, renew, prepareDelivery, acknowledge, acknowledgeConfirmed, replaceResponses, snapshot, release, retry, resolveConflict, requeueConflict, requestPersistence };
 });

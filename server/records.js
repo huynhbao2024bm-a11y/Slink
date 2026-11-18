@@ -915,7 +915,7 @@ function registerRecordRoutes(app, { pool, env }) {
         [storeId, orderId, ['owner', 'manager', 'accountant'].includes(membership.role)]
       );
       const payments = await client.query(
-        `SELECT id, method, status, amount_vnd::text AS amount_vnd, provider_reference, occurred_at
+        `SELECT id, method, status, amount_vnd::text AS amount_vnd, provider, provider_reference, occurred_at
          FROM payments WHERE store_id = $1 AND order_id = $2 ORDER BY occurred_at, id`,
         [storeId, orderId]
       );
@@ -978,6 +978,14 @@ function registerRecordRoutes(app, { pool, env }) {
           internalNotesNextBeforeId: internalNotesTotal > notes.rows.length ? String(notes.rows[0]?.id || '') || null : null,
           tags: tags.rows.map((tag) => ({ key: tag.tag_key, label: tag.tag })),
           occurredAt: item.occurred_at,
+          einvoiceProvider: item.einvoice_provider || null,
+          einvoiceNumber: item.einvoice_number || null,
+          einvoiceLookupCode: item.einvoice_lookup_code || null,
+          einvoiceStatus: item.einvoice_status || 'none',
+          shippingProvider: item.shipping_provider || null,
+          shippingTrackingCode: item.shipping_tracking_code || null,
+          shippingFeeVnd: item.shipping_fee_vnd != null ? String(item.shipping_fee_vnd) : '0',
+          shippingStatus: item.shipping_status || 'none',
           voidRestockWarehouseId: item.void_restock_warehouse_id,
           voidRestockWarehouseName: item.void_restock_warehouse_name,
           items: lines.rows,

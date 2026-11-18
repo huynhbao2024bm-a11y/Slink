@@ -136,12 +136,14 @@ function requireCsrf(request, env) {
 }
 
 async function deliverEmail(env, email, subject, text, developmentUrl) {
-  if (!env.EMAIL_DELIVERY_URL) {
+  const effectiveUrl = env.EMAIL_DELIVERY_URL || (env.RESEND_API_KEY?.trim() ? 'https://api.resend.com/emails' : '');
+  const effectiveToken = env.EMAIL_DELIVERY_TOKEN || env.RESEND_API_KEY || '';
+  if (!effectiveUrl) {
     if (env.NODE_ENV === 'production') throw new ApiError(503, 'email_unavailable', 'Dịch vụ gửi thư chưa được cấu hình.');
     return { delivered: false, developmentUrl };
   }
-  const deliveryUrl = new URL(env.EMAIL_DELIVERY_URL);
-  if (env.NODE_ENV === 'production' && (deliveryUrl.protocol !== 'https:' || !env.EMAIL_DELIVERY_TOKEN || !env.EMAIL_FROM?.trim())) {
+  const deliveryUrl = new URL(effectiveUrl);
+  if (env.NODE_ENV === 'production' && (deliveryUrl.protocol !== 'https:' || !effectiveToken || !env.EMAIL_FROM?.trim())) {
     throw new ApiError(503, 'email_unavailable', 'Dịch vụ gửi thư chưa được cấu hình an toàn.');
   }
   let response;
@@ -151,7 +153,7 @@ async function deliverEmail(env, email, subject, text, developmentUrl) {
       redirect: 'error',
       headers: {
         'content-type': 'application/json',
-        ...(env.EMAIL_DELIVERY_TOKEN ? { authorization: `Bearer ${env.EMAIL_DELIVERY_TOKEN}` } : {}),
+        ...(effectiveToken ? { authorization: `Bearer ${effectiveToken}` } : {}),
       },
       body: JSON.stringify({
         ...(typeof env.EMAIL_FROM === 'string' && env.EMAIL_FROM.trim() ? { from: env.EMAIL_FROM.trim() } : {}),

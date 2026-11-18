@@ -5,7 +5,7 @@
   else root.SlinkMoneyFields=api;
 })(typeof globalThis!=='undefined'?globalThis:this,function(){
   'use strict';
-  const names=new Set(['price','cost','packCostVnd','unitCostVnd','amount','amountVnd','amountReceivedVnd','paid','openingFloatVnd','countedCashVnd','openingBalanceVnd','openingPayableVnd','discount','discountVnd','minimumSubtotalVnd','maximumDiscountVnd']);
+  const names=new Set(['price','cost','packCostVnd','unitCostVnd','refundReceivedVnd','amount','amountVnd','amountReceivedVnd','paid','openingFloatVnd','countedCashVnd','openingBalanceVnd','openingPayableVnd','discount','discountVnd','minimumSubtotalVnd','maximumDiscountVnd']);
   const raw=value=>{const text=String(value??'').trim();return /^\d+(?:[.,]\d{3})*$/.test(text)?text.replace(/[.,]/g,'').replace(/^0+(?=\d)/,''):text;};
   const format=value=>{const text=raw(value);return /^\d+$/.test(text)?text.replace(/\B(?=(\d{3})+(?!\d))/g,'.'):text;};
   function enhance(container){

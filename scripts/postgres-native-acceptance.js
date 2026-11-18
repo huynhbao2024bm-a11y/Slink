@@ -690,7 +690,12 @@ async function run() {
     const excessCustomerPayment = await app.inject({
       method: 'POST', url: customerPaymentUrl,
       headers: { ...writeHeaders, 'idempotency-key': `native-customer-overpay-${suffix}-01` },
-      payload: { amountVnd: '2001', method: 'bank_transfer', note: 'Expected to exceed receivable' },
+      payload: {
+        amountVnd: '2001',
+        method: 'bank_transfer',
+        note: 'Expected to exceed selected receivable',
+        allocations: [{ orderId: 'opening', amountVnd: '2001' }],
+      },
     });
     requireStatus(excessCustomerPayment, 409, 'Customer receivable overpayment rejection');
     assert.equal(excessCustomerPayment.json().error.code, 'payment_exceeds_due');
@@ -698,12 +703,22 @@ async function run() {
       app.inject({
         method: 'POST', url: customerPaymentUrl,
         headers: { ...writeHeaders, 'idempotency-key': `native-customer-race-${suffix}-a` },
-        payload: { amountVnd: '1500', method: 'bank_transfer', note: 'Native competing receipt A' },
+        payload: {
+          amountVnd: '1500',
+          method: 'bank_transfer',
+          note: 'Native competing receipt A',
+          allocations: [{ orderId: 'opening', amountVnd: '1500' }],
+        },
       }),
       app.inject({
         method: 'POST', url: customerPaymentUrl,
         headers: { ...writeHeaders, 'idempotency-key': `native-customer-race-${suffix}-b` },
-        payload: { amountVnd: '1500', method: 'bank_transfer', note: 'Native competing receipt B' },
+        payload: {
+          amountVnd: '1500',
+          method: 'bank_transfer',
+          note: 'Native competing receipt B',
+          allocations: [{ orderId: 'opening', amountVnd: '1500' }],
+        },
       }),
     ]);
     assert.deepEqual(competingCustomerPayments.map((response) => response.statusCode).sort(), [201, 409]);

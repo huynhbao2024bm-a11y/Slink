@@ -98,7 +98,11 @@
 .calm-ui .customer-extra-filters > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; padding: 0 0 20px; }
 .calm-ui .customer-extra-filters .customer-saved-tools, .calm-ui .customer-extra-filters .customer-filter-hint { grid-column: 1/-1; border: 0; padding: 0; background: transparent; }
 .calm-ui .customer-extra-filters :is(.customer-spend-filter span, .customer-saved-select-wrap span, .customer-saved-hint, .customer-filter-hint) { font-size: 13px; line-height: 1.6; color: var(--muted); }
-.calm-ui .topbar { display: none; }
+.calm-ui .topbar { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 12px; height: 58px; padding: 0 32px; background: rgba(255,255,255,.94); border-bottom: 1px solid var(--line); }
+@media (min-width: 1101px) {
+  .calm-ui .topbar .mobile-brand, .calm-ui .topbar .workspace-name { display: none; }
+  .calm-ui .topbar .topbar-left { display: flex; margin-right: auto; }
+}
 .calm-ui .mobile-nav { display: none; }
 .calm-ui .workspace-directory { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 40px; }
 .calm-ui .directory-group h2 { margin: 0 0 8px; color: #5f6c63; font-size: 14px; font-weight: 500; }
@@ -396,8 +400,11 @@
 .calm-ui .product-editor-photo-name [data-photo-status]:empty { display: none; }
 .calm-ui .product-editor-photo-name [data-photo-status] { text-align: center; overflow-wrap: anywhere; }
 .calm-ui .editor-opening-stock, .calm-ui .editor-stock-fields, .calm-ui .product-pack-price { margin-top: 12px; }
-.calm-ui .editor-input-action { display: grid; grid-template-columns: minmax(0, 1fr) 44px; gap: 5px; }
-.calm-ui .editor-input-action .btn { min-height: 44px; padding: 0; }
+.calm-ui .editor-input-action { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: stretch; }
+.calm-ui .editor-input-action:has(> :nth-child(3)) { grid-template-columns: minmax(0, 1fr) auto 44px; }
+.calm-ui .editor-input-action .btn { min-height: 44px; min-width: 44px; padding: 0 12px; white-space: nowrap; }
+.calm-ui .editor-input-action [data-action='scan-product-barcode'],
+.calm-ui .editor-input-action [data-action='generate-product-sku'] { padding: 0; }
 .calm-ui .product-editor .editor-price-warning { color: #903f2c; background: #fff5e9; padding: 9px 10px; border-radius: 6px; }
 .finance-debt-detail { margin-top: 16px; }
 .finance-debt-detail h3 { margin: 20px 0 8px; font-size: 1rem; }
@@ -425,8 +432,8 @@
 .calm-ui .editor-barcode-camera:not([hidden]) { display: grid; justify-items: start; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; }
 .calm-ui .editor-barcode-camera video { width: 100%; max-height: 180px; object-fit: cover; border-radius: 6px; }
 .calm-ui .editor-barcode-camera p { margin: 0; font-size: 14px; }
-.calm-ui .product-editor .modal-footer { display: grid; grid-template-columns: minmax(max-content, 2fr) minmax(0, 3fr); gap: 8px; }
-.calm-ui .product-editor .modal-footer .btn { min-height: 48px; padding-inline: clamp(6px, 2vw, 14px); font-size: 14px; line-height: 1.25; white-space: normal; }
+.calm-ui .product-editor .modal-footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.calm-ui .product-editor .modal-footer .btn { min-height: 48px; padding-inline: clamp(8px, 2vw, 14px); font-size: 14px; line-height: 1.25; white-space: normal; flex: 1 1 auto; }
 .calm-ui .product-editor .modal-discard + .modal-footer { display: none; }
 @media (max-width: 480px) {
   .calm-ui .product-editor .modal-head, .calm-ui .product-editor .modal-body, .calm-ui .product-editor .modal-footer { padding-inline: 12px; }
@@ -642,3 +649,70 @@
 .order-more-actions>summary{cursor:pointer;font-weight:700;min-height:40px;display:flex;align-items:center}
 .order-more-actions>p{color:var(--text-muted,#697972);font-size:.9rem;line-height:1.45;margin:4px 0 12px}
 .order-more-actions-buttons{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+
+/* Finance and catalogue workspaces: full information on desktop, one task at a time on phones. */
+.calm-ui .mobile-task-actions { display: none; }
+.calm-ui .finance-record-panel { min-width: 0; overflow: hidden; }
+.calm-ui .finance-record-panel > .panel-header { padding-bottom: 16px; }
+.calm-ui .finance-list-note { padding: 8px 16px 16px; color: var(--muted); font-size: 13px; }
+.calm-ui .finance-debt-layout { min-width: 0; }
+.calm-ui .finance-debt-layout:has(> :nth-child(2)) { display: grid; grid-template-columns: minmax(280px, .8fr) minmax(0, 1.2fr); gap: 24px; align-items: start; }
+.calm-ui .finance-debt-layout > * { min-width: 0; }
+.calm-ui .finance-debt-detail { margin: 0; }
+.calm-ui .finance-debt-placeholder { padding: 24px; }
+.calm-ui .finance-debt-placeholder h2 { margin: 0 0 8px; font-size: 18px; }
+.calm-ui .finance-debt-placeholder p { max-width: 420px; margin: 0; color: var(--muted); line-height: 1.6; }
+.calm-ui .finance-debt-search { padding: 0 20px 14px; }
+.calm-ui .finance-debt-search .input { min-height: 44px; font-size: 15px; }
+.calm-ui .finance-credit-warning { color: #a3492c !important; font-weight: 650; }
+.calm-ui .product-card-menu-button { width: 44px; height: 44px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 12px; background: #fff; color: var(--primary); }
+.calm-ui .product-card-actions { display: grid; gap: 10px; }
+.calm-ui .product-card-actions > button { min-height: 52px; width: 100%; justify-content: flex-start; font-size: 16px; }
+.calm-ui .product-secondary-actions { display: none; }
+@media (min-width: 1101px) {
+  .calm-ui [data-page='products'] .heading-actions,
+  .calm-ui [data-page='finance'] .heading-actions { justify-content: flex-end; }
+  .calm-ui [data-page='finance'] .finance-tabs { gap: 28px; }
+  .calm-ui [data-page='finance'] .finance-cash-row { grid-template-columns: minmax(0, 1fr) 190px; padding: 14px 20px; }
+  .calm-ui [data-page='finance'] .finance-debt-detail { position: sticky; top: 82px; max-height: calc(100vh - 100px); overflow: auto; }
+}
+@media (max-width: 1100px) {
+  .calm-ui .product-card-menu-button { grid-column: 2; grid-row: 1; align-self: center; }
+}
+@media (max-width: 640px) {
+  .calm-ui [data-page='products'] .page-heading,
+  .calm-ui [data-page='finance'] .page-heading,
+  .calm-ui [data-page='inventory'] .page-heading { margin-bottom: 16px; }
+  .calm-ui [data-page='products'] .page-heading .heading-actions,
+  .calm-ui [data-page='finance'] .page-heading .heading-actions,
+  .calm-ui [data-page='inventory'] .page-heading .heading-actions { display: none; }
+  .calm-ui [data-page='products'],
+  .calm-ui [data-page='finance'],
+  .calm-ui [data-page='inventory'] { padding-bottom: calc(170px + env(safe-area-inset-bottom)); }
+  .calm-ui .mobile-task-actions { position: fixed; z-index: 30; inset: auto 0 calc(64px + env(safe-area-inset-bottom)); display: flex; gap: 10px; padding: 10px 16px; background: rgba(255,255,255,.97); border-top: 1px solid var(--line); box-shadow: 0 -6px 20px #173d2610; }
+  .calm-ui .mobile-task-actions > button { flex: 1; min-width: 0; min-height: 48px; padding: 8px 5px; font-size: 13px; white-space: normal; }
+  .calm-ui[data-page='products'] .toast-stack,
+  .calm-ui[data-page='finance'] .toast-stack,
+  .calm-ui[data-page='inventory'] .toast-stack { bottom: calc(146px + env(safe-area-inset-bottom)); }
+  .calm-ui .product-secondary-actions { display: block; margin: 0 0 16px; }
+  .calm-ui .inventory-secondary-actions { margin-bottom: 8px; }
+  .calm-ui .product-secondary-actions > summary { min-height: 44px; display: flex; align-items: center; color: var(--primary); font-size: 14px; cursor: pointer; }
+  .calm-ui .product-secondary-actions > div { display: grid; gap: 8px; padding: 0 0 12px; }
+  .calm-ui .product-secondary-actions > div > button { min-height: 44px; width: 100%; justify-content: flex-start; font-size: 14px; }
+  .calm-ui .finance-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-bottom: 20px; border: 0; overflow: visible; }
+  .calm-ui .finance-tabs button { min-width: 0; min-height: 48px; padding: 8px 5px; border: 1px solid var(--line); border-radius: 10px; font-size: 13px; line-height: 1.25; text-align: center; white-space: normal; }
+  .calm-ui .finance-tabs button[aria-current] { border-color: #285a40; background: #e9f3eb; }
+  .calm-ui .finance-debt-layout:has(> :nth-child(2)) { display: block; }
+  .calm-ui .finance-debt-detail { margin-top: 16px; }
+  .calm-ui .finance-debt-placeholder { display: none; }
+  .calm-ui .inventory-stats .stat-card:first-child,
+  .calm-ui .inventory-stats .stat-card:last-child:not(:nth-child(3)) { display: none; }
+  .calm-ui .product-mobile-card { grid-template-columns: minmax(0, 1fr) 44px; align-items: start; gap: 8px 12px; }
+  .calm-ui .product-mobile-main { grid-column: 1; grid-row: 1; grid-template-columns: 42px minmax(0, 1fr); gap: 10px; }
+  .calm-ui .product-mobile-main .product-thumb { width: 42px; height: 42px; }
+  .calm-ui .product-mobile-side { grid-column: 2; grid-row: 2; justify-content: flex-start; gap: 2px 12px; }
+  .calm-ui .product-card-menu-button { grid-column: 2; grid-row: 1; align-self: start; }
+  .calm-ui .product-mobile-info strong { line-height: 1.35; }
+  .calm-ui .product-mobile-info small { margin-top: 2px; }
+  .calm-ui .product-mobile-side strong { color: var(--primary); }
+}
