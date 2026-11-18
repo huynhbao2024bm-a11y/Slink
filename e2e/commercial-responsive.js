@@ -389,8 +389,8 @@ async function runViewportAudit(browser, origin, viewport, label) {
     await page.waitForSelector("[data-action='finance-tab']");
     assert.equal(await page.locator("[data-action='finance-tab']").count(), 5, `${label}: owner finance must expose five distinct work areas`);
     for (const [tab, content] of [
-      ['cashbook', 'Sổ thu chi'],
-      ['vouchers', 'Phiếu thu và phiếu chi'],
+      ['cashbook', 'Sổ quỹ thu chi'],
+      ['vouchers', 'Phiếu thu / chi & Chuyển quỹ'],
       ['shifts', 'Tiền mặt trong quầy'],
       ['receivables', 'Tổng cần thu'],
       ['payables', 'Tổng cần trả'],
@@ -403,6 +403,74 @@ async function runViewportAudit(browser, origin, viewport, label) {
         await page.screenshot({ path: path.join(process.env.SLINK_E2E_SCREENSHOT_DIR, `${label}-finance-${tab}.png`) });
       }
     }
+    // 8b. Verify Cashbook fund switcher, internal cash transfer, P&L expense + 'other' counterparty, void reversal & Reports net profit
+    await page.locator("[data-action='finance-tab'][data-tab='cashbook']").click();
+    await page.waitForSelector("[data-action='cashbook-fund'][data-fund='bank']");
+    await page.locator("[data-action='cashbook-fund'][data-fund='bank']").click();
+    await page.waitForTimeout(200);
+    await assertNoHorizontalOverflow(page, `${label}:finance-cashbook-bank`);
+    await page.locator("[data-action='cashbook-fund'][data-fund='all']").click();
+    await page.waitForTimeout(200);
+
+    // Record an operating expense with counterparty 'other' & includeInPnl=true
+    await page.locator("[data-action='new-expense'][data-direction='out']:visible").first().click();
+    await page.waitForSelector(".modal [data-form='cash']");
+    await page.fill(".modal [data-form='cash'] [name='amount']", '150000');
+    await page.selectOption(".modal [data-form='cash'] [name='partyKind']", 'other');
+    await page.fill("#voucher-party-other-name", 'Điện lực EVN');
+    await page.fill(".modal [data-form='cash'] [name='note']", `Tiền điện E2E ${label}`);
+    const [expSaveRes] = await Promise.all([
+      page.waitForResponse((res) => res.url().includes('/cash-movements') && res.request().method() === 'POST'),
+      page.locator(".modal button[type='submit'][form='entity-form']").click(),
+    ]);
+    assert.equal(expSaveRes.status(), 201, `${label}: manual expense with other counterparty must return 201`);
+    await page.waitForTimeout(300);
+
+    // Internal cash transfer cash -> bank (drawer has seeded 150k/pos cash; transfer 20k)
+    await page.locator("[data-finance-content] [data-action='open-cash-transfer']").first().click();
+    await page.waitForSelector(".modal [data-form='cash-transfer']");
+    await page.fill(".modal [data-form='cash-transfer'] [name='amount']", '20000');
+    await page.fill(".modal [data-form='cash-transfer'] [name='note']", 'Nộp quỹ ngân hàng E2E');
+    const [xferRes] = await Promise.all([
+      page.waitForResponse((res) => res.url().includes('/cash-transfers') && res.request().method() === 'POST'),
+      page.locator(".modal button[type='submit'][form='entity-form']").click(),
+    ]);
+    assert.equal(xferRes.status(), 201, `${label}: cash transfer POST must return 201`);
+    await page.waitForTimeout(300);
+
+    // Check Reports displays Net Profit and Operating Expense 150.000
+    await page.locator("#primary-nav [data-route='workspace']:visible, #mobile-nav [data-route='workspace']:visible").first().click();
+    const reportsBtn = page.locator("#view [data-route='reports']");
+    if (!(await reportsBtn.isVisible())) {
+      await page.locator("#view details.directory-fold:has([data-route='reports']) > summary").click();
+    }
+    await reportsBtn.click();
+    await page.waitForSelector('.fv-pnl-grid', { timeout: 15000 });
+    await page.locator('.fv-pnl-grid').getByText('150.000 ₫').first().waitFor();
+    await assertNoHorizontalOverflow(page, `${label}:reports-pnl`);
+
+    // Go back to Finance -> Cashbook and void the 150,000 expense cleanly
+    await page.locator("#primary-nav [data-route='workspace']:visible, #mobile-nav [data-route='workspace']:visible").first().click();
+    const financeBtn = page.locator("#view [data-route='finance']");
+    if (!(await financeBtn.isVisible())) {
+      await page.locator("#view details.directory-fold:has([data-route='finance']) > summary").click();
+    }
+    await financeBtn.click();
+    await page.waitForSelector("[data-action='finance-tab'][data-tab='cashbook']");
+    await page.locator('#finance-cashbook-search').fill(`Tiền điện E2E ${label}`);
+    await page.waitForTimeout(450);
+    await page.locator("[data-finance-content] [data-action='void-cash-movement']:visible").first().click();
+    await page.waitForSelector(".modal [data-form='void-cash-movement']");
+    await page.fill(".modal [data-form='void-cash-movement'] [name='reason']", 'Hủy kiểm thử E2E');
+    const [voidRes] = await Promise.all([
+      page.waitForResponse((res) => res.url().includes('/void') && res.request().method() === 'POST'),
+      page.locator(".modal button[type='submit'][form='entity-form']").click(),
+    ]);
+    assert.equal(voidRes.status(), 201, `${label}: void cash movement POST must return 201`);
+    await page.waitForTimeout(300);
+    await page.locator('#finance-cashbook-search').fill('');
+    await page.waitForTimeout(350);
+
     await page.locator("[data-action='finance-tab'][data-tab='receivables']").click();
     await page.locator('#finance-receivable-search').fill('Khách Giao Hàng');
     await page.locator('[data-finance-content] .activity-list [data-action="finance-receivable"]').first().waitFor();
@@ -440,9 +508,9 @@ async function runViewportAudit(browser, origin, viewport, label) {
     await assertNoHorizontalOverflow(page, `${label}:settings-integrations`);
 
     const assetsOk = await page.evaluate(async () => {
-      const urls = ['/offline-conflict-ui.js', '/supplier-returns-ui.js', '/barcode-tools.js', '/banks-vn.js', '/vietqr-tools.js', '/escpos-printer.js', '/integrations-ui.js'];
+      const urls = ['/offline-conflict-ui.js', '/supplier-returns-ui.js', '/barcode-tools.js', '/banks-vn.js', '/vietqr-tools.js', '/escpos-printer.js', '/integrations-ui.js', '/finance-vouchers-ui.js'];
       const responses = await Promise.all(urls.map((u) => fetch(u, { credentials: 'same-origin' })));
-      return responses.every((r) => r.ok) && Boolean(window.SlinkBarcodeTools) && Boolean(window.SlinkOfflineConflictUI) && Boolean(window.SlinkReturnsExchangeUI) && Boolean(window.SlinkIntegrationsUI) && Boolean(window.SlinkVietQrTools);
+      return responses.every((r) => r.ok) && Boolean(window.SlinkBarcodeTools) && Boolean(window.SlinkOfflineConflictUI) && Boolean(window.SlinkReturnsExchangeUI) && Boolean(window.SlinkIntegrationsUI) && Boolean(window.SlinkVietQrTools) && Boolean(window.SlinkFinanceUI);
     });
     assert.equal(assetsOk, true, 'All standalone commercial UI bundles must be loaded');
     assert.ok(seeded.storeId);

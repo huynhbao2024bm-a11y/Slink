@@ -4,6 +4,7 @@ const { createHash } = require('node:crypto');
 const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
 const { lockActiveCashSession } = require('./cash-register');
+const { insertCashMovement } = require('./cashbook-ledger');
 const { normalizeOffline, beginOffline, recordOffline, expectedPrices } = require('./offline-operations');
 const { calculatePromotion, consumePromotion, promotionCode } = require('./promotions');
 
@@ -358,18 +359,38 @@ function registerSalesRoutes(app, { pool, env }) {
         );
       }
       for (const tender of sale.tenders) {
-        await client.query(
-          `INSERT INTO cash_movements (store_id, direction, category, amount_vnd, method, source_type, source_id, note, actor_user_id, cash_session_id)
-           VALUES ($1, 'in', 'Bán hàng', $2, $3, 'order_payment', $4, $5, $6, $7)`,
-          [storeId, tender.amountReceivedVnd.toString(), tender.method, order.id, `Thu đơn ${orderNumber}`, auth.userId, tender.method === 'cash' ? cashSessionId : null]
-        );
+        await insertCashMovement(client, {
+          storeId,
+          direction: 'in',
+          category: 'Bán hàng',
+          amountVnd: tender.amountReceivedVnd.toString(),
+          method: tender.method,
+          sourceType: 'order_payment',
+          sourceId: order.id,
+          note: `Thu đơn ${orderNumber}`,
+          actorUserId: auth.userId,
+          cashSessionId: tender.method === 'cash' ? cashSessionId : null,
+          counterpartyKind: sale.customerId ? 'customer' : null,
+          counterpartyId: sale.customerId || null,
+          counterpartyName: sale.customerId ? '' : 'Khách lẻ',
+        });
       }
       if (change > 0n) {
-        await client.query(
-          `INSERT INTO cash_movements (store_id, direction, category, amount_vnd, method, source_type, source_id, note, actor_user_id, cash_session_id)
-           VALUES ($1, 'out', 'Tiền thối', $2, 'cash', 'order_change', $3, $4, $5, $6)`,
-          [storeId, change.toString(), order.id, `Thối tiền đơn ${orderNumber}`, auth.userId, cashSessionId]
-        );
+        await insertCashMovement(client, {
+          storeId,
+          direction: 'out',
+          category: 'Tiền thối',
+          amountVnd: change.toString(),
+          method: 'cash',
+          sourceType: 'order_change',
+          sourceId: order.id,
+          note: `Thối tiền đơn ${orderNumber}`,
+          actorUserId: auth.userId,
+          cashSessionId,
+          counterpartyKind: sale.customerId ? 'customer' : null,
+          counterpartyId: sale.customerId || null,
+          counterpartyName: sale.customerId ? '' : 'Khách lẻ',
+        });
       }
       if (sale.customerId) {
         if (total > 0n) {

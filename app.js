@@ -122,6 +122,11 @@
   let financeTopCustomers = [];
   let financeReceivables = { rows: [], total: 0, nextOffset: null, offset: 0, query: '', ready: false, loading: false, error: '', requestNumber: 0 };
   let financeReceivableSearchTimer = null;
+  let financeCashbook = { rows: [], balances: null, total: 0, nextOffset: null, offset: 0, filters: { fund: 'all', direction: '', kind: '', includeInPnl: '', from: '', to: '', q: '' }, ready: false, loading: false, error: '', requestNumber: 0 };
+  let financeCashbookSearchTimer = null;
+  let financeCategories = { rows: [], ready: false, loading: false, requestNumber: 0 };
+  let financePayables = { rows: [], total: 0, totalPayableVnd: '0', nextOffset: null, offset: 0, query: '', onlyOwing: true, ready: false, loading: false, error: '', requestNumber: 0 };
+  let financePayableSearchTimer = null;
   let analyticsData = null;
   let analyticsLoading = false;
   let analyticsError = '';
@@ -1837,6 +1842,12 @@
     financeTopCustomers = [];
     financeReceivables.requestNumber += 1;
     financeReceivables = { rows: [], total: 0, nextOffset: null, offset: 0, query: '', ready: false, loading: false, error: '', requestNumber: financeReceivables.requestNumber };
+    financeCashbook.requestNumber += 1;
+    financeCashbook = { rows: [], balances: null, total: 0, nextOffset: null, offset: 0, filters: { fund: 'all', direction: '', kind: '', includeInPnl: '', from: '', to: '', q: '' }, ready: false, loading: false, error: '', requestNumber: financeCashbook.requestNumber };
+    financeCategories.requestNumber += 1;
+    financeCategories = { rows: [], ready: false, loading: false, requestNumber: financeCategories.requestNumber };
+    financePayables.requestNumber += 1;
+    financePayables = { rows: [], total: 0, totalPayableVnd: '0', nextOffset: null, offset: 0, query: '', onlyOwing: true, ready: false, loading: false, error: '', requestNumber: financePayables.requestNumber };
     financeTab = 'cashbook';
     financeError = '';
     analyticsData = null;
@@ -2179,7 +2190,7 @@
       ]);
       if (!current()) return;
       store.cashbook = result.movements.map(function (row) {
-        return { id: row.source_id, movementId: row.movement_id || [row.source_id, row.method, row.direction].join(':'), orderId: row.order_id, orderNumber: row.order_number, counterparty: row.counterparty, sourceType: row.source_type, local: row.offline_pending === true, type: row.direction, category: row.category, amountVnd: row.amount_vnd, note: row.note, method: row.method, actorName: row.actor_name, cashSessionId: row.cash_session_id, cashSessionOpenedAt: row.cash_session_opened_at, createdAt: row.occurred_at };
+        return { id: row.source_id, movementId: row.movement_id || [row.source_id, row.method, row.direction].join(':'), voucherNumber: row.voucher_number || '', fundType: row.fund_type || '', movementKind: row.movement_kind || 'standard', includeInPnl: row.include_in_pnl === true, voidReason: row.void_reason || '', reversedByMovementId: row.reversed_by_movement_id || null, orderId: row.order_id, orderNumber: row.order_number, counterparty: row.counterparty, sourceType: row.source_type, local: row.offline_pending === true, type: row.direction, category: row.category, amountVnd: row.amount_vnd, note: row.note, method: row.method, actorName: row.actor_name, cashSessionId: row.cash_session_id, cashSessionOpenedAt: row.cash_session_opened_at, createdAt: row.occurred_at };
       });
       store.suppliers = result.suppliers.map(function (row) { return { id: row.id, name: row.name, debtVnd: String(row.balance_vnd || '0'), lastActivityAt: row.last_activity_at, local: row.offline_pending === true }; });
       purchaseHistory = (result.purchases || []).map(mapFinancePurchase);
@@ -2197,6 +2208,9 @@
       financeDataReady = true;
       if (page === 'finance') refreshFinanceBody();
       if (page === 'finance' && financeTab === 'receivables') loadFinanceReceivables(financeReceivables.offset);
+      if (page === 'finance' && ['cashbook', 'vouchers'].includes(financeTab) && store.role !== 'stockkeeper') loadFinanceCashbook(financeCashbook.offset || 0);
+      if (page === 'finance' && (financeTab === 'payables' || store.role === 'stockkeeper')) loadFinancePayables(financePayables.offset || 0);
+      if (['owner', 'manager', 'accountant'].includes(store.role)) loadFinanceCategories();
     } catch (error) {
       if (!current()) return;
       financeLoading = false;
@@ -2232,6 +2246,97 @@
       if (state.requestNumber === requestNumber && authSession === session && store.id === storeId) {
         state.loading = false;
         if (page === 'finance' && financeTab === 'receivables') refreshFinanceBody();
+      }
+    }
+  }
+
+  async function loadFinanceCashbook(offset = 0) {
+    if (!authSession || !store.id || store.role === 'stockkeeper') return;
+    if (offlineState.mode !== 'online') return;
+    const state = financeCashbook;
+    const requestNumber = ++state.requestNumber;
+    const session = authSession, storeId = store.id;
+    const f = state.filters;
+    state.loading = true;
+    state.error = '';
+    if (page === 'finance' && ['cashbook', 'vouchers'].includes(financeTab)) refreshFinanceBody();
+    try {
+      const params = new URLSearchParams({ limit: '50', offset: String(offset) });
+      if (f.fund && f.fund !== 'all') params.set('fund', f.fund);
+      if (f.direction) params.set('direction', f.direction);
+      if (f.kind) params.set('kind', f.kind);
+      if (f.includeInPnl) params.set('includeInPnl', f.includeInPnl);
+      if (f.from) params.set('from', f.from);
+      if (f.to) params.set('to', f.to);
+      if (f.q && f.q.trim()) params.set('q', f.q.trim());
+      const result = await apiRequest(`/api/stores/${encodeURIComponent(storeId)}/finance/cashbook?${params}`);
+      if (state.requestNumber !== requestNumber || authSession !== session || store.id !== storeId) return;
+      state.rows = Array.isArray(result.movements) ? result.movements : [];
+      state.balances = result.balances || null;
+      state.total = Number(result.total || 0);
+      state.nextOffset = result.nextOffset;
+      state.offset = offset;
+      state.ready = true;
+    } catch (error) {
+      if (state.requestNumber !== requestNumber || authSession !== session || store.id !== storeId) return;
+      state.error = error.message || 'Chưa tải được sổ quỹ.';
+      if (error.status === 401) return showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
+    } finally {
+      if (state.requestNumber === requestNumber && authSession === session && store.id === storeId) {
+        state.loading = false;
+        if (page === 'finance' && ['cashbook', 'vouchers'].includes(financeTab)) refreshFinanceBody();
+      }
+    }
+  }
+
+  async function loadFinanceCategories() {
+    if (!authSession || !store.id || !['owner', 'manager', 'accountant'].includes(store.role)) return;
+    if (offlineState.mode !== 'online') return;
+    const state = financeCategories;
+    const requestNumber = ++state.requestNumber;
+    const session = authSession, storeId = store.id;
+    state.loading = true;
+    try {
+      const result = await apiRequest(`/api/stores/${encodeURIComponent(storeId)}/finance/categories?includeArchived=true`);
+      if (state.requestNumber !== requestNumber || authSession !== session || store.id !== storeId) return;
+      state.rows = Array.isArray(result.categories) ? result.categories : [];
+      state.ready = true;
+    } catch (error) {
+      if (state.requestNumber === requestNumber && error.status === 401) {
+        showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
+      }
+    } finally {
+      if (state.requestNumber === requestNumber && authSession === session && store.id === storeId) state.loading = false;
+    }
+  }
+
+  async function loadFinancePayables(offset = 0) {
+    if (!authSession || !store.id || !['owner', 'manager', 'accountant'].includes(store.role)) return;
+    if (offlineState.mode !== 'online') return;
+    const state = financePayables;
+    const requestNumber = ++state.requestNumber;
+    const session = authSession, storeId = store.id, query = state.query, onlyOwing = state.onlyOwing;
+    state.loading = true;
+    state.error = '';
+    if (page === 'finance' && financeTab === 'payables') refreshFinanceBody();
+    try {
+      const params = new URLSearchParams({ limit: '50', offset: String(offset), q: query, onlyOwing: onlyOwing ? 'true' : 'false' });
+      const result = await apiRequest(`/api/stores/${encodeURIComponent(storeId)}/finance/payables?${params}`);
+      if (state.requestNumber !== requestNumber || authSession !== session || store.id !== storeId || state.query !== query || state.onlyOwing !== onlyOwing) return;
+      state.rows = Array.isArray(result.suppliers) ? result.suppliers : [];
+      state.total = Number(result.total || 0);
+      state.totalPayableVnd = String(result.totalPayableVnd || '0');
+      state.nextOffset = result.nextOffset;
+      state.offset = offset;
+      state.ready = true;
+    } catch (error) {
+      if (state.requestNumber !== requestNumber || authSession !== session || store.id !== storeId) return;
+      state.error = error.message || 'Chưa tải được công nợ nhà cung cấp.';
+      if (error.status === 401) return showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
+    } finally {
+      if (state.requestNumber === requestNumber && authSession === session && store.id === storeId) {
+        state.loading = false;
+        if (page === 'finance' && financeTab === 'payables') refreshFinanceBody();
       }
     }
   }
@@ -3614,24 +3719,68 @@
     }).join('');
   }
 
+  function findCashMovementById(id) {
+    const key = String(id || '');
+    const cb = financeCashbook.rows.find(row => String(row.movement_id) === key);
+    if (cb) {
+      return {
+        id: cb.source_id,
+        movementId: cb.movement_id,
+        voucherNumber: cb.voucher_number || '',
+        fundType: cb.fund_type || '',
+        movementKind: cb.movement_kind || 'standard',
+        includeInPnl: cb.include_in_pnl === true,
+        voidReason: cb.void_reason || '',
+        reversedByMovementId: cb.reversed_by_movement_id || null,
+        reversesMovementId: cb.reverses_movement_id || null,
+        orderId: cb.order_id,
+        orderNumber: cb.order_number,
+        counterparty: cb.counterparty,
+        sourceType: cb.source_type,
+        local: false,
+        type: cb.direction,
+        category: cb.category,
+        amountVnd: cb.amount_vnd,
+        note: cb.note,
+        method: cb.method,
+        actorName: cb.actor_name,
+        cashSessionId: cb.cash_session_id,
+        cashSessionOpenedAt: cb.cash_session_opened_at,
+        createdAt: cb.occurred_at,
+      };
+    }
+    return store.cashbook.find(row => String(row.movementId) === key) || null;
+  }
+
   function openCashMovement(id) {
-    const movement = store.cashbook.find(row => String(row.movementId) === String(id));
+    const movement = findCashMovementById(id);
     if (!movement) return;
-    const direction = movement.type === 'in' ? 'Khoản thu' : 'Khoản chi';
+    const canRecord = ['owner', 'manager', 'accountant'].includes(store.role);
+    const direction = movement.movementKind === 'transfer' ? 'Chuyển quỹ nội bộ' : movement.movementKind === 'reversal' ? 'Phiếu đảo / hủy' : movement.type === 'in' ? 'Khoản thu' : 'Khoản chi';
     const sourceId = esc(movement.id || '');
     const orderId = movement.orderId || (['order_payment', 'order_change'].includes(movement.sourceType) ? movement.id : '');
     const order = orderId && canAccessRoute('orders');
     const purchase = movement.sourceType === 'purchase_payment' && purchaseHistory.some(row => row.id === movement.id);
+    const voidable = window.SlinkFinanceUI && window.SlinkFinanceUI.canVoidMovement(movement, canRecord);
+    const voidBtn = voidable ? `<button class='btn btn-secondary finance-quick-out' type='button' data-action='void-cash-movement' data-id='${esc(movement.movementId)}'>Hủy / Đảo phiếu</button>` : '';
     const source = order ? `<button class='btn btn-primary' data-action='order-detail' data-id='${esc(orderId)}'>Xem đơn bán</button>`
       : purchase ? `<button class='btn btn-primary' data-action='purchase-detail' data-id='${sourceId}'>Xem phiếu nhập</button>` : '';
-    const rows = [['Ngày giờ', humanDate(movement.createdAt, true)], ['Phương thức', cashMethodName(movement.method)], ['Người ghi', movement.actorName || 'Nhân viên']];
+    const rows = [];
+    if (movement.voucherNumber) rows.push(['Mã chứng từ', movement.voucherNumber]);
+    rows.push(['Ngày giờ', humanDate(movement.createdAt, true)]);
+    rows.push(['Quỹ', movement.fundType === 'cash' ? 'Tiền mặt' : movement.fundType === 'bank' ? 'Ngân hàng' : cashMethodName(movement.method)]);
+    rows.push(['Phương thức', cashMethodName(movement.method)]);
+    rows.push(['Hạch toán KQKD', movement.includeInPnl ? 'Có tính Lãi/Lỗ' : 'Không tính Lãi/Lỗ']);
+    rows.push(['Người ghi', movement.actorName || 'Nhân viên']);
     if (movement.cashSessionOpenedAt) rows.push(['Ca mở', humanDate(movement.cashSessionOpenedAt, true)]);
     if (movement.counterparty?.name) rows.push([movement.type === 'in' ? 'Người nộp tiền' : 'Người nhận tiền', movement.counterparty.name]);
+    if (movement.voidReason) rows.push(['Lý do hủy', movement.voidReason]);
+    if (movement.reversedByMovementId) rows.push(['Trạng thái', 'Đã bị hủy bởi bút toán đảo']);
     if (movement.note) rows.push(['Ghi chú', movement.note]);
     if (movement.local) rows.push(['Chứng từ', 'Đã lưu trên máy']);
     const body = `<div class='checkout-total'><span>${esc(cashMovementTitle(movement))}</span><strong>${moneyVndText(movement.amountVnd)}</strong></div>
       ${rows.map(([label, value]) => `<div class='detail-line'><span>${label}</span><strong>${esc(value)}</strong></div>`).join('')}`;
-    showModal(direction, '', body, `<button class='btn btn-secondary' data-action='close-modal'>Đóng</button>${source}`);
+    showModal(direction, '', body, `<button class='btn btn-secondary' data-action='close-modal'>Đóng</button>${voidBtn}${source}`);
   }
 
   function renderReceivables() {
@@ -3807,7 +3956,17 @@
     const canManageSuppliers = canRecord || isStockkeeper;
     const canReceivePurchases = canManageSuppliers;
     if (isStockkeeper || (canViewFullFinance && financeTab === 'payables')) {
-      return renderPayables(canViewFullFinance, canManageSuppliers, canReceivePurchases) + `<details class='work-details' data-finance-fold='purchase-history'><summary>Đặt hàng và lịch sử nhập hàng</summary>${purchaseOrderPanel()}${purchaseHistoryPanel()}</details>`;
+      const payablesHtml = canViewFullFinance && window.SlinkFinanceUI && offlineState.mode === 'online'
+        ? window.SlinkFinanceUI.renderPayablesPanel({
+          state: financePayables,
+          summaryTotalVnd: financeDataReady ? financeSummary.supplierPayableVnd : null,
+          canViewFullFinance,
+          canManageSuppliers,
+          canReceivePurchases,
+          fallbackSuppliers: store.suppliers,
+        })
+        : renderPayables(canViewFullFinance, canManageSuppliers, canReceivePurchases);
+      return payablesHtml + `<details class='work-details' data-finance-fold='purchase-history'><summary>Đặt hàng và lịch sử nhập hàng</summary>${purchaseOrderPanel()}${purchaseHistoryPanel()}</details>`;
     }
     if (canViewFullFinance && financeTab === 'receivables') return renderReceivables();
     const cashSession = cashRegisterState.session;
@@ -3842,10 +4001,27 @@
     const metrics = canViewFullFinance ? `<div class='stat-grid finance-today'><article class='stat-card'><div class='stat-label'>${financeSummary.periodDate || offlineState.mode !== 'online' || offlineState.pending ? 'Thu' + (financeSummary.periodDate ? ' ' + financeSummary.periodDate : '') + ' · trên máy' : 'Đã thu hôm nay'}</div><div class='stat-value'>${financeDataReady ? moneyVndText(financeSummary.todayInVnd) : '—'}</div></article><article class='stat-card'><div class='stat-label'>${financeSummary.periodDate || offlineState.mode !== 'online' || offlineState.pending ? 'Chi' + (financeSummary.periodDate ? ' ' + financeSummary.periodDate : '') + ' · trên máy' : 'Đã chi hôm nay'}</div><div class='stat-value'>${financeDataReady ? moneyVndText(financeSummary.todayOutVnd) : '—'}</div></article></div>` : '';
     if (financeTab === 'shifts' || store.role === 'cashier') return cashSessionPanel;
     if (financeTab === 'vouchers' && canRecord) {
+      if (window.SlinkFinanceUI && offlineState.mode === 'online') {
+        return window.SlinkFinanceUI.renderVouchersPanel({
+          cashbookState: financeCashbook,
+          fallbackRows: store.cashbook,
+          canRecord,
+          humanDate,
+        });
+      }
       const vouchers = store.cashbook.filter(row => row.sourceType === 'manual_cash_movement');
       return `<section class='panel finance-record-panel'><div class='panel-header'><div><h2>Phiếu thu và phiếu chi</h2><p>Phiếu ghi tay trong ${number(store.cashbook.length)} giao dịch gần nhất</p></div></div>
         <div class='finance-cash-list'>${cashRows(vouchers) || `<div class='empty-state'><strong>${financeDataReady ? 'Chưa có phiếu ghi tay gần đây' : 'Đang tải phiếu thu chi…'}</strong></div>`}</div>
         ${financeMovementTotal > store.cashbook.length ? `<p class='finance-list-note'>Sổ quỹ còn giao dịch cũ hơn; phần này chỉ hiển thị dữ liệu đã tải.</p>` : ''}</section>`;
+    }
+    if (canViewCashbook && window.SlinkFinanceUI && offlineState.mode === 'online') {
+      return window.SlinkFinanceUI.renderCashbookPanel({
+        state: financeCashbook,
+        canViewFullFinance,
+        canRecord,
+        canExport: canExportData(),
+        humanDate,
+      });
     }
     const cashbook = canViewCashbook ? `<section class='panel finance-record-panel' data-tour-target='finance-register'><div class='panel-header'><div><h2>Sổ thu chi</h2><p>${number(store.cashbook.length)} giao dịch gần nhất${financeMovementTotal > store.cashbook.length ? ` trên ${number(financeMovementTotal)}` : ''}</p></div>${canExportData() ? `<button type='button' class='link-button' data-action='open-export'>Xuất CSV</button>` : ''}</div>
       <div class='finance-cash-list'>${cashRows(store.cashbook) || `<div class='empty-state'><strong>${!financeDataReady ? (financeError ? 'Chưa tải được sổ thu chi' : 'Đang tải sổ thu chi…') : 'Chưa có giao dịch'}</strong></div>`}</div></section>` : '';
@@ -3863,25 +4039,38 @@
     const active = document.activeElement;
     const focusAction = body.contains(active) ? active.dataset.action : '';
     const focusId = focusAction && active.dataset.id;
-    const focusInput = body.contains(active) && active.id === 'finance-receivable-search' ? { start: active.selectionStart, end: active.selectionEnd } : null;
+    const focusFund = focusAction === 'cashbook-fund' ? active.dataset.fund : '';
+    const focusFilterKey = body.contains(active) ? active.dataset?.cashbookFilter : '';
+    const focusCheckboxId = body.contains(active) && active.id === 'finance-payable-only-owing' ? active.id : '';
+    const preservedSearchIds = ['finance-receivable-search', 'finance-cashbook-search', 'finance-payable-search'];
+    const focusInput = body.contains(active) && preservedSearchIds.includes(active.id) ? { id: active.id, start: active.selectionStart, end: active.selectionEnd } : null;
     const focusedSummary = body.contains(active) && active.matches('summary') ? active.parentElement : null;
     const openDetails = new Set(Array.from(body.querySelectorAll('details[data-finance-fold][open]'), node => node.dataset.financeFold));
     body.innerHTML = financeBody();
     body.querySelectorAll('details[data-finance-fold]').forEach(node => { node.open = openDetails.has(node.dataset.financeFold); });
     enhanceRecordLists(body);
     if (focusInput) {
-      const input = body.querySelector('#finance-receivable-search');
+      const input = body.querySelector('#' + focusInput.id);
       if (input) { input.focus({ preventScroll: true }); if (focusInput.start !== null) input.setSelectionRange(focusInput.start, focusInput.end); }
+    } else if (focusFilterKey) {
+      body.querySelector(`[data-cashbook-filter='${focusFilterKey}']`)?.focus({ preventScroll: true });
+    } else if (focusCheckboxId) {
+      body.querySelector('#' + focusCheckboxId)?.focus({ preventScroll: true });
     }
-    if (focusAction) Array.from(body.querySelectorAll('[data-action]')).find(node => node.dataset.action === focusAction && node.dataset.id === focusId)?.focus({ preventScroll: true });
-    else if (focusedSummary?.dataset.financeFold) Array.from(body.querySelectorAll('details[data-finance-fold]')).find(node => node.dataset.financeFold === focusedSummary.dataset.financeFold)?.querySelector('summary')?.focus({ preventScroll: true });
+    if (focusAction === 'cashbook-fund' && focusFund) {
+      body.querySelector(`[data-action='cashbook-fund'][data-fund='${focusFund}']`)?.focus({ preventScroll: true });
+    } else if (focusAction) {
+      Array.from(body.querySelectorAll('[data-action]')).find(node => node.dataset.action === focusAction && node.dataset.id === focusId)?.focus({ preventScroll: true });
+    } else if (focusedSummary?.dataset.financeFold) {
+      Array.from(body.querySelectorAll('details[data-finance-fold]')).find(node => node.dataset.financeFold === focusedSummary.dataset.financeFold)?.querySelector('summary')?.focus({ preventScroll: true });
+    }
   }
 
   function renderFinance() {
     const stockkeeper = store.role === 'stockkeeper';
     const canRecord = ['owner', 'manager', 'accountant'].includes(store.role);
     const actions = stockkeeper ? `<button class='btn btn-secondary' data-action='new-purchase-order'>＋ Đặt hàng</button><button class='btn btn-primary' data-action='receive-stock'>＋ Nhập hàng</button>`
-      : canRecord ? `<button class='btn btn-primary' data-action='new-expense' data-direction='in'>＋ Thu tiền</button><button class='btn btn-secondary finance-quick-out' data-action='new-expense' data-direction='out'>− Chi tiền</button>` : '';
+      : canRecord ? `<button class='btn btn-primary' data-action='new-expense' data-direction='in'>＋ Thu tiền</button><button class='btn btn-secondary finance-quick-out' data-action='new-expense' data-direction='out'>− Chi tiền</button><button class='btn btn-secondary' data-action='open-cash-transfer'>⇄ Chuyển quỹ</button>` : '';
     const heading = pageHeading(stockkeeper ? 'Nhập hàng' : 'Thu chi', '', actions);
     const tabOptions = canRecord ? [['cashbook', 'Sổ quỹ'], ['vouchers', 'Phiếu thu / chi'], ['shifts', 'Ca & két tiền'], ['receivables', 'Khách nợ'], ['payables', 'Nhà cung cấp']]
       : store.role === 'cashier' ? [['shifts', 'Ca tiền mặt'], ['cashbook', 'Giao dịch']] : [];
@@ -6838,41 +7027,80 @@
   function voucherCategories(direction, current) {
     const names = direction === 'in' ? ['Thu khác', 'Góp vốn', 'Hoàn lại chi phí'] : ['Vận hành', 'Điện nước', 'Thuê mặt bằng', 'Nhập hàng', 'Hoàn tiền', 'Chi khác'];
     if (current && !names.includes(current)) names.push(current);
-    return names.map(name => `<option ${current === name ? 'selected' : ''}>${esc(name)}</option>`).join('');
+    return names.map(name => `<option value='${esc(name)}' data-default-pnl='${/góp vốn|rút vốn/i.test(name) ? '0' : '1'}' ${current === name ? 'selected' : ''}>${esc(name)}</option>`).join('');
+  }
+
+  function voucherCategoryOptions(direction, currentName, currentId) {
+    const active = (financeCategories.rows || [])
+      .filter(cat => cat.status === 'active' && (cat.direction === direction || cat.direction === 'both'))
+      .sort((a, b) => (a.direction === direction ? 0 : 1) - (b.direction === direction ? 0 : 1));
+    if (!active.length) return voucherCategories(direction, currentName);
+    const hasMatch = active.some(cat => (currentId && cat.id === currentId) || (!currentId && currentName && cat.name === currentName));
+    const options = active.map((cat, idx) => {
+      const selected = hasMatch ? (currentId ? cat.id === currentId : cat.name === currentName) : idx === 0;
+      return `<option value='${esc(cat.name)}' data-category-id='${esc(cat.id)}' data-default-pnl='${cat.default_include_in_pnl ? '1' : '0'}' ${selected ? 'selected' : ''}>${esc(cat.name)}</option>`;
+    }).join('');
+    if (!hasMatch && currentName) {
+      return options + `<option value='${esc(currentName)}' data-category-id='${esc(currentId || '')}' data-default-pnl='1' selected>${esc(currentName)}</option>`;
+    }
+    return options;
   }
 
   function openExpense(direction) {
     const pending = loadPendingCash();
     const disabled = pending ? 'disabled' : '';
-    const payload = pending ? pending.payload : { direction: direction === 'in' ? 'in' : 'out', amountVnd: '', category: direction === 'in' ? 'Thu khác' : 'Vận hành', method: 'cash', note: '' };
+    const payload = pending ? pending.payload : { direction: direction === 'in' ? 'in' : 'out', amountVnd: '', category: direction === 'in' ? 'Thu nhập khác' : 'Chi phí vận hành khác', categoryId: '', method: 'cash', note: '' };
     const party = payload.counterparty;
+    const isOtherParty = party?.kind === 'other';
+    const matchingCats = (financeCategories.rows || [])
+      .filter(cat => cat.status === 'active' && (cat.direction === payload.direction || cat.direction === 'both'))
+      .sort((a, b) => (a.direction === payload.direction ? 0 : 1) - (b.direction === payload.direction ? 0 : 1));
+    const initialCat = matchingCats.find(cat => (payload.categoryId && cat.id === payload.categoryId) || cat.name === payload.category) || matchingCats[0];
+    const initialPnl = typeof payload.includeInPnl === 'boolean' ? payload.includeInPnl : (initialCat ? Boolean(initialCat.default_include_in_pnl) : true);
     const form = `<form id='entity-form' data-form='cash'><div class='form-grid'>
       <label class='form-field full'><span class='input-label'>Số tiền (đ) *</span><input class='input finance-voucher-amount' name='amount' type='number' min='1' step='1' required value='${esc(payload.amountVnd)}' placeholder='0' ${disabled}/></label>
       <label class='form-field'><span class='input-label'>Loại giao dịch</span><select class='input' name='type' ${disabled}><option value='in' ${payload.direction === 'in' ? 'selected' : ''}>Phiếu thu</option><option value='out' ${payload.direction === 'out' ? 'selected' : ''}>Phiếu chi</option></select></label>
-      <label class='form-field'><span class='input-label'>Khoản mục</span><select class='input' name='category' ${disabled}>${voucherCategories(payload.direction, payload.category)}</select></label>
-      <label class='form-field'><span class='input-label'>Phương thức</span><select class='input' name='method' ${disabled}>${['cash', 'bank_transfer', 'bank_qr', 'card', 'other'].filter(value => ['cash', 'bank_transfer'].includes(value) || value === payload.method).map(value => `<option value='${value}' ${payload.method === value ? 'selected' : ''}>${esc(cashMethodName(value))}</option>`).join('')}</select></label>
-      <label class='form-field'><span class='input-label' data-voucher-party-label>${payload.direction === 'in' ? 'Người nộp tiền' : 'Người nhận tiền'}</span><select class='input' name='partyKind' ${disabled}><option value=''>Không chọn</option>${[['customer', 'Khách hàng'], ['supplier', 'Nhà cung cấp'], ['staff', 'Nhân viên']].map(([value, label]) => `<option value='${value}' ${party?.kind === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
-      <div class='form-field full finance-party' data-voucher-party ${party ? '' : 'hidden'}><input class='input' id='voucher-party-search' name='partySearch' type='search' maxlength='80' autocomplete='off' aria-label='Tìm theo tên' placeholder='Tìm theo tên' value='${esc(party?.name || '')}' ${disabled}/><div class='finance-party-options' data-voucher-options></div></div>
+      <label class='form-field'><span class='input-label'>Khoản mục</span><select class='input' name='category' ${disabled}>${voucherCategoryOptions(payload.direction, payload.category, payload.categoryId)}</select></label>
+      <label class='form-field'><span class='input-label'>Phương thức</span><select class='input' name='method' ${disabled}>${['cash', 'bank_transfer', 'bank_qr', 'card', 'other'].map(value => `<option value='${value}' ${payload.method === value ? 'selected' : ''}>${esc(cashMethodName(value))}</option>`).join('')}</select></label>
+      <label class='form-field'><span class='input-label' data-voucher-party-label>${payload.direction === 'in' ? 'Người nộp tiền' : 'Người nhận tiền'}</span><select class='input' name='partyKind' ${disabled}><option value=''>Không chọn</option>${[['customer', 'Khách hàng'], ['supplier', 'Nhà cung cấp'], ['staff', 'Nhân viên'], ['other', 'Đối tượng khác']].map(([value, label]) => `<option value='${value}' ${party?.kind === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+      <div class='form-field full finance-party' data-voucher-party ${party && !isOtherParty ? '' : 'hidden'}><input class='input' id='voucher-party-search' name='partySearch' type='search' maxlength='80' autocomplete='off' aria-label='Tìm theo tên' placeholder='Tìm theo tên' value='${esc(!isOtherParty ? (party?.name || '') : '')}' ${disabled}/><div class='finance-party-options' data-voucher-options></div></div>
+      <label class='form-field full' data-voucher-party-other ${isOtherParty ? '' : 'hidden'}><span class='input-label'>Tên đối tượng khác *</span><input class='input' id='voucher-party-other-name' name='partyOtherName' maxlength='80' placeholder='Ví dụ: EVN, Chủ mặt bằng, Grab…' value='${esc(isOtherParty ? (party?.name || '') : '')}' ${disabled}/></label>
+      <label class='fv-checkbox-inline full'><input type='checkbox' name='includeInPnl' ${initialPnl ? 'checked' : ''} ${disabled}/><span>Hạch toán vào kết quả kinh doanh (Lãi/Lỗ)</span></label>
       <label class='form-field full'><span class='input-label'>Ghi chú</span><textarea class='input finance-reminder-text' name='note' rows='2' maxlength='300' placeholder='Không bắt buộc' ${disabled}>${esc(payload.note)}</textarea></label></div>
-      ${pending ? `<p class='modal-note'>Phiếu đang chờ xác nhận. Gửi lại cùng nội dung để tránh ghi hai lần.</p>` : '<p class="modal-note">Để thu hoặc trả nợ, dùng mục Cần thu hoặc Cần trả.</p>'}</form>`;
+      ${pending ? `<p class='modal-note'>Phiếu đang chờ xác nhận. Gửi lại cùng nội dung để tránh ghi hai lần.</p>` : '<p class="modal-note">Để thu hoặc trả nợ, dùng mục Khách nợ hoặc Nhà cung cấp.</p>'}</form>`;
     showModal(pending ? 'Kiểm tra phiếu đang chờ' : payload.direction === 'in' ? 'Thu tiền' : 'Chi tiền', '', form, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Hủy</button><button class='btn btn-primary' type='submit' form='entity-form'>${pending ? 'Thử lại phiếu' : 'Lưu phiếu'}</button>`);
     const element = modal.querySelector('[data-form="cash"]');
     const kind = element.elements.partyKind;
     const search = element.elements.partySearch;
+    const otherWrap = element.querySelector('[data-voucher-party-other]');
+    const otherInput = element.elements.partyOtherName;
     const results = element.querySelector('[data-voucher-options]');
     element.cashCounterparty = party;
     if (pending) return;
+    if (!financeCategories.ready && offlineState.mode === 'online') {
+      const gen = modalGeneration;
+      loadFinanceCategories().then(() => {
+        if (gen !== modalGeneration || modal.hidden || !element.isConnected) return;
+        const catSel = element.elements.category;
+        const pnlBox = element.elements.includeInPnl;
+        catSel.innerHTML = voucherCategoryOptions(element.elements.type.value, catSel.value, '');
+        const opt = catSel.selectedOptions[0];
+        if (opt && opt.dataset.defaultPnl !== undefined && pnlBox) pnlBox.checked = opt.dataset.defaultPnl === '1';
+      });
+    }
     let timer, sequence = 0;
     function findPeople() {
       clearTimeout(timer);
       const request = ++sequence;
       const type = kind.value;
-      const query = search.value.trim();
       element.cashCounterparty = null;
       search.setCustomValidity('');
-      element.querySelector('[data-voucher-party]').hidden = !type;
+      if (otherInput) otherInput.setCustomValidity('');
+      if (otherWrap) otherWrap.hidden = type !== 'other';
+      element.querySelector('[data-voucher-party]').hidden = !type || type === 'other';
       results.replaceChildren();
-      if (!type) return;
+      if (!type || type === 'other') return;
+      const query = search.value.trim();
       function renderPeople(people, empty = '') {
         results.innerHTML = people.map(person => `<button type='button' class='link-button' data-voucher-option='${esc(person.id)}'>${esc(person.name)}${person.detail ? `<small>${esc(person.detail)}</small>` : ''}</button>`).join('') || (empty ? `<small role='status'>${empty}</small>` : '');
         results.people = people;
@@ -6893,7 +7121,7 @@
         }
       }, 180);
     }
-    kind.addEventListener('change', () => { search.value = ''; findPeople(); if (kind.value) search.focus(); });
+    kind.addEventListener('change', () => { search.value = ''; if (otherInput) otherInput.value = ''; findPeople(); if (kind.value === 'other' && otherInput) otherInput.focus(); else if (kind.value) search.focus(); });
     search.addEventListener('input', findPeople);
     results.addEventListener('click', event => {
       const person = results.people?.find(row => row.id === event.target.closest('[data-voucher-option]')?.dataset.voucherOption);
@@ -6904,12 +7132,54 @@
       results.replaceChildren();
       search.focus();
     });
+    element.elements.category.addEventListener('change', () => {
+      const opt = element.elements.category.selectedOptions[0];
+      if (opt && opt.dataset.defaultPnl !== undefined && element.elements.includeInPnl) {
+        element.elements.includeInPnl.checked = opt.dataset.defaultPnl === '1';
+      }
+    });
     element.elements.type.addEventListener('change', event => {
       const incoming = event.target.value === 'in';
-      element.elements.category.innerHTML = voucherCategories(event.target.value);
+      element.elements.category.innerHTML = voucherCategoryOptions(event.target.value, '', '');
+      const opt = element.elements.category.selectedOptions[0];
+      if (opt && opt.dataset.defaultPnl !== undefined && element.elements.includeInPnl) {
+        element.elements.includeInPnl.checked = opt.dataset.defaultPnl === '1';
+      }
       element.querySelector('[data-voucher-party-label]').textContent = incoming ? 'Người nộp tiền' : 'Người nhận tiền';
       modal.querySelector('#modal-title').textContent = incoming ? 'Thu tiền' : 'Chi tiền';
     });
+  }
+
+  function openCashTransfer() {
+    if (!window.SlinkFinanceUI) return;
+    if (offlineState.mode !== 'online') return toast('Cần kết nối mạng', 'Chuyển quỹ nội bộ cần thực hiện khi trực tuyến.', 'error');
+    const body = window.SlinkFinanceUI.renderTransferModalHtml();
+    showModal('Chuyển quỹ nội bộ', 'Chuyển tiền qua lại giữa quỹ Tiền mặt và Ngân hàng.', body, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Hủy</button><button class='btn btn-primary' type='submit' form='entity-form'>Xác nhận chuyển</button>`);
+    const form = modal.querySelector('[data-form="cash-transfer"]');
+    if (form) {
+      form.elements.fromFund.addEventListener('change', () => {
+        form.elements.toFund.value = form.elements.fromFund.value === 'cash' ? 'bank' : 'cash';
+      });
+      form.elements.toFund.addEventListener('change', () => {
+        form.elements.fromFund.value = form.elements.toFund.value === 'cash' ? 'bank' : 'cash';
+      });
+    }
+  }
+
+  function openVoidCashMovement(id) {
+    if (!window.SlinkFinanceUI) return;
+    if (offlineState.mode !== 'online') return toast('Cần kết nối mạng', 'Hủy chứng từ cần thực hiện khi trực tuyến.', 'error');
+    const movement = findCashMovementById(id);
+    if (!movement) return toast('Không tìm thấy chứng từ', 'Hãy tải lại sổ quỹ và thử lại.', 'error');
+    const body = window.SlinkFinanceUI.renderVoidMovementModalHtml(movement);
+    showModal('Hủy / Đảo phiếu thu chi', '', body, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button><button class='btn btn-primary finance-quick-out' type='submit' form='entity-form'>Xác nhận hủy phiếu</button>`);
+  }
+
+  async function openCashCategoriesModal() {
+    if (!window.SlinkFinanceUI) return;
+    if (!financeCategories.ready && offlineState.mode === 'online') await loadFinanceCategories();
+    const body = window.SlinkFinanceUI.renderCategoriesModalHtml(financeCategories.rows);
+    showModal('Quản lý khoản mục thu chi', 'Khoản mục giúp phân loại chi phí vận hành và tự động tính Lãi/Lỗ.', body, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button><button class='btn btn-primary' type='submit' form='entity-form'>Thêm khoản mục</button>`);
   }
 
   function openCashSessionForm(returnFlow) {
@@ -9709,22 +9979,37 @@
       const data = new FormData(form);
       const amountVnd = Number(moneyInputRaw(data.get('amount')));
       if (!Number.isSafeInteger(amountVnd) || amountVnd <= 0) return toast('Số tiền không hợp lệ', 'Nhập số tiền bằng VND nguyên dương.', 'error');
-      if (data.get('partyKind') && !form.cashCounterparty) {
+      const partyKind = String(data.get('partyKind') || '');
+      let counterparty = form.cashCounterparty || null;
+      if (partyKind === 'other') {
+        const otherName = String(data.get('partyOtherName') || '').trim();
+        if (!otherName) {
+          const otherField = form.elements.partyOtherName;
+          if (otherField) { otherField.setCustomValidity('Nhập tên đối tượng thu chi.'); otherField.reportValidity(); }
+          return;
+        }
+        counterparty = { kind: 'other', name: otherName };
+      } else if (partyKind && !counterparty) {
         const search = form.elements.partySearch;
         search.setCustomValidity('Chọn một người trong danh sách hoặc chọn Không chọn.');
         search.reportValidity();
         return;
       }
+      const catOption = form.elements.category?.selectedOptions?.[0];
+      const categoryId = catOption?.dataset?.categoryId || '';
+      const includeInPnl = Boolean(form.elements.includeInPnl?.checked);
       pending = {
         storeId: store.id,
         key: newIdempotencyKey(),
         payload: { _slinkOfflineVersion: 1,
           direction: data.get('type') === 'in' ? 'in' : 'out',
           amountVnd: amountVnd,
-          category: String(data.get('category') || 'Vận hành'),
+          category: String(data.get('category') || 'Chi phí khác'),
+          ...(categoryId ? { categoryId } : {}),
+          includeInPnl,
           method: String(data.get('method') || 'cash'),
           note: String(data.get('note') || '').trim(),
-          ...(form.cashCounterparty ? { counterparty: form.cashCounterparty } : {}),
+          ...(counterparty ? { counterparty } : {}),
         },
       };
     }
@@ -9748,6 +10033,106 @@
       }
       toast('Chưa lưu được phiếu thu chi', error.message, 'error');
       if (submitButton && !modal.hidden) submitButton.disabled = false;
+    }
+  }
+
+  async function saveCashTransfer(form) {
+    const data = new FormData(form);
+    const fromFund = String(data.get('fromFund') || '');
+    const toFund = String(data.get('toFund') || '');
+    const amountVnd = Number(moneyInputRaw(data.get('amount')));
+    if (!['cash', 'bank'].includes(fromFund) || !['cash', 'bank'].includes(toFund) || fromFund === toFund) {
+      return toast('Quỹ không hợp lệ', 'Chọn 2 quỹ khác nhau (Tiền mặt và Ngân hàng).', 'error');
+    }
+    if (!Number.isSafeInteger(amountVnd) || amountVnd <= 0) return toast('Số tiền không hợp lệ', 'Nhập số tiền VND nguyên dương.', 'error');
+    const submitButton = modal.querySelector('button[type="submit"][form="entity-form"]');
+    if (submitButton) submitButton.disabled = true;
+    const idempotencyKey = form.dataset.idempotencyKey || (form.dataset.idempotencyKey = newIdempotencyKey());
+    try {
+      const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/cash-transfers`, {
+        method: 'POST',
+        headers: { 'idempotency-key': idempotencyKey },
+        body: { fromFund, toFund, amountVnd, bankMethod: String(data.get('bankMethod') || 'bank_transfer'), note: String(data.get('note') || '').trim() },
+      });
+      closeModal();
+      await loadFinancePage();
+      toast('Đã chuyển quỹ nội bộ', `${result.transfer.voucherNumber} · ${money(Number(result.transfer.amountVnd))}`);
+    } catch (error) {
+      if (error.status === 401) showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
+      else {
+        if (error.status >= 400 && error.status < 500 && !['idempotency_conflict', 'request_in_progress'].includes(error.code)) {
+          delete form.dataset.idempotencyKey;
+        }
+        toast('Chưa chuyển được quỹ', error.message, 'error');
+      }
+      if (submitButton && !modal.hidden) submitButton.disabled = false;
+    }
+  }
+
+  async function saveVoidCashMovement(form) {
+    const id = form.dataset.id;
+    const reason = String(new FormData(form).get('reason') || '').trim();
+    if (reason.length < 3) return toast('Thiếu lý do hủy', 'Nhập lý do hủy ít nhất 3 ký tự.', 'error');
+    const submitButton = modal.querySelector('button[type="submit"][form="entity-form"]');
+    if (submitButton) submitButton.disabled = true;
+    const idempotencyKey = form.dataset.idempotencyKey || (form.dataset.idempotencyKey = newIdempotencyKey());
+    try {
+      const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/cash-movements/${encodeURIComponent(id)}/void`, {
+        method: 'POST',
+        headers: { 'idempotency-key': idempotencyKey },
+        body: { reason },
+      });
+      closeModal();
+      await loadFinancePage();
+      const firstCode = result.reversals?.[0]?.voucherNumber || '';
+      toast('Đã lập phiếu đảo', firstCode ? `Chứng từ ${firstCode}` : 'Đã hủy phiếu và cập nhật số dư.');
+    } catch (error) {
+      if (error.status === 401) showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
+      else {
+        if (error.status >= 400 && error.status < 500 && !['idempotency_conflict', 'request_in_progress'].includes(error.code)) {
+          delete form.dataset.idempotencyKey;
+        }
+        toast('Chưa hủy được phiếu', error.message, 'error');
+      }
+      if (submitButton && !modal.hidden) submitButton.disabled = false;
+    }
+  }
+
+  async function saveCashCategory(form) {
+    const data = new FormData(form);
+    const name = String(data.get('name') || '').trim();
+    const direction = String(data.get('direction') || 'out');
+    const defaultIncludeInPnl = Boolean(form.elements.defaultIncludeInPnl?.checked);
+    if (!name) return toast('Thiếu tên khoản mục', 'Nhập tên khoản mục thu chi.', 'error');
+    const submitButton = modal.querySelector('button[type="submit"][form="entity-form"]');
+    if (submitButton) submitButton.disabled = true;
+    try {
+      await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/finance/categories`, {
+        method: 'POST',
+        body: { name, direction, defaultIncludeInPnl },
+      });
+      await loadFinanceCategories();
+      await openCashCategoriesModal();
+      toast('Đã thêm khoản mục', name);
+    } catch (error) {
+      if (error.status === 401) showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
+      else toast('Chưa thêm được khoản mục', error.message, 'error');
+      if (submitButton && !modal.hidden) submitButton.disabled = false;
+    }
+  }
+
+  async function toggleCashCategoryStatus(id, nextStatus) {
+    try {
+      await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/finance/categories/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: { status: nextStatus },
+      });
+      await loadFinanceCategories();
+      await openCashCategoriesModal();
+      toast(nextStatus === 'active' ? 'Đã hiện lại khoản mục' : 'Đã ẩn khoản mục');
+    } catch (error) {
+      if (error.status === 401) showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
+      else toast('Chưa cập nhật được khoản mục', error.message, 'error');
     }
   }
 
@@ -10309,6 +10694,9 @@
         ['Chỉ số', 'Giá trị', 'Đơn vị'],
         ['Doanh thu thuần', reportCsvInteger(summary.netSalesVnd, 'doanh thu thuần'), 'VND'],
         ['Lãi gộp ước tính', reportCsvInteger(summary.grossProfitVnd, 'lãi gộp'), 'VND'],
+        ['Thu khác (tính KQKD)', reportCsvInteger(summary.otherIncomeVnd || '0', 'thu khác'), 'VND'],
+        ['Chi phí vận hành (tính KQKD)', reportCsvInteger(summary.operatingExpenseVnd || '0', 'chi phí vận hành'), 'VND'],
+        ['Lãi ròng (Net Profit)', reportCsvInteger(summary.netProfitVnd != null ? summary.netProfitVnd : summary.grossProfitVnd, 'lãi ròng'), 'VND'],
         ['Số đơn trong kỳ', reportCsvInteger(summary.orderCount, 'số đơn'), 'đơn'],
         ['Giá trị đơn trung bình', reportCsvInteger(summary.averageTicketVnd, 'giá trị đơn trung bình'), 'VND'],
         ['Tiền đã thu ròng', reportCsvInteger(summary.collectedVnd, 'tiền đã thu'), 'VND'],
@@ -10359,10 +10747,10 @@
     const html = `<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Báo cáo bán hàng ${esc(report.range.from)}–${esc(report.range.to)}</title><style>
       @page{size:A4 portrait;margin:14mm}*{box-sizing:border-box}body{font:12px Arial,sans-serif;color:#202923;margin:0;line-height:1.45}h1{font-size:22px;margin:0 0 4px}h2{font-size:14px;margin:20px 0 8px}.muted{color:#657069}.brand{font-size:11px;font-weight:700;color:#4d775d;text-transform:uppercase;letter-spacing:.08em}.meta{margin:8px 0 18px}.cards{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}.card{border:1px solid #dce4dc;border-radius:8px;padding:10px}.card small{display:block;color:#667169;margin-bottom:5px}.card strong{font-size:17px}table{width:100%;border-collapse:collapse;font-size:11px}th,td{padding:7px 6px;border-bottom:1px solid #e5eae5;text-align:left;vertical-align:top}th{background:#f2f5f1;font-weight:700}.num{text-align:right;white-space:nowrap}.note{margin-top:18px;padding:10px;background:#f6f7f4;border-radius:6px;color:#566158;font-size:10px}.footer{margin-top:18px;color:#7b847c;font-size:10px}.empty{padding:10px;color:#68736b;border:1px dashed #ccd5cd}@media print{tr{break-inside:avoid}thead{display:table-header-group}}
       </style></head><body><div class="brand">${esc(storeName)}</div><h1>Báo cáo bán hàng</h1><div class="meta muted">Kỳ báo cáo: ${esc(report.range.from)} đến ${esc(report.range.to)} · Tạo lúc ${esc(generatedAt)}</div>
-      <div class="cards"><div class="card"><small>Doanh thu thuần</small><strong>${esc(moneyVndText(summary.netSalesVnd))}</strong></div><div class="card"><small>Lãi gộp ước tính</small><strong>${esc(moneyVndText(summary.grossProfitVnd))}</strong></div><div class="card"><small>Số đơn trong kỳ</small><strong>${number(summary.orderCount)}</strong></div><div class="card"><small>Giá trị đơn trung bình</small><strong>${esc(moneyVndText(summary.averageTicketVnd))}</strong></div><div class="card"><small>Tiền đã thu ròng</small><strong>${esc(moneyVndText(summary.collectedVnd))}</strong></div><div class="card"><small>Còn phải thu</small><strong>${esc(moneyVndText(summary.receivableVnd))}</strong></div></div>
+      <div class="cards"><div class="card"><small>Doanh thu thuần</small><strong>${esc(moneyVndText(summary.netSalesVnd))}</strong></div><div class="card"><small>Lãi gộp ước tính</small><strong>${esc(moneyVndText(summary.grossProfitVnd))}</strong></div><div class="card"><small>Chi phí vận hành</small><strong>${esc(moneyVndText(summary.operatingExpenseVnd || '0'))}</strong></div><div class="card"><small>Lãi ròng (Net Profit)</small><strong>${esc(moneyVndText(summary.netProfitVnd != null ? summary.netProfitVnd : summary.grossProfitVnd))}</strong></div><div class="card"><small>Số đơn trong kỳ</small><strong>${number(summary.orderCount)}</strong></div><div class="card"><small>Giá trị đơn trung bình</small><strong>${esc(moneyVndText(summary.averageTicketVnd))}</strong></div><div class="card"><small>Tiền đã thu ròng</small><strong>${esc(moneyVndText(summary.collectedVnd))}</strong></div><div class="card"><small>Còn phải thu</small><strong>${esc(moneyVndText(summary.receivableVnd))}</strong></div></div>
       <h2>Doanh thu thuần theo ngày</h2>${dailyRows ? `<table><thead><tr><th>Ngày</th><th class="num">Số đơn</th><th class="num">Doanh thu thuần</th></tr></thead><tbody>${dailyRows}</tbody></table>` : '<div class="empty">Không có dữ liệu theo ngày trong kỳ này.</div>'}
       <h2>Sản phẩm bán chạy</h2>${products ? `<table><thead><tr><th>#</th><th>Sản phẩm</th><th>Mã hàng</th><th class="num">Số lượng bán ròng</th><th class="num">Doanh thu thuần</th></tr></thead><tbody>${products}</tbody></table>` : '<div class="empty">Không có sản phẩm bán trong kỳ này.</div>'}
-      <div class="note">Lãi gộp là số ước tính sau giá vốn của hàng bán và hàng trả, trước tiền thuê, lương, thuế và các chi phí vận hành. Báo cáo lấy từ dữ liệu đã ghi sổ trong Slink; bản in không thay thế chứng từ kế toán hoặc hóa đơn thuế.</div><div class="footer">Dùng hộp thoại in của trình duyệt để in hoặc chọn “Lưu dưới dạng PDF”.</div><script>window.addEventListener('load',function(){setTimeout(function(){window.focus();window.print()},250)})<\/script></body></html>`;
+      <div class="note">Lãi ròng = Lãi gộp ước tính + Thu khác − Chi phí vận hành (chỉ tính các phiếu có bật hạch toán KQKD, đã trừ phiếu hủy). Báo cáo lấy từ dữ liệu đã ghi sổ trong Slink; bản in không thay thế chứng từ kế toán hoặc hóa đơn thuế.</div><div class="footer">Dùng hộp thoại in của trình duyệt để in hoặc chọn “Lưu dưới dạng PDF”.</div><script>window.addEventListener('load',function(){setTimeout(function(){window.focus();window.print()},250)})<\/script></body></html>`;
     popup.document.open();
     popup.document.write(html.replace(/<script>[\s\S]*?<\/script>/, ''));
     popup.document.close();
@@ -10389,8 +10777,9 @@
     const tops = topProducts();
     const totalTopRevenue = tops.reduce(function (sum, item) { return sum + item.revenue; }, 0) || 1;
     const reportCanPrint = !!(analyticsData && analyticsData.range && analyticsData.summary && !analyticsLoading && !analyticsError);
-    return pageHeading('Báo cáo', 'Doanh thu, lãi gộp và sản phẩm bán chạy từ dữ liệu đã ghi sổ.', `<button class='btn btn-secondary' data-action='download-reports-csv' ${reportCanPrint ? '' : 'disabled'}>Tải CSV</button><button class='btn btn-secondary' data-action='print-reports-pdf' ${reportCanPrint ? '' : 'disabled'} title='In hoặc lưu báo cáo thành PDF'>In / lưu PDF</button><div class='segmented'><button class='segment ${days === 7 ? 'active' : ''}' data-action='chart-range' data-range='7 ngày'>7 ngày</button><button class='segment ${days === 30 ? 'active' : ''}' data-action='chart-range' data-range='30 ngày'>30 ngày</button></div>`) +
-      `${analyticsError ? `<div class='notice-item'><span>${icon('alert', 18)}</span><span><strong>Chưa tải được báo cáo</strong><small>${esc(analyticsError)}</small></span></div>` : ''}<div class='report-grid' data-tour-target='reports-summary'><article class='panel report-card'><small>Doanh thu thuần</small><strong>${moneyVndText(summary.netSalesVnd)}</strong><span>${number(summary.orderCount)} đơn trong kỳ</span></article><article class='panel report-card'><small>Lãi gộp ước tính</small><strong>${moneyVndText(summary.grossProfitVnd)}</strong><span>Sau giá vốn và hàng trả, trước chi phí vận hành</span></article><article class='panel report-card'><small>Giá trị đơn trung bình</small><strong>${moneyVndText(summary.averageTicketVnd)}</strong><span>Doanh thu thuần chia cho số đơn</span></article><article class='panel report-card'><small>Tiền đã thu ròng</small><strong>${moneyVndText(summary.collectedVnd)}</strong><span>Còn phải thu: ${moneyVndText(summary.receivableVnd)}</span></article></div><div class='report-main-grid'><section class='panel'><div class='panel-header'><div><h2>Doanh thu theo ngày</h2><p>${analyticsData ? esc(analyticsData.range.from) + ' đến ' + esc(analyticsData.range.to) : analyticsLoading ? 'Đang tải…' : 'Chưa có dữ liệu'}</p></div></div><div class='bar-chart'>${bars || `<div class='empty-state'>${analyticsLoading ? 'Đang tải báo cáo…' : esc(analyticsError || 'Chưa có dữ liệu trong khoảng này.')}</div>`}</div></section><section class='panel'><div class='panel-header'><div><h2>Sản phẩm nổi bật</h2><p>Doanh thu thuần trong kỳ</p></div></div><div class='report-breakdown'>${tops.map(function (item, index) { const share = Math.round(item.revenue / totalTopRevenue * 100); return `<div class='breakdown-row'><i class='breakdown-mark ${index === 1 ? 'alt' : index > 1 ? 'third' : ''}'></i><span>${esc(item.product.name)} · ${number(item.count)} ${esc(item.product.unit)}</span><strong>${share}%</strong></div>`; }).join('') || `<div class='empty-state'><strong>${analyticsLoading ? 'Đang tải dữ liệu' : 'Chưa có giao dịch'}</strong><span>${esc(analyticsError || 'Sản phẩm bán sẽ được xếp hạng tại đây.')}</span></div>`}</div></section></div><div class='install-hint' style='margin-top:15px'>Lãi gộp đã trừ giá vốn của hàng bán và tính hàng trả lại theo tình trạng nhập lại kho. Chỉ số chưa trừ tiền thuê, lương, thuế và các chi phí vận hành.</div>`;
+    const pnlExtras = window.SlinkFinanceUI ? window.SlinkFinanceUI.renderReportsPnlExtras({ summary, expenseBreakdown: analyticsData && analyticsData.expenseBreakdown || [] }) : { pnlCardsHtml: '', expenseSectionHtml: '' };
+    return pageHeading('Báo cáo', 'Doanh thu, lãi gộp, lãi ròng và chi phí vận hành từ dữ liệu đã ghi sổ.', `<button class='btn btn-secondary' data-action='download-reports-csv' ${reportCanPrint ? '' : 'disabled'}>Tải CSV</button><button class='btn btn-secondary' data-action='print-reports-pdf' ${reportCanPrint ? '' : 'disabled'} title='In hoặc lưu báo cáo thành PDF'>In / lưu PDF</button><div class='segmented'><button class='segment ${days === 7 ? 'active' : ''}' data-action='chart-range' data-range='7 ngày'>7 ngày</button><button class='segment ${days === 30 ? 'active' : ''}' data-action='chart-range' data-range='30 ngày'>30 ngày</button></div>`) +
+      `${analyticsError ? `<div class='notice-item'><span>${icon('alert', 18)}</span><span><strong>Chưa tải được báo cáo</strong><small>${esc(analyticsError)}</small></span></div>` : ''}<div class='report-grid' data-tour-target='reports-summary'><article class='panel report-card'><small>Doanh thu thuần</small><strong>${moneyVndText(summary.netSalesVnd)}</strong><span>${number(summary.orderCount)} đơn trong kỳ</span></article><article class='panel report-card'><small>Lãi gộp ước tính</small><strong>${moneyVndText(summary.grossProfitVnd)}</strong><span>Sau giá vốn và hàng trả, trước chi phí vận hành</span></article><article class='panel report-card'><small>Giá trị đơn trung bình</small><strong>${moneyVndText(summary.averageTicketVnd)}</strong><span>Doanh thu thuần chia cho số đơn</span></article><article class='panel report-card'><small>Tiền đã thu ròng</small><strong>${moneyVndText(summary.collectedVnd)}</strong><span>Còn phải thu: ${moneyVndText(summary.receivableVnd)}</span></article></div>${pnlExtras.pnlCardsHtml ? `<div class='fv-pnl-grid'>${pnlExtras.pnlCardsHtml}</div>` : ''}<div class='report-main-grid'><section class='panel'><div class='panel-header'><div><h2>Doanh thu theo ngày</h2><p>${analyticsData ? esc(analyticsData.range.from) + ' đến ' + esc(analyticsData.range.to) : analyticsLoading ? 'Đang tải…' : 'Chưa có dữ liệu'}</p></div></div><div class='bar-chart'>${bars || `<div class='empty-state'>${analyticsLoading ? 'Đang tải báo cáo…' : esc(analyticsError || 'Chưa có dữ liệu trong khoảng này.')}</div>`}</div></section><section class='panel'><div class='panel-header'><div><h2>Sản phẩm nổi bật</h2><p>Doanh thu thuần trong kỳ</p></div></div><div class='report-breakdown'>${tops.map(function (item, index) { const share = Math.round(item.revenue / totalTopRevenue * 100); return `<div class='breakdown-row'><i class='breakdown-mark ${index === 1 ? 'alt' : index > 1 ? 'third' : ''}'></i><span>${esc(item.product.name)} · ${number(item.count)} ${esc(item.product.unit)}</span><strong>${share}%</strong></div>`; }).join('') || `<div class='empty-state'><strong>${analyticsLoading ? 'Đang tải dữ liệu' : 'Chưa có giao dịch'}</strong><span>${esc(analyticsError || 'Sản phẩm bán sẽ được xếp hạng tại đây.')}</span></div>`}</div></section></div>${pnlExtras.expenseSectionHtml}<div class='install-hint' style='margin-top:15px'>Lãi ròng = Lãi gộp + Thu khác − Chi phí vận hành (chỉ tính các phiếu có bật hạch toán KQKD).</div>`;
   }
 
   function routeTo(next) {
@@ -10738,7 +11127,19 @@
       button.setAttribute('aria-current', 'page');
       refreshFinanceBody();
       if (financeTab === 'receivables') loadFinanceReceivables(0);
+      else if (financeTab === 'cashbook' || financeTab === 'vouchers') loadFinanceCashbook(0);
+      else if (financeTab === 'payables') loadFinancePayables(0);
     }
+    else if (action === 'cashbook-fund') {
+      financeCashbook.filters.fund = button.dataset.fund || 'all';
+      loadFinanceCashbook(0);
+    }
+    else if (action === 'cashbook-page') loadFinanceCashbook(Number(button.dataset.offset) || 0);
+    else if (action === 'finance-payable-page') loadFinancePayables(Number(button.dataset.offset) || 0);
+    else if (action === 'open-cash-transfer') openCashTransfer();
+    else if (action === 'void-cash-movement') openVoidCashMovement(id);
+    else if (action === 'manage-cash-categories') openCashCategoriesModal();
+    else if (action === 'toggle-cash-category') toggleCashCategoryStatus(id, button.dataset.nextStatus);
     else if (action === 'finance-receivable-page') loadFinanceReceivables(Number(button.dataset.offset) || 0);
     else if (action === 'finance-receivable-retry') loadFinanceReceivables(financeReceivables.offset);
     else if (action === 'new-debtor') openCustomer(null, { debt: true });
@@ -11201,6 +11602,24 @@
         if (page === 'finance' && financeTab === 'receivables') loadFinanceReceivables(0);
       }, 250);
     }
+    else if (id === 'finance-cashbook-search') {
+      financeCashbook.filters.q = event.target.value;
+      financeCashbook.requestNumber += 1;
+      window.clearTimeout(financeCashbookSearchTimer);
+      financeCashbookSearchTimer = window.setTimeout(function () {
+        if (page === 'finance' && ['cashbook', 'vouchers'].includes(financeTab)) loadFinanceCashbook(0);
+      }, 250);
+    }
+    else if (id === 'finance-payable-search') {
+      financePayables.query = event.target.value;
+      financePayables.ready = false;
+      financePayables.requestNumber += 1;
+      refreshFinanceBody();
+      window.clearTimeout(financePayableSearchTimer);
+      financePayableSearchTimer = window.setTimeout(function () {
+        if (page === 'finance' && financeTab === 'payables') loadFinancePayables(0);
+      }, 250);
+    }
     else if (id === 'order-search') {
       searchTerms.orders = event.target.value;
       const query = searchTerms.orders;
@@ -11311,6 +11730,16 @@
   });
 
   document.addEventListener('change', function (event) {
+    if (event.target.matches('[data-cashbook-filter]')) {
+      financeCashbook.filters[event.target.dataset.cashbookFilter] = event.target.value;
+      loadFinanceCashbook(0);
+      return;
+    }
+    if (event.target.id === 'finance-payable-only-owing') {
+      financePayables.onlyOwing = Boolean(event.target.checked);
+      loadFinancePayables(0);
+      return;
+    }
     if (event.target.matches('[data-delivery-field]')) {
       posDelivery[event.target.dataset.deliveryField] = event.target.value;
       if (event.target.dataset.deliveryField === 'collection') refreshCartPanels();
@@ -11714,6 +12143,9 @@
     else if (type === 'supplier-return') submitSupplierReturnForm(form);
     else if (type === 'order-exchange') submitOrderExchangeForm(form);
     else if (type === 'cash') saveCash(form);
+    else if (type === 'cash-transfer') saveCashTransfer(form);
+    else if (type === 'void-cash-movement') saveVoidCashMovement(form);
+    else if (type === 'cash-category-create') saveCashCategory(form);
     else if (type === 'cash-session-open') saveCashSessionOpen(form);
     else if (type === 'cash-session-close') saveCashSessionClose(form);
     else if (type === 'settings') saveSettings(form);

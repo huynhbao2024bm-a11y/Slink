@@ -4,6 +4,7 @@ const { createHash, randomUUID } = require('node:crypto');
 const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
 const { lockActiveCashSession } = require('./cash-register');
+const { insertCashMovement } = require('./cashbook-ledger');
 const { findAccessibleWarehouse, requireWarehouseAccess, allowedWarehouseIds } = require('./warehouse-access');
 const { quantityMilli, quantityText } = require('./sales');
 
@@ -275,12 +276,21 @@ async function persistSupplierReturn(client, storeId, actorUserId, req, prepared
        VALUES ($1, $2, 'manual_credit', $3, 'supplier_return_refund', $4, $5, $6)`,
       [storeId, supplier.id, req.refundReceivedVnd.toString(), returnId, `NCC hoàn tiền · ${returnNumber}`, actorUserId]
     );
-    await client.query(
-      `INSERT INTO cash_movements (store_id, direction, category, amount_vnd, method, source_type, source_id, note, actor_user_id, cash_session_id)
-       VALUES ($1, 'in', 'Hoàn tiền nhà cung cấp', $2, $3, 'supplier_return_refund', $4, $5, $6, $7)`,
-      [storeId, req.refundReceivedVnd.toString(), req.refundMethod, returnId,
-        `NCC ${supplier.name} hoàn tiền · ${returnNumber}`, actorUserId, cashSessionId]
-    );
+    await insertCashMovement(client, {
+      storeId,
+      direction: 'in',
+      category: 'Hoàn tiền nhà cung cấp',
+      amountVnd: req.refundReceivedVnd.toString(),
+      method: req.refundMethod,
+      sourceType: 'supplier_return_refund',
+      sourceId: returnId,
+      note: `NCC ${supplier.name} hoàn tiền · ${returnNumber}`,
+      actorUserId,
+      cashSessionId,
+      counterpartyKind: 'supplier',
+      counterpartyId: supplier.id,
+      counterpartyName: supplier.name,
+    });
   }
 
   const metadata = {

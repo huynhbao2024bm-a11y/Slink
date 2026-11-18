@@ -5,6 +5,7 @@ const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
 const { quantityMilli, quantityText } = require('./sales');
 const { lockActiveCashSession } = require('./cash-register');
+const { insertCashMovement } = require('./cashbook-ledger');
 
 const RETURN_ROLES = new Set(['owner', 'manager']);
 const REFUND_METHODS = new Set(['cash', 'bank_transfer', 'bank_qr', 'card', 'other']);
@@ -216,11 +217,20 @@ function registerReturnRoutes(app, { pool, env }) {
            VALUES ($1, $2, $3, 'succeeded', $4, $5)`,
           [storeId, returnId, value.refundMethod, refundPayment.toString(), auth.userId]
         );
-        await client.query(
-          `INSERT INTO cash_movements (store_id, direction, category, amount_vnd, method, source_type, source_id, note, actor_user_id, cash_session_id)
-           VALUES ($1, 'out', 'Hoàn tiền', $2, $3, 'return_refund', $4, $5, $6, $7)`,
-          [storeId, refundPayment.toString(), value.refundMethod, returnId, `Hoàn đơn ${order.order_number}`, auth.userId, cashSessionId]
-        );
+        await insertCashMovement(client, {
+          storeId,
+          direction: 'out',
+          category: 'Hoàn tiền',
+          amountVnd: refundPayment.toString(),
+          method: value.refundMethod,
+          sourceType: 'return_refund',
+          sourceId: returnId,
+          note: `Hoàn đơn ${order.order_number}`,
+          actorUserId: auth.userId,
+          cashSessionId,
+          counterpartyKind: order.customer_id ? 'customer' : null,
+          counterpartyId: order.customer_id || null,
+        });
       }
       if (order.customer_id) {
         if (refundTotal > 0n) {
