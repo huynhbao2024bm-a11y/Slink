@@ -120,6 +120,8 @@
   let cashRegisterState = { session: null, lastClosed: null, recentClosed: [], canOperate: false };
   let cashRegisterError = '';
   let financeTopCustomers = [];
+  let financeReceivables = { rows: [], total: 0, nextOffset: null, offset: 0, query: '', ready: false, loading: false, error: '', requestNumber: 0 };
+  let financeReceivableSearchTimer = null;
   let analyticsData = null;
   let analyticsLoading = false;
   let analyticsError = '';
@@ -628,7 +630,6 @@
   let cachedBootSnapshot = null;
   let financeTab = 'cashbook';
   let receivableDetail = null;
-  let financeBookOpen = true;
   let offlinePreparation = 0, offlineSender = null, offlineSenderScope = '', offlineRefreshDue = false;
   const offlineOwner = newIdempotencyKey();
   const offlineChannel = window.BroadcastChannel ? new BroadcastChannel('slink-offline') : null;
@@ -1492,7 +1493,7 @@
     add('customers','customers-search','Khách hàng và khoản nợ','Tìm tên hoặc số điện thoại để xem khách và số tiền còn nợ.');
     if(['owner','manager','accountant'].includes(store.role)){
       add('finance','finance-income','Ghi tiền thu và chi','Chọn Ghi thu khi nhận tiền hoặc Ghi chi khi trả tiền. Nhập số tiền và lý do rồi lưu.');
-      add('finance','finance-book','Xem sổ thu chi','Chạm để mở hoặc thu gọn sổ. Chuyển sang Phải thu, Phải trả để theo dõi các khoản còn nợ.');
+      add('finance','finance-book','Xem sổ quỹ','Giao dịch gần đây hiện ở đây. Các thẻ phía trên mở phiếu thu chi, ca tiền mặt và công nợ riêng.');
     }
     add('reports','reports-summary','Xem báo cáo','Chọn khoảng ngày để xem số liệu của cửa hàng.');
     if(store.role==='owner')add('staff','staff-invite','Mời nhân viên','Chọn vai trò và gửi đường dẫn mời. Nhân viên chỉ mở được các phần đã được cấp quyền.');
@@ -1534,7 +1535,7 @@
       'orders-search':'#order-search',
       'customers-search':'#customer-search',
       'finance-income':"[data-action='new-expense'][data-direction='in']",
-      'finance-book':'[data-finance-book] > summary',
+      'finance-book':'[data-tour-target="finance-register"]',
       'settings-gear':".topbar [aria-label='Cài đặt']",
       'pos-cart': '[data-tour-target="pos-cart-mobile"], [data-tour-target="pos-cart-desktop"]',
       'finance-register': '[data-tour-target="finance-register"]',
@@ -1833,6 +1834,8 @@
     financeLoading = false;
     financeDataReady = false;
     financeTopCustomers = [];
+    financeReceivables.requestNumber += 1;
+    financeReceivables = { rows: [], total: 0, nextOffset: null, offset: 0, query: '', ready: false, loading: false, error: '', requestNumber: financeReceivables.requestNumber };
     financeTab = 'cashbook';
     financeError = '';
     analyticsData = null;
@@ -2187,6 +2190,7 @@
       financeLoading = false;
       financeDataReady = true;
       if (page === 'finance') refreshFinanceBody();
+      if (page === 'finance' && financeTab === 'receivables') loadFinanceReceivables(financeReceivables.offset);
     } catch (error) {
       if (!current()) return;
       financeLoading = false;
@@ -2194,6 +2198,35 @@
       cashRegisterError = error.message;
       if (error.status === 401) return showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
       if (page === 'finance') refreshFinanceBody();
+    }
+  }
+
+  async function loadFinanceReceivables(offset = 0) {
+    if (!authSession || !store.id || !['owner', 'manager', 'accountant'].includes(store.role)) return;
+    const state = financeReceivables;
+    const requestNumber = ++state.requestNumber;
+    const session = authSession, storeId = store.id, query = state.query;
+    state.loading = true;
+    state.error = '';
+    if (page === 'finance' && financeTab === 'receivables') refreshFinanceBody();
+    try {
+      const params = new URLSearchParams({ segment: 'owing', limit: '50', offset: String(offset), search: query });
+      const result = await apiRequest(`/api/stores/${encodeURIComponent(storeId)}/customers?${params}`);
+      if (state.requestNumber !== requestNumber || authSession !== session || store.id !== storeId || state.query !== query) return;
+      state.rows = (result.customers || []).map(row => ({ id: row.id, name: row.name, phone: row.phone, debt: String(row.balance_vnd || '0'), creditLimitVnd: String(row.credit_limit_vnd || '0') }));
+      state.total = Number(result.total || 0);
+      state.nextOffset = result.nextOffset;
+      state.offset = offset;
+      state.ready = true;
+    } catch (error) {
+      if (state.requestNumber !== requestNumber || authSession !== session || store.id !== storeId) return;
+      state.error = error.message || 'Chưa tải được danh sách khách nợ.';
+      if (error.status === 401) return showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
+    } finally {
+      if (state.requestNumber === requestNumber && authSession === session && store.id === storeId) {
+        state.loading = false;
+        if (page === 'finance' && financeTab === 'receivables') refreshFinanceBody();
+      }
     }
   }
 
@@ -2539,16 +2572,32 @@
 
   function productMobileCard(product) {
     const canEdit = ['owner', 'manager', 'stockkeeper'].includes(store.role);
-    const canViewPriceHistory = ['owner', 'manager', 'stockkeeper', 'accountant'].includes(store.role);
     const attributes = Object.entries(product.variantAttributes || {}).map(function (entry) { return `${entry[0]}: ${entry[1]}`; }).join(' · ');
-    const productMain = `${productThumb(product)}<span class='product-mobile-info'><strong>${esc(product.name)}</strong><small>${esc(product.sku)}${product.barcode ? ` · ${esc(product.barcode)}` : ''} · ${esc(attributes || product.category)}</small></span><span class='product-mobile-side'><strong>${money(product.price)}</strong><small>${product.inventoryTracked ? (product.stock <= 0 ? 'Hết hàng' : `Còn ${number(product.stock)} ${esc(product.unit)}`) : 'Không theo dõi tồn'}</small></span>`;
-    return `<article class='product-mobile-card'>${canEdit ? `<button class='product-mobile-main' data-action='edit-product' data-id='${product.id}' aria-label='Sửa ${esc(product.name)}'>${productMain}</button>` : `<div class='product-mobile-main'>${productMain}</div>`}<button class='product-history-button' data-action='print-barcode-single' data-id='${product.id}' aria-label='In tem mã vạch ${esc(product.name)}' title='In tem mã vạch'>${icon('scan', 17)}</button>${canViewPriceHistory ? `<button class='product-history-button' data-action='product-price-history' data-id='${product.id}' aria-label='Xem lịch sử giá ${esc(product.name)}' title='Lịch sử giá'>${icon('clock', 17)}</button>` : ''}</article>`;
+    const productMain = `${productThumb(product)}<span class='product-mobile-info'><strong>${esc(product.name)}</strong><small>${esc([product.sku, attributes || product.category].filter(Boolean).join(' · '))}</small></span><span class='product-mobile-side'><strong>${money(product.price)}</strong><small>${product.inventoryTracked ? (product.stock <= 0 ? 'Hết hàng' : `Còn ${number(product.stock)} ${esc(product.unit)}`) : 'Không theo dõi tồn'}</small></span>`;
+    return `<article class='product-mobile-card'>${canEdit ? `<button class='product-mobile-main' data-action='edit-product' data-id='${product.id}' aria-label='Sửa ${esc(product.name)}'>${productMain}</button>` : `<div class='product-mobile-main'>${productMain}</div>`}<button class='product-card-menu-button' data-action='product-card-menu' data-id='${product.id}' aria-label='Thao tác với ${esc(product.name)}' title='Thao tác'>${icon('more', 21)}</button></article>`;
+  }
+
+  function openProductCardMenu(id) {
+    const product = productById(id);
+    if (!product) return;
+    const canEdit = ['owner', 'manager', 'stockkeeper'].includes(store.role);
+    const canViewHistory = ['owner', 'manager', 'stockkeeper', 'accountant'].includes(store.role);
+    const actions = [
+      canEdit ? ['edit', 'Sửa mặt hàng'] : null,
+      ['print', 'In tem mã vạch'],
+      canViewHistory ? ['history', 'Lịch sử giá'] : null,
+      canEdit && product.inventoryTracked ? ['stock', 'Kiểm kê tồn kho'] : null,
+    ].filter(Boolean);
+    showModal(product.name, 'Chọn việc cần làm', `<div class='product-card-actions'>${actions.map(([kind, label]) => `<button type='button' class='btn btn-secondary' data-action='product-card-choice' data-kind='${kind}' data-id='${esc(id)}'>${label}</button>`).join('')}</div>`, '');
   }
 
   function renderProducts() {
     const canEdit = ['owner', 'manager', 'stockkeeper'].includes(store.role);
-    const moreActions = `<button class='btn btn-secondary' data-action='print-barcode-batch'>In tem mã vạch</button>` + (canEdit ? `<button class='btn btn-secondary' data-action='new-product-variant-group'>Thêm hàng có nhiều màu, cỡ</button><button class='btn btn-secondary' data-action='bulk-update-products'>Cập nhật hàng loạt bằng tệp</button>` : '') + (canExportData() ? `<button class='btn btn-secondary' data-action='open-export'>Xuất danh sách</button>` : '');
-    return pageHeading('Sản phẩm', '', (canEdit ? `<button class='btn btn-primary' data-action='new-product'>＋ Thêm mặt hàng</button><button class='btn btn-secondary' data-action='import-products'>Nhập danh sách</button>` : `<button class='btn btn-secondary' data-action='print-barcode-batch'>In tem mã vạch</button>`) + (moreActions && canEdit ? `<details class='catalog-more'><summary class='btn btn-secondary'>Thao tác khác</summary><div>${moreActions}</div></details>` : '')) +
+    const moreActions = (canEdit ? `<button class='btn btn-secondary' data-action='new-product-variant-group'>Thêm hàng có nhiều màu, cỡ</button><button class='btn btn-secondary' data-action='bulk-update-products'>Cập nhật hàng loạt bằng tệp</button>` : '') + (canExportData() ? `<button class='btn btn-secondary' data-action='open-export'>Xuất danh sách</button>` : '');
+    const actions = (canEdit ? `<button class='btn btn-primary' data-action='new-product'>＋ Thêm mặt hàng</button><button class='btn btn-secondary' data-action='import-products'>Nhập danh sách</button>` : '') + `<button class='btn btn-secondary' data-action='print-barcode-batch'>In tem</button>` + (moreActions ? `<details class='catalog-more'><summary class='btn btn-secondary'>Thao tác khác</summary><div>${moreActions}</div></details>` : '');
+    return pageHeading('Sản phẩm', '', actions) +
+      (canEdit || canExportData() ? `<details class='product-secondary-actions'><summary>Nhập danh sách và thao tác khác</summary><div>${canEdit ? `<button type='button' class='btn btn-secondary' data-action='import-products'>Nhập danh sách có sẵn</button>` : ''}${moreActions}</div></details>` : '') +
+      `<div class='mobile-task-actions product-task-actions'>${canEdit ? `<button class='btn btn-primary' data-action='new-product'>＋ Thêm hàng</button>` : ''}<button class='btn btn-secondary' data-action='product-scan'>Quét mã</button><button class='btn btn-secondary' data-action='print-barcode-batch'>In tem</button></div>` +
       `<div class='toolbar'><div class='toolbar-left'><div class='search-wrap product-search-wrap'><span class='search-symbol'>⌕</span><input class='input' id='product-search' type='search' placeholder='Tìm tên, mã hàng hoặc mã vạch…' value='${esc(searchTerms.products)}' aria-label='Tìm sản phẩm'><button class='icon-button inventory-scan' type='button' data-action='product-scan' aria-label='Quét mã vạch tìm sản phẩm' title='Quét mã vạch'>${icon('scan', 19)}</button></div><span class='result-count' data-product-result-count>${productLoading ? 'Đang tải…' : `${number(productTotal)} sản phẩm`}</span></div></div>` + renderProductList();
   }
 
@@ -3079,9 +3128,10 @@
     else tabBody = `<div class='stat-grid inventory-stats'><article class='stat-card'><div class='stat-top'><span class='stat-label'>Tổng mặt hàng</span><span class='stat-icon'>${icon('box', 15)}</span></div><div class='stat-value' data-inventory-stat='total'>${inventoryStatText('total')}</div></article><article class='stat-card'><div class='stat-top'><span class='stat-label'>Sắp hết hàng</span><span class='stat-icon'>${icon('alert', 15)}</span></div><div class='stat-value' data-inventory-stat='low'>${inventoryStatText('low')}</div></article><article class='stat-card'><div class='stat-top'><span class='stat-label'>Hết hàng</span><span class='stat-icon'>${icon('layers', 15)}</span></div><div class='stat-value' data-inventory-stat='out'>${inventoryStatText('out')}</div></article>${store.role !== 'cashier' ? `<article class='stat-card'><div class='stat-top'><span class='stat-label'>Giá trị tồn ước tính</span><span class='stat-icon'>${icon('wallet', 15)}</span></div><div class='stat-value' style='font-size:17px' data-inventory-stat='stockValueVnd'>${inventoryStatText('stockValueVnd')}</div></article>` : ''}</div>` +
       `<div class='toolbar inventory-search-tools'><div class='toolbar-left'><div class='search-wrap inventory-search-wrap' data-tour-target='inventory-search'><span class='search-symbol' aria-hidden='true'>⌕</span><input class='input' id='inventory-search' type='search' placeholder='Tìm tên, mã hàng hoặc mã vạch…' value='${esc(searchTerms.inventory)}' aria-label='Tìm trong kho'><button class='icon-button inventory-scan' type='button' data-action='inventory-scan' aria-label='Quét mã vạch tìm hàng' title='Quét mã vạch'>${icon('scan', 20)}</button></div><span class='result-count' data-inventory-result-count aria-live='polite'>${inventoryLoading ? 'Đang tải…' : inventoryError ? 'Chưa tải được' : `${number(total)} mặt hàng`}</span></div></div>
       <div class='inventory-stock-filters' role='group' aria-label='Lọc theo tồn kho'>${[['all', 'Tất cả'], ['low', 'Sắp hết'], ['out', 'Hết hàng']].map(([value, label]) => `<button type='button' data-action='inventory-stock-filter' data-stock='${value}' aria-pressed='${inventoryStockFilter === value}'>${label}</button>`).join('')}</div>` + renderInventoryList();
-    return pageHeading('Kho hàng', '', `${canReceive ? `<button class='btn btn-primary' data-action='receive-stock' data-tour-target='inventory-receive'>＋ Nhập hàng</button>` : ''}${advanced ? `<details class='catalog-more'><summary class='btn btn-secondary'>Thêm</summary><div>${advanced}</div></details>` : ''}`) +
+    return pageHeading('Kho hàng', '', `${canReceive ? `<button class='btn btn-primary' data-action='receive-stock' data-tour-target='inventory-receive'>＋ Nhập hàng</button>` : ''}${advanced ? `<details class='catalog-more'><summary class='btn btn-secondary'>Thao tác khác</summary><div>${advanced}</div></details>` : ''}`) +
+      (canReceive || advanced ? `<details class='product-secondary-actions inventory-secondary-actions'><summary>Thao tác kho khác</summary><div>${canReceive ? `<button class='btn btn-secondary' data-action='receive-stock'>＋ Nhập hàng</button>` : ''}${advanced}</div></details>` : '') +
       `<div class='toolbar warehouse-toolbar'><div class='toolbar-left'><label class='input-label' for='inventory-warehouse'>Đang xem tại</label><div class='select-wrap'><select class='input' id='inventory-warehouse' aria-label='Chọn kho tồn kho'>${warehouseOptions}</select></div><span class='result-count'>${warehouseLoading ? 'Đang tải kho…' : warehouseError ? 'Chưa tải được kho' : ''}</span></div></div>` +
-      tabBar + tabBody;
+      tabBar + tabBody + (activeTab === 'stock' ? `<div class='mobile-task-actions inventory-task-actions'>${canReceive ? `<button class='btn btn-primary' data-action='receive-stock' data-tour-target='inventory-receive'>＋ Nhập hàng</button>` : ''}${canCount ? `<button class='btn btn-secondary' data-action='adjust-stock-picker'>Đếm lại</button>` : ''}<button class='btn btn-secondary' data-action='inventory-scan'>Quét mã</button></div>` : '');
   }
 
   function renderInventoryList() {
@@ -3343,20 +3393,20 @@
   }
 
   function cashRows(rows) {
-    return rows.map((movement, index) => {
+    return rows.map(movement => {
       const title = cashMovementTitle(movement);
       const person = movement.counterparty?.name;
       const session = movement.cashSessionOpenedAt ? `Ca mở ${humanDate(movement.cashSessionOpenedAt, true)}` : movement.cashSessionId ? 'Ca tiền mặt' : '';
       const meta = [cashMethodName(movement.method), session, movement.actorName].filter(Boolean).join(' · ');
-      return `<button type='button' class='finance-cash-row' data-action='cash-movement-detail' data-id='${esc(movement.movementId)}' data-index='${index}'>
+      return `<button type='button' class='finance-cash-row' data-action='cash-movement-detail' data-id='${esc(movement.movementId)}'>
         <span><strong>${esc(title)}</strong><small>${esc(meta)}</small>${person ? `<small>${esc(person)}</small>` : ''}</span>
         <span class='finance-cash-amount'><strong class='finance-amount-${movement.type === 'in' ? 'in' : 'out'}'>${movement.type === 'in' ? '+' : '−'}${moneyVndText(movement.amountVnd)}</strong><small>${humanDate(movement.createdAt, true)}</small></span>
       </button>`;
     }).join('');
   }
 
-  function openCashMovement(index) {
-    const movement = store.cashbook[index];
+  function openCashMovement(id) {
+    const movement = store.cashbook.find(row => String(row.movementId) === String(id));
     if (!movement) return;
     const direction = movement.type === 'in' ? 'Khoản thu' : 'Khoản chi';
     const sourceId = esc(movement.id || '');
@@ -3376,24 +3426,27 @@
   }
 
   function renderReceivables() {
-    const rows = financeTopCustomers.map(customer => `<div class='activity-item'><span class='avatar'>${esc(initials(customer.name))}</span>
-      <span class='activity-text'><button type='button' class='link-button' data-action='finance-receivable' data-id='${esc(customer.id)}'>${esc(customer.name)}</button>${customer.phone ? `<small>${esc(customer.phone)}</small>` : ''}</span>
+    const shownCustomers = financeReceivables.ready ? financeReceivables.rows : financeReceivables.query ? [] : financeTopCustomers;
+    const rows = shownCustomers.map(customer => `<div class='activity-item'><span class='avatar'>${esc(initials(customer.name))}</span>
+      <span class='activity-text'><button type='button' class='link-button' data-action='finance-receivable' data-id='${esc(customer.id)}'>${esc(customer.name)}</button>${customer.phone ? `<small>${esc(customer.phone)}</small>` : ''}${BigInt(customer.creditLimitVnd || '0') > 0n && BigInt(customer.debt) > BigInt(customer.creditLimitVnd) ? `<small class='finance-credit-warning'>Vượt hạn mức nợ</small>` : ''}</span>
       <strong class='activity-amount'>${moneyVndText(customer.debt)}</strong></div>`).join('');
-    const empty = !financeDataReady ? (financeError ? 'Chưa tải được công nợ' : 'Đang tải công nợ…') : 'Chưa có khách còn nợ';
-    const detail = receivableDetail && financeTopCustomers.some(row => row.id === receivableDetail.customer.id)
+    const empty = financeReceivables.loading ? 'Đang tải khách nợ…' : financeReceivables.error ? 'Chưa tải được danh sách khách nợ' : !financeDataReady ? (financeError ? 'Chưa tải được công nợ' : 'Đang tải công nợ…') : financeReceivables.query ? 'Không tìm thấy khách còn nợ' : 'Chưa có khách còn nợ';
+    const detail = receivableDetail && shownCustomers.some(row => row.id === receivableDetail.customer.id)
       ? `<section class='panel finance-debt-detail'><div class='panel-header'><h2>${esc(receivableDetail.customer.name)}</h2><button type='button' class='link-button' data-action='close-receivable'>Đóng</button></div>
         <div class='finance-balance'><span>Còn nợ</span><strong>${moneyVndText(receivableDetail.balanceVnd)}</strong></div>
         <div class='finance-debt-actions'><button type='button' class='btn btn-primary' data-action='collect-customer-payment' data-id='${esc(receivableDetail.customer.id)}'>Thu tiền</button><button type='button' class='btn btn-secondary' data-action='add-customer-opening-debt' data-id='${esc(receivableDetail.customer.id)}'>Thêm khoản nợ cũ</button><button type='button' class='btn btn-secondary' data-action='finance-reminder' data-id='${esc(receivableDetail.customer.id)}'>Nhắc nợ</button></div>
         <h3>Các khoản còn nợ</h3><div class='activity-list'>${receivableDetail.orders.map(row => `<div class='activity-item'><span class='activity-text'><strong>Đơn ${esc(row.order_number)}</strong><small>${humanDate(row.occurred_at)}</small></span><strong>${moneyVndText(row.due_vnd)}</strong></div>`).join('')}${(receivableDetail.openingItems || []).map(row => `<div class='activity-item'><span class='activity-text'><strong>${esc(row.note || 'Nợ cũ')}</strong><small>${humanDate(row.occurredAt)}</small></span><strong>${moneyVndText(row.dueVnd)}</strong></div>`).join('')}</div>
         <h3>Lịch sử công nợ</h3><div class='activity-list'>${receivableDetail.timeline.map(row => `<div class='activity-item'><span class='activity-text'><strong>${esc(row.note || (BigInt(row.debit_vnd) > 0n ? 'Phát sinh nợ' : 'Đã thu'))}</strong><small>${humanDate(row.occurred_at, true)}</small></span><strong>${BigInt(row.debit_vnd) > 0n ? '+' + moneyVndText(row.debit_vnd) : '−' + moneyVndText(row.credit_vnd)}</strong></div>`).join('')}</div></section>` : '';
     return `<div class='finance-balance'><span>Tổng cần thu</span><strong>${financeDataReady ? moneyVndText(financeSummary.customerDebtVnd) : '—'}</strong></div>
-      <section class='panel'><div class='panel-header'><h2>Khách còn nợ</h2>${rows ? `<button type='button' class='link-button' data-action='new-debtor'>＋ Thêm khách nợ</button>` : ''}</div>
-      <div class='activity-list'>${rows || `<div class='empty-state finance-debt-empty'><strong>${empty}</strong>${financeDataReady ? `<button type='button' class='btn btn-secondary' data-action='new-debtor'>＋ Thêm khách nợ</button>` : ''}</div>`}</div>
-      ${financeSummary.customerDebtCount > financeTopCustomers.length ? `<button type='button' class='link-button finance-list-more' data-action='view-customer-debt'>Xem tất cả ${number(financeSummary.customerDebtCount)} khách</button>` : ''}</section>${detail}`;
+      <div class='finance-debt-layout'><section class='panel'><div class='panel-header'><h2>Khách còn nợ</h2><button type='button' class='link-button' data-action='new-debtor'>＋ Thêm khách nợ</button></div>
+      <div class='finance-debt-search'><label class='input-label' for='finance-receivable-search'>Tìm khách còn nợ</label><input id='finance-receivable-search' class='input' type='search' value='${esc(financeReceivables.query)}' placeholder='Tên hoặc số điện thoại' autocomplete='off'/></div>
+      ${financeReceivables.error ? `<div class='notice-item' role='status'><span><strong>Chưa tải được danh sách</strong></span><button type='button' class='link-button' data-action='finance-receivable-retry'>Thử lại</button></div>` : ''}
+      <div class='activity-list'>${rows || `<div class='empty-state finance-debt-empty'><strong>${empty}</strong>${financeDataReady && !financeReceivables.query ? `<button type='button' class='btn btn-secondary' data-action='new-debtor'>＋ Thêm khách nợ</button>` : ''}</div>`}</div>
+      ${financeReceivables.ready ? `<div class='pagination'><span>Hiển thị ${shownCustomers.length} trên ${number(financeReceivables.total)} khách còn nợ</span><span class='pagination-actions'>${financeReceivables.offset > 0 ? `<button class='page-button' data-action='finance-receivable-page' data-offset='${Math.max(0, financeReceivables.offset - 50)}' aria-label='Trang trước'>‹</button>` : ''}${financeReceivables.nextOffset !== null ? `<button class='page-button' data-action='finance-receivable-page' data-offset='${financeReceivables.nextOffset}' aria-label='Trang sau'>›</button>` : ''}</span></div>` : ''}</section>${detail || `<aside class='panel finance-debt-placeholder'><h2>Xem từng khoản nợ</h2><p>Chọn một khách ở bên trái để xem đơn còn nợ, khoản đã thu và ghi nhận tiền khách trả.</p></aside>`}</div>`;
   }
 
   async function openReceivable(id) {
-    const customer = financeTopCustomers.find(item => item.id === id);
+    const customer = (financeReceivables.ready ? financeReceivables.rows : financeTopCustomers).find(item => item.id === id);
     if (!customer) return;
     try {
       const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/customers/${encodeURIComponent(id)}/debts`);
@@ -3552,7 +3605,7 @@
     const canOpenCash = cashRegisterState.canOpen === true || (!cashSession && canOperateCash);
     const canCloseCash = cashRegisterState.canClose === true || (cashRegisterState.canClose === undefined && Boolean(cashSession && canOperateCash));
     let cashSessionPanel = '';
-    if (!isStockkeeper) {
+    if (!isStockkeeper && financeTab === 'shifts') {
       let cashSessionContent = '';
       if (cashRegisterError) {
         cashSessionContent = `<div class='notice-item'><span>${icon('alert', 18)}</span><span><strong>Chưa tải được trạng thái ca</strong></span></div>`;
@@ -3576,11 +3629,16 @@
         ${cashSessionHistory ? `<details class='work-details' data-finance-fold='shift-closed'><summary>Xem các ca đã chốt</summary>${cashSessionHistory}</details>` : ''}</section>`;
     }
     const metrics = canViewFullFinance ? `<div class='stat-grid finance-today'><article class='stat-card'><div class='stat-label'>${financeSummary.periodDate || offlineState.mode !== 'online' || offlineState.pending ? 'Thu' + (financeSummary.periodDate ? ' ' + financeSummary.periodDate : '') + ' · trên máy' : 'Đã thu hôm nay'}</div><div class='stat-value'>${financeDataReady ? moneyVndText(financeSummary.todayInVnd) : '—'}</div></article><article class='stat-card'><div class='stat-label'>${financeSummary.periodDate || offlineState.mode !== 'online' || offlineState.pending ? 'Chi' + (financeSummary.periodDate ? ' ' + financeSummary.periodDate : '') + ' · trên máy' : 'Đã chi hôm nay'}</div><div class='stat-value'>${financeDataReady ? moneyVndText(financeSummary.todayOutVnd) : '—'}</div></article></div>` : '';
-    const cashbook = canViewCashbook ? `<details class='finance-cashbook' data-finance-book data-tour-target='finance-register' ${financeBookOpen ? 'open' : ''}><summary>Sổ thu chi <span>${number(store.cashbook.length)} giao dịch gần nhất</span></summary>
-      ${canExportData() ? `<div class='finance-cashbook-actions'><button type='button' class='link-button' data-action='open-export'>Xuất CSV</button></div>` : ''}
-      <div class='finance-cash-list'>${cashRows(store.cashbook) || `<div class='empty-state'><strong>${!financeDataReady ? (financeError ? 'Chưa tải được sổ thu chi' : 'Đang tải sổ thu chi…') : 'Chưa có giao dịch'}</strong></div>`}</div>
-      ${financeMovementTotal > store.cashbook.length ? `<div class='pagination'><span>Hiển thị ${store.cashbook.length} trên ${number(financeMovementTotal)} giao dịch</span></div>` : ''}</details>` : '';
-    return `${metrics}${cashSessionPanel}${cashbook}`;
+    if (financeTab === 'shifts' || store.role === 'cashier') return cashSessionPanel;
+    if (financeTab === 'vouchers' && canRecord) {
+      const vouchers = store.cashbook.filter(row => row.sourceType === 'manual_cash_movement');
+      return `<section class='panel finance-record-panel'><div class='panel-header'><div><h2>Phiếu thu và phiếu chi</h2><p>Phiếu ghi tay trong ${number(store.cashbook.length)} giao dịch gần nhất</p></div></div>
+        <div class='finance-cash-list'>${cashRows(vouchers) || `<div class='empty-state'><strong>${financeDataReady ? 'Chưa có phiếu ghi tay gần đây' : 'Đang tải phiếu thu chi…'}</strong></div>`}</div>
+        ${financeMovementTotal > store.cashbook.length ? `<p class='finance-list-note'>Sổ quỹ còn giao dịch cũ hơn; phần này chỉ hiển thị dữ liệu đã tải.</p>` : ''}</section>`;
+    }
+    const cashbook = canViewCashbook ? `<section class='panel finance-record-panel' data-tour-target='finance-register'><div class='panel-header'><div><h2>Sổ thu chi</h2><p>${number(store.cashbook.length)} giao dịch gần nhất${financeMovementTotal > store.cashbook.length ? ` trên ${number(financeMovementTotal)}` : ''}</p></div>${canExportData() ? `<button type='button' class='link-button' data-action='open-export'>Xuất CSV</button>` : ''}</div>
+      <div class='finance-cash-list'>${cashRows(store.cashbook) || `<div class='empty-state'><strong>${!financeDataReady ? (financeError ? 'Chưa tải được sổ thu chi' : 'Đang tải sổ thu chi…') : 'Chưa có giao dịch'}</strong></div>`}</div></section>` : '';
+    return `${metrics}${cashbook}`;
   }
 
   function financeBody() {
@@ -3594,13 +3652,17 @@
     const active = document.activeElement;
     const focusAction = body.contains(active) ? active.dataset.action : '';
     const focusId = focusAction && active.dataset.id;
+    const focusInput = body.contains(active) && active.id === 'finance-receivable-search' ? { start: active.selectionStart, end: active.selectionEnd } : null;
     const focusedSummary = body.contains(active) && active.matches('summary') ? active.parentElement : null;
     const openDetails = new Set(Array.from(body.querySelectorAll('details[data-finance-fold][open]'), node => node.dataset.financeFold));
     body.innerHTML = financeBody();
     body.querySelectorAll('details[data-finance-fold]').forEach(node => { node.open = openDetails.has(node.dataset.financeFold); });
     enhanceRecordLists(body);
+    if (focusInput) {
+      const input = body.querySelector('#finance-receivable-search');
+      if (input) { input.focus({ preventScroll: true }); if (focusInput.start !== null) input.setSelectionRange(focusInput.start, focusInput.end); }
+    }
     if (focusAction) Array.from(body.querySelectorAll('[data-action]')).find(node => node.dataset.action === focusAction && node.dataset.id === focusId)?.focus({ preventScroll: true });
-    else if (focusedSummary?.hasAttribute('data-finance-book')) body.querySelector('[data-finance-book] > summary')?.focus({ preventScroll: true });
     else if (focusedSummary?.dataset.financeFold) Array.from(body.querySelectorAll('details[data-finance-fold]')).find(node => node.dataset.financeFold === focusedSummary.dataset.financeFold)?.querySelector('summary')?.focus({ preventScroll: true });
   }
 
@@ -3610,8 +3672,13 @@
     const actions = stockkeeper ? `<button class='btn btn-secondary' data-action='new-purchase-order'>＋ Đặt hàng</button><button class='btn btn-primary' data-action='receive-stock'>＋ Nhập hàng</button>`
       : canRecord ? `<button class='btn btn-primary' data-action='new-expense' data-direction='in'>＋ Thu tiền</button><button class='btn btn-secondary finance-quick-out' data-action='new-expense' data-direction='out'>− Chi tiền</button>` : '';
     const heading = pageHeading(stockkeeper ? 'Nhập hàng' : 'Thu chi', '', actions);
-    const tabs = canRecord ? `<nav class='workspace-tabs finance-tabs' aria-label='Sổ tiền và công nợ'>${[['cashbook', 'Thu chi'], ['receivables', 'Cần thu'], ['payables', 'Cần trả']].map(([value, label]) => `<button type='button' data-action='finance-tab' data-tab='${value}' ${financeTab === value ? `aria-current='page'` : ''}>${label}</button>`).join('')}</nav>` : '';
-    return `${heading}${tabs}<div data-finance-content>${financeBody()}</div>`;
+    const tabOptions = canRecord ? [['cashbook', 'Sổ quỹ'], ['vouchers', 'Phiếu thu / chi'], ['shifts', 'Ca & két tiền'], ['receivables', 'Khách nợ'], ['payables', 'Nhà cung cấp']]
+      : store.role === 'cashier' ? [['shifts', 'Ca tiền mặt'], ['cashbook', 'Giao dịch']] : [];
+    if (store.role === 'cashier' && !tabOptions.some(([value]) => value === financeTab)) financeTab = 'shifts';
+    const tabs = tabOptions.length ? `<nav class='workspace-tabs finance-tabs' aria-label='Các phần thu chi'>${tabOptions.map(([value, label]) => `<button type='button' data-action='finance-tab' data-tab='${value}' ${financeTab === value ? `aria-current='page'` : ''}>${label}</button>`).join('')}</nav>` : '';
+    const mobileActions = canRecord ? `<div class='mobile-task-actions finance-task-actions'><button class='btn btn-primary' data-action='new-expense' data-direction='in'>＋ Thu tiền</button><button class='btn btn-secondary finance-quick-out' data-action='new-expense' data-direction='out'>− Chi tiền</button></div>`
+      : stockkeeper ? `<div class='mobile-task-actions finance-task-actions'><button class='btn btn-primary' data-action='receive-stock'>＋ Nhập hàng</button><button class='btn btn-secondary' data-action='new-purchase-order'>＋ Đặt hàng</button></div>` : '';
+    return `${heading}${tabs}<div data-finance-content>${financeBody()}</div>${mobileActions}`;
   }
 
   function purchaseHistoryPanel() {
@@ -4520,7 +4587,7 @@
 
   function enhanceWorkspace() {
     const actions = root.querySelector('.page-heading .heading-actions');
-    if (actions) {
+    if (actions && !['products', 'finance'].includes(page)) {
       const extras = Array.from(actions.children).filter(function (node) { return node.tagName === 'BUTTON' && !node.classList.contains('btn-primary') && !(page === 'finance' && node.dataset.action === 'new-expense'); });
       let menu = actions.querySelector('.catalog-more');
       if (extras.length && (actions.children.length > 1 || menu)) {
@@ -10434,7 +10501,10 @@
       button.parentElement.querySelector('[aria-current]')?.removeAttribute('aria-current');
       button.setAttribute('aria-current', 'page');
       refreshFinanceBody();
+      if (financeTab === 'receivables') loadFinanceReceivables(0);
     }
+    else if (action === 'finance-receivable-page') loadFinanceReceivables(Number(button.dataset.offset) || 0);
+    else if (action === 'finance-receivable-retry') loadFinanceReceivables(financeReceivables.offset);
     else if (action === 'new-debtor') openCustomer(null, { debt: true });
     else if (action === 'close-receivable') { receivableDetail = null; render(); }
     else if (action === 'close-inline-debt-payment') button.closest('[data-inline-debt-payment]')?.remove();
@@ -10448,7 +10518,7 @@
     else if (action === 'finance-receivable') openReceivable(id);
     else if (action === 'finance-reminder') openDebtReminder(id);
     else if (action === 'share-finance-reminder' || action === 'copy-finance-reminder') useDebtReminder(action === 'share-finance-reminder');
-    else if (action === 'cash-movement-detail') openCashMovement(Number(button.dataset.index));
+    else if (action === 'cash-movement-detail') openCashMovement(id);
     else if (action === 'toggle-customer-filters') {
       customerAdvancedOpen = !customerAdvancedOpen;
       const advanced = document.getElementById('customer-advanced');
@@ -10587,6 +10657,18 @@
           if (removeButton) removeButton.disabled = index < 2 || rows.length <= 2;
         });
       }
+    }
+    else if (action === 'product-card-menu') openProductCardMenu(id);
+    else if (action === 'product-card-choice') {
+      const product = productById(id);
+      if (!product) return;
+      const kind = button.dataset.kind;
+      const canEdit = ['owner', 'manager', 'stockkeeper'].includes(store.role);
+      const canViewHistory = ['owner', 'manager', 'stockkeeper', 'accountant'].includes(store.role);
+      if (kind === 'edit' && canEdit) requestCloseModal(() => openProduct(id));
+      else if (kind === 'print') requestCloseModal(() => openBarcodePrintModal([{ ...product, copies: 1 }]));
+      else if (kind === 'history' && canViewHistory) requestCloseModal(() => openProductPriceHistory(id));
+      else if (kind === 'stock' && canEdit && product.inventoryTracked) requestCloseModal(() => openStockAdjust(id));
     }
     else if (action === 'edit-product') openProduct(id);
     else if (action === 'add-product-to-existing-variant-group') openProductVariantAdd(id);
@@ -10864,6 +10946,15 @@
       window.clearTimeout(productSearchTimer);
       productSearchTimer = window.setTimeout(function () {
         if (page === 'products') loadProductsPage(query, 0, { keepSearch: true });
+      }, 250);
+    }
+    else if (id === 'finance-receivable-search') {
+      financeReceivables.query = event.target.value;
+      financeReceivables.ready = false;
+      financeReceivables.requestNumber += 1;
+      window.clearTimeout(financeReceivableSearchTimer);
+      financeReceivableSearchTimer = window.setTimeout(function () {
+        if (page === 'finance' && financeTab === 'receivables') loadFinanceReceivables(0);
       }, 250);
     }
     else if (id === 'order-search') {
@@ -11463,7 +11554,6 @@
     }
   });
   document.addEventListener('toggle', function (event) {
-    if (event.target.matches?.('[data-finance-book]')) financeBookOpen = event.target.open;
     if (event.target.matches?.('[data-staff-detail]')) {
       const id = event.target.dataset.staffDetail;
       if (event.target.open) staffExpandedIds.add(id);
