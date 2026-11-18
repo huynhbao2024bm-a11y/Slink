@@ -15,7 +15,7 @@ const OPENING_BALANCE_ROLES = new Set(['owner', 'manager', 'accountant']);
 const VOID_ORDER_ROLES = new Set(['owner', 'manager']);
 const MAX_BIGINT = 9223372036854775807n;
 const MAX_CUSTOMER_IMPORT_ROWS = 200;
-const CUSTOMER_SEGMENTS = new Set(['no_purchase', 'repeat', 'owing', 'inactive90']);
+const CUSTOMER_SEGMENTS = new Set(['no_purchase', 'repeat', 'owing', 'inactive90', 'vip_tier', 'wholesale', 'birthday_month', 'over_credit_limit']);
 
 function nonNegativeVnd(value, label) {
   if (value === undefined || value === null || value === '') return 0n;
@@ -60,12 +60,53 @@ function validateCustomer(input, { partial = false } = {}) {
   }
   if (!partial || source.customerType !== undefined) {
     const type = source.customerType || 'retail';
-    if (!['retail', 'wholesale', 'vip'].includes(type)) throw new ApiError(400, 'validation_error', 'Nhóm khách hàng không hợp lệ.');
+    if (!['retail', 'wholesale', 'vip', 'agency'].includes(type)) throw new ApiError(400, 'validation_error', 'Nhóm khách hàng không hợp lệ.');
     values.customerType = type;
   }
   if (!partial || source.creditLimitVnd !== undefined) {
     values.creditLimitVnd = source.creditLimitVnd === '' || source.creditLimitVnd == null
       ? null : nonNegativeVnd(source.creditLimitVnd, 'Hạn mức nợ').toString();
+  }
+  if (!partial || source.customerCode !== undefined) {
+    const code = source.customerCode == null ? '' : String(source.customerCode).trim();
+    if (code.length > 40) throw new ApiError(400, 'validation_error', 'Mã khách hàng tối đa 40 ký tự.');
+    values.customerCode = code || null;
+  }
+  if (!partial || source.birthday !== undefined) {
+    const bday = source.birthday == null ? '' : String(source.birthday).trim();
+    if (bday) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(bday)) throw new ApiError(400, 'validation_error', 'Ngày sinh phải có định dạng YYYY-MM-DD.');
+      const parsed = new Date(`${bday}T00:00:00.000Z`);
+      if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== bday) {
+        throw new ApiError(400, 'validation_error', 'Ngày sinh không hợp lệ.');
+      }
+    }
+    values.birthday = bday || null;
+  }
+  if (!partial || source.gender !== undefined) {
+    const gender = source.gender == null ? '' : String(source.gender).trim();
+    if (gender && !['male', 'female', 'other'].includes(gender)) throw new ApiError(400, 'validation_error', 'Giới tính không hợp lệ.');
+    values.gender = gender || null;
+  }
+  if (!partial || source.companyName !== undefined) {
+    const companyName = typeof source.companyName === 'string' ? source.companyName.trim() : '';
+    if (companyName.length > 160) throw new ApiError(400, 'validation_error', 'Tên công ty tối đa 160 ký tự.');
+    values.companyName = companyName;
+  }
+  if (!partial || source.taxCode !== undefined) {
+    const taxCode = typeof source.taxCode === 'string' ? source.taxCode.trim() : '';
+    if (taxCode.length > 40) throw new ApiError(400, 'validation_error', 'Mã số thuế tối đa 40 ký tự.');
+    values.taxCode = taxCode;
+  }
+  if (!partial || source.discountRateBps !== undefined) {
+    const raw = source.discountRateBps === '' || source.discountRateBps == null ? 0 : Number(source.discountRateBps);
+    if (!Number.isSafeInteger(raw) || raw < 0 || raw > 10000) throw new ApiError(400, 'validation_error', 'Chiết khấu mặc định không hợp lệ (0–100%).');
+    values.discountRateBps = raw;
+  }
+  if (!partial || source.bonusPoints !== undefined) {
+    const raw = source.bonusPoints === '' || source.bonusPoints == null ? 0 : Number(source.bonusPoints);
+    if (!Number.isSafeInteger(raw) || raw < -1000000 || raw > 10000000) throw new ApiError(400, 'validation_error', 'Điểm thưởng không hợp lệ.');
+    values.bonusPoints = raw;
   }
   return values;
 }
@@ -250,17 +291,31 @@ function registerRecordRoutes(app, { pool, env }) {
       if (!CUSTOMER_VIEW_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền xem hồ sơ khách hàng.');
       if (pickerView === 'picker') {
         const result = await client.query(
-          `SELECT c.id, c.name, c.phone
+          `SELECT c.id, c.name, c.phone, c.customer_code, c.customer_type,
+                  COALESCE(c.discount_rate_bps, 0)::int AS discount_rate_bps,
+                  c.shipping_address, c.credit_limit_vnd::text AS credit_limit_vnd
            FROM customers c
            WHERE c.store_id = $1 AND c.status = 'active'
-             AND ($2 = '' OR c.name ILIKE '%' || $2 || '%' OR ($3 <> '' AND COALESCE(c.phone_normalized, '') LIKE '%' || $3 || '%'))
+             AND ($2 = '' OR c.name ILIKE '%' || $2 || '%' OR COALESCE(c.customer_code, '') ILIKE '%' || $2 || '%' OR ($3 <> '' AND COALESCE(c.phone_normalized, '') LIKE '%' || $3 || '%'))
            ORDER BY c.name, c.id LIMIT $4 OFFSET $5`,
           [storeId, search, phoneSearch, limit, offset]
         );
         return { customers: result.rows };
       }
       const result = await client.query(
-        `SELECT c.id, c.name, c.phone, c.email, c.note, c.shipping_address, c.customer_type, c.credit_limit_vnd::text AS credit_limit_vnd, c.status, c.version,
+        `SELECT c.id, c.customer_code, c.name, c.phone, c.email, c.note, c.shipping_address, c.customer_type,
+                c.credit_limit_vnd::text AS credit_limit_vnd, c.birthday::text AS birthday, c.gender,
+                COALESCE(c.company_name, '') AS company_name, COALESCE(c.tax_code, '') AS tax_code,
+                COALESCE(c.discount_rate_bps, 0)::int AS discount_rate_bps,
+                COALESCE(c.bonus_points, 0)::int AS bonus_points,
+                GREATEST(0, (customer_activity.total_spent_vnd / 100000)::int + COALESCE(c.bonus_points, 0))::int AS loyalty_points,
+                CASE
+                  WHEN customer_activity.total_spent_vnd >= 50000000 THEN 'diamond'
+                  WHEN customer_activity.total_spent_vnd >= 15000000 OR c.customer_type IN ('vip', 'agency') THEN 'gold'
+                  WHEN customer_activity.total_spent_vnd >= 3000000 THEN 'silver'
+                  ELSE 'member'
+                END AS loyalty_tier,
+                c.status, c.version,
                 customer_balance.balance_vnd::text AS balance_vnd,
                 customer_activity.order_count,
                 customer_activity.total_spent_vnd::text AS total_spent_vnd,
@@ -285,7 +340,9 @@ function registerRecordRoutes(app, { pool, env }) {
            FROM orders o WHERE o.store_id = c.store_id AND o.customer_id = c.id AND o.status <> 'voided'
          ) customer_activity ON true
          WHERE c.store_id = $1 AND c.status = 'active'
-           AND ($2 = '' OR c.name ILIKE '%' || $2 || '%' OR ($3 <> '' AND COALESCE(c.phone_normalized, '') LIKE '%' || $3 || '%'))
+           AND ($2 = '' OR c.name ILIKE '%' || $2 || '%' OR COALESCE(c.customer_code, '') ILIKE '%' || $2 || '%'
+                OR COALESCE(c.company_name, '') ILIKE '%' || $2 || '%' OR COALESCE(c.tax_code, '') ILIKE '%' || $2 || '%'
+                OR ($3 <> '' AND COALESCE(c.phone_normalized, '') LIKE '%' || $3 || '%'))
            AND ($4 = '' OR EXISTS (
              SELECT 1 FROM (
                SELECT DISTINCT ON (tag_key) tag_key, operation
@@ -297,6 +354,10 @@ function registerRecordRoutes(app, { pool, env }) {
              OR ($5 = 'no_purchase' AND customer_activity.order_count = 0)
              OR ($5 = 'repeat' AND customer_activity.order_count >= 2)
              OR ($5 = 'owing' AND customer_balance.balance_vnd > 0)
+             OR ($5 = 'over_credit_limit' AND c.credit_limit_vnd IS NOT NULL AND customer_balance.balance_vnd > c.credit_limit_vnd)
+             OR ($5 = 'vip_tier' AND (c.customer_type IN ('vip', 'agency') OR customer_activity.total_spent_vnd >= 15000000))
+             OR ($5 = 'wholesale' AND c.customer_type = 'wholesale')
+             OR ($5 = 'birthday_month' AND c.birthday IS NOT NULL AND EXTRACT(MONTH FROM c.birthday) = EXTRACT(MONTH FROM CURRENT_DATE))
              OR ($5 = 'inactive90' AND customer_activity.order_count > 0
                  AND customer_activity.latest_order_at < now() - interval '90 days'))
            AND ($6::bigint IS NULL OR customer_activity.total_spent_vnd >= $6::bigint)
@@ -460,7 +521,12 @@ function registerRecordRoutes(app, { pool, env }) {
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
       if (!CUSTOMER_VIEW_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền xem hồ sơ khách hàng.');
       const customerResult = await client.query(
-        `SELECT c.id, c.name, c.phone, c.email, c.note, c.shipping_address, c.customer_type, c.credit_limit_vnd::text AS credit_limit_vnd, c.status, c.version, c.created_at,
+        `SELECT c.id, c.customer_code, c.name, c.phone, c.email, c.note, c.shipping_address, c.customer_type,
+                c.credit_limit_vnd::text AS credit_limit_vnd, c.birthday::text AS birthday, c.gender,
+                COALESCE(c.company_name, '') AS company_name, COALESCE(c.tax_code, '') AS tax_code,
+                COALESCE(c.discount_rate_bps, 0)::int AS discount_rate_bps,
+                COALESCE(c.bonus_points, 0)::int AS bonus_points,
+                c.status, c.version, c.created_at,
                 COALESCE((SELECT SUM(l.debit_vnd - l.credit_vnd) FROM customer_ledger_entries l
                           WHERE l.store_id = c.store_id AND l.customer_id = c.id), 0)::text AS balance_vnd,
                 COALESCE((SELECT COUNT(*) FROM orders o WHERE o.store_id = c.store_id AND o.customer_id = c.id AND o.status <> 'voided'), 0)::int AS order_count,
@@ -471,6 +537,10 @@ function registerRecordRoutes(app, { pool, env }) {
         [storeId, customerId]
       );
       if (!customerResult.rowCount) throw new ApiError(404, 'customer_not_found', 'Không tìm thấy khách hàng đang hoạt động.');
+      const custRow = customerResult.rows[0];
+      const spentBig = BigInt(custRow.total_spent_vnd || '0');
+      custRow.loyalty_points = Math.max(0, Number(spentBig / 100000n) + Number(custRow.bonus_points || 0));
+      custRow.loyalty_tier = spentBig >= 50000000n ? 'diamond' : (spentBig >= 15000000n || ['vip', 'agency'].includes(custRow.customer_type)) ? 'gold' : spentBig >= 3000000n ? 'silver' : 'member';
       const tags = await client.query(
         `SELECT tag_key, tag FROM (
            SELECT DISTINCT ON (tag_key) tag_key, tag, operation
@@ -726,12 +796,38 @@ function registerRecordRoutes(app, { pool, env }) {
           return { status: record.response_status, body: record.response_body, replayed: true };
         }
       }
-      const inserted = await client.query(
-        `INSERT INTO customers (store_id, name, phone, phone_normalized, email, note, shipping_address, customer_type, credit_limit_vnd, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-         RETURNING id, name, phone, email, note, shipping_address, customer_type, credit_limit_vnd::text AS credit_limit_vnd, status, version, created_at, updated_at`,
-        [storeId, customer.name, customer.phone, customer.phoneNormalized, customer.email, customer.note, customer.shippingAddress, customer.customerType, customer.creditLimitVnd, auth.userId]
-      );
+      let customerCode = customer.customerCode;
+      if (!customerCode) {
+        const cntRes = await client.query(
+          `SELECT GREATEST(COUNT(*), COALESCE(MAX(CASE WHEN customer_code ~ '^KH-[0-9]{1,9}$' THEN substring(customer_code FROM 4)::bigint END), 0))::int AS cnt
+           FROM customers WHERE store_id = $1`,
+          [storeId]
+        );
+        customerCode = `KH-${String((cntRes.rows[0]?.cnt || 0) + 1).padStart(4, '0')}`;
+      }
+      let inserted;
+      try {
+        inserted = await client.query(
+          `INSERT INTO customers (
+             store_id, customer_code, name, phone, phone_normalized, email, note, shipping_address,
+             customer_type, credit_limit_vnd, birthday, gender, company_name, tax_code,
+             discount_rate_bps, bonus_points, created_by
+           )
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::date, $12, $13, $14, $15, $16, $17)
+           RETURNING id, customer_code, name, phone, email, note, shipping_address, customer_type,
+                     credit_limit_vnd::text AS credit_limit_vnd, birthday::text AS birthday, gender,
+                     company_name, tax_code, discount_rate_bps, bonus_points, status, version, created_at, updated_at`,
+          [
+            storeId, customerCode, customer.name, customer.phone, customer.phoneNormalized, customer.email,
+            customer.note, customer.shippingAddress, customer.customerType, customer.creditLimitVnd,
+            customer.birthday || null, customer.gender || null, customer.companyName || '', customer.taxCode || '',
+            customer.discountRateBps || 0, customer.bonusPoints || 0, auth.userId,
+          ]
+        );
+      } catch (err) {
+        if (err.code === '23505') throw new ApiError(409, 'customer_code_conflict', 'Mã khách hàng này đã tồn tại trong cửa hàng.');
+        throw err;
+      }
       const created = inserted.rows[0];
       let openingBalanceEntryId = null;
       if (openingBalance > 0n) {
@@ -779,11 +875,12 @@ function registerRecordRoutes(app, { pool, env }) {
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
       if (!EDIT_CUSTOMER_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền quản lý khách hàng.');
       await client.query('SELECT id FROM stores WHERE id = $1 FOR UPDATE', [storeId]);
-      const currentResult = await client.query('SELECT * FROM customers WHERE store_id = $1 AND id = $2 FOR UPDATE', [storeId, customerId]);
+      const currentResult = await client.query('SELECT *, birthday::text AS birthday_text FROM customers WHERE store_id = $1 AND id = $2 FOR UPDATE', [storeId, customerId]);
       if (!currentResult.rowCount || currentResult.rows[0].status !== 'active') throw new ApiError(404, 'customer_not_found', 'Không tìm thấy khách hàng đang hoạt động.');
       const current = currentResult.rows[0];
       if (current.version !== expectedVersion) throw new ApiError(409, 'version_conflict', 'Hồ sơ đã được thay đổi trên thiết bị khác. Hãy tải lại rồi thử lại.');
       const next = {
+        customerCode: fields.customerCode !== undefined ? fields.customerCode : current.customer_code,
         name: fields.name ?? current.name,
         phone: fields.phone !== undefined ? fields.phone : current.phone,
         phoneNormalized: fields.phoneNormalized !== undefined ? fields.phoneNormalized : current.phone_normalized,
@@ -792,15 +889,36 @@ function registerRecordRoutes(app, { pool, env }) {
         shippingAddress: fields.shippingAddress ?? current.shipping_address,
         customerType: fields.customerType ?? current.customer_type,
         creditLimitVnd: fields.creditLimitVnd !== undefined ? fields.creditLimitVnd : current.credit_limit_vnd,
+        birthday: fields.birthday !== undefined ? fields.birthday : (current.birthday_text ? String(current.birthday_text).slice(0, 10) : null),
+        gender: fields.gender !== undefined ? fields.gender : current.gender,
+        companyName: fields.companyName !== undefined ? fields.companyName : (current.company_name || ''),
+        taxCode: fields.taxCode !== undefined ? fields.taxCode : (current.tax_code || ''),
+        discountRateBps: fields.discountRateBps !== undefined ? fields.discountRateBps : (current.discount_rate_bps || 0),
+        bonusPoints: fields.bonusPoints !== undefined ? fields.bonusPoints : (current.bonus_points || 0),
       };
-      const updated = await client.query(
-        `UPDATE customers SET name = $3, phone = $4, phone_normalized = $5, email = $6, note = $7,
-             shipping_address = $9, customer_type = $11, credit_limit_vnd = $10,
-             version = version + 1, updated_at = now()
-         WHERE store_id = $1 AND id = $2 AND version = $8
-         RETURNING id, name, phone, email, note, shipping_address, customer_type, credit_limit_vnd::text AS credit_limit_vnd, status, version, updated_at`,
-        [storeId, customerId, next.name, next.phone, next.phoneNormalized, next.email, next.note, expectedVersion, next.shippingAddress, next.creditLimitVnd, next.customerType]
-      );
+      let updated;
+      try {
+        updated = await client.query(
+          `UPDATE customers SET name = $3, phone = $4, phone_normalized = $5, email = $6, note = $7,
+               shipping_address = $9, customer_type = $11, credit_limit_vnd = $10,
+               customer_code = $12, birthday = $13::date, gender = $14, company_name = $15,
+               tax_code = $16, discount_rate_bps = $17, bonus_points = $18,
+               version = version + 1, updated_at = now()
+           WHERE store_id = $1 AND id = $2 AND version = $8
+           RETURNING id, customer_code, name, phone, email, note, shipping_address, customer_type,
+                     credit_limit_vnd::text AS credit_limit_vnd, birthday::text AS birthday, gender,
+                     company_name, tax_code, discount_rate_bps, bonus_points, status, version, updated_at`,
+          [
+            storeId, customerId, next.name, next.phone, next.phoneNormalized, next.email, next.note,
+            expectedVersion, next.shippingAddress, next.creditLimitVnd, next.customerType,
+            next.customerCode, next.birthday, next.gender, next.companyName, next.taxCode,
+            next.discountRateBps, next.bonusPoints,
+          ]
+        );
+      } catch (err) {
+        if (err.code === '23505') throw new ApiError(409, 'customer_code_conflict', 'Mã khách hàng này đã tồn tại trong cửa hàng.');
+        throw err;
+      }
       await client.query(
         `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, metadata)
          VALUES ($1, $2, 'customer.updated', 'customer', $3, jsonb_build_object('version', $4::integer))`,

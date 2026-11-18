@@ -66,6 +66,25 @@ function validateProduct(input, { partial = false } = {}) {
     if (barcode !== null && (barcode.length < 3 || barcode.length > 80)) throw new ApiError(400, 'validation_error', 'Mã vạch phải có từ 3 đến 80 ký tự.');
     values.barcode = barcode;
   }
+  if (!partial || source.extraBarcodes !== undefined) {
+    const rawList = Array.isArray(source.extraBarcodes)
+      ? source.extraBarcodes
+      : typeof source.extraBarcodes === 'string' && source.extraBarcodes.trim()
+        ? source.extraBarcodes.split(/[\n,;]+/)
+        : [];
+    const seen = new Set();
+    const cleaned = [];
+    for (const entry of rawList) {
+      const code = String(entry ?? '').trim();
+      if (!code) continue;
+      if (code.length < 3 || code.length > 80) throw new ApiError(400, 'validation_error', 'Mã vạch phụ phải có từ 3 đến 80 ký tự.');
+      if (code === values.barcode || seen.has(code)) continue;
+      if (cleaned.length >= 20) throw new ApiError(400, 'validation_error', 'Mỗi sản phẩm hỗ trợ tối đa 20 mã vạch phụ.');
+      seen.add(code);
+      cleaned.push(code);
+    }
+    values.extraBarcodes = cleaned;
+  }
   if (!partial || source.inventoryTracked !== undefined) {
     const tracked = source.inventoryTracked ?? true;
     if (typeof tracked !== 'boolean') throw new ApiError(400, 'validation_error', 'Cấu hình theo dõi tồn kho không hợp lệ.');
@@ -359,7 +378,7 @@ function registerProductRoutes(app, { pool, env }) {
       if (requestedWarehouseId && !await findAccessibleWarehouse(client, storeId, membership, requestedWarehouseId)) throw new ApiError(404, 'warehouse_not_found', 'Không tìm thấy kho đang hoạt động.');
       const warehouseIds = allowedWarehouseIds(membership);
       const result = await client.query(
-        `SELECT p.id, p.sku, p.barcode, p.name, p.category, p.unit,
+        `SELECT p.id, p.sku, p.barcode, COALESCE(p.extra_barcodes, '{}'::text[]) AS extra_barcodes, p.name, p.category, p.unit,
                 p.sale_price_vnd::text AS sale_price_vnd,
                 CASE WHEN $5::boolean THEN p.cost_vnd::text ELSE NULL END AS cost_vnd,
                 p.low_stock_threshold::text AS low_stock_threshold, p.inventory_tracked,
@@ -376,7 +395,7 @@ function registerProductRoutes(app, { pool, env }) {
            FROM inventory_balances b WHERE b.store_id = p.store_id AND b.product_id = p.id
          ) i ON true
          WHERE p.status = $1 AND ($8::uuid IS NULL OR p.id = $8) AND ($2 = '' OR p.name ILIKE '%' || $2 || '%' OR p.category ILIKE '%' || $2 || '%' OR p.variant_group_name ILIKE '%' || $2 || '%'
-           OR p.variant_attributes::text ILIKE '%' || $2 || '%' OR p.sku_normalized LIKE '%' || lower($2) || '%' OR p.barcode = $2)
+           OR p.variant_attributes::text ILIKE '%' || $2 || '%' OR p.sku_normalized LIKE '%' || lower($2) || '%' OR p.barcode = $2 OR $2 = ANY(p.extra_barcodes))
          ORDER BY p.name, p.id LIMIT $3 OFFSET $4`,
         [status, search, limit + 1, offset, canViewCost, requestedWarehouseId || null, warehouseIds, requestedProductId || null]
       );
@@ -485,8 +504,15 @@ function registerProductRoutes(app, { pool, env }) {
       throw new ApiError(400, 'idempotency_key_required', 'Thiếu mã lưu thao tác an toàn. Hãy thử lại.');
     }
     const products = validateImportRows(request.body?.items);
-    if (products.length > 1 && request.body.items.some(item => item.image !== undefined)) throw new ApiError(400, 'validation_error', 'Thêm ảnh riêng cho từng mặt hàng sau khi nhập danh sách.');
-    if (products.length === 1) products[0].image = await prepareProductImage(request.body.items[0].image);
+    if (products.length > 50 && request.body.items.some(item => item.image !== undefined)) throw new ApiError(400, 'validation_error', 'Thêm ảnh riêng cho từng mặt hàng sau khi nhập danh sách.');
+    const firstRawImage = request.body.items[0]?.image;
+    const sharedImage = firstRawImage !== undefined ? await prepareProductImage(firstRawImage) : undefined;
+    for (let idx = 0; idx < products.length; idx++) {
+      const rawImg = request.body.items[idx]?.image;
+      if (rawImg !== undefined) {
+        products[idx].image = (idx === 0 || rawImg === firstRawImage) ? sharedImage : await prepareProductImage(rawImg);
+      }
+    }
     const warehouseInput = request.body?.warehouseId;
     if (warehouseInput !== undefined && (typeof warehouseInput !== 'string' || !UUID_PATTERN.test(warehouseInput))) throw new ApiError(400, 'validation_error', 'Kho nhận tồn đầu kỳ không hợp lệ.');
     const requestedWarehouseId = warehouseInput?.toLowerCase() || null;
@@ -535,17 +561,18 @@ function registerProductRoutes(app, { pool, env }) {
           const variantGroupId = product.groupKey ? variantGroupIds.get(product.groupKey) : null;
           const inserted = await client.query(
             `INSERT INTO products (
-               store_id, sku, sku_normalized, barcode, name, category, unit,
+               store_id, sku, sku_normalized, barcode, extra_barcodes, name, category, unit,
                sale_price_vnd, cost_vnd, low_stock_threshold, inventory_tracked, created_by,
                variant_group_id, variant_group_name, variant_attributes, purchase_pack
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16::jsonb)
-             RETURNING id, sku, barcode, name, category, unit, sale_price_vnd::text AS sale_price_vnd,
+             ) VALUES ($1, $2, $3, $4, $17::text[], $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16::jsonb)
+             RETURNING id, sku, barcode, COALESCE(extra_barcodes, '{}'::text[]) AS extra_barcodes, name, category, unit, sale_price_vnd::text AS sale_price_vnd,
                        cost_vnd::text AS cost_vnd, low_stock_threshold::text AS low_stock_threshold,
                        inventory_tracked, status, version, purchase_pack, variant_group_id, variant_group_name, variant_attributes, created_at`,
             [storeId, product.sku, product.sku.toLocaleLowerCase('vi'), product.barcode, product.name,
               product.category, product.unit, product.salePriceVnd, product.costVnd,
               product.lowStockThreshold, product.inventoryTracked, auth.userId, variantGroupId,
-              product.variantGroupName, JSON.stringify(product.variantAttributes || {}), product.purchasePack ? JSON.stringify(product.purchasePack) : null]
+              product.variantGroupName, JSON.stringify(product.variantAttributes || {}), product.purchasePack ? JSON.stringify(product.purchasePack) : null,
+              product.extraBarcodes || []]
           );
           const created = inserted.rows[0];
           Object.assign(created, await writeProductImage(client, storeId, created.id, product.image, auth.userId));
@@ -886,15 +913,16 @@ function registerProductRoutes(app, { pool, env }) {
         requireEditor(membership.role);
         const inserted = await client.query(
           `INSERT INTO products (
-             store_id, sku, sku_normalized, barcode, name, category, unit,
+             store_id, sku, sku_normalized, barcode, extra_barcodes, name, category, unit,
              sale_price_vnd, cost_vnd, low_stock_threshold, inventory_tracked, created_by, purchase_pack
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb)
-           RETURNING id, sku, barcode, name, category, unit, sale_price_vnd::text AS sale_price_vnd,
+           ) VALUES ($1, $2, $3, $4, $14::text[], $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb)
+           RETURNING id, sku, barcode, COALESCE(extra_barcodes, '{}'::text[]) AS extra_barcodes, name, category, unit, sale_price_vnd::text AS sale_price_vnd,
                      cost_vnd::text AS cost_vnd, low_stock_threshold::text AS low_stock_threshold,
                      inventory_tracked, status, version, purchase_pack, created_at`,
           [storeId, product.sku, product.sku.toLocaleLowerCase('vi'), product.barcode, product.name,
             product.category, product.unit, product.salePriceVnd, product.costVnd,
-            product.lowStockThreshold, product.inventoryTracked, auth.userId, product.purchasePack ? JSON.stringify(product.purchasePack) : null]
+            product.lowStockThreshold, product.inventoryTracked, auth.userId, product.purchasePack ? JSON.stringify(product.purchasePack) : null,
+            product.extraBarcodes || []]
         );
         const created = inserted.rows[0];
         Object.assign(created, await writeProductImage(client, storeId, created.id, image, auth.userId));
@@ -1222,6 +1250,7 @@ function registerProductRoutes(app, { pool, env }) {
         const next = {
           sku: product.sku ?? old.sku,
           barcode: product.barcode !== undefined ? product.barcode : old.barcode,
+          extraBarcodes: product.extraBarcodes !== undefined ? product.extraBarcodes : (old.extra_barcodes || []),
           name: product.name ?? old.name,
           category: product.category ?? old.category,
           unit: product.unit ?? old.unit,
@@ -1259,16 +1288,17 @@ function registerProductRoutes(app, { pool, env }) {
           }
         }
         const updated = await client.query(
-          `UPDATE products SET sku = $3, sku_normalized = $4, barcode = $5, name = $6, category = $7, unit = $8,
+          `UPDATE products SET sku = $3, sku_normalized = $4, barcode = $5, extra_barcodes = $16::text[], name = $6, category = $7, unit = $8,
                sale_price_vnd = $9, cost_vnd = $10, low_stock_threshold = $11, inventory_tracked = $12,
                variant_attributes = $14::jsonb, purchase_pack = $15::jsonb, version = version + 1, updated_at = now()
            WHERE store_id = $1 AND id = $2 AND version = $13
-           RETURNING id, sku, barcode, name, category, unit, sale_price_vnd::text AS sale_price_vnd,
+           RETURNING id, sku, barcode, COALESCE(extra_barcodes, '{}'::text[]) AS extra_barcodes, name, category, unit, sale_price_vnd::text AS sale_price_vnd,
                      cost_vnd::text AS cost_vnd, low_stock_threshold::text AS low_stock_threshold,
                      inventory_tracked, status, version, purchase_pack, variant_group_id, variant_group_name, variant_attributes, updated_at`,
           [storeId, productId, next.sku, next.sku.toLocaleLowerCase('vi'), next.barcode, next.name, next.category,
             next.unit, next.salePriceVnd, next.costVnd, next.lowStockThreshold, next.inventoryTracked, expectedVersion,
-            JSON.stringify(next.variantAttributes), next.purchasePack ? JSON.stringify(next.purchasePack) : null]
+            JSON.stringify(next.variantAttributes), next.purchasePack ? JSON.stringify(next.purchasePack) : null,
+            (next.extraBarcodes || []).filter((code) => code !== next.barcode)]
         );
         if (next.costVnd !== Number(old.cost_vnd)) {
           await client.query(

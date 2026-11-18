@@ -285,7 +285,7 @@ async function runViewportAudit(browser, origin, viewport, label) {
     if (viewport.width <= 640) {
       const card = page.locator('.product-mobile-card').filter({ hasText: 'Trà sữa E2E' });
       await card.locator('[data-action="product-card-menu"]').click();
-      assert.equal(await page.locator('.modal [data-action="product-card-choice"]').count(), 4, `${label}: one card menu exposes four non-overlapping actions`);
+      assert.equal(await page.locator('.modal [data-action="product-card-choice"]').count(), 5, `${label}: one card menu exposes five non-overlapping actions including clone`);
       await page.locator('.modal [data-action="close-modal"]').click();
       await page.waitForSelector('#modal[hidden]', { state: 'attached' });
       await page.locator('.product-secondary-actions summary').click();
