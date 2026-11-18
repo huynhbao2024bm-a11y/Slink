@@ -124,6 +124,7 @@
   let analyticsLoading = false;
   let analyticsError = '';
   let analyticsRequestNumber = 0;
+  const integrationState = { data: null, loading: false, error: '', requestNumber: 0, storeId: '' };
   let customerTotal = 0;
   let customerListLoaded = false;
   let customerOffset = 0;
@@ -1892,6 +1893,10 @@
     selectedWarehouseId = '';
     warehouseLoading = false;
     warehouseError = '';
+    integrationState.data = null;
+    integrationState.loading = false;
+    integrationState.error = '';
+    integrationState.storeId = '';
     page = checkoutPendingPayload ? 'pos' : taskFocusRoute || (store.role === 'stockkeeper' ? 'inventory' : store.role === 'accountant' ? 'finance' : store.role === 'cashier' ? 'pos' : 'dashboard');
     authRoot.hidden = true;
     appShell.hidden = false;
@@ -1914,6 +1919,7 @@
       else if (store.role === 'stockkeeper') dashboardLoads.push(loadFinancePage());
       await Promise.all(dashboardLoads);
     }
+    if (['pos', 'orders', 'settings'].includes(page)) loadIntegrationStatus();
     if (page === 'pos' && checkoutPendingPayload) {
       cart = checkoutPendingPayload.items.map(function (item) { return { id: item.productId, qty: item.quantity, unitPriceVnd: item.expectedUnitPriceVnd == null ? undefined : Number(item.expectedUnitPriceVnd) }; });
       cartCustomerId = checkoutPendingPayload.customerId || '';
@@ -2215,6 +2221,209 @@
     } catch (error) {
       if (error.status === 401) showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
       else toast('Chưa tải được thông tin cửa hàng', error.message, 'error');
+    }
+  }
+
+  async function loadIntegrationStatus(force = false) {
+    if (!authSession || !store.id) return;
+    if (!force && integrationState.storeId === store.id && (integrationState.data || integrationState.loading)) return;
+    const storeId = store.id;
+    const requestNumber = ++integrationState.requestNumber;
+    integrationState.loading = true;
+    integrationState.error = '';
+    integrationState.storeId = storeId;
+    if (page === 'settings') render();
+    try {
+      const result = await apiRequest(`/api/stores/${encodeURIComponent(storeId)}/integrations/status`);
+      if (requestNumber !== integrationState.requestNumber || store.id !== storeId) return;
+      integrationState.data = result;
+      integrationState.loading = false;
+    } catch (error) {
+      if (requestNumber !== integrationState.requestNumber || store.id !== storeId) return;
+      integrationState.loading = false;
+      integrationState.error = error.message;
+      if (error.status === 401) return showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
+    }
+    if (page === 'settings') render();
+    else if (page === 'pos' && !modal.hidden) {
+      const checkoutForm = modal.querySelector('[data-form="checkout"]');
+      if (checkoutForm) updateCheckoutTenderSummary(checkoutForm);
+    }
+  }
+
+  async function saveIntegrationSettings(form) {
+    if (!['owner', 'manager'].includes(store.role)) return;
+    const data = new FormData(form);
+    const submit = form.querySelector('[type="submit"]');
+    const payload = {
+      bankBin: String(data.get('bankBin') || '').trim(),
+      bankAccountNumber: String(data.get('bankAccountNumber') || '').trim(),
+      bankAccountName: String(data.get('bankAccountName') || '').trim(),
+      bankWebhookProvider: String(data.get('bankWebhookProvider') || 'none').trim(),
+      einvoiceProvider: String(data.get('einvoiceProvider') || 'none').trim(),
+      taxCode: String(data.get('taxCode') || '').trim(),
+      einvoiceTemplateCode: String(data.get('einvoiceTemplateCode') || '').trim(),
+      einvoiceSerial: String(data.get('einvoiceSerial') || '').trim(),
+      shippingProvider: String(data.get('shippingProvider') || 'none').trim(),
+    };
+    if (submit) submit.disabled = true;
+    try {
+      const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/integrations/settings`, { method: 'PUT', body: payload });
+      delete form.dataset.dirty;
+      integrationState.data = { ...(integrationState.data || {}), settings: result.settings, connectors: result.connectors };
+      await loadIntegrationStatus(true);
+      toast('Đã lưu cấu hình tích hợp', result.settings.bankAccountNumber ? `VietQR ${result.settings.bankName || result.settings.bankBin} sẵn sàng` : 'Đã cập nhật tích hợp');
+    } catch (error) {
+      if (error.status === 401) showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
+      else toast('Chưa lưu được tích hợp', error.message, 'error');
+      if (submit?.isConnected) submit.disabled = false;
+    }
+  }
+
+  function updateIntegrationVietQrPreview(form) {
+    const preview = form?.querySelector('#int-vietqr-preview');
+    if (!preview || !window.SlinkIntegrationsUI) return;
+    const bankBin = String(form.elements.bankBin?.value || '').trim();
+    const bankAccountNumber = String(form.elements.bankAccountNumber?.value || '').trim();
+    const bankAccountName = String(form.elements.bankAccountName?.value || '').trim();
+    const found = window.SlinkBanksVn?.findBankByBin?.(bankBin);
+    preview.innerHTML = bankBin && bankAccountNumber
+      ? window.SlinkIntegrationsUI.renderVietQrCard({
+        bankBin,
+        bankAccountNumber,
+        bankAccountName,
+        bankName: found?.shortName || '',
+        amountVnd: '100000',
+        note: 'SLINK TEST VIETQR',
+        subtitle: 'Xem trước VietQR trực tiếp — lưu cấu hình để áp dụng tại POS.',
+      }) || `<div class='install-hint'>Nhập số tài khoản hợp lệ (4–32 ký tự, không khoảng trắng) để tạo VietQR.</div>`
+      : `<div class='install-hint'>Chọn ngân hàng + nhập số tài khoản bên cạnh để tạo mã VietQR động tự động tại POS và nhắc nợ.</div>`;
+  }
+
+  async function handleEscPosAction(action, orderId) {
+    const printer = window.SlinkEscPosPrinter;
+    if (!printer) return;
+    try {
+      if (action === 'escpos-connect') {
+        await printer.connectSerialPrinter(9600);
+        toast('Đã kết nối máy in bill', 'Sẵn sàng in ESC/POS trực tiếp.');
+        if (page === 'settings') render();
+      } else if (action === 'escpos-kick-drawer') {
+        await printer.openCashDrawer();
+        toast('Đã gửi lệnh mở két tiền');
+      } else if (action === 'escpos-test-print') {
+        await printer.printReceipt({
+          storeName: store.settings.storeName || 'Slink',
+          address: store.settings.address || '',
+          phone: store.settings.phone || '',
+          orderNumber: 'SLINK-TEST',
+          createdAt: humanDate(new Date().toISOString(), true),
+          items: [{ name: 'Thu may in nhiet ESC/POS', quantity: 1, unitPriceVnd: '100000', lineTotalVnd: '100000' }],
+          subtotalVnd: '100000',
+          discountVnd: '0',
+          totalVnd: '100000',
+          paidVnd: '100000',
+          footer: store.settings.receiptFooter || 'Cam on quy khach!',
+        });
+        toast('Đã in bill thử nghiệm');
+      } else if (action === 'escpos-print-order' && orderId) {
+        const o = store.orders.find(item => item.id === orderId);
+        if (!o) return;
+        const c = customerById(o.customerId);
+        await printer.printReceipt({
+          storeName: store.settings.storeName || 'Slink',
+          address: store.settings.address || '',
+          phone: store.settings.phone || '',
+          orderNumber: o.number,
+          createdAt: humanDate(o.createdAt, true),
+          customerName: o.customerName || c?.name || '',
+          items: (o.items || []).map(i => ({
+            name: i.name,
+            quantity: i.qty,
+            unitPriceVnd: i.priceVnd ?? String(i.price || 0),
+            lineTotalVnd: i.totalVnd ?? String(i.total || 0),
+          })),
+          subtotalVnd: o.subtotalVndText ?? String(o.subtotal || 0),
+          discountVnd: o.discountVndText ?? String(o.discount || 0),
+          totalVnd: o.totalVndText ?? String(o.total || 0),
+          paidVnd: o.paidVndText ?? String(o.paid || 0),
+          footer: store.settings.receiptFooter || 'Cam on quy khach!',
+        });
+        toast('Đã in bill ESC/POS', o.number);
+      }
+    } catch (error) {
+      toast('Thao tác máy in chưa hoàn tất', error.message, 'error');
+    }
+  }
+
+  function openOrderShippingModal(orderId) {
+    const o = store.orders.find(item => item.id === orderId);
+    if (!o) return;
+    const c = customerById(o.customerId);
+    const recName = o.customerName || c?.name || '';
+    const recPhone = o.customerPhone || c?.phone || '';
+    const defaultProv = integrationState.data?.settings?.shippingProvider && integrationState.data.settings.shippingProvider !== 'none'
+      ? integrationState.data.settings.shippingProvider : 'ghn';
+    const form = `<form id='entity-form' data-form='order-shipping' data-id='${esc(o.id)}'>
+      <div class='form-grid'>
+        <div class='form-field'><label class='input-label' for='ship-provider'>Đơn vị vận chuyển</label><div class='select-wrap'><select class='input' id='ship-provider' name='provider'><option value='ghn' ${defaultProv === 'ghn' ? 'selected' : ''}>Giao Hàng Nhanh (GHN)</option><option value='ghtk' ${defaultProv === 'ghtk' ? 'selected' : ''}>Giao Hàng Tiết Kiệm (GHTK)</option></select></div></div>
+        <div class='form-field'><label class='input-label' for='ship-cod'>Tiền thu hộ COD (VND)</label><input class='input' id='ship-cod' name='codAmountVnd' type='number' min='0' step='1' value='${esc(String(o.due || 0))}'/></div>
+        <div class='form-field'><label class='input-label' for='ship-name'>Tên người nhận *</label><input class='input' id='ship-name' name='receiverName' value='${esc(recName)}' required maxlength='120'/></div>
+        <div class='form-field'><label class='input-label' for='ship-phone'>Số điện thoại *</label><input class='input' id='ship-phone' name='receiverPhone' value='${esc(recPhone)}' required maxlength='30' inputmode='tel'/></div>
+        <div class='form-field full'><label class='input-label' for='ship-address'>Địa chỉ giao hàng *</label><input class='input' id='ship-address' name='address' required maxlength='300' placeholder='Số nhà, đường, phường/xã, quận/huyện, tỉnh/thành'/></div>
+        <div class='form-field'><label class='input-label' for='ship-weight'>Khối lượng (gram)</label><input class='input' id='ship-weight' name='weightGram' type='number' min='50' max='500000' value='500'/></div>
+      </div>
+      <div class='modal-note'>Cần gắn khóa đối tác GHN/GHTK trong cấu hình máy chủ (.env) để đẩy vận đơn trực tiếp.</div>
+    </form>`;
+    showModal(`Tạo vận đơn · ${o.number}`, 'Điền thông tin người nhận để đẩy sang GHN hoặc GHTK.', form, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Hủy</button><button class='btn btn-primary' type='submit' form='entity-form'>Đẩy vận đơn</button>`);
+  }
+
+  async function saveOrderShipping(form) {
+    const orderId = form.dataset.id;
+    const submit = modal.querySelector("button[type='submit'][form='entity-form']");
+    const data = new FormData(form);
+    if (submit) submit.disabled = true;
+    try {
+      const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/orders/${encodeURIComponent(orderId)}/shipping`, {
+        method: 'POST',
+        body: {
+          provider: String(data.get('provider') || ''),
+          receiverName: String(data.get('receiverName') || '').trim(),
+          receiverPhone: String(data.get('receiverPhone') || '').trim(),
+          address: String(data.get('address') || '').trim(),
+          codAmountVnd: Number(data.get('codAmountVnd') || 0),
+          weightGram: Number(data.get('weightGram') || 500),
+        },
+      });
+      closeModal();
+      toast('Đã tạo vận đơn', `Mã vận đơn ${result.trackingCode}`);
+      await openOrder(orderId);
+    } catch (error) {
+      if (error.status === 401) showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
+      else toast('Chưa tạo được vận đơn', error.message, 'error');
+      if (submit?.isConnected) submit.disabled = false;
+    }
+  }
+
+  async function handleOrderIntegrationAction(action, orderId, button) {
+    if (!orderId) return;
+    if (action === 'create-order-shipping') {
+      openOrderShippingModal(orderId);
+      return;
+    }
+    if (button?.disabled) return;
+    if (button) button.disabled = true;
+    try {
+      const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/orders/${encodeURIComponent(orderId)}/einvoice`, {
+        method: 'POST',
+        body: {},
+      });
+      toast('Đã xuất hóa đơn điện tử', `Số HĐĐT ${result.invoiceNumber}`);
+      await openOrder(orderId);
+    } catch (error) {
+      if (error.status === 401) showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
+      else toast('Chưa xuất được hóa đơn điện tử', error.message, 'error');
+      if (button?.isConnected) button.disabled = false;
     }
   }
 
@@ -2940,7 +3149,7 @@
         ? `<div class='panel empty-state pos-empty-start' style='grid-column:1/-1'><strong>Chưa có hàng sẵn để bán</strong><span>Kiểm tra số lượng trong kho đang chọn. Bạn có thể ghi số lượng đang có hoặc nhập hàng mới.</span><button class='btn btn-secondary' data-route='inventory'>Kiểm tra kho hàng</button></div>`
         : `<div class='panel empty-state pos-empty-start' style='grid-column:1/-1'><strong>Chưa có hàng sẵn để bán</strong><span>Nhờ chủ cửa hàng kiểm tra số lượng trong kho.</span></div>`;
     }
-    if (!productLoading && !warehouseLoading && !productError && !warehouseError && !hasCatalog && !query && categoryFilter === 'Tất cả' && !cart.length && !checkoutPendingPayload) {
+    if (!productLoading && !warehouseLoading && !productError && !warehouseError && !hasCatalog && !query && categoryFilter === 'Tất cả' && !cart.length && !checkoutPendingPayload && warehouses.length <= 1) {
       return pageHeading('Bắt đầu bán hàng', '', '') + emptyProductState;
     }
     const activePosWarehouse = warehouses.find(function (warehouse) { return warehouse.id === selectedWarehouseId; }) || warehouses.find(function (warehouse) { return warehouse.is_default; }) || warehouses[0];
@@ -3258,7 +3467,7 @@
     const submit = modal.querySelector('button[type="submit"][form="entity-form"]');
     if (submit) submit.disabled = true;
     const result = await sendWarehouseMutation('warehouse-create', 'new', '/warehouses', { code, name }, 'Đã tạo kho');
-    if (result) { closeModal(); selectedWarehouseId = result.warehouse.id; await loadInventoryPage('', 0); }
+    if (result) { closeModal(); if (!selectedWarehouseId) selectedWarehouseId = result.warehouse.id; await loadInventoryPage('', 0); }
     else if (submit && submit.isConnected) submit.disabled = false;
   }
 
@@ -3944,7 +4153,7 @@
     const canEdit = ['owner', 'manager'].includes(store.role);
     const disabled = canEdit ? '' : 'disabled';
     return pageHeading('Cài đặt', '', '') + renderAccountSummary() + renderDeviceSettings() +
-      `<section class='panel settings-panel'><h2>Thông tin cửa hàng</h2><p>Tên cửa hàng, số điện thoại, địa chỉ và lời chào trên biên nhận.</p><form id='entity-form' data-form='settings' data-version='${store.settings.version || 1}'><div class='form-grid'><div class='form-field full'><label class='input-label' for='setting-store-name'>Tên cửa hàng *</label><input class='input' id='setting-store-name' name='storeName' value='${esc(store.settings.storeName)}' required minlength='2' maxlength='160' ${disabled}/></div><div class='form-field'><label class='input-label' for='setting-phone'>Số điện thoại</label><input class='input' id='setting-phone' name='phone' value='${esc(store.settings.phone)}' inputmode='tel' maxlength='40' ${disabled}/></div><div class='form-field full'><label class='input-label' for='setting-address'>Địa chỉ</label><input class='input' id='setting-address' name='address' value='${esc(store.settings.address)}' maxlength='300' ${disabled}/></div><div class='form-field full'><label class='input-label' for='setting-footer'>Lời chào cuối biên nhận</label><input class='input' id='setting-footer' name='receiptFooter' value='${esc(store.settings.receiptFooter)}' maxlength='240' placeholder='Cảm ơn quý khách' ${disabled}/></div></div>${canEdit ? `<div class='modal-footer' style='padding:17px 0 0;margin-top:12px'><button class='btn btn-primary' type='submit'>Lưu thay đổi</button></div>` : `<div class='install-hint'>Chỉ chủ cửa hàng và quản lý mới được sửa thông tin.</div>`}</form></section>${renderBusinessProfileSettings(canEdit)}${renderChangePasswordForm()}${renderAccountSecurity()}${canAccessRoute('audit') ? `<section class='panel settings-panel'><div class='panel-header'><div><h2>Nhật ký hoạt động</h2><p>Xem các thao tác nghiệp vụ đã được ghi nhận, người thực hiện và lý do.</p></div><button class='btn btn-secondary' data-route='audit'>Mở nhật ký</button></div></section>` : ''}`;
+      `<section class='panel settings-panel'><h2>Thông tin cửa hàng</h2><p>Tên cửa hàng, số điện thoại, địa chỉ và lời chào trên biên nhận.</p><form id='entity-form' data-form='settings' data-version='${store.settings.version || 1}'><div class='form-grid'><div class='form-field full'><label class='input-label' for='setting-store-name'>Tên cửa hàng *</label><input class='input' id='setting-store-name' name='storeName' value='${esc(store.settings.storeName)}' required minlength='2' maxlength='160' ${disabled}/></div><div class='form-field'><label class='input-label' for='setting-phone'>Số điện thoại</label><input class='input' id='setting-phone' name='phone' value='${esc(store.settings.phone)}' inputmode='tel' maxlength='40' ${disabled}/></div><div class='form-field full'><label class='input-label' for='setting-address'>Địa chỉ</label><input class='input' id='setting-address' name='address' value='${esc(store.settings.address)}' maxlength='300' ${disabled}/></div><div class='form-field full'><label class='input-label' for='setting-footer'>Lời chào cuối biên nhận</label><input class='input' id='setting-footer' name='receiptFooter' value='${esc(store.settings.receiptFooter)}' maxlength='240' placeholder='Cảm ơn quý khách' ${disabled}/></div></div>${canEdit ? `<div class='modal-footer' style='padding:17px 0 0;margin-top:12px'><button class='btn btn-primary' type='submit'>Lưu thay đổi</button></div>` : `<div class='install-hint'>Chỉ chủ cửa hàng và quản lý mới được sửa thông tin.</div>`}</form></section>${renderBusinessProfileSettings(canEdit)}${canEdit && window.SlinkIntegrationsUI ? window.SlinkIntegrationsUI.renderIntegrationSettingsSection({ data: integrationState.data, loading: integrationState.loading, error: integrationState.error, canEdit }) : ''}${renderChangePasswordForm()}${renderAccountSecurity()}${canAccessRoute('audit') ? `<section class='panel settings-panel'><div class='panel-header'><div><h2>Nhật ký hoạt động</h2><p>Xem các thao tác nghiệp vụ đã được ghi nhận, người thực hiện và lý do.</p></div><button class='btn btn-secondary' data-route='audit'>Mở nhật ký</button></div></section>` : ''}`;
   }
 
   function renderAccountSummary() {
@@ -6053,6 +6262,22 @@
     const due = Math.max(0, total - paid);
     summary.textContent = `Tổng nhận ${money(received)} · Đã thu ${money(paid)} · Còn nợ ${money(due)}${change ? ` · Tiền thối ${money(change)}` : ''}`;
     summary.classList.remove('error');
+    const qrBox = form.querySelector('#checkout-vietqr-box');
+    if (qrBox && window.SlinkIntegrationsUI) {
+      const bankTender = checkoutTenderValues(form).find(t => (t.method === 'bank_qr' || t.method === 'bank_transfer') && Number(t.amountText) > 0);
+      const st = integrationState.data?.settings;
+      qrBox.innerHTML = bankTender && st?.bankBin && st?.bankAccountNumber
+        ? window.SlinkIntegrationsUI.renderVietQrCard({
+          bankBin: st.bankBin,
+          bankAccountNumber: st.bankAccountNumber,
+          bankAccountName: st.bankAccountName,
+          bankName: st.bankName,
+          amountVnd: bankTender.amountText,
+          note: 'SLINK POS',
+          subtitle: 'Quét VietQR để thanh toán đúng số tiền chuyển khoản.',
+        })
+        : '';
+    }
   }
 
   function renderCheckoutTenders(form, tenders) {
@@ -6152,7 +6377,7 @@
     const customers = `<option value=''>Khách lẻ</option>` + store.customers.map(function (c) { return `<option value='${c.id}' ${selectedCustomer === c.id ? 'selected' : ''}>${esc(c.name)} · ${esc(c.phone)}</option>`; }).join('');
     if (!checkoutIdempotencyKey) checkoutIdempotencyKey = newIdempotencyKey();
     const optionalFields = `<details class='checkout-more' ${selectedCustomer ? 'open' : ''}><summary>Thêm thông tin nếu cần</summary><div class='form-grid'><div class='form-field full'><label class='input-label'>Khách hàng</label><div class='select-wrap'><select class='input' name='customerId' ${disabled}>${customers}</select></div></div>${pending ? '' : `<div class='form-field full'><label class='input-label' for='checkout-promotion-code'>Mã giảm giá</label><div class='form-field-inline'><input class='input' id='checkout-promotion-code' name='promotionCode' maxlength='32' autocomplete='off' placeholder='Chỉ nhập khi khách có mã'/><button class='btn btn-secondary' type='button' data-action='apply-promotion'>Kiểm tra</button></div><small id='checkout-promotion-status' class='muted' aria-live='polite'>Mã sẽ được kiểm tra trước khi lưu đơn.</small></div>`}<div class='form-field full'><label class='input-label'>Ghi chú</label><input class='input' name='note' value='${esc(selectedNote)}' placeholder='Không bắt buộc' ${disabled}/></div></div></details>`;
-    const body = `<form id='entity-form' data-form='checkout' data-base-total-vnd='${baseTotals.total}' data-promotion-discount-vnd='${promotionDiscount}' data-total-vnd='${totals.total}'><div class='checkout-total'><span>${pending ? 'Đơn đang chờ · kiểm tra số tiền' : 'Khách cần thanh toán'}</span><strong id='checkout-due'>${money(totals.total)}</strong></div><details class='work-details checkout-lines'><summary>Xem ${number(totals.count)} sản phẩm</summary><div class='checkout-items' aria-label='Mặt hàng trong đơn'>${itemSummary}</div></details><div class='checkout-payment'><span class='input-label'>Khách trả bằng</span><div id='checkout-tenders'>${selectedTenders.map(function (tender, index) { return checkoutTenderRow(tender, index, selectedTenders.length, disabled); }).join('')}</div>${pending ? '' : `<button class='link-button' type='button' data-action='add-tender'>＋ Chia nhiều cách trả</button>`}<div id='checkout-tender-summary' class='checkout-tender-summary' aria-live='polite'></div></div>${optionalFields}<div class='modal-note'>${pending ? 'Gửi lại cùng yêu cầu để tránh tạo đơn trùng.' : 'Chỉ xác nhận sau khi đã nhận tiền. Khoản chưa trả cần gắn khách hàng để theo dõi nợ.'}</div></form>`;
+    const body = `<form id='entity-form' data-form='checkout' data-base-total-vnd='${baseTotals.total}' data-promotion-discount-vnd='${promotionDiscount}' data-total-vnd='${totals.total}'><div class='checkout-total'><span>${pending ? 'Đơn đang chờ · kiểm tra số tiền' : 'Khách cần thanh toán'}</span><strong id='checkout-due'>${money(totals.total)}</strong></div><details class='work-details checkout-lines'><summary>Xem ${number(totals.count)} sản phẩm</summary><div class='checkout-items' aria-label='Mặt hàng trong đơn'>${itemSummary}</div></details><div class='checkout-payment'><span class='input-label'>Khách trả bằng</span><div id='checkout-tenders'>${selectedTenders.map(function (tender, index) { return checkoutTenderRow(tender, index, selectedTenders.length, disabled); }).join('')}</div>${pending ? '' : `<button class='link-button' type='button' data-action='add-tender'>＋ Chia nhiều cách trả</button>`}<div id='checkout-tender-summary' class='checkout-tender-summary' aria-live='polite'></div><div id='checkout-vietqr-box'></div></div>${optionalFields}<div class='modal-note'>${pending ? 'Gửi lại cùng yêu cầu để tránh tạo đơn trùng.' : 'Chỉ xác nhận sau khi đã nhận tiền. Khoản chưa trả cần gắn khách hàng để theo dõi nợ.'}</div></form>`;
     showModal(pending ? 'Kiểm tra đơn đang chờ' : 'Xác nhận thanh toán', `${totals.count} sản phẩm`, body, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Để sau</button><button class='btn btn-primary' type='submit' form='entity-form'>${pending ? 'Thử lại đơn hàng' : 'Đã nhận tiền · Lưu đơn'}</button>`);
     updateCheckoutTenderSummary(modal.querySelector('[data-form="checkout"]'));
   }
@@ -6801,6 +7026,14 @@
         due: row.status === 'voided' ? 0 : Math.max(0, total - paid - returned + refunded),
         status: statusText(row.status, total - paid - returned + refunded),
         rawStatus: row.status,
+        einvoiceProvider: row.einvoiceProvider || null,
+        einvoiceNumber: row.einvoiceNumber || null,
+        einvoiceLookupCode: row.einvoiceLookupCode || null,
+        einvoiceStatus: row.einvoiceStatus || 'none',
+        shippingProvider: row.shippingProvider || null,
+        shippingTrackingCode: row.shippingTrackingCode || null,
+        shippingFeeVnd: row.shippingFeeVnd || '0',
+        shippingStatus: row.shippingStatus || 'none',
         voidRestockWarehouseId: row.voidRestockWarehouseId || '',
         voidRestockWarehouseName: row.voidRestockWarehouseName || '',
         method: Array.from(new Set(payments.map(function (p) { return methodLabels[p.method] || p.method; }))).join(' · ') || 'Chưa thu tiền',
@@ -6865,7 +7098,8 @@
     const canReturn = ['owner', 'manager'].includes(store.role) && o.status !== 'Đã hủy' && o.items.some(item => item.returnedQty < item.qty);
     const primary = canCollect ? `<button class='btn btn-primary' data-action='collect-payment' data-id='${o.id}'>Thu tiền còn thiếu</button>`
       : canReturn ? `<button class='btn btn-secondary' data-action='exchange-order' data-id='${o.id}'>Đổi hàng</button><button class='btn btn-primary' data-action='return-order' data-id='${o.id}'>Trả hàng</button>` : '';
-    const more = `<details class='order-more-actions'><summary>Thao tác khác</summary><p>Đơn đã ghi được giữ nguyên để đối soát. Chọn thu tiền, đổi hàng, trả hàng hoặc hủy đơn khi cần điều chỉnh.</p><div class='order-more-actions-buttons'><button class='btn btn-secondary' data-action='print-order' data-id='${o.id}'>In biên nhận</button><button class='btn btn-secondary' data-action='share-order' data-id='${o.id}'>Chia sẻ biên nhận</button>${canCollect && canReturn ? `<button class='btn btn-secondary' data-action='exchange-order' data-id='${o.id}'>Đổi hàng</button><button class='btn btn-secondary' data-action='return-order' data-id='${o.id}'>Trả hàng</button>` : ''}${canVoid ? `<button class='btn btn-danger' data-action='void-order' data-id='${o.id}'>Hủy đơn</button>` : ''}</div>${collaborationPanel}</details>`;
+    const integrationActions = window.SlinkIntegrationsUI ? window.SlinkIntegrationsUI.renderOrderIntegrationSection({ order: o, settings: integrationState.data?.settings, role: store.role }) : '';
+    const more = `<details class='order-more-actions'><summary>Thao tác khác</summary><p>Đơn đã ghi được giữ nguyên để đối soát. Chọn thu tiền, đổi hàng, trả hàng hoặc hủy đơn khi cần điều chỉnh.</p><div class='order-more-actions-buttons'><button class='btn btn-secondary' data-action='print-order' data-id='${o.id}'>In biên nhận</button><button class='btn btn-secondary' data-action='share-order' data-id='${o.id}'>Chia sẻ biên nhận</button>${canCollect && canReturn ? `<button class='btn btn-secondary' data-action='exchange-order' data-id='${o.id}'>Đổi hàng</button><button class='btn btn-secondary' data-action='return-order' data-id='${o.id}'>Trả hàng</button>` : ''}${canVoid ? `<button class='btn btn-danger' data-action='void-order' data-id='${o.id}'>Hủy đơn</button>` : ''}</div>${integrationActions}${collaborationPanel}</details>`;
     const completeBody = body.replace(/<\/div>$/, `${more}</div>`);
     const footer = `<button class='btn btn-secondary' data-action='close-modal'>Đóng</button>${primary}`;
     showModal('Chi tiết đơn hàng', 'Hàng đã bán, tiền đã thu và phần còn phải thu.', completeBody, footer, true);
@@ -10114,14 +10348,14 @@
     else if (page === 'inventory') loadWarehouses().then(function () { return loadInventoryPage(searchTerms.inventory, 0); });
     else if (page === 'finance') { render(); loadFinancePage(); }
     else if (page === 'reports') loadAnalytics(chartRange === '30 ngày' ? 30 : 7);
-    else if (page === 'settings') { if (store.id) loadStoreProfile(); loadAccountSecurity(); }
+    else if (page === 'settings') { if (store.id) { loadStoreProfile(); loadIntegrationStatus(true); } loadAccountSecurity(); }
     else if (page === 'affiliate') loadAffiliateLinks(0);
     else if (page === 'staff') loadStaffPage();
     else if (page === 'channels') { loadChannelCatalog(); if (channelState.view === 'orders') loadChannelOrders(0); }
     else if (page === 'audit') loadAuditEvents(null, 0);
     else if (page === 'customers') loadCustomersPage(searchTerms.customers, 0).then(render);
-    else if (page === 'orders') loadOrdersPage(searchTerms.orders, 0).then(render);
-    else if (page === 'pos') { searchTerms.products = ''; searchTerms.customers = ''; posSearchTerm = ''; posProducts = []; loadProductsPage('', 0); }
+    else if (page === 'orders') { loadIntegrationStatus(); loadOrdersPage(searchTerms.orders, 0).then(render); }
+    else if (page === 'pos') { loadIntegrationStatus(); searchTerms.products = ''; searchTerms.customers = ''; posSearchTerm = ''; posProducts = []; loadProductsPage('', 0); }
     else render();
     window.scrollTo({ top: 0, behavior: 'instant' });
   }
@@ -10623,6 +10857,13 @@
     else if (action === 'print-order') printOrder(id);
     else if (action === 'share-order') showDigitalReceipt(id);
     else if (action === 'latest-receipt') openOrder(id, true);
+    else if (action === 'reload-integrations') loadIntegrationStatus(true);
+    else if (action === 'copy-integration-url') {
+      const value = button.dataset.copyValue || '';
+      if (value) navigator.clipboard?.writeText(value).then(() => toast('Đã sao chép URL webhook', value)).catch(() => toast('Sao chép thủ công', value));
+    }
+    else if (['escpos-connect', 'escpos-test-print', 'escpos-kick-drawer', 'escpos-print-order'].includes(action)) handleEscPosAction(action, id);
+    else if (['issue-order-einvoice', 'create-order-shipping'].includes(action)) handleOrderIntegrationAction(action, id, button);
     else if (['receipt-share', 'receipt-copy', 'receipt-download'].includes(action)) useDigitalReceipt(action, button);
     else if (action === 'download-reports-csv') downloadReportsCsv();
     else if (action === 'print-reports-pdf') printReportsPdf();
@@ -11382,6 +11623,8 @@
     else if (type === 'cash-session-open') saveCashSessionOpen(form);
     else if (type === 'cash-session-close') saveCashSessionClose(form);
     else if (type === 'settings') saveSettings(form);
+    else if (type === 'integration-settings') saveIntegrationSettings(form);
+    else if (type === 'order-shipping') saveOrderShipping(form);
     else if (type === 'staff-invite') saveStaffInvitation(form);
     else if (type === 'scan') addByCode(form);
     else if (type === 'discount') { if (checkoutPendingPayload) return toast('Đang chờ xác nhận đơn', 'Hãy kiểm tra đơn đang chờ trước khi thay đổi giảm giá.', 'error'); cart.discount = Math.max(0, Math.min(cartTotals().subtotal, Number(new FormData(form).get('discount')) || 0)); closeModal(); render(); toast('Đã áp dụng giảm giá', money(cart.discount)); }
@@ -11446,10 +11689,12 @@
   window.addEventListener('offline', function () { offlinePreparation += 1; offlineState.preparing = false; offlineState.mode = 'offline'; renderShell(); });
   document.addEventListener('input', function (event) {
     if (page === 'settings' && event.target.closest('#view form')) event.target.closest('form').dataset.dirty = 'true';
+    if (event.target.closest('#integration-settings-form')) updateIntegrationVietQrPreview(event.target.form);
     if(event.target.closest('[data-form="product"],[data-form="quick-product"]'))updateProductHints(event.target.form);
   }, true);
   document.addEventListener('change', function (event) {
     if (page === 'settings' && event.target.closest('#view form')) event.target.closest('form').dataset.dirty = 'true';
+    if (event.target.closest('#integration-settings-form')) updateIntegrationVietQrPreview(event.target.form);
   }, true);
   for (const type of ['input', 'change']) modal.addEventListener(type, function (event) {
     const form = event.target.closest('form[data-form]');

@@ -311,9 +311,33 @@ async function runViewportAudit(browser, origin, viewport, label) {
       }
     }
 
+    // 6.5. Creating a second warehouse in Kho hàng must not trap POS into an empty catalog
+    await page.locator("[data-action='inventory-tab'][data-tab='stock']").click().catch(() => {});
+    const newWhBtn = page.locator("[data-action='new-warehouse']").first();
+    if (await newWhBtn.isVisible()) {
+      await newWhBtn.click();
+      await page.waitForSelector(".modal:not([hidden]) [data-form='warehouse-create']");
+      const closeBox = await page.locator(".modal:not([hidden]) .modal-close").boundingBox();
+      if (viewport.width <= 700 && closeBox) {
+        assert.ok(closeBox.width >= 44 && closeBox.height >= 44, `${label}: modal close button ${closeBox.width}x${closeBox.height} must be >= 44px`);
+      }
+      await page.fill(".modal [name='code']", `K2-${label === 'mobile-390' ? 'M' : 'D'}`);
+      await page.fill(".modal [name='name']", `Kho phụ ${label}`);
+      const [whRes] = await Promise.all([
+        page.waitForResponse((res) => res.url().includes('/warehouses') && res.request().method() === 'POST'),
+        page.locator(".modal button[type='submit'][form='entity-form']").click(),
+      ]);
+      assert.equal(whRes.status(), 201, `${label}: creating second warehouse must return 201`);
+      await page.waitForTimeout(300);
+      await page.locator("#primary-nav [data-route='pos']:visible, #mobile-nav [data-route='pos']:visible").first().click();
+      await page.waitForSelector('.pos-product-grid', { timeout: 15000 });
+      assert.ok((await page.locator('.pos-product').count()) >= 1, `${label}: POS products must remain visible after creating secondary warehouse`);
+    }
+
     // 7. Test Order Detail & Đổi hàng (SlinkReturnsExchangeUI)
     await page.locator("#primary-nav [data-route='orders']:visible, #mobile-nav [data-route='orders']:visible").first().click();
     await page.waitForSelector("[data-action='order-detail']", { timeout: 15000 });
+    await assertNoHorizontalOverflow(page, `${label}:orders-segmented`);
     await page.locator("[data-action='order-detail']").first().click();
     await page.waitForSelector('.modal:not([hidden])');
     const exchangeBtn = page.locator(".modal [data-action='exchange-order']");
@@ -330,11 +354,25 @@ async function runViewportAudit(browser, origin, viewport, label) {
     await page.waitForTimeout(350);
     await page.locator(".modal [data-action='close-modal']").first().click().catch(() => {});
 
+    // 8. Test Cài đặt Tích hợp & VietQR SVG offline rendering
+    const settingsBtn = page.locator("[data-action='account-settings']:visible, #primary-nav [data-route='settings']:visible").first();
+    await settingsBtn.click();
+    await page.waitForSelector('#integration-settings-form', { timeout: 15000 });
+    await page.selectOption('#int-bank-bin', '970436');
+    await page.fill('#int-bank-account', '1903668899');
+    await page.fill('#int-bank-owner', 'SLINK TEST');
+    await page.waitForSelector('#int-vietqr-preview .vietqr-svg', { timeout: 5000 });
+    const [intSaveRes] = await Promise.all([
+      page.waitForResponse((res) => res.url().includes('/integrations/settings') && res.request().method() === 'PUT'),
+      page.locator("#integration-settings-form button[type='submit']").click(),
+    ]);
+    assert.equal(intSaveRes.status(), 200, `${label}: saving VietQR integration config must succeed`);
+    await assertNoHorizontalOverflow(page, `${label}:settings-integrations`);
+
     const assetsOk = await page.evaluate(async () => {
-      const a = await fetch('/offline-conflict-ui.js', { credentials: 'same-origin' });
-      const b = await fetch('/supplier-returns-ui.js', { credentials: 'same-origin' });
-      const c = await fetch('/barcode-tools.js', { credentials: 'same-origin' });
-      return a.ok && b.ok && c.ok && Boolean(window.SlinkBarcodeTools) && Boolean(window.SlinkOfflineConflictUI) && Boolean(window.SlinkReturnsExchangeUI);
+      const urls = ['/offline-conflict-ui.js', '/supplier-returns-ui.js', '/barcode-tools.js', '/banks-vn.js', '/vietqr-tools.js', '/escpos-printer.js', '/integrations-ui.js'];
+      const responses = await Promise.all(urls.map((u) => fetch(u, { credentials: 'same-origin' })));
+      return responses.every((r) => r.ok) && Boolean(window.SlinkBarcodeTools) && Boolean(window.SlinkOfflineConflictUI) && Boolean(window.SlinkReturnsExchangeUI) && Boolean(window.SlinkIntegrationsUI) && Boolean(window.SlinkVietQrTools);
     });
     assert.equal(assetsOk, true, 'All standalone commercial UI bundles must be loaded');
     assert.ok(seeded.storeId);

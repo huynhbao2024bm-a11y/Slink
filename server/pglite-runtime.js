@@ -206,6 +206,8 @@ async function applyMigrations(db, migrationsDirectory) {
       REVOKE ALL ON public.channel_orders, public.channel_order_lines, public.channel_order_events FROM slink_app;
       GRANT SELECT, INSERT ON public.channel_orders, public.channel_order_lines, public.channel_order_events TO slink_app;
       GRANT UPDATE (fulfillment_status, version, updated_by, updated_at, packed_at, shipped_at, delivered_at, cancelled_at) ON public.channel_orders TO slink_app;
+      REVOKE UPDATE, DELETE, TRUNCATE ON public.integration_webhook_events FROM slink_app;
+      GRANT SELECT, INSERT ON public.integration_webhook_events TO slink_app;
   `);
 }
 

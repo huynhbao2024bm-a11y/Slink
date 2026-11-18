@@ -36,6 +36,7 @@ const { registerSecurityRoutes } = require('./security');
 const { registerWarehouseRoutes } = require('./warehouses');
 const { registerChannelMappingRoutes } = require('./channel-mappings');
 const { registerChannelOrderRoutes } = require('./channel-orders');
+const { registerIntegrationRoutes } = require('./integrations');
 
 const APP_ROOT = path.resolve(__dirname, '..');
 const ASSETS = new Map([
@@ -55,6 +56,10 @@ const ASSETS = new Map([
   ['/offline-conflict-ui.js', 'offline-conflict-ui.js'],
   ['/supplier-returns-ui.js', 'supplier-returns-ui.js'],
   ['/barcode-tools.js', 'barcode-tools.js'],
+  ['/banks-vn.js', 'banks-vn.js'],
+  ['/vietqr-tools.js', 'vietqr-tools.js'],
+  ['/escpos-printer.js', 'escpos-printer.js'],
+  ['/integrations-ui.js', 'integrations-ui.js'],
   ['/register-sw.js', 'register-sw.js'],
   ['/manifest.webmanifest', 'manifest.webmanifest'],
   ['/sw.js', 'sw.js'],
@@ -90,18 +95,20 @@ function validateProductionConfig(env) {
   const demoBypass = emailVerificationDisabled(env);
   let publicOrigin;
   let deliveryUrl;
+  const effectiveDeliveryUrl = env.EMAIL_DELIVERY_URL || (env.RESEND_API_KEY?.trim() ? 'https://api.resend.com/emails' : '');
+  const effectiveDeliveryToken = env.EMAIL_DELIVERY_TOKEN || env.RESEND_API_KEY || '';
   try {
     publicOrigin = new URL(env.PUBLIC_ORIGIN);
-    if (!demoBypass) deliveryUrl = new URL(env.EMAIL_DELIVERY_URL);
+    if (!demoBypass) deliveryUrl = new URL(effectiveDeliveryUrl);
   } catch {
     throw new Error(demoBypass
       ? 'Production demo mode still requires a valid PUBLIC_ORIGIN.'
-      : 'Production requires valid PUBLIC_ORIGIN and EMAIL_DELIVERY_URL values.');
+      : 'Production requires valid PUBLIC_ORIGIN and EMAIL_DELIVERY_URL (or RESEND_API_KEY) values.');
   }
   if (publicOrigin.protocol !== 'https:' || publicOrigin.pathname !== '/' || publicOrigin.search || publicOrigin.hash || publicOrigin.username || publicOrigin.password) {
     throw new Error('Production PUBLIC_ORIGIN must be an HTTPS origin without a path or credentials.');
   }
-  if (!demoBypass && (deliveryUrl.protocol !== 'https:' || typeof env.EMAIL_DELIVERY_TOKEN !== 'string' || env.EMAIL_DELIVERY_TOKEN.length < 32)) {
+  if (!demoBypass && (deliveryUrl.protocol !== 'https:' || typeof effectiveDeliveryToken !== 'string' || effectiveDeliveryToken.length < 32)) {
     throw new Error('Production requires an HTTPS email delivery endpoint and a token of at least 32 characters.');
   }
   if (!demoBypass && (typeof env.EMAIL_FROM !== 'string' || !env.EMAIL_FROM.trim() || env.EMAIL_FROM.length > 320 || /[\r\n]/.test(env.EMAIL_FROM))) {
@@ -117,7 +124,7 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
     logger: logger ? {
       level: env.LOG_LEVEL || 'info',
       redact: {
-        paths: ['req.headers.cookie', 'req.headers.authorization', 'req.headers["x-csrf-token"]', 'req.body.password', 'req.body.token'],
+        paths: ['req.headers.cookie', 'req.headers.authorization', 'req.headers["x-csrf-token"]', 'req.headers["secure-token"]', 'req.headers["x-webhook-token"]', 'req.body.password', 'req.body.token', 'req.body.signature'],
         censor: '[REDACTED]',
       },
     } : false,
@@ -146,7 +153,11 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
   await app.register(cookie);
   await app.register(rateLimit, {
     global: true,
-    max: env.NODE_ENV === 'test' ? 1000 : 120,
+    keyGenerator: (request) => request.ip,
+    max: (request) => {
+      if (env.NODE_ENV === 'test') return 2000;
+      return request.url.startsWith('/api/stores/') ? 600 : 120;
+    },
     timeWindow: '1 minute',
     errorResponseBuilder: () => Object.assign(
       new Error('Quá nhiều yêu cầu. Vui lòng thử lại sau.'),
@@ -213,6 +224,7 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
     registerWarehouseRoutes(app, { pool, env });
     registerChannelMappingRoutes(app, { pool, env });
     registerChannelOrderRoutes(app, { pool, env });
+    registerIntegrationRoutes(app, { pool, env });
   }
 
   for (const [route, fileName] of ASSETS) {
