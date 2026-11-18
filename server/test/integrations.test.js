@@ -653,3 +653,149 @@ test('GHN auto-shop discovery, fee preview, shipment creation, GHN status webhoo
   const cbRes = await app.inject({ method: 'GET', url: `/api/stores/${owner.storeId}/finance/cashbook?fund=bank`, headers: owner.headers });
   assert.equal(cbRes.json().balances.bank.inVnd, '120000');
 });
+
+test('KiotViet/Sapo Staff direct-create, CRM loyalty/tiers, and multi-barcode products work end-to-end', async (t) => {
+  const { app } = await setupApp(t);
+  const owner = await registerOwner(app, 'owner-kv@slink.test', 'Cửa hàng Kiot Sapo');
+
+  // 1) Direct staff creation & profile/commission update
+  const directRes = await app.inject({
+    method: 'POST',
+    url: `/api/stores/${owner.storeId}/staff/direct-create`,
+    headers: owner.headers,
+    payload: {
+      displayName: 'Thu Ngân Ca Sáng',
+      email: 'cashier-direct@slink.test',
+      password: 'DirectStaffPassword2026!',
+      role: 'cashier',
+      staffCode: 'NV-101',
+      phone: '0911222333',
+      jobTitle: 'Thu ngân chính',
+      baseSalaryVnd: '7500000',
+      commissionRateBps: 250,
+      note: 'Ca 7h - 15h',
+    },
+  });
+  assert.equal(directRes.statusCode, 201, directRes.body);
+  const directStaff = directRes.json().member;
+  assert.equal(directStaff.staff_code, 'NV-101');
+  assert.equal(directStaff.commission_rate_bps, 250);
+
+  // Verify direct staff can immediately log in without email verification link
+  const staffLogin = await app.inject({
+    method: 'POST',
+    url: '/api/auth/login',
+    headers: { origin },
+    payload: { email: 'cashier-direct@slink.test', password: 'DirectStaffPassword2026!' },
+  });
+  assert.equal(staffLogin.statusCode, 200, staffLogin.body);
+
+  // Update staff salary & commission
+  const patchStaff = await app.inject({
+    method: 'PATCH',
+    url: `/api/stores/${owner.storeId}/staff/members/${directStaff.user_id}`,
+    headers: owner.headers,
+    payload: {
+      role: 'cashier',
+      status: 'active',
+      displayName: 'Thu Ngân Ca Sáng (Senior)',
+      staffCode: 'NV-101S',
+      baseSalaryVnd: '8000000',
+      commissionRateBps: 300,
+    },
+  });
+  assert.equal(patchStaff.statusCode, 200, patchStaff.body);
+
+  const staffList = await app.inject({
+    method: 'GET',
+    url: `/api/stores/${owner.storeId}/staff`,
+    headers: owner.headers,
+  });
+  assert.equal(staffList.statusCode, 200, staffList.body);
+  assert.equal(staffList.json().summary.totalStaff, 1);
+  assert.equal(staffList.json().members[0].staff_code, 'NV-101S');
+  assert.equal(staffList.json().members[0].base_salary_vnd, '8000000');
+
+  // 2) Customer CRM with customerCode, agency tier, discountRateBps, bonusPoints, B2B taxCode
+  const currentMonth = String(new Date().getMonth() + 1).padStart(2, '0');
+  const custRes = await app.inject({
+    method: 'POST',
+    url: `/api/stores/${owner.storeId}/customers`,
+    headers: { ...owner.headers, 'idempotency-key': randomUUID() },
+    payload: {
+      customerCode: 'KH-VIP99',
+      name: 'Công ty TNHH Minh Phát',
+      phone: '0988777666',
+      customerType: 'agency',
+      discountRateBps: 500,
+      creditLimitVnd: '5000000',
+      openingBalanceVnd: '6000000',
+      birthday: `1992-${currentMonth}-15`,
+      gender: 'female',
+      companyName: 'TNHH Minh Phát',
+      taxCode: '0312345678',
+      bonusPoints: 50,
+    },
+  });
+  assert.equal(custRes.statusCode, 201, custRes.body);
+  assert.equal(custRes.json().customer.customer_code, 'KH-VIP99');
+  assert.equal(custRes.json().customer.discount_rate_bps, 500);
+
+  // Filter by over_credit_limit & vip_tier & birthday_month
+  for (const seg of ['over_credit_limit', 'vip_tier', 'birthday_month']) {
+    const segRes = await app.inject({
+      method: 'GET',
+      url: `/api/stores/${owner.storeId}/customers?segment=${seg}`,
+      headers: owner.headers,
+    });
+    assert.equal(segRes.statusCode, 200, segRes.body);
+    assert.equal(segRes.json().customers.length, 1, `Segment ${seg} should match customer`);
+    assert.equal(segRes.json().customers[0].loyalty_tier, 'gold');
+    assert.equal(segRes.json().customers[0].loyalty_points, 50);
+  }
+
+  // 3) Multi-barcode rapid product import + secondary extraBarcodes search
+  const multiImport = await app.inject({
+    method: 'POST',
+    url: `/api/stores/${owner.storeId}/products/import`,
+    headers: { ...owner.headers, 'idempotency-key': randomUUID() },
+    payload: {
+      items: [
+        {
+          sku: 'POLO-01',
+          barcode: '8935000000108',
+          extraBarcodes: ['8935000000999', 'OLD-BOX-CODE-1'],
+          name: 'Áo Polo · Màu Đen',
+          category: 'Thời trang',
+          unit: 'cái',
+          salePriceVnd: 250000,
+          costVnd: 150000,
+          openingQuantity: '10',
+        },
+        {
+          sku: 'POLO-02',
+          barcode: '8935000000115',
+          name: 'Áo Polo · Màu Trắng',
+          category: 'Thời trang',
+          unit: 'cái',
+          salePriceVnd: 250000,
+          costVnd: 150000,
+          openingQuantity: '15',
+        },
+      ],
+    },
+  });
+  assert.equal(multiImport.statusCode, 201, multiImport.body);
+  assert.equal(multiImport.json().products.length, 2);
+
+  // Search by secondary extraBarcode
+  const searchExtra = await app.inject({
+    method: 'GET',
+    url: `/api/stores/${owner.storeId}/products?q=OLD-BOX-CODE-1`,
+    headers: owner.headers,
+  });
+  assert.equal(searchExtra.statusCode, 200, searchExtra.body);
+  assert.equal(searchExtra.json().products.length, 1);
+  assert.equal(searchExtra.json().products[0].sku, 'POLO-01');
+  assert.deepEqual(searchExtra.json().products[0].extra_barcodes, ['8935000000999', 'OLD-BOX-CODE-1']);
+});
