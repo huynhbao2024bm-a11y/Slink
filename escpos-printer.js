@@ -97,14 +97,58 @@
   }
 
   let activeSerialPort = null;
+  let btBridgeFn = null;
+  let btDevice = { address: '', name: '' };
+
+  function setAndroidBridge(fn) {
+    btBridgeFn = typeof fn === 'function' ? fn : null;
+  }
+
+  function bytesToBase64(bytes) {
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
+    if (typeof btoa === 'function') return btoa(binary);
+    return Buffer.from(bytes).toString('base64');
+  }
 
   function capabilities() {
     const nav = typeof navigator !== 'undefined' ? navigator : null;
+    const hasAndroid = Boolean(typeof window !== 'undefined' && window.SlinkAndroid && btBridgeFn);
     return {
       serialSupported: Boolean(nav && 'serial' in nav),
+      btSupported: hasAndroid,
       usbSupported: Boolean(nav && 'usb' in nav),
-      connected: Boolean(activeSerialPort && activeSerialPort.writable),
+      connected: Boolean((activeSerialPort && activeSerialPort.writable) || (hasAndroid && btDevice.address)),
+      btDeviceName: btDevice.name || '',
+      btDeviceAddress: btDevice.address || '',
     };
+  }
+
+  async function refreshBluetoothState() {
+    if (!btBridgeFn) return btDevice;
+    try {
+      const res = await btBridgeFn({ type: 'btPrinter', action: 'state' });
+      if (res?.printer) {
+        btDevice = { address: res.printer.address || '', name: res.printer.name || '' };
+      }
+    } catch {}
+    return btDevice;
+  }
+
+  async function listBluetoothPrinters() {
+    if (!btBridgeFn) throw new Error('Chỉ hỗ trợ máy in Bluetooth trên ứng dụng Android Slink.');
+    const res = await btBridgeFn({ type: 'btPrinter', action: 'list' });
+    if (res?.status !== 'ok') throw new Error(res?.message || 'Chưa lấy được danh sách thiết bị Bluetooth.');
+    if (res.printer) btDevice = { address: res.printer.address || '', name: res.printer.name || '' };
+    return Array.isArray(res.devices) ? res.devices : [];
+  }
+
+  async function selectBluetoothPrinter(address, name) {
+    if (!btBridgeFn) throw new Error('Chỉ hỗ trợ máy in Bluetooth trên ứng dụng Android Slink.');
+    const res = await btBridgeFn({ type: 'btPrinter', action: 'select', address: String(address || ''), name: String(name || '') });
+    if (res?.status !== 'ok') throw new Error(res?.message || 'Chưa lưu được máy in Bluetooth.');
+    btDevice = { address: String(address || ''), name: String(name || '') };
+    return btDevice;
   }
 
   async function connectSerialPrinter(baudRate = 9600) {
@@ -120,6 +164,14 @@
   }
 
   async function writeBytes(bytes) {
+    const caps = capabilities();
+    if (caps.btSupported) {
+      if (!btDevice.address) await refreshBluetoothState();
+      if (!btDevice.address) throw new Error('Chưa chọn máy in Bluetooth. Vào Cài đặt → Chọn máy in đã ghép đôi.');
+      const res = await btBridgeFn({ type: 'btPrinter', action: 'print', address: btDevice.address, base64: bytesToBase64(bytes) });
+      if (res?.status !== 'ok') throw new Error(res?.message || 'In hóa đơn Bluetooth thất bại.');
+      return true;
+    }
     if (!activeSerialPort || !activeSerialPort.writable) {
       await connectSerialPrinter(9600);
     }
@@ -145,6 +197,10 @@
     buildReceiptBytes,
     buildDrawerKickBytes,
     capabilities,
+    setAndroidBridge,
+    refreshBluetoothState,
+    listBluetoothPrinters,
+    selectBluetoothPrinter,
     connectSerialPrinter,
     printReceipt,
     openCashDrawer,

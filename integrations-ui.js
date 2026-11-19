@@ -116,14 +116,19 @@
       || settings.taxCode
     );
 
-    const serialHardwareHtml = caps.serialSupported
+    const printerSupported = Boolean(caps.serialSupported || caps.btSupported);
+    const printerTitle = caps.btSupported ? 'Máy in nhiệt Bluetooth (58mm / 80mm)' : 'Máy in nhiệt USB / COM';
+    const printerSubtitle = caps.btSupported
+      ? (caps.btDeviceName ? `Đã chọn: ${caps.btDeviceName}` : 'Ghép đôi máy in trong Cài đặt điện thoại rồi chọn tại đây')
+      : (caps.connected ? 'Đã kết nối' : 'Máy in 58mm / 80mm');
+    const serialHardwareHtml = printerSupported
       ? `<div class='integration-hardware-bar' style='margin-top:12px'>
           <div>
-            <strong>Máy in nhiệt USB / COM</strong>
-            <small>${caps.connected ? 'Đã kết nối' : 'Máy in 58mm / 80mm'}</small>
+            <strong>${esc(printerTitle)}</strong>
+            <small>${esc(printerSubtitle)}</small>
           </div>
           <div class='integration-hardware-actions'>
-            <button class='btn btn-secondary' type='button' data-action='escpos-connect'>${caps.connected ? 'Đổi máy in' : 'Kết nối'}</button>
+            <button class='btn btn-secondary' type='button' data-action='escpos-connect'>${caps.connected ? 'Đổi máy in' : 'Chọn máy in'}</button>
             <button class='btn btn-secondary' type='button' data-action='escpos-test-print'>In thử</button>
             <button class='btn btn-secondary' type='button' data-action='escpos-kick-drawer'>Mở két</button>
           </div>
@@ -239,7 +244,8 @@
       ? `<button class='btn btn-secondary' type='button' data-action='create-order-momo' data-id='${esc(order.id)}'>MoMo</button>`
       : '';
 
-    const serialSupported = Boolean(root.SlinkEscPosPrinter?.capabilities?.().serialSupported);
+    const caps = root.SlinkEscPosPrinter?.capabilities?.() || {};
+    const serialSupported = Boolean(caps.serialSupported || caps.btSupported);
     const escposBtn = serialSupported
       ? `<button class='btn btn-secondary' type='button' data-action='escpos-print-order' data-id='${esc(order.id)}'>In bill nhiệt</button>`
       : '';

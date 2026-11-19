@@ -4,6 +4,7 @@ const { createHash, randomUUID } = require('node:crypto');
 const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
 const { quantityMilli, quantityText } = require('./sales');
+const { normalizeSerialCodeList } = require('./serials');
 const { lockActiveCashSession } = require('./cash-register');
 const { insertCashMovement } = require('./cashbook-ledger');
 
@@ -21,18 +22,45 @@ function normalizeReturn(body) {
   }
   const items = [];
   const seen = new Map();
+  const seenSerials = new Set();
   for (const row of body.items) {
     if (!row || typeof row.orderLineId !== 'string' || !UUID_PATTERN.test(row.orderLineId)) {
       throw new ApiError(400, 'validation_error', 'Sản phẩm trả lại không hợp lệ.');
     }
     const milli = quantityMilli(row.quantity);
+    let serialCodes = [];
+    if (row.serialCodes !== undefined && row.serialCodes !== null) {
+      if (!Array.isArray(row.serialCodes)) {
+        throw new ApiError(400, 'validation_error', 'Danh sách mã riêng trả hàng không hợp lệ.');
+      }
+      serialCodes = normalizeSerialCodeList(row.serialCodes, { maxCount: 200 });
+      if (serialCodes.length > 0 && (milli % 1000 !== 0 || serialCodes.length * 1000 !== milli)) {
+        throw new ApiError(400, 'validation_error', 'Số lượng mã riêng trả lại phải khớp với số lượng sản phẩm trả.');
+      }
+      for (const code of serialCodes) {
+        const key = code.toLocaleLowerCase('vi');
+        if (seenSerials.has(key)) {
+          throw new ApiError(400, 'duplicate_serial_code', `Mã riêng “${code}” bị trùng giữa các dòng trả hàng.`);
+        }
+        seenSerials.add(key);
+      }
+    }
     if (seen.has(row.orderLineId)) {
       const index = seen.get(row.orderLineId);
       items[index].quantityMilli += milli;
       if (!Number.isSafeInteger(items[index].quantityMilli)) throw new ApiError(400, 'validation_error', 'Số lượng trả vượt giới hạn.');
+      if (serialCodes.length > 0 || items[index].serialCodes) {
+        const merged = normalizeSerialCodeList([...(items[index].serialCodes || []), ...serialCodes], { maxCount: 200 });
+        if (merged.length * 1000 !== items[index].quantityMilli) {
+          throw new ApiError(400, 'validation_error', 'Số lượng mã riêng trả lại phải khớp với tổng số lượng trả của dòng.');
+        }
+        items[index].serialCodes = merged;
+      }
     } else {
       seen.set(row.orderLineId, items.length);
-      items.push({ orderLineId: row.orderLineId, quantityMilli: milli });
+      const entry = { orderLineId: row.orderLineId, quantityMilli: milli };
+      if (serialCodes.length > 0) entry.serialCodes = serialCodes;
+      items.push(entry);
     }
   }
   const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
@@ -119,7 +147,7 @@ function registerReturnRoutes(app, { pool, env }) {
 
       const linesResult = await client.query(
         `SELECT ol.id, ol.product_id, ol.product_name_snapshot, ol.quantity::text AS quantity,
-                ol.line_total_vnd::text AS line_total_vnd, p.inventory_tracked,
+                ol.line_total_vnd::text AS line_total_vnd, p.inventory_tracked, p.serial_tracked,
                 COALESCE((SELECT SUM(rl.quantity) FROM return_lines rl JOIN returns r ON r.id = rl.return_id
                           WHERE rl.store_id = ol.store_id AND rl.order_line_id = ol.id AND r.status = 'completed'), 0)::text AS returned_quantity,
                 COALESCE((SELECT SUM(rl.refund_vnd) FROM return_lines rl JOIN returns r ON r.id = rl.return_id
@@ -148,6 +176,22 @@ function registerReturnRoutes(app, { pool, env }) {
         return { requested, line, remainingMilli, refundVnd };
       }).sort((a, b) => a.line.product_id.localeCompare(b.line.product_id));
       const refundTotal = requestedLines.reduce((sum, item) => sum + item.refundVnd, 0n);
+      for (const item of requestedLines) {
+        if (item.requested.serialCodes?.length > 0) {
+          const lowerCodes = item.requested.serialCodes.map((c) => c.toLocaleLowerCase('vi'));
+          const matchedSerials = await client.query(
+            `SELECT id, code FROM product_serial_codes
+             WHERE store_id = $1 AND order_id = $2 AND product_id = $3 AND status = 'sold'
+               AND lower(code) = ANY($4::text[])
+             ORDER BY id FOR UPDATE`,
+            [storeId, orderId, item.line.product_id, lowerCodes]
+          );
+          if (matchedSerials.rowCount !== item.requested.serialCodes.length) {
+            throw new ApiError(409, 'serial_return_invalid', `${item.line.product_name_snapshot}: có mã riêng không thuộc đơn này hoặc đã được trả trước đó.`);
+          }
+          item.matchedSerialIds = matchedSerials.rows.map((r) => r.id);
+        }
+      }
       const refundableResult = await client.query(
         `SELECT (
            COALESCE((SELECT SUM(p.amount_vnd) FROM payments p WHERE p.store_id = $1 AND p.order_id = $2 AND p.status = 'succeeded'), 0)
@@ -210,7 +254,14 @@ function registerReturnRoutes(app, { pool, env }) {
               `Trả hàng ${returnNumber}`, returnId, auth.userId]
           );
           const wholeRestock = Math.floor(restockedMilli / 1000);
-          if (wholeRestock > 0) {
+          if (item.matchedSerialIds?.length > 0) {
+            await client.query(
+              `UPDATE product_serial_codes
+               SET status = 'in_stock', order_id = NULL, sold_at = NULL, warehouse_id = $2, updated_at = now()
+               WHERE store_id = $1 AND id = ANY($3::uuid[])`,
+              [storeId, restockWarehouse.id, item.matchedSerialIds]
+            );
+          } else if (wholeRestock > 0) {
             await client.query(
               `UPDATE product_serial_codes
                SET status = 'in_stock', order_id = NULL, sold_at = NULL, warehouse_id = $4, updated_at = now()
@@ -221,6 +272,28 @@ function registerReturnRoutes(app, { pool, env }) {
                  LIMIT $5
                )`,
               [storeId, orderId, item.line.product_id, restockWarehouse.id, wholeRestock]
+            );
+          }
+        } else if (item.matchedSerialIds?.length > 0) {
+          await client.query(
+            `UPDATE product_serial_codes
+             SET status = 'archived', updated_at = now()
+             WHERE store_id = $1 AND id = ANY($2::uuid[])`,
+            [storeId, item.matchedSerialIds]
+          );
+        } else if (item.line.serial_tracked) {
+          const wholeRetire = Math.floor(item.requested.quantityMilli / 1000);
+          if (wholeRetire > 0) {
+            await client.query(
+              `UPDATE product_serial_codes
+               SET status = 'archived', updated_at = now()
+               WHERE id IN (
+                 SELECT id FROM product_serial_codes
+                 WHERE store_id = $1 AND order_id = $2 AND product_id = $3 AND status = 'sold'
+                 ORDER BY sold_at DESC NULLS LAST, id DESC
+                 LIMIT $4
+               )`,
+              [storeId, orderId, item.line.product_id, wholeRetire]
             );
           }
         }

@@ -38,6 +38,7 @@ const { registerWarehouseRoutes } = require('./warehouses');
 const { registerChannelMappingRoutes } = require('./channel-mappings');
 const { registerChannelOrderRoutes } = require('./channel-orders');
 const { registerIntegrationRoutes } = require('./integrations');
+const legalContent = require('../legal-content');
 
 const APP_ROOT = path.resolve(__dirname, '..');
 const ASSETS = new Map([
@@ -62,6 +63,7 @@ const ASSETS = new Map([
   ['/escpos-printer.js', 'escpos-printer.js'],
   ['/integrations-ui.js', 'integrations-ui.js'],
   ['/finance-vouchers-ui.js', 'finance-vouchers-ui.js'],
+  ['/legal-content.js', 'legal-content.js'],
   ['/register-sw.js', 'register-sw.js'],
   ['/manifest.webmanifest', 'manifest.webmanifest'],
   ['/sw.js', 'sw.js'],
@@ -189,6 +191,8 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
   });
 
   app.get('/api/health', async () => ({ status: 'ok' }));
+  app.get('/legal/terms', async (_request, reply) => reply.type('text/html; charset=utf-8').send(legalContent.renderStandaloneLegalPage('terms')));
+  app.get('/legal/privacy', async (_request, reply) => reply.type('text/html; charset=utf-8').send(legalContent.renderStandaloneLegalPage('privacy')));
   app.get('/api/ready', async (_request, reply) => {
     if (!pool) return reply.code(503).send({ status: 'unavailable' });
     try {
