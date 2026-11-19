@@ -1,8 +1,8 @@
 # Slink — Bàn giao cho Codex & Phân tích toàn diện lộ trình Production thương mại (2026-11-19)
 
-> **Điểm đồng bộ `origin/main`:** `d08cb9d` (sau PR #54 `android-v0.4.0` và PR #55 `android-v0.4.1`).
-> **Bản APK chính thức mới nhất:** [`android-v0.4.1`](https://github.com/huynhbao2024bm-a11y/Slink/releases/tag/android-v0.4.1) (`versionCode: 3011`, `Slink.apk` + `android-update.json`).
-> **Migration production:** `20261119140000_product_serial_codes.sql` đã chạy thành công trên production DB qua `production-migrate.yml` (run `44510673776`) và đã xác thực quyền `slink_app`.
+> **Điểm đồng bộ `origin/main`:** `e75c136` (sau PR #54 `android-v0.4.0`, PR #55 `android-v0.4.1`, PR #56 handoff và **PR #57 `android-v0.4.2`**).
+> **Bản APK chính thức mới nhất:** [`android-v0.4.2`](https://github.com/huynhbao2024bm-a11y/Slink/releases/tag/android-v0.4.2) (`versionCode: 3012`, SHA-256 `4bb9fd0a750defbe552bfdcf3e21f1dd96d1adbeaffb2fd05463bde4a1b78645`, `4.77 MB`, `Slink.apk` + `android-update.json`).
+> **Migration production:** `20261119140000_product_serial_codes.sql` đã chạy thành công trên production DB qua `production-migrate.yml` (run `44510673776`). **PR #57 không thêm migration DB mới.**
 
 ---
 
@@ -20,10 +20,33 @@ Codex chỉ cần `git fetch origin main && git checkout -b <nhánh-mới> origi
    - Ẩn `Kênh bán / Bán online` khỏi menu, cài đặt và `Quản lý`; mở sẵn 2 nhóm `Bán hàng & Kho` và `Quản trị cửa hàng`.
    - Ẩn các nút/cấu hình bên thứ ba chưa kết nối (`Xuất HĐĐT`, `Tạo vận đơn GHN`, `MoMo`, webhook SePay/MISA) cho đến khi cửa hàng thực sự bật cấu hình; lược bỏ các dòng giải thích lặp lại.
    - Đã sửa 6 lỗi thực tế phát hiện qua phiên QA thao tác trực tiếp trên trình duyệt thật (`Enter` trong `#serial-rapid-input`, dòng `Còn khoản phải thu` chi tiết đơn, tiêu đề `Đơn 1` đè tab, toast che nút thanh toán, form Giao hàng 1 cột, tự xóa `#pos-search` khi chặn mã đã bán).
-3. **Bằng chứng kiểm thử hiện tại:**
-   - `92/92` bài kiểm tra máy chủ (`node --test server/test/*.test.js`) đạt (0 lỗi / 0 bỏ qua).
+3. **Hoàn thiện Sẵn sàng thương mại Production (Tracks B, C, D, E) — PR #57 (`e75c136` · `android-v0.4.2`, `versionCode: 3012`):**
+   - **Track B (Hạ tầng sao lưu, Diễn tập khôi phục & Uptime Monitor):**
+     - `.github/workflows/production-backup.yml`: lịch 02:00 VN hằng ngày (`0 19 * * *`) + `workflow_dispatch`, chạy `scripts/postgres-backup.js create` + `verify` (AES-256-GCM, `BACKUP_DATABASE_URL`, `SLINK_BACKUP_ENCRYPTION_KEY`, `SLINK_BACKUP_KEY_ID`, `SLINK_BACKUP_DIR`), ghim SHA bất biến cho `actions/upload-artifact` (`ea165f8d65b6e75b540449e92b4886f43607fa02`), không nội suy trực tiếp input trong bash `run:`.
+     - `.github/workflows/uptime-monitor.yml`: kiểm tra `/api/ready` mỗi 15 phút, mở/cập nhật GitHub Issue deduped khi lỗi + hỗ trợ `ALERT_WEBHOOK_URL` (build JSON bằng `node -e JSON.stringify`).
+     - `scripts/restore-drill.js`: export `runLogicalRestoreDrill()` diễn tập mã hóa AES-256-GCM → kiểm SHA-256 → giải mã → phục hồi vào PGlite mới và đo RTO.
+   - **Track C (Pháp lý & Chính sách bảo mật Nghị định 13/2023/NĐ-CP):**
+     - `legal-content.js` (đã thêm vào `Dockerfile`, `server/index.js` `ASSETS`, `index.html`, `scripts/android-assets.js`, `MainActivity.java` `WEB_FILES`): phục vụ công khai `GET /legal/terms`, `GET /legal/privacy` và modal xem trong app (chân trang Đăng nhập + `Cài đặt → Dữ liệu & sao lưu`).
+   - **Track D (Cầu nối máy in nhiệt Bluetooth ESC/POS 58mm/80mm trên Android APK):**
+     - `android/app/src/main/java/com/slink/retail/BluetoothEscPosPrinter.java`: RFCOMM SPP (`00001101-0000-1000-8000-00805F9B34FB`), xác thực `BluetoothAdapter.checkBluetoothAddress` + bắt buộc thiết bị nằm trong `getBondedDevices()`, lưu máy in qua `SharedPreferences`.
+     - `android/app/src/main/java/com/slink/retail/MainActivity.java` & `AndroidManifest.xml`: xin quyền `BLUETOOTH_CONNECT` (Android 12+) / `BLUETOOTH` (`maxSdkVersion=30`), thực thi in trên `ExecutorService` đơn tuần tự (`btExecutor`, `shutdownNow()` trong `onDestroy`), chặn trùng `pendingBtRequest`, phản hồi `{ id, status: "ok", printer, devices }` (và `app.js` `SlinkAndroid.onmessage` đã xử lý `status === 'ok'`).
+     - `escpos-printer.js`, `integrations-ui.js`, `app.js`: tự nhận diện Android APK (`caps.btSupported`) hiển thị **Máy in nhiệt Bluetooth (58mm / 80mm)** + hộp thoại chọn máy in đã ghép đôi; Desktop Chrome giữ Web Serial USB/COM.
+   - **Track E (Trả hàng chọn đúng từng mã Serial, Chuyển kho mã Serial nguyên tử & Kiểm thử tải tranh chấp):**
+     - `server/records.js` (`GET /orders/:orderId`): trả thêm `sold_serial_codes` trên từng dòng `order_lines`.
+     - `server/returns.js` (`POST /orders/:orderId/returns`): hỗ trợ `serialCodes[]` (chống trùng mã giữa các dòng trả trong cùng yêu cầu), hoàn kho đúng các mã được tích chọn; nếu `restockPolicy` là `damaged`/`discarded` tự chuyển mã sang `status = 'archived'`.
+     - `server/serials.js`: thêm `POST /api/stores/:storeId/serials/transfer` (CSRF + mandatory `idempotency-key` + `EDIT_ROLES` + `canAccessWarehouse` cả 2 kho, kiểm tra `on_hand - reserved`, khóa đúng thứ tự chuẩn `warehouses → products → inventory_balances → product_serial_codes` khớp `sales.js` để tránh deadlock `40P01`, ghi đủ `transfer_out`/`transfer_in` + `audit_events`), kèm modal `Chuyển kho` ngay trong danh sách mã riêng (`app.js`).
+     - `server/test/production-readiness.test.js`: 5 bài test mới bao phủ restore drill, `/legal/terms` & `/legal/privacy`, trả hàng chọn đúng mã `RET-S1` (chặn bán lại `RET-S2`), chuyển kho mã riêng A→B, và **đua 10 luồng `POST /sales` đồng thời trên cùng 1 mã riêng** (`1 × 201` + `9 × 409`).
+4. **Bằng chứng kiểm thử & Rà soát kép mới nhất (sau PR #57):**
+   - `97/97` bài kiểm tra máy chủ (`node --test server/test/*.test.js`) đạt (0 lỗi / 0 bỏ qua).
    - Playwright E2E `e2e/commercial-responsive.js` đạt trên cả `390×844` và `1440×900` (0 tràn ngang, 0 lỗi console/5xx).
-   - GitHub CI xanh cả `API and schema acceptance` và `Production container build`.
+   - Dual review (`code-reviewer` + `security-reviewer`) đã xử lý toàn bộ CRITICAL/HIGH/MEDIUM.
+   - GitHub CI PR #57 xanh 2/2 (`API and schema acceptance` + `Production container build`), APK `0.4.2` (`3012`) biên dịch & phát hành thành công.
+5. **Những đầu mục còn chờ bên ngoài (Codex lưu ý không tự chế/không đụng khi chưa có thông tin user):**
+   - **Email thật (Resend):** User sẽ mua gói Resend sớm và cấp key/domain; hiện chưa đổi `EMAIL_DELIVERY_URL`.
+   - **GitHub Secret sao lưu:** Cần user thêm `SLINK_BACKUP_ENCRYPTION_KEY` (32-byte base64) vào Environment `production-migrations` để lịch 02:00 sáng chạy thật.
+   - **Google Play Keystore (Track A):** User đang test trên điện thoại thật qua APK ký nội bộ; sẽ mua tài khoản Play Console sau.
+   - **Máy in Bluetooth thật (Track D):** Cầu nối native + UI đã sẵn sàng trong `v0.4.2`, chờ user có máy in thật để test vật lý.
+   - **Tracks F (Gói cước/thuê bao) & G (SePay/MoMo/HĐĐT):** User yêu cầu **tạm hoãn**, bổ sung sau — không tự ý triển khai trước.
 
 ---
 
