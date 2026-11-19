@@ -44,9 +44,13 @@ public class MainActivity extends Activity {
     private static final int SAVE_FILE = 2;
     private static final int CAMERA_PERMISSION = 3;
     private static final int PHOTO_PERMISSION = 4;
+    private static final int BLUETOOTH_PERMISSION = 5;
     private static final Set<String> WEB_FILES = new HashSet<>(Arrays.asList(
             "index.html", "styles.css", "workspace.css", "app.js", "offline-store.js",
-            "offline-ledger.js", "purchase-units.js", "money-inputs.js", "offline-sync.js", "register-sw.js", "sw.js", "manifest.webmanifest",
+            "offline-ledger.js", "purchase-units.js", "money-inputs.js", "offline-sync.js",
+            "offline-conflict-ui.js", "supplier-returns-ui.js", "barcode-tools.js",
+            "banks-vn.js", "vietqr-tools.js", "escpos-printer.js", "integrations-ui.js",
+            "finance-vouchers-ui.js", "legal-content.js", "register-sw.js", "sw.js", "manifest.webmanifest",
             "assets/slink-icon.svg", "assets/slink-icon-180.png", "assets/slink-icon-192.png",
             "assets/slink-icon-512.png", "assets/slink-icon-maskable-512.png"));
     private WebView web;
@@ -56,7 +60,11 @@ public class MainActivity extends Activity {
     private WebChromeClient.FileChooserParams pendingChooser;
     private JSONObject pendingSave;
     private JavaScriptReplyProxy saveReply;
+    private JSONObject pendingBtRequest;
+    private JavaScriptReplyProxy btReply;
+    private final java.util.concurrent.ExecutorService btExecutor = java.util.concurrent.Executors.newSingleThreadExecutor();
     private AppUpdater updater;
+    private BluetoothEscPosPrinter btPrinter;
 
     @Override
     public void onCreate(Bundle state) {
@@ -163,6 +171,7 @@ public class MainActivity extends Activity {
             }
         });
         updater = new AppUpdater(this, this::sendUpdateState);
+        btPrinter = new BluetoothEscPosPrinter(this);
         updater.check(false);
         Uri incoming = getIntent().getData();
         Uri initial = incoming != null && isAppOrigin(incoming) ? incoming : Uri.parse(BuildConfig.APP_ORIGIN + "/");
@@ -252,7 +261,72 @@ public class MainActivity extends Activity {
             save.putExtra(Intent.EXTRA_TITLE, data.optString("name", "slink.txt").replaceAll("[\\\\/\\p{Cntrl}]", "-"));
             try { startActivityForResult(save, SAVE_FILE); }
             catch (ActivityNotFoundException error) { answer(reply, id, "error"); pendingSave = null; saveReply = null; }
+        } else if (data.optString("type").equals("btPrinter")) {
+            handleBtPrinterMessage(data, reply);
         } else answer(reply, id, "error");
+    }
+
+    private void handleBtPrinterMessage(JSONObject data, JavaScriptReplyProxy reply) {
+        String id = data.optString("id");
+        String action = data.optString("action");
+        if ("state".equals(action)) {
+            try { reply.postMessage(new JSONObject().put("id", id).put("status", "ok").put("printer", btPrinter.savedState()).toString()); }
+            catch (Exception ignored) {}
+            return;
+        }
+        if ("select".equals(action)) {
+            try {
+                btPrinter.saveDevice(data.optString("address"), data.optString("name"));
+                reply.postMessage(new JSONObject().put("id", id).put("status", "ok").put("printer", btPrinter.savedState()).toString());
+            } catch (Exception error) {
+                try { reply.postMessage(new JSONObject().put("id", id).put("status", "error").put("message", error.getMessage() != null ? error.getMessage() : "Không lưu được máy in.").toString()); }
+                catch (Exception ignored) {}
+            }
+            return;
+        }
+        if (!btPrinter.hasConnectPermission() && android.os.Build.VERSION.SDK_INT >= 31) {
+            if (pendingBtRequest != null) {
+                try { reply.postMessage(new JSONObject().put("id", id).put("status", "error").put("message", "Đang chờ xác nhận quyền Bluetooth.").toString()); }
+                catch (Exception ignored) {}
+                return;
+            }
+            pendingBtRequest = data;
+            btReply = reply;
+            requestPermissions(new String[] { Manifest.permission.BLUETOOTH_CONNECT }, BLUETOOTH_PERMISSION);
+            return;
+        }
+        executeBtPrinterAction(data, reply);
+    }
+
+    private void executeBtPrinterAction(JSONObject data, JavaScriptReplyProxy reply) {
+        String id = data.optString("id");
+        String action = data.optString("action");
+        btExecutor.execute(() -> {
+            JSONObject response = new JSONObject();
+            try {
+                response.put("id", id);
+                if ("list".equals(action)) {
+                    response.put("status", "ok");
+                    response.put("devices", btPrinter.listPaired());
+                    response.put("printer", btPrinter.savedState());
+                } else if ("print".equals(action)) {
+                    btPrinter.printBase64(data.optString("address"), data.optString("base64"));
+                    response.put("status", "ok");
+                } else {
+                    response.put("status", "error");
+                    response.put("message", "Thao tác máy in không hợp lệ.");
+                }
+            } catch (Exception error) {
+                try {
+                    response.put("status", "error");
+                    response.put("message", error.getMessage() != null ? error.getMessage() : "Lỗi máy in Bluetooth.");
+                } catch (Exception ignored) {}
+            }
+            final String out = response.toString();
+            runOnUiThread(() -> {
+                try { reply.postMessage(out); } catch (Exception ignored) {}
+            });
+        });
     }
 
     @Override
@@ -291,6 +365,19 @@ public class MainActivity extends Activity {
             else cameraRequest.deny();
             cameraRequest = null;
         }
+        if (request == BLUETOOTH_PERMISSION && pendingBtRequest != null) {
+            JSONObject req = pendingBtRequest;
+            JavaScriptReplyProxy rep = btReply;
+            pendingBtRequest = null;
+            btReply = null;
+            if (grants.length > 0 && grants[0] == PackageManager.PERMISSION_GRANTED) {
+                executeBtPrinterAction(req, rep);
+            } else {
+                try {
+                    rep.postMessage(new JSONObject().put("id", req.optString("id")).put("status", "error").put("message", "Bạn đã từ chối quyền Bluetooth.").toString());
+                } catch (Exception ignored) {}
+            }
+        }
     }
 
     @Override
@@ -311,6 +398,7 @@ public class MainActivity extends Activity {
     }
     @Override
     protected void onDestroy() {
+        btExecutor.shutdownNow();
         if (fileCallback != null) fileCallback.onReceiveValue(null);
         if (cameraRequest != null) cameraRequest.deny();
         web.destroy();

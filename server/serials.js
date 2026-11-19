@@ -1,6 +1,6 @@
 'use strict';
 
-const { createHash, randomBytes } = require('node:crypto');
+const { createHash, randomBytes, randomUUID } = require('node:crypto');
 const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
 const { allowedWarehouseIds, canAccessWarehouse, findAccessibleWarehouse } = require('./warehouse-access');
@@ -397,6 +397,191 @@ function registerSerialRoutes(app, { pool, env }) {
           [storeId, auth.userId, idempotencyKey, JSON.stringify(resBody)]
         );
       }
+      return { status: 201, body: resBody, replayed: false };
+    });
+
+    if (outcome.replayed) reply.header('idempotent-replayed', 'true');
+    return reply.code(outcome.status).send(outcome.body);
+  });
+
+  app.post('/api/stores/:storeId/serials/transfer', async (request, reply) => {
+    const auth = await authenticate(pool, request);
+    requireCsrf(request, env);
+    const { storeId } = request.params;
+    if (!UUID_PATTERN.test(storeId)) {
+      throw new ApiError(400, 'validation_error', 'Cửa hàng không hợp lệ.');
+    }
+    const idempotencyKey = request.headers['idempotency-key'];
+    if (typeof idempotencyKey !== 'string' || idempotencyKey.length < 16 || idempotencyKey.length > 200) {
+      throw new ApiError(400, 'idempotency_key_required', 'Thiếu mã chống gửi trùng an toàn. Hãy thử lại.');
+    }
+    const body = request.body || {};
+    const productId = typeof body.productId === 'string' ? body.productId.trim() : '';
+    const sourceWarehouseId = typeof body.sourceWarehouseId === 'string' ? body.sourceWarehouseId.trim() : '';
+    const destinationWarehouseId = typeof body.destinationWarehouseId === 'string' ? body.destinationWarehouseId.trim() : '';
+    if (!UUID_PATTERN.test(productId) || !UUID_PATTERN.test(sourceWarehouseId) || !UUID_PATTERN.test(destinationWarehouseId)) {
+      throw new ApiError(400, 'validation_error', 'Sản phẩm hoặc kho chuyển/nhận không hợp lệ.');
+    }
+    if (sourceWarehouseId.toLowerCase() === destinationWarehouseId.toLowerCase()) {
+      throw new ApiError(400, 'validation_error', 'Kho nhận phải khác kho xuất.');
+    }
+    const codes = normalizeSerialCodeList(body.codes, { maxCount: 200 });
+    if (codes.length < 1) {
+      throw new ApiError(400, 'validation_error', 'Chọn ít nhất 1 mã riêng cần chuyển kho.');
+    }
+    const note = typeof body.note === 'string' ? body.note.trim().slice(0, 240) : '';
+    const canonicalHash = createHash('sha256').update(JSON.stringify({
+      op: 'serials.transfer',
+      productId: productId.toLowerCase(),
+      sourceWarehouseId: sourceWarehouseId.toLowerCase(),
+      destinationWarehouseId: destinationWarehouseId.toLowerCase(),
+      codes,
+      note,
+    })).digest();
+
+    const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
+      if (!EDIT_ROLES.has(membership.role)) {
+        throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền chuyển kho mã riêng.');
+      }
+      const reserved = await client.query(
+        `INSERT INTO idempotency_records (store_id, actor_user_id, idempotency_key, request_hash)
+         VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING RETURNING idempotency_key`,
+        [storeId, auth.userId, idempotencyKey, canonicalHash]
+      );
+      if (!reserved.rowCount) {
+        const prev = await client.query(
+          `SELECT request_hash, response_status, response_body FROM idempotency_records
+           WHERE store_id = $1 AND actor_user_id = $2 AND idempotency_key = $3 FOR UPDATE`,
+          [storeId, auth.userId, idempotencyKey]
+        );
+        const rec = prev.rows[0];
+        if (!rec || !Buffer.from(rec.request_hash).equals(canonicalHash)) {
+          throw new ApiError(409, 'idempotency_conflict', 'Mã thao tác đã dùng cho dữ liệu khác.');
+        }
+        if (!rec.response_body || !rec.response_status) {
+          throw new ApiError(409, 'request_in_progress', 'Yêu cầu đang được xử lý. Hãy thử lại sau.');
+        }
+        return { status: rec.response_status, body: rec.response_body, replayed: true };
+      }
+
+      // Lock in canonical order matching sales.js (warehouses -> products -> inventory_balances -> product_serial_codes) to prevent deadlocks
+      const orderedWhIds = [sourceWarehouseId, destinationWarehouseId].sort();
+      const whRes = await client.query(
+        `SELECT id, name, status FROM warehouses
+         WHERE store_id = $1 AND id = ANY($2::uuid[]) ORDER BY id FOR UPDATE`,
+        [storeId, orderedWhIds]
+      );
+      const whMap = new Map(whRes.rows.map((w) => [w.id.toLowerCase(), w]));
+      const srcWh = whMap.get(sourceWarehouseId.toLowerCase());
+      const dstWh = whMap.get(destinationWarehouseId.toLowerCase());
+      if (!srcWh || srcWh.status !== 'active' || !canAccessWarehouse(membership, srcWh.id)) {
+        throw new ApiError(404, 'warehouse_not_found', 'Không tìm thấy kho xuất đang hoạt động.');
+      }
+      if (!dstWh || dstWh.status !== 'active' || !canAccessWarehouse(membership, dstWh.id)) {
+        throw new ApiError(404, 'warehouse_not_found', 'Không tìm thấy kho nhận đang hoạt động.');
+      }
+
+      const productRes = await client.query(
+        `SELECT id, name, sku, unit, inventory_tracked, serial_tracked, status
+         FROM products WHERE store_id = $1 AND id = $2 FOR UPDATE`,
+        [storeId, productId]
+      );
+      if (!productRes.rowCount || productRes.rows[0].status !== 'active') {
+        throw new ApiError(404, 'product_not_found', 'Không tìm thấy sản phẩm đang hoạt động.');
+      }
+      if (!productRes.rows[0].inventory_tracked) {
+        throw new ApiError(400, 'validation_error', 'Sản phẩm chưa bật theo dõi tồn kho.');
+      }
+
+      const qtyText = String(codes.length);
+      const srcBalRes = await client.query(
+        `SELECT on_hand::text AS on_hand, reserved::text AS reserved FROM inventory_balances
+         WHERE store_id = $1 AND warehouse_id = $2 AND product_id = $3 FOR UPDATE`,
+        [storeId, srcWh.id, productId]
+      );
+      const currentSrcOnHand = Number(srcBalRes.rows[0]?.on_hand || 0);
+      const currentSrcReserved = Number(srcBalRes.rows[0]?.reserved || 0);
+      const availableSrc = currentSrcOnHand - currentSrcReserved;
+      if (!srcBalRes.rowCount || availableSrc < codes.length) {
+        throw new ApiError(409, 'insufficient_stock', `Kho “${srcWh.name}” không đủ tồn khả dụng để chuyển ${codes.length} mã riêng.`);
+      }
+
+      const lowerCodes = codes.map((c) => c.toLocaleLowerCase('vi'));
+      const matched = await client.query(
+        `SELECT id, code FROM product_serial_codes
+         WHERE store_id = $1 AND product_id = $2 AND warehouse_id = $3 AND status = 'in_stock'
+           AND lower(code) = ANY($4::text[])
+         ORDER BY id FOR UPDATE`,
+        [storeId, productId, srcWh.id, lowerCodes]
+      );
+      if (matched.rowCount !== codes.length) {
+        throw new ApiError(409, 'serial_transfer_invalid', 'Có mã riêng không còn trong kho xuất hoặc không thuộc sản phẩm này.');
+      }
+
+      const serialIds = matched.rows.map((r) => r.id);
+      await client.query(
+        `UPDATE product_serial_codes
+         SET warehouse_id = $2, updated_at = now()
+         WHERE store_id = $1 AND id = ANY($3::uuid[])`,
+        [storeId, dstWh.id, serialIds]
+      );
+
+      const newSrcBal = await client.query(
+        `UPDATE inventory_balances
+         SET on_hand = on_hand - $4::numeric, version = version + 1, updated_at = now()
+         WHERE store_id = $1 AND warehouse_id = $2 AND product_id = $3
+         RETURNING on_hand::text AS on_hand`,
+        [storeId, srcWh.id, productId, qtyText]
+      );
+      const newDstBal = await client.query(
+        `INSERT INTO inventory_balances (store_id, warehouse_id, product_id, on_hand, reserved)
+         VALUES ($1, $2, $3, $4::numeric, 0)
+         ON CONFLICT (store_id, warehouse_id, product_id) DO UPDATE
+           SET on_hand = inventory_balances.on_hand + EXCLUDED.on_hand,
+               version = inventory_balances.version + 1, updated_at = now()
+         RETURNING on_hand::text AS on_hand`,
+        [storeId, dstWh.id, productId, qtyText]
+      );
+
+      const transferId = randomUUID();
+      const outReason = `Chuyển ${codes.length} mã riêng sang ${dstWh.name}${note ? ': ' + note : ''}`;
+      const inReason = `Nhận ${codes.length} mã riêng từ ${srcWh.name}${note ? ': ' + note : ''}`;
+      await client.query(
+        `INSERT INTO inventory_movements (store_id, warehouse_id, product_id, movement_type, quantity_delta, quantity_after,
+                                           reason, source_type, source_id, actor_user_id)
+         VALUES ($1, $2, $3, 'transfer_out', $4::numeric, $5::numeric, $6, 'serial_transfer', $7, $8)`,
+        [storeId, srcWh.id, productId, `-${qtyText}`, newSrcBal.rows[0].on_hand, outReason, transferId, auth.userId]
+      );
+      await client.query(
+        `INSERT INTO inventory_movements (store_id, warehouse_id, product_id, movement_type, quantity_delta, quantity_after,
+                                           reason, source_type, source_id, actor_user_id)
+         VALUES ($1, $2, $3, 'transfer_in', $4::numeric, $5::numeric, $6, 'serial_transfer', $7, $8)`,
+        [storeId, dstWh.id, productId, qtyText, newDstBal.rows[0].on_hand, inReason, transferId, auth.userId]
+      );
+      await client.query(
+        `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, reason, metadata)
+         VALUES ($1, $2, 'product.serials_transferred', 'product', $3, $4,
+                 jsonb_build_object('transferId', $5::text, 'count', $6::int, 'sourceWarehouseId', $7::text, 'destinationWarehouseId', $8::text, 'codes', $9::jsonb))`,
+        [storeId, auth.userId, productId, outReason, transferId, codes.length, srcWh.id, dstWh.id, JSON.stringify(matched.rows.map((r) => r.code).slice(0, 50))]
+      );
+
+      const resBody = {
+        transferId,
+        productId,
+        sourceWarehouseId: srcWh.id,
+        sourceWarehouseName: srcWh.name,
+        destinationWarehouseId: dstWh.id,
+        destinationWarehouseName: dstWh.name,
+        transferredCount: matched.rowCount,
+        transferredCodes: matched.rows.map((r) => r.code),
+        sourceOnHand: newSrcBal.rows[0].on_hand,
+        destinationOnHand: newDstBal.rows[0].on_hand,
+      };
+      await client.query(
+        `UPDATE idempotency_records SET response_status = 201, response_body = $4::jsonb, completed_at = now()
+         WHERE store_id = $1 AND actor_user_id = $2 AND idempotency_key = $3`,
+        [storeId, auth.userId, idempotencyKey, JSON.stringify(resBody)]
+      );
       return { status: 201, body: resBody, replayed: false };
     });
 

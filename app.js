@@ -1355,9 +1355,19 @@
   }
 
   function authCard(title, subtitle, body, message, tone) {
-    authRoot.innerHTML = `<section class='auth-card'><div class='auth-brand'><span class='brand-mark' aria-hidden='true'><svg viewBox='0 0 32 32'><path d='M8 8.5h16v5H13v2h11v8H8v-5h11v-2H8z' fill='currentColor'/><circle cx='24.5' cy='7.5' r='2.5' fill='#c8f36c'/></svg></span><span class='brand-name'>slink<span class='brand-period'>.</span></span></div><h1>${esc(title)}</h1><p>${esc(subtitle)}</p>${message ? `<div class='auth-message ${tone === 'error' ? 'error' : ''}'>${message}</div>` : ''}${body}<div class='auth-footnote'>Dữ liệu chỉ dành cho người được cấp quyền.</div></section>`;
+    authRoot.innerHTML = `<section class='auth-card'><div class='auth-brand'><span class='brand-mark' aria-hidden='true'><svg viewBox='0 0 32 32'><path d='M8 8.5h16v5H13v2h11v8H8v-5h11v-2H8z' fill='currentColor'/><circle cx='24.5' cy='7.5' r='2.5' fill='#c8f36c'/></svg></span><span class='brand-name'>slink<span class='brand-period'>.</span></span></div><h1>${esc(title)}</h1><p>${esc(subtitle)}</p>${message ? `<div class='auth-message ${tone === 'error' ? 'error' : ''}'>${message}</div>` : ''}${body}<div class='auth-footnote'>Dữ liệu chỉ dành cho người được cấp quyền. · <button type='button' class='link-button' data-action='open-legal' data-kind='terms'>Điều khoản</button> · <button type='button' class='link-button' data-action='open-legal' data-kind='privacy'>Bảo mật</button></div></section>`;
     appShell.hidden = true;
     authRoot.hidden = false;
+  }
+
+  function openLegalModal(kind) {
+    const k = kind === 'privacy' ? 'privacy' : 'terms';
+    const title = k === 'privacy' ? 'Chính sách bảo mật' : 'Điều khoản sử dụng';
+    const legal = window.SlinkLegalContent;
+    const html = legal
+      ? `<div class='legal-modal-body' style='max-height:60vh;overflow:auto;padding-right:4px'>${legal.renderLegalSectionsHtml(k)}<p class='muted' style='margin-top:14px;font-size:12px'>Cập nhật: ${esc(legal.LAST_UPDATED || '')} · <a href='/legal/${k}' target='_blank' rel='noopener'>Mở trang độc lập</a></p></div>`
+      : `<div class='empty-state'><a href='/legal/${k}' target='_blank' rel='noopener'>Xem ${esc(title)}</a></div>`;
+    showModal(title, '', html, `<button class='btn btn-primary' type='button' data-action='close-modal'>Đóng</button>`, true);
   }
 
   function authPasswordField(id, name, label, autocomplete, confirmationFor) {
@@ -2557,6 +2567,17 @@
     if (!printer) return;
     try {
       if (action === 'escpos-connect') {
+        const caps = printer.capabilities();
+        if (caps.btSupported) {
+          const devices = await printer.listBluetoothPrinters();
+          if (!devices.length) {
+            toast('Chưa có máy in Bluetooth đã ghép đôi', 'Mở Cài đặt Bluetooth trên điện thoại, ghép đôi máy in nhiệt 58mm/80mm rồi thử lại.', 'error');
+            return;
+          }
+          const rows = devices.map(d => `<button type='button' class='btn btn-secondary' style='width:100%;justify-content:space-between;margin-bottom:8px' data-action='select-bt-printer' data-address='${esc(d.address)}' data-name='${esc(d.name || d.address)}'><span><strong>${esc(d.name || 'Máy in Bluetooth')}</strong><br/><small class='muted'>${esc(d.address)}</small></span><span>Chọn</span></button>`).join('');
+          showModal('Chọn máy in nhiệt Bluetooth', 'Chọn máy in đã ghép đôi với điện thoại.', `<div>${rows}</div>`, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button>`);
+          return;
+        }
         await printer.connectSerialPrinter(9600);
         toast('Đã kết nối máy in bill', 'Sẵn sàng in ESC/POS trực tiếp.');
         if (page === 'settings') render();
@@ -4817,7 +4838,7 @@
   function renderDeviceSettings() {
     const startOptions = taskFocusOptions();
     const focus = store.id && startOptions.length ? `<section class='panel settings-panel'><h2>Màn hình mở đầu</h2><form data-form='task-focus'><div class='task-focus-choices'>${renderTaskFocusChoices(taskFocusRoute)}</div><button class='btn btn-primary' type='submit'>Lưu</button></form><button class='link-button' type='button' data-action='replay-guided-tour'>Xem lại hướng dẫn</button></section>` : '';
-    const data = `<section class='panel settings-panel'><h2>Dữ liệu &amp; sao lưu</h2><div class='settings-actions'>${store.id ? `<button class='btn btn-secondary' type='button' data-action='offline-records'>Chứng từ trên máy</button>` : ''}${canExportData() && store.id ? `<button class='btn btn-secondary' type='button' data-action='open-export'>Xuất dữ liệu cửa hàng</button>` : ''}</div></section>`;
+    const data = `<section class='panel settings-panel'><h2>Dữ liệu &amp; sao lưu</h2><div class='settings-actions'>${store.id ? `<button class='btn btn-secondary' type='button' data-action='offline-records'>Chứng từ trên máy</button>` : ''}${canExportData() && store.id ? `<button class='btn btn-secondary' type='button' data-action='open-export'>Xuất dữ liệu cửa hàng</button>` : ''}<button class='btn btn-secondary' type='button' data-action='open-legal' data-kind='terms'>Điều khoản</button><button class='btn btn-secondary' type='button' data-action='open-legal' data-kind='privacy'>Chính sách bảo mật</button></div></section>`;
     const operations = store.id ? `<section class='panel settings-panel'><h2>Quản lý nhanh</h2>${renderWorkspaceLinks([{ title: '', routes: ['staff', 'inventory', 'promotions'] }])}</section>` : '';
     const updates = window.SlinkAndroid ? `<section class='panel settings-panel' data-app-update-state><h2>Phiên bản ứng dụng</h2><p data-app-version>Slink</p><p data-app-update-message></p><div class='settings-actions'><button class='btn btn-secondary' type='button' data-action='check-app-update'>Kiểm tra cập nhật</button><button class='btn btn-primary' type='button' data-action='install-app-update' hidden>Cài bản mới</button></div></section>` : '';
     return focus + data + operations + updates;
@@ -7008,12 +7029,68 @@
       const rowsHtml = (data.serials || []).length
         ? `<div class='table-wrap'><table class='data-table'><thead><tr><th>Mã riêng / QR</th><th>Kho</th><th>Trạng thái</th><th>Đơn hàng</th></tr></thead><tbody>${data.serials.map(s => `<tr><td><code>${esc(s.code)}</code></td><td>${esc(s.warehouse_name || '')}</td><td>${s.status === 'in_stock' ? `<span class='badge badge-success'>Còn trong kho</span>` : `<span class='badge badge-neutral'>Đã bán</span>`}</td><td>${s.order_number ? `<button type='button' class='link-button' data-action='order-detail' data-id='${esc(s.order_id)}'>${esc(s.order_number)}</button>` : '—'}</td></tr>`).join('')}</tbody></table></div>`
         : `<div class='empty-state'><strong>Chưa có mã nào</strong></div>`;
-      const footer = `${canEdit ? `<button class='btn btn-secondary' type='button' data-action='add-product-units' data-id='${esc(productId)}'>＋ Thêm / quét mã</button>` : ''}${inStockCodes.length ? `<button class='btn btn-secondary' type='button' data-action='print-product-serials' data-id='${esc(productId)}'>In ${number(inStockCodes.length)} tem còn kho</button>` : ''}<button class='btn btn-primary' type='button' data-action='close-modal'>Đóng</button>`;
+      const footer = `${canEdit ? `<button class='btn btn-secondary' type='button' data-action='add-product-units' data-id='${esc(productId)}'>＋ Thêm / quét mã</button>` : ''}${canEdit && warehouses.length > 1 && inStockCodes.length ? `<button class='btn btn-secondary' type='button' data-action='open-transfer-serials' data-id='${esc(productId)}'>Chuyển kho</button>` : ''}${inStockCodes.length ? `<button class='btn btn-secondary' type='button' data-action='print-product-serials' data-id='${esc(productId)}'>In ${number(inStockCodes.length)} tem còn kho</button>` : ''}<button class='btn btn-primary' type='button' data-action='close-modal'>Đóng</button>`;
       modal.dataset.productSerialsCache = JSON.stringify(inStockCodes.map(s => s.code));
+      modal.dataset.productSerialsFullCache = JSON.stringify(inStockCodes.map(s => ({ code: s.code, warehouseId: s.warehouse_id, warehouseName: s.warehouse_name })));
       showModal(`Mã riêng · ${product.name}`, '', tabs + rowsHtml, footer, true);
     } catch (error) {
       if (modal.hidden || modalGeneration !== gen) return;
       showModal(`Mã riêng · ${product.name}`, '', `<div class='auth-message error'>${esc(error.message)}</div>`, `<button class='btn btn-primary' type='button' data-action='close-modal'>Đóng</button>`);
+    }
+  }
+
+  function openTransferSerialsModal(productId) {
+    const product = productById(productId) || inventoryProducts.find(item => item.id === productId);
+    if (!product || warehouses.length < 2) return;
+    let items = [];
+    try { items = JSON.parse(modal.dataset.productSerialsFullCache || '[]'); } catch {}
+    if (!items.length) return toast('Không có mã riêng còn kho', 'Hãy thêm mã trước khi chuyển kho.', 'error');
+    const sourceIds = Array.from(new Set(items.map(i => i.warehouseId)));
+    const defaultSourceId = sourceIds[0];
+    const defaultDest = warehouses.find(w => w.id !== defaultSourceId) || warehouses[0];
+    const renderCodeList = (whId) => items.filter(i => i.warehouseId === whId).map(i => `<label style='display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border:1px solid var(--border);border-radius:999px;font-size:12px;cursor:pointer'><input type='checkbox' name='codes' value='${esc(i.code)}'/><code>${esc(i.code)}</code></label>`).join('');
+    const sourceOptions = warehouses.filter(w => sourceIds.includes(w.id)).map(w => `<option value='${esc(w.id)}' ${w.id === defaultSourceId ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
+    const destOptions = warehouses.map(w => `<option value='${esc(w.id)}' ${w.id === defaultDest?.id ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
+    const body = `<form id='entity-form' data-form='transfer-serials' data-id='${esc(productId)}' data-idempotency-key='${esc(newIdempotencyKey())}'>
+      <div class='form-grid'>
+        <div class='form-field'><label class='input-label' for='ts-source'>Kho xuất</label><div class='select-wrap'><select class='input' id='ts-source' name='sourceWarehouseId'>${sourceOptions}</select></div></div>
+        <div class='form-field'><label class='input-label' for='ts-dest'>Kho nhận</label><div class='select-wrap'><select class='input' id='ts-dest' name='destinationWarehouseId'>${destOptions}</select></div></div>
+      </div>
+      <div class='form-field full' style='margin-top:12px'>
+        <label class='input-label'>Chọn mã riêng cần chuyển</label>
+        <div data-transfer-serial-list style='display:flex;flex-wrap:wrap;gap:6px;max-height:220px;overflow:auto;padding:4px 0'>${renderCodeList(defaultSourceId)}</div>
+      </div>
+      <div class='form-field full' style='margin-top:10px'><label class='input-label' for='ts-note'>Ghi chú</label><input class='input' id='ts-note' name='note' maxlength='240' placeholder='Tùy chọn'/></div>
+    </form>`;
+    showModal(`Chuyển kho mã riêng · ${product.name}`, '', body, `<button class='btn btn-secondary' type='button' data-action='view-product-serials' data-id='${esc(productId)}'>Quay lại</button><button class='btn btn-primary' type='submit' form='entity-form'>Xác nhận chuyển kho</button>`, true);
+    modal.dataset.productSerialsFullCache = JSON.stringify(items);
+  }
+
+  async function saveTransferSerials(form) {
+    const productId = form.dataset.id;
+    const data = new FormData(form);
+    const sourceWarehouseId = String(data.get('sourceWarehouseId') || '');
+    const destinationWarehouseId = String(data.get('destinationWarehouseId') || '');
+    const codes = data.getAll('codes').map(v => String(v).trim()).filter(Boolean);
+    const note = String(data.get('note') || '').trim();
+    if (!sourceWarehouseId || !destinationWarehouseId || sourceWarehouseId === destinationWarehouseId) {
+      return toast('Kho nhận phải khác kho xuất', '', 'error');
+    }
+    if (!codes.length) return toast('Chưa chọn mã riêng', 'Tích chọn ít nhất 1 mã cần chuyển kho.', 'error');
+    const submitButton = modal.querySelector('button[type="submit"][form="entity-form"]');
+    if (submitButton) submitButton.disabled = true;
+    try {
+      const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/serials/transfer`, {
+        method: 'POST',
+        headers: { 'idempotency-key': form.dataset.idempotencyKey || newIdempotencyKey() },
+        body: { productId, sourceWarehouseId, destinationWarehouseId, codes, note },
+      });
+      toast('Đã chuyển kho mã riêng', `${result.transferredCount} mã · ${result.sourceWarehouseName} → ${result.destinationWarehouseName}`);
+      await loadProductsPage(searchTerms.products, productOffset);
+      openProductSerials(productId);
+    } catch (error) {
+      toast('Chưa chuyển kho được', error.message, 'error');
+      if (submitButton && !modal.hidden) submitButton.disabled = false;
     }
   }
 
@@ -8587,13 +8664,19 @@
     const saved = loadPendingReturn(orderId);
     returnPending = saved;
     const returnMap = new Map((saved && saved.payload.items || []).map(function (item) { return [item.orderLineId, Number(item.quantity)]; }));
+    const returnSerialMap = new Map((saved && saved.payload.items || []).map(function (item) { return [item.orderLineId, new Set(item.serialCodes || [])]; }));
     const lines = order.items.filter(function (line) { return Number(line.returned_quantity) < Number(line.quantity); });
     if (!lines.length) return toast('Đơn hàng đã trả đủ', 'Không còn sản phẩm nào có thể trả.');
     const lineMarkup = lines.map(function (line) {
       const remaining = Number(line.quantity) - Number(line.returned_quantity);
-      const quantity = returnMap.has(line.id) ? returnMap.get(line.id) : 0;
+      const soldSerials = Array.isArray(line.sold_serial_codes) ? line.sold_serial_codes.filter(Boolean) : [];
+      const savedSerials = returnSerialMap.get(line.id) || new Set();
+      const quantity = soldSerials.length ? savedSerials.size : (returnMap.has(line.id) ? returnMap.get(line.id) : 0);
       const disabled = saved ? 'disabled' : '';
-      return `<div class='detail-line' style='gap:12px'><span>${esc(line.product_name_snapshot)}<small> Còn trả ${number(remaining)} ${esc(line.unit_snapshot)}</small></span><input class='input' data-return-line='${line.id}' type='number' min='0' max='${remaining}' step='0.001' value='${quantity}' aria-label='Số lượng trả ${esc(line.product_name_snapshot)}' style='max-width:125px' ${disabled}/></div>`;
+      const serialPicker = soldSerials.length
+        ? `<div class='return-serial-picker' data-return-serials-for='${esc(line.id)}' style='display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;width:100%'>${soldSerials.map(function (code) { return `<label style='display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border:1px solid var(--border);border-radius:999px;font-size:12px;cursor:pointer'><input type='checkbox' data-return-serial-check='${esc(line.id)}' value='${esc(code)}' ${savedSerials.has(code) ? 'checked' : ''} ${disabled}/><code>${esc(code)}</code></label>`; }).join('')}</div>`
+        : '';
+      return `<div class='detail-line' style='gap:12px;flex-wrap:wrap'><span>${esc(line.product_name_snapshot)}<small> Còn trả ${number(remaining)} ${esc(line.unit_snapshot)}${soldSerials.length ? ' · tích chọn mã riêng trả lại' : ''}</small></span><input class='input' data-return-line='${line.id}' type='number' min='0' max='${remaining}' step='${soldSerials.length ? '1' : '0.001'}' value='${quantity}' aria-label='Số lượng trả ${esc(line.product_name_snapshot)}' style='max-width:125px' ${soldSerials.length ? 'readonly' : ''} ${disabled}/>${serialPicker}</div>`;
     }).join('');
     const disabled = saved ? 'disabled' : '';
     const reason = saved ? saved.payload.reason : '';
@@ -8614,7 +8697,11 @@
     if (!pending) {
       const data = new FormData(form);
       const items = Array.from(form.querySelectorAll('[data-return-line]')).map(function (input) {
-        return { orderLineId: input.dataset.returnLine, quantity: Number(input.value) || 0 };
+        const lineId = input.dataset.returnLine;
+        const serialChecks = Array.from(form.querySelectorAll(`[data-return-serial-check="${CSS.escape(lineId)}"]:checked`)).map(function (el) { return el.value; });
+        const item = { orderLineId: lineId, quantity: serialChecks.length ? serialChecks.length : (Number(input.value) || 0) };
+        if (serialChecks.length) item.serialCodes = serialChecks;
+        return item;
       }).filter(function (item) { return item.quantity > 0; });
       if (!items.length) return toast('Chưa chọn sản phẩm', 'Nhập số lượng lớn hơn 0 cho ít nhất một dòng.', 'error');
       for (const item of items) {
@@ -11716,8 +11803,9 @@
     if (!pending) return;
     nativeRequests.delete(result.id);
     if (result.update) { applyAppUpdateState(result.update); pending.resolve(result.update); }
+    else if (result.status === 'ok') pending.resolve(result);
     else if (['saved', 'opened', 'canceled'].includes(result.status)) pending.resolve(result.status);
-    else pending.reject(new Error('Chưa lưu được tệp. Hãy thử lại.'));
+    else pending.reject(new Error(result.message || 'Thao tác thiết bị chưa hoàn tất. Hãy thử lại.'));
   };
 
   async function download(name, content, type) {
@@ -12247,6 +12335,10 @@
   }
 
   async function boot() {
+    if (window.SlinkEscPosPrinter?.setAndroidBridge) {
+      window.SlinkEscPosPrinter.setAndroidBridge(nativeAction);
+      if (window.SlinkAndroid) window.SlinkEscPosPrinter.refreshBluetoothState().catch(() => {});
+    }
     const resetToken = new URLSearchParams(window.location.hash.slice(1)).get('reset');
     if (resetToken) {
       authMode = 'reset-complete';
@@ -12649,6 +12741,19 @@
       else requestCloseModal(() => openProductSerials(id));
     }
     else if (action === 'filter-product-serials') openProductSerials(id, button.dataset.status || 'all');
+    else if (action === 'open-transfer-serials') openTransferSerialsModal(id);
+    else if (action === 'open-legal') openLegalModal(button.dataset.kind || 'terms');
+    else if (action === 'select-bt-printer') {
+      const addr = button.dataset.address || '';
+      const name = button.dataset.name || addr;
+      if (addr && window.SlinkEscPosPrinter?.selectBluetoothPrinter) {
+        window.SlinkEscPosPrinter.selectBluetoothPrinter(addr, name).then(() => {
+          closeModal();
+          toast('Đã chọn máy in Bluetooth', name);
+          if (page === 'settings') render();
+        }).catch(err => toast('Không lưu được máy in', err.message, 'error'));
+      }
+    }
     else if (action === 'print-product-serials') {
       const product = productById(id) || inventoryProducts.find(item => item.id === id);
       let codes = [];
@@ -13545,6 +13650,7 @@
     else if (type === 'product') saveProduct(form);
     else if (type === 'quick-product') saveQuickProduct(form, event.submitter);
     else if (type === 'add-product-units') saveAddProductUnits(form, event.submitter);
+    else if (type === 'transfer-serials') saveTransferSerials(form);
     else if (type === 'product-variants') saveProductVariantGroup(form);
     else if (type === 'product-variant-add') saveProductVariantAdd(form);
     else if (type === 'promotion-create') savePromotion(form);
@@ -13689,6 +13795,20 @@
       if (event.target.name === 'taskFocusRoute') form.dataset.taskFocusEdited = 'true';
       if (event.target.closest('#warehouse-transfer-lines')) {
         event.target.closest('#warehouse-transfer-lines').dataset.transferTouched = 'true';
+      }
+      if (event.target.matches('[data-return-serial-check]')) {
+        const lineId = event.target.dataset.returnSerialCheck;
+        const checkedCount = form.querySelectorAll(`[data-return-serial-check="${CSS.escape(lineId)}"]:checked`).length;
+        const qtyInput = form.querySelector(`[data-return-line="${CSS.escape(lineId)}"]`);
+        if (qtyInput) qtyInput.value = String(checkedCount);
+      }
+      if (form.dataset.form === 'transfer-serials' && event.target.name === 'sourceWarehouseId') {
+        let items = [];
+        try { items = JSON.parse(modal.dataset.productSerialsFullCache || '[]'); } catch {}
+        const listEl = form.querySelector('[data-transfer-serial-list]');
+        if (listEl) {
+          listEl.innerHTML = items.filter(i => i.warehouseId === event.target.value).map(i => `<label style='display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border:1px solid var(--border);border-radius:999px;font-size:12px;cursor:pointer'><input type='checkbox' name='codes' value='${esc(i.code)}'/><code>${esc(i.code)}</code></label>`).join('');
+        }
       }
       modalEditedField = event.target;
     }

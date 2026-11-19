@@ -1,0 +1,68 @@
+name: Production uptime monitor
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: production-uptime-monitor
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Probe /api/ready health endpoint
+        id: probe
+        env:
+          TARGET_URL: ${{ vars.SLINK_PRODUCTION_URL }}
+        run: |
+          BASE="${TARGET_URL:-https://slink-production.onrender.com}"
+          ENDPOINT="${BASE%/}/api/ready"
+          START_MS=$(date +%s%3N)
+          HTTP_CODE=$(curl -sS -o /tmp/ready.json -w '%{http_code}' --max-time 20 "$ENDPOINT" || echo "000")
+          END_MS=$(date +%s%3N)
+          LATENCY=$((END_MS - START_MS))
+          BODY=$(cat /tmp/ready.json 2>/dev/null || echo "")
+          echo "endpoint=$ENDPOINT" >> "$GITHUB_OUTPUT"
+          echo "http_code=$HTTP_CODE" >> "$GITHUB_OUTPUT"
+          echo "latency_ms=$LATENCY" >> "$GITHUB_OUTPUT"
+          if [ "$HTTP_CODE" = "200" ] && echo "$BODY" | grep -q '"ready"'; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+            echo "Slink ready ($HTTP_CODE) in ${LATENCY}ms"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "Slink readiness failed: HTTP=$HTTP_CODE latency=${LATENCY}ms" >&2
+          fi
+
+      - name: Notify webhook or open incident issue on outage
+        if: steps.probe.outputs.ok != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+          PROBE_ENDPOINT: ${{ steps.probe.outputs.endpoint }}
+          PROBE_HTTP_CODE: ${{ steps.probe.outputs.http_code }}
+          PROBE_LATENCY_MS: ${{ steps.probe.outputs.latency_ms }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          export ALERT_MSG="Slink production readiness check FAILED: ${PROBE_ENDPOINT} returned HTTP ${PROBE_HTTP_CODE} (${PROBE_LATENCY_MS}ms)."
+          if [ -n "$ALERT_WEBHOOK_URL" ]; then
+            PAYLOAD=$(node -e "process.stdout.write(JSON.stringify({ text: process.env.ALERT_MSG }))")
+            curl -sS -X POST -H 'Content-Type: application/json' \
+              -d "$PAYLOAD" "$ALERT_WEBHOOK_URL" || true
+          fi
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --state open --search "Slink production outage in:title" --json number --jq '.[0].number // empty')
+          if [ -z "$EXISTING" ]; then
+            gh issue create --repo "${{ github.repository }}" \
+              --title "Slink production outage detected" \
+              --body "${ALERT_MSG}"$'\n\n'"Run: ${RUN_URL}"
+          else
+            gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body "Still failing: ${ALERT_MSG}"
+          fi
+          exit 1

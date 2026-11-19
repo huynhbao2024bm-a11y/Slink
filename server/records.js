@@ -1028,7 +1028,10 @@ function registerRecordRoutes(app, { pool, env }) {
                 CASE WHEN $3::boolean THEN ol.unit_cost_vnd::text ELSE NULL END AS unit_cost_vnd,
                 ol.discount_vnd::text AS discount_vnd, ol.line_total_vnd::text AS line_total_vnd,
                 COALESCE((SELECT SUM(rl.quantity) FROM return_lines rl JOIN returns r ON r.id = rl.return_id
-                          WHERE rl.store_id = ol.store_id AND rl.order_line_id = ol.id AND r.status = 'completed'), 0)::text AS returned_quantity
+                          WHERE rl.store_id = ol.store_id AND rl.order_line_id = ol.id AND r.status = 'completed'), 0)::text AS returned_quantity,
+                COALESCE((SELECT ARRAY_AGG(sc.code ORDER BY sc.sold_at ASC NULLS LAST, sc.code ASC)
+                          FROM product_serial_codes sc
+                          WHERE sc.store_id = ol.store_id AND sc.order_id = ol.order_id AND sc.product_id = ol.product_id AND sc.status = 'sold'), '{}'::text[]) AS sold_serial_codes
          FROM order_lines ol WHERE ol.store_id = $1 AND ol.order_id = $2 ORDER BY ol.id`,
         [storeId, orderId, ['owner', 'manager', 'accountant'].includes(membership.role)]
       );
