@@ -44,7 +44,9 @@
     const warehouseMap = new Map(), metadata = new Map();
     ordered.forEach(row => (row.value.warehouses || []).forEach(warehouse => warehouseMap.set(warehouse.id, warehouse)));
     const knownWarehouses = Array.from(warehouseMap.values()).filter(row => row.status !== 'archived');
-    const defaultWarehouse = knownWarehouses.find(row => row.is_default)?.id || '';
+    const defaultWarehouse = knownWarehouses.length === 1
+      ? knownWarehouses[0].id
+      : (knownWarehouses.find(row => row.is_default)?.id || '');
     for (const response of ordered) {
       const url = new URL(response.url, 'https://offline.invalid');
       for (const row of (response.value.customers || []).concat(response.value.customerDebtors || [])) state.customers.set(row.id, { ...state.customers.get(row.id), ...row });
@@ -54,7 +56,7 @@
           const old = metadata.get(item.id);
           if (!old || Number(item.version || 0) >= Number(old.version || 0)) metadata.set(item.id, { ...old, ...fields });
         }
-        if (!url.searchParams.has('warehouseId') && knownWarehouses.length > 1) continue;
+        if (!url.searchParams.has('warehouseId') && knownWarehouses.length !== 1) continue;
         const warehouseId = url.searchParams.get('warehouseId') || defaultWarehouse;
         for (const item of response.value.products || []) {
           const key = productKey(warehouseId, item.id), old = state.products.get(key);
@@ -259,7 +261,9 @@
       result.products = (result.products || []).map(row => {
         const candidates = byProduct.get(row.id);
         if (!candidates) return row;
-        return { ...row, on_hand: String(candidates.reduce((sum, item) => sum + item.milli, 0) / 1000), inventory_version: Math.max(...candidates.map(item => Number(item.inventory_version || 1))), cost_vnd: candidates[0].cost_vnd, purchase_pack: candidates[0].purchase_pack || null, version: Math.max(...candidates.map(item => Number(item.version || row.version || 1))) };
+        const scoped = candidates.filter(item => item.warehouseId);
+        const effective = scoped.length ? scoped : candidates;
+        return { ...row, on_hand: String(effective.reduce((sum, item) => sum + item.milli, 0) / 1000), inventory_version: Math.max(...effective.map(item => Number(item.inventory_version || 1))), cost_vnd: effective[0].cost_vnd, purchase_pack: effective[0].purchase_pack || null, version: Math.max(...effective.map(item => Number(item.version || row.version || 1))) };
       });
       if (query.pathname.endsWith('/inventory')) {
         const products = Array.from(state.products.values()).filter(row => row.inventory_tracked && (!warehouseId || row.warehouseId === warehouseId));

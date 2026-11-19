@@ -113,6 +113,7 @@ async function seedProductsAndCashViaBrowserSession(page) {
     };
     const p1 = await createProd('CF-01', '8938505974194', 'Cà phê đá E2E', 35000, 12000);
     const p2 = await createProd('TR-01', '2000000000122', 'Trà đào cam sả', 45000, 15000);
+    const pSingle = await createProd('ONE-01', '8938505999911', 'Bình giữ nhiệt độc bản', 99000, 40000);
 
     const purRes = await fetch(`/api/stores/${storeId}/purchases`, {
       method: 'POST',
@@ -124,8 +125,9 @@ async function seedProductsAndCashViaBrowserSession(page) {
         items: [
           { productId: p1.id, quantity: 20, unitCostVnd: 12000 },
           { productId: p2.id, quantity: 10, unitCostVnd: 15000 },
+          { productId: pSingle.id, quantity: 1, unitCostVnd: 40000 },
         ],
-        amountPaidVnd: 390000,
+        amountPaidVnd: 430000,
         method: 'bank_transfer',
       }),
     });
@@ -213,8 +215,8 @@ async function runViewportAudit(browser, origin, viewport, label) {
     await page.waitForSelector('.pos-product-grid button');
     await assertNoHorizontalOverflow(page, `${label}:pos-topbar`);
 
-    // 2. Hardware barcode Enter auto-add on #pos-search
-    await page.fill('#pos-search', '8938505974194');
+    // 2. Hardware barcode Enter auto-add + verify already-sold 1-unit barcode CANNOT be resold
+    await page.fill('#pos-search', '8938505999911');
     await page.press('#pos-search', 'Enter');
     await page.waitForTimeout(250);
 
@@ -228,6 +230,39 @@ async function runViewportAudit(browser, origin, viewport, label) {
       await page.locator(".pos-mobile-checkout[data-action='fast-pay']").click();
     }
     await page.waitForSelector('.sale-saved');
+
+    // Rescanning the already-sold 1-unit barcode MUST be blocked immediately (cart count stays 0)
+    await page.fill('#pos-search', '8938505999911');
+    await page.press('#pos-search', 'Enter');
+    await page.waitForTimeout(300);
+    const soldOutCount = await page.locator('.pos-mobile-cart .mobile-cart-count').textContent();
+    assert.equal(soldOutCount.trim(), '0', `${label}: already-sold barcode must not re-enter cart`);
+
+    // 3b. Test Bán thường multi-bill tabs (Đơn 1 -> add item -> open Đơn 2 -> empty -> switch back -> 1-click standard pay)
+    await page.locator("[data-action='pos-mode'][data-mode='standard']").click();
+    await page.waitForTimeout(150);
+    await page.fill('#pos-search', '8938505974194');
+    await page.press('#pos-search', 'Enter');
+    await page.waitForTimeout(250);
+    if (await page.locator(".pos-layout > .cart-panel [data-action='pos-bill-add']").isVisible()) {
+      await page.locator(".pos-layout > .cart-panel [data-action='pos-bill-add']").click();
+      await page.waitForTimeout(100);
+      assert.equal(await page.locator(".pos-layout > .cart-panel .cart-row").count(), 0, `${label}: new Đơn 2 must start empty`);
+      await page.locator(".pos-layout > .cart-panel [data-action='pos-bill-switch']").first().click();
+      await page.waitForTimeout(100);
+      assert.equal(await page.locator(".pos-layout > .cart-panel .cart-row").count(), 1, `${label}: switching back to Đơn 1 must restore cart`);
+      const [stdSaleRes] = await Promise.all([
+        page.waitForResponse((res) => res.url().includes('/sales') && res.request().method() === 'POST'),
+        page.locator(".pos-layout > .cart-panel [data-action='standard-pay']").click(),
+      ]);
+      assert.equal(stdSaleRes.status(), 201, `${label}: standard-pay POST /sales must succeed with 201`);
+    } else {
+      const [stdSaleRes] = await Promise.all([
+        page.waitForResponse((res) => res.url().includes('/sales') && res.request().method() === 'POST'),
+        page.locator(".pos-mobile-checkout[data-action='standard-pay']").click(),
+      ]);
+      assert.equal(stdSaleRes.status(), 201, `${label}: mobile standard-pay POST /sales must succeed with 201`);
+    }
 
     // 4. Test Bán giao hàng (real delivery order + customer creation)
     await page.locator("[data-action='pos-mode'][data-mode='delivery']").click();
@@ -492,10 +527,15 @@ async function runViewportAudit(browser, origin, viewport, label) {
     await assertNoHorizontalOverflow(page, `${label}:finance-receivable-detail`);
     assert.equal(await page.locator("[data-action='new-expense'][data-direction='in']:visible").count() > 0, true, `${label}: record income remains reachable`);
 
-    // 9. Test Cài đặt Tích hợp & VietQR SVG offline rendering
+    // 9. Test Cài đặt Cửa hàng → Tài khoản nhận chuyển khoản (VietQR) — clean UI without awkward extra tab or raw .env jargon
     const settingsBtn = page.locator("[data-action='account-settings']:visible, #primary-nav [data-route='settings']:visible").first();
     await settingsBtn.click();
+    await page.waitForSelector('.settings-areas', { timeout: 15000 });
+    const storeSettingsTab = page.locator("[data-action='settings-area']", { hasText: 'Cửa hàng' }).first();
+    await storeSettingsTab.click();
     await page.waitForSelector('#integration-settings-form', { timeout: 15000 });
+    const settingsText = await page.locator('#integrations-panel').textContent();
+    assert.equal(/MOMO_PARTNER_CODE|SEPAY_WEBHOOK_TOKEN|VIETTEL_EINVOICE/.test(settingsText || ''), false, `${label}: Settings must not show raw .env variable names`);
     await page.selectOption('#int-bank-bin', '970436');
     await page.fill('#int-bank-account', '1903668899');
     await page.fill('#int-bank-owner', 'SLINK TEST');

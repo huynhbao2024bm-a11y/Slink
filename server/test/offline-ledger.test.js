@@ -128,3 +128,33 @@ test('cached daily finance excludes queued entries from another business day', (
   assert.equal(result.summary.todayInVnd, '6000');
   assert.equal(result.movements.length, 2, 'all pending entries remain visible with their own dates');
 });
+
+test('single-warehouse product cached without warehouseId projects to zero after sale without double counting', () => {
+  const unlabeledProducts = {
+    url: '/api/stores/store/products?limit=100&offset=0&q=',
+    fetchedAt: '2026-11-01T00:00:00Z',
+    value: { products: [{ id: productId, name: 'SP duy nhat', sale_price_vnd: '80000', cost_vnd: '10000', inventory_tracked: true, on_hand: '1', reserved: '0', low_stock_threshold: '0', inventory_version: 1, version: 1 }] },
+  };
+  const scopedSale = operation('sale', sale(1), 1);
+  const state = ledger.derive([responses[0], unlabeledProducts, responses[2]], [scopedSale]);
+  assert.equal(state.products.get(`${warehouseId}|${productId}`).on_hand, '0');
+  const projected = ledger.projectResponse('/api/stores/store/products?limit=100&offset=0&q=', unlabeledProducts.value, [responses[0], unlabeledProducts, responses[2]], [scopedSale], userId);
+  assert.equal(projected.products[0].on_hand, '0', 'already-sold single-unit item must project to 0 stock, never 1');
+  assert.throws(() => ledger.validateEnqueue([responses[0], unlabeledProducts, responses[2]], [scopedSale], operation('sale', sale(1), 2), session), e => e.code === 'offline_insufficient_stock');
+});
+
+test('unlabeled aggregate products do not inflate warehouse stock when warehouses list is uncached', () => {
+  const scopedW1 = {
+    url: `/api/stores/store/products?warehouseId=${warehouseId}`,
+    fetchedAt: '2026-11-01T00:00:00Z',
+    value: { products: [{ id: productId, name: 'SP da kho', sale_price_vnd: '80000', cost_vnd: '10000', inventory_tracked: true, on_hand: '2', reserved: '0', low_stock_threshold: '0', inventory_version: 1, version: 1 }] },
+  };
+  const unlabeledAggregate = {
+    url: '/api/stores/store/products?limit=100&offset=0&q=',
+    fetchedAt: '2026-11-01T00:01:00Z',
+    value: { products: [{ id: productId, name: 'SP da kho', sale_price_vnd: '80000', cost_vnd: '10000', inventory_tracked: true, on_hand: '10', reserved: '0', low_stock_threshold: '0', inventory_version: 5, version: 1 }] },
+  };
+  const state = ledger.derive([scopedW1, unlabeledAggregate, responses[2]], []);
+  assert.equal(state.products.get(`${warehouseId}|${productId}`).on_hand, '2', 'aggregate sum must never overwrite single warehouse balance');
+  assert.throws(() => ledger.validateEnqueue([scopedW1, unlabeledAggregate, responses[2]], [], operation('sale', sale(3), 1), session), e => e.code === 'offline_insufficient_stock');
+});

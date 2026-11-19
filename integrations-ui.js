@@ -27,13 +27,6 @@
     return root.SlinkBanksVn || null;
   }
 
-  function connectorStatusMeta(status) {
-    if (status === 'active') return { cls: 'badge-success', text: 'Chạy ngay · 0 khóa' };
-    if (status === 'configured') return { cls: 'badge-success', text: 'Đã gắn khóa .env' };
-    if (status === 'needs_store_config') return { cls: 'badge-warning', text: 'Chờ nhập TK cửa hàng' };
-    return { cls: 'badge-neutral', text: 'Chờ khóa đối tác' };
-  }
-
   function renderVietQrCard({ bankBin, bankAccountNumber, bankAccountName, bankName, amountVnd, orderNumber, note, subtitle } = {}) {
     const qrApi = getVietQrApi();
     if (!qrApi || !bankBin || !bankAccountNumber) return '';
@@ -60,7 +53,7 @@
     return `<div class='vietqr-card'>
       <div class='vietqr-svg-wrap'>${svg}</div>
       <div class='vietqr-meta'>
-        <span class='eyebrow'>VIETQR CHUẨN NAPAS · OFFLINE 100%</span>
+        <span class='eyebrow'>VIETQR CHUYỂN KHOẢN</span>
         <strong>${esc(resolvedBankName)} · ${esc(bankAccountNumber)}</strong>
         ${bankAccountName ? `<small>Chủ TK: ${esc(bankAccountName)}</small>` : ''}
         ${Number(amountStr) > 0 ? `<small class='vietqr-amount'>Số tiền: <strong>${esc(formatMoneyVnd(amountStr))}</strong></small>` : ''}
@@ -72,32 +65,31 @@
 
   function renderIntegrationSettingsSection({ data, loading, error, canEdit, escposCaps } = {}) {
     const settings = data?.settings || {};
-    const connectors = Array.isArray(data?.connectors) ? data.connectors : [];
     const webhookUrls = data?.webhookUrls || {};
     const banks = getBanksApi()?.VN_BANKS || [];
     const disabled = canEdit ? '' : 'disabled';
     const caps = escposCaps || root.SlinkEscPosPrinter?.capabilities?.() || { serialSupported: false, connected: false };
 
-    const bankOptions = `<option value=''>— Chưa chọn ngân hàng —</option>` + banks.map((b) =>
-      `<option value='${esc(b.bin)}' ${settings.bankBin === b.bin ? 'selected' : ''}>${esc(b.shortName)} (${esc(b.code)} · ${esc(b.bin)})</option>`
+    const bankOptions = `<option value=''>— Chọn ngân hàng —</option>` + banks.map((b) =>
+      `<option value='${esc(b.bin)}' ${settings.bankBin === b.bin ? 'selected' : ''}>${esc(b.shortName)} (${esc(b.code)})</option>`
     ).join('');
 
     const webhookOptions = [
-      ['none', 'Tạm tắt — đối soát thủ công'],
-      ['sepay', 'SePay Webhook (Khuyên dùng · hỗ trợ ĐV Việt Nam)'],
-      ['casso', 'Casso Webhook v2'],
-      ['payos', 'PayOS / VietQR tự động'],
+      ['none', 'Xác nhận thủ công'],
+      ['sepay', 'SePay'],
+      ['casso', 'Casso'],
+      ['payos', 'PayOS'],
     ].map(([v, label]) => `<option value='${esc(v)}' ${(settings.bankWebhookProvider || 'none') === v ? 'selected' : ''}>${esc(label)}</option>`).join('');
 
     const einvoiceOptions = [
-      ['none', 'Chưa kích hoạt Hóa đơn điện tử'],
-      ['misa', 'MISA meInvoice (NĐ 123 / NĐ 70)'],
+      ['none', 'Chưa sử dụng'],
+      ['misa', 'MISA meInvoice'],
       ['viettel', 'Viettel S-Invoice'],
       ['vnpt', 'VNPT Invoice'],
     ].map(([v, label]) => `<option value='${esc(v)}' ${(settings.einvoiceProvider || 'none') === v ? 'selected' : ''}>${esc(label)}</option>`).join('');
 
     const shippingOptions = [
-      ['none', 'Chưa chọn ĐVVC mặc định'],
+      ['none', 'Tự giao'],
       ['ghn', 'Giao Hàng Nhanh (GHN)'],
       ['ghtk', 'Giao Hàng Tiết Kiệm (GHTK)'],
       ['viettelpost', 'Viettel Post'],
@@ -110,130 +102,102 @@
         bankAccountName: settings.bankAccountName,
         bankName: settings.bankName,
         amountVnd: '100000',
-        note: 'SLINK TEST VIETQR',
-        subtitle: 'Mã thử 100.000 đ — quét bằng mọi app ngân hàng VN để kiểm tra.',
+        note: 'SLINK TEST',
       })
-      : `<div class='install-hint'>Chọn ngân hàng + nhập số tài khoản bên cạnh để tạo mã VietQR động tự động tại POS và nhắc nợ.</div>`;
+      : '';
 
-    const activeWebhookUrl = settings.bankWebhookProvider && settings.bankWebhookProvider !== 'none'
-      ? webhookUrls[settings.bankWebhookProvider] || ''
-      : (webhookUrls.sepay || '');
-    const activeWebhookLabel = settings.bankWebhookProvider && settings.bankWebhookProvider !== 'none'
-      ? String(settings.bankWebhookProvider).toUpperCase()
-      : 'SEPAY (CHỜ DUYỆT / SẴN SÀNG DÁN)';
-    const momoIpnUrl = webhookUrls.momo || '';
-    const ghnWebhookUrl = webhookUrls.ghn || '';
+    const hasBankWebhook = Boolean(settings.bankWebhookProvider && settings.bankWebhookProvider !== 'none');
+    const activeWebhookUrl = hasBankWebhook ? (webhookUrls[settings.bankWebhookProvider] || '') : '';
     const ghnShopId = data?.ghnShopId || '';
+    const hasAdvancedConfigured = Boolean(
+      hasBankWebhook
+      || (settings.einvoiceProvider && settings.einvoiceProvider !== 'none')
+      || (settings.shippingProvider && settings.shippingProvider !== 'none')
+      || settings.taxCode
+    );
 
-    const connectorCards = connectors.map((c) => {
-      const meta = connectorStatusMeta(c.status);
-      const missing = Array.isArray(c.missingKeys) && c.missingKeys.length
-        ? `<small class='integration-missing'>Cần gắn: <code>${esc(c.missingKeys.join(', '))}</code></small>`
-        : `<small class='integration-ready-note'>Đã sẵn sàng để sử dụng.</small>`;
-      return `<article class='integration-connector-card'>
-        <div class='integration-connector-head'>
-          <strong>${esc(c.name)}</strong>
-          <span class='badge ${meta.cls}'><i class='badge-dot'></i>${esc(meta.text)}</span>
-        </div>
-        <p>${esc(c.description)}</p>
-        ${missing}
-      </article>`;
-    }).join('');
+    const serialHardwareHtml = caps.serialSupported
+      ? `<div class='integration-hardware-bar' style='margin-top:12px'>
+          <div>
+            <strong>Máy in nhiệt USB / COM</strong>
+            <small>${caps.connected ? 'Đã kết nối sẵn sàng in trực tiếp.' : 'Chọn cổng máy in 58mm/80mm trên máy tính.'}</small>
+          </div>
+          <div class='integration-hardware-actions'>
+            <button class='btn btn-secondary' type='button' data-action='escpos-connect'>${caps.connected ? 'Đổi máy in' : 'Kết nối máy in'}</button>
+            <button class='btn btn-secondary' type='button' data-action='escpos-test-print'>In thử</button>
+            <button class='btn btn-secondary' type='button' data-action='escpos-kick-drawer'>Mở két</button>
+          </div>
+        </div>`
+      : '';
 
     return `<section class='panel settings-panel integrations-panel' id='integrations-panel'>
       <div class='panel-header'>
         <div>
-          <h2>Tích hợp thương mại &amp; Thiết bị POS</h2>
-          <p>VietQR &amp; máy in ESC/POS chạy ngay không cần khóa. Webhook ngân hàng, HĐĐT, vận chuyển và sàn chỉ cần gắn biến .env để kích hoạt.</p>
+          <h2>Tài khoản nhận chuyển khoản (VietQR)</h2>
         </div>
-        <button class='link-button' type='button' data-action='reload-integrations'>Làm mới trạng thái</button>
       </div>
-      ${loading ? `<div class='install-hint' role='status'>Đang tải cấu hình tích hợp…</div>` : ''}
+      ${loading ? `<div class='install-hint' role='status'>Đang tải…</div>` : ''}
       ${error ? `<div class='auth-message error' role='alert'>${esc(error)}</div>` : ''}
       <form id='integration-settings-form' data-form='integration-settings'>
         <div class='form-grid'>
           <div class='form-field'>
-            <label class='input-label' for='int-bank-bin'>Ngân hàng nhận VietQR (NAPAS)</label>
+            <label class='input-label' for='int-bank-bin'>Ngân hàng</label>
             <div class='select-wrap'><select class='input' id='int-bank-bin' name='bankBin' ${disabled}>${bankOptions}</select></div>
           </div>
           <div class='form-field'>
-            <label class='input-label' for='int-bank-account'>Số tài khoản nhận tiền</label>
-            <input class='input' id='int-bank-account' name='bankAccountNumber' value='${esc(settings.bankAccountNumber || '')}' maxlength='32' autocomplete='off' placeholder='VD: 19036688999' ${disabled}/>
-          </div>
-          <div class='form-field'>
-            <label class='input-label' for='int-bank-owner'>Tên chủ tài khoản</label>
-            <input class='input' id='int-bank-owner' name='bankAccountName' value='${esc(settings.bankAccountName || '')}' maxlength='120' placeholder='NGUYEN VAN A' ${disabled}/>
-          </div>
-          <div class='form-field'>
-            <label class='input-label' for='int-bank-webhook'>Cổng gạch nợ Webhook tự động</label>
-            <div class='select-wrap'><select class='input' id='int-bank-webhook' name='bankWebhookProvider' ${disabled}>${webhookOptions}</select></div>
-          </div>
-          ${activeWebhookUrl ? `<div class='form-field full'>
-            <div class='integration-webhook-box'>
-              <div>
-                <span class='input-label' style='margin:0 0 4px'>Webhook URL gạch nợ ngân hàng (${esc(activeWebhookLabel)})</span>
-                <code>${esc(activeWebhookUrl)}</code>
-              </div>
-              <button class='btn btn-secondary' type='button' data-action='copy-integration-url' data-copy-value='${esc(activeWebhookUrl)}'>Sao chép URL</button>
-            </div>
-          </div>` : ''}
-          ${momoIpnUrl ? `<div class='form-field full'>
-            <div class='integration-webhook-box'>
-              <div>
-                <span class='input-label' style='margin:0 0 4px'>MoMo IPN Webhook URL (dán vào MoMo Business khi duyệt xong)</span>
-                <code>${esc(momoIpnUrl)}</code>
-              </div>
-              <button class='btn btn-secondary' type='button' data-action='copy-integration-url' data-copy-value='${esc(momoIpnUrl)}'>Sao chép IPN</button>
-            </div>
-          </div>` : ''}
-          <div class='form-field full' id='int-vietqr-preview'>${previewQr}</div>
-          <div class='form-field'>
-            <label class='input-label' for='int-einvoice-provider'>Hóa đơn điện tử (NĐ 123 / NĐ 70)</label>
-            <div class='select-wrap'><select class='input' id='int-einvoice-provider' name='einvoiceProvider' ${disabled}>${einvoiceOptions}</select></div>
-          </div>
-          <div class='form-field'>
-            <label class='input-label' for='int-tax-code'>Mã số thuế hộ / doanh nghiệp</label>
-            <input class='input' id='int-tax-code' name='taxCode' value='${esc(settings.taxCode || '')}' maxlength='14' placeholder='VD: 0312345678' ${disabled}/>
-          </div>
-          <div class='form-field'>
-            <label class='input-label' for='int-einvoice-template'>Mẫu số hóa đơn</label>
-            <input class='input' id='int-einvoice-template' name='einvoiceTemplateCode' value='${esc(settings.einvoiceTemplateCode || '')}' maxlength='40' placeholder='VD: 1' ${disabled}/>
-          </div>
-          <div class='form-field'>
-            <label class='input-label' for='int-einvoice-serial'>Ký hiệu hóa đơn</label>
-            <input class='input' id='int-einvoice-serial' name='einvoiceSerial' value='${esc(settings.einvoiceSerial || '')}' maxlength='40' placeholder='VD: 1C26TYY' ${disabled}/>
+            <label class='input-label' for='int-bank-account'>Số tài khoản</label>
+            <input class='input' id='int-bank-account' name='bankAccountNumber' value='${esc(settings.bankAccountNumber || '')}' maxlength='32' autocomplete='off' placeholder='Nhập số tài khoản' ${disabled}/>
           </div>
           <div class='form-field full'>
-            <label class='input-label' for='int-shipping-provider'>Đơn vị vận chuyển mặc định ${ghnShopId ? `· GHN Shop #${esc(ghnShopId)}` : ''}</label>
-            <div style='display:flex;gap:8px;flex-wrap:wrap;align-items:center'>
-              <div class='select-wrap' style='flex:1 1 240px'><select class='input' id='int-shipping-provider' name='shippingProvider' ${disabled}>${shippingOptions}</select></div>
-              ${canEdit ? `<button class='btn btn-secondary' type='button' data-action='verify-ghn-token'>Kiểm tra kết nối GHN</button>` : ''}
+            <label class='input-label' for='int-bank-owner'>Chủ tài khoản</label>
+            <input class='input' id='int-bank-owner' name='bankAccountName' value='${esc(settings.bankAccountName || '')}' maxlength='120' placeholder='VD: NGUYEN VAN A' ${disabled}/>
+          </div>
+          <div class='form-field full' id='int-vietqr-preview' ${previewQr ? '' : 'hidden'}>${previewQr}</div>
+        </div>
+        <details class='settings-advanced-fold' style='margin-top:14px' ${hasAdvancedConfigured ? 'open' : ''}>
+          <summary style='cursor:pointer;font-weight:600;color:var(--muted)'>Kết nối mở rộng (vận chuyển, hóa đơn điện tử, tự động đối soát)</summary>
+          <div class='form-grid' style='margin-top:12px'>
+            <div class='form-field full'>
+              <label class='input-label' for='int-shipping-provider'>Đơn vị vận chuyển${ghnShopId ? ` · GHN #${esc(ghnShopId)}` : ''}</label>
+              <div style='display:flex;gap:8px;flex-wrap:wrap;align-items:center'>
+                <div class='select-wrap' style='flex:1 1 220px'><select class='input' id='int-shipping-provider' name='shippingProvider' ${disabled}>${shippingOptions}</select></div>
+                ${canEdit && ghnShopId ? `<button class='btn btn-secondary' type='button' data-action='verify-ghn-token'>Kiểm tra GHN</button>` : ''}
+              </div>
+            </div>
+            <div class='form-field'>
+              <label class='input-label' for='int-bank-webhook'>Đối soát chuyển khoản</label>
+              <div class='select-wrap'><select class='input' id='int-bank-webhook' name='bankWebhookProvider' ${disabled}>${webhookOptions}</select></div>
+            </div>
+            <div class='form-field'>
+              <label class='input-label' for='int-einvoice-provider'>Hóa đơn điện tử</label>
+              <div class='select-wrap'><select class='input' id='int-einvoice-provider' name='einvoiceProvider' ${disabled}>${einvoiceOptions}</select></div>
+            </div>
+            ${activeWebhookUrl ? `<div class='form-field full'>
+              <div class='integration-webhook-box'>
+                <div>
+                  <span class='input-label' style='margin:0 0 4px'>Webhook URL (${esc(String(settings.bankWebhookProvider).toUpperCase())})</span>
+                  <code>${esc(activeWebhookUrl)}</code>
+                </div>
+                <button class='btn btn-secondary' type='button' data-action='copy-integration-url' data-copy-value='${esc(activeWebhookUrl)}'>Sao chép</button>
+              </div>
+            </div>` : ''}
+            <div class='form-field'>
+              <label class='input-label' for='int-tax-code'>Mã số thuế</label>
+              <input class='input' id='int-tax-code' name='taxCode' value='${esc(settings.taxCode || '')}' maxlength='14' placeholder='Không bắt buộc' ${disabled}/>
+            </div>
+            <div class='form-field'>
+              <label class='input-label' for='int-einvoice-template'>Mẫu số HĐ</label>
+              <input class='input' id='int-einvoice-template' name='einvoiceTemplateCode' value='${esc(settings.einvoiceTemplateCode || '')}' maxlength='40' placeholder='VD: 1' ${disabled}/>
+            </div>
+            <div class='form-field'>
+              <label class='input-label' for='int-einvoice-serial'>Ký hiệu HĐ</label>
+              <input class='input' id='int-einvoice-serial' name='einvoiceSerial' value='${esc(settings.einvoiceSerial || '')}' maxlength='40' placeholder='VD: 1C26TYY' ${disabled}/>
             </div>
           </div>
-          ${ghnWebhookUrl ? `<div class='form-field full'>
-            <div class='integration-webhook-box'>
-              <div>
-                <span class='input-label' style='margin:0 0 4px'>GHN Callback Webhook URL (cập nhật trạng thái giao hàng tự động)</span>
-                <code>${esc(ghnWebhookUrl)}</code>
-              </div>
-              <button class='btn btn-secondary' type='button' data-action='copy-integration-url' data-copy-value='${esc(ghnWebhookUrl)}'>Sao chép URL</button>
-            </div>
-          </div>` : ''}
-        </div>
-        ${canEdit ? `<div class='modal-footer' style='padding:17px 0 0;margin-top:12px'><button class='btn btn-primary' type='submit'>Lưu cấu hình tích hợp</button></div>` : ''}
+          ${serialHardwareHtml}
+        </details>
+        ${canEdit ? `<div class='modal-footer' style='padding:17px 0 0;margin-top:12px'><button class='btn btn-primary' type='submit'>Lưu cài đặt thanh toán</button></div>` : ''}
       </form>
-      <div class='integration-hardware-bar'>
-        <div>
-          <strong>Máy in nhiệt ESC/POS (58mm/80mm) &amp; Két tiền</strong>
-          <small>${caps.serialSupported ? (caps.connected ? 'Đã kết nối cổng Serial sẵn sàng in trực tiếp.' : 'Trình duyệt hỗ trợ WebSerial — bấm Kết nối để chọn cổng COM/USB máy in.') : 'Trình duyệt hiện tại dùng hộp thoại in chuẩn (Chrome/Edge máy tính hỗ trợ in trực tiếp không hộp thoại).'}</small>
-        </div>
-        <div class='integration-hardware-actions'>
-          ${caps.serialSupported ? `<button class='btn btn-secondary' type='button' data-action='escpos-connect'>${caps.connected ? 'Đổi máy in' : 'Kết nối máy in USB/COM'}</button>` : ''}
-          ${caps.serialSupported ? `<button class='btn btn-secondary' type='button' data-action='escpos-test-print'>In thử bill</button>` : ''}
-          ${caps.serialSupported ? `<button class='btn btn-secondary' type='button' data-action='escpos-kick-drawer'>Mở két tiền</button>` : ''}
-        </div>
-      </div>
-      ${connectorCards ? `<div class='integration-grid'>${connectorCards}</div>` : ''}
     </section>`;
   }
 
