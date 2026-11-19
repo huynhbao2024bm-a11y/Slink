@@ -4,6 +4,13 @@
 
 Status labels: **Not started**, **In progress**, **Blocked by external dependency**, **Evidence passed**. “Evidence passed” applies only to the named milestone, never to the whole product by implication.
 
+## Cập nhật bằng chứng quản lý mã vạch / Serial riêng & nhập hàng chuẩn KiotViet/Sapo (2026-11-19)
+
+- **Quản lý từng mã riêng (Serial / IMEI — 1 mã = 1 đơn vị):** Bổ sung migration `20261119140000_product_serial_codes.sql` (`products.serial_tracked`, bảng `product_serial_codes` có forced RLS theo `app.store_id` và quyền `slink_app` chỉ `SELECT, INSERT, UPDATE`), API `server/serials.js` (`GET /serials/lookup`, `GET /products/:id/serials`, `POST /products/:id/serials` bắt buộc `idempotency-key` + khóa kho + chặn trùng mã/barcode/SKU), tích hợp giao dịch khóa `FOR UPDATE` trong `server/sales.js`, khôi phục mã khi trả/hủy đơn (`server/returns.js`, `server/records.js`), và chặn thao tác lệch tồn theo số lượng thuần hoặc bán ngoại tuyến trên sản phẩm quản lý mã riêng (`server/stock.js`, `server/purchases.js`, `server/warehouses.js`, `server/exchanges.js`, `server/offline-conflicts.js`).
+- **Quét & in mã không số, mã chữ, QR (1–120 ký tự):** Mở rộng camera (`BarcodeDetector`) hỗ trợ đồng thời 1D và 2D (`qr_code`, `code_128`, `code_39`, `code_93`, `codabar`, `ean_13`, `ean_8`, `upc_a`, `upc_e`, `itf`, `data_matrix`, `pdf417`, `aztec`); `barcode-tools.js` tự động in mã QR SVG cho mã có dấu tiếng Việt hoặc dài >80 ký tự.
+- **Tạo hàng hóa, Thêm tồn / Quét mã & Nhập từ file chuẩn KiotViet/Sapo:** Gọn hóa biểu mẫu Thêm hàng hóa theo 2 chế độ rõ ràng (`Hàng thường theo số lượng` / `Từng mã riêng Serial-IMEI`), thêm nút `＋ Thêm tồn / Quét mã` ngay trên từng sản phẩm để bổ sung số lượng hoặc quét thêm mã mà không nhập lại thông tin, và nâng cấp nhập CSV hỗ trợ dấu `,`/`;`, tự sinh SKU khi trống, hiểu số tiền có dấu phân cách nghìn (`150.000`) và cột `Danh sách mã riêng (Serial/IMEI)`.
+- **Bằng chứng kiểm thử:** `92/92` bài kiểm tra máy chủ (`node --test server/test/*.test.js`) đạt (0 lỗi/bỏ qua); Playwright E2E `e2e/commercial-responsive.js` đạt trên cả `390×844` và `1440×900` (tạo SP mã riêng, thêm mã mới vào SP sẵn có, bán 1 mã, quét lại mã đã bán bị chặn ngay, quét mã còn lại thành công; 0 lỗi tràn ngang/console/5xx); đã rà soát kép (`code-reviewer` + `security-reviewer`) và xử lý toàn bộ lỗi HIGH/MEDIUM trước khi phát hành `android-v0.4.0`.
+
 ## Ghi nhận hiệu năng tải ban đầu (2026-10-31)
 
 - Log Render trong khoảng 24 giờ trước khi tối ưu kho có mẫu nhỏ: API danh sách kho 3 lượt, trung vị 519 ms và cao nhất 521 ms; API sản phẩm 4 lượt, trung vị 579 ms và cao nhất 594 ms. Đây là thời gian xử lý API trong log, không phải thời gian đầy đủ người dùng nhìn thấy màn hình; cỡ mẫu chưa đủ để suy ra mức thường gặp.

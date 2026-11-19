@@ -158,7 +158,7 @@ async function loadOrderAndReturns(client, storeId, orderId, returnItems) {
 
   const linesRes = await client.query(
     `SELECT ol.id, ol.product_id, ol.product_name_snapshot, ol.quantity::text AS quantity,
-            ol.line_total_vnd::text AS line_total_vnd, p.inventory_tracked,
+            ol.line_total_vnd::text AS line_total_vnd, p.inventory_tracked, p.serial_tracked,
             COALESCE((SELECT SUM(rl.quantity) FROM return_lines rl JOIN returns r ON r.id = rl.return_id
                       WHERE rl.store_id = ol.store_id AND rl.order_line_id = ol.id AND r.status = 'completed'), 0)::text AS returned_quantity,
             COALESCE((SELECT SUM(rl.refund_vnd) FROM return_lines rl JOIN returns r ON r.id = rl.return_id
@@ -171,6 +171,7 @@ async function loadOrderAndReturns(client, storeId, orderId, returnItems) {
   const requestedReturnLines = returnItems.map((req) => {
     const line = linesById.get(req.orderLineId);
     if (!line) throw new ApiError(400, 'return_line_invalid', 'Một sản phẩm trả không thuộc đơn hàng đã chọn.');
+    if (line.serial_tracked) throw new ApiError(409, 'serial_tracked_product', `${line.product_name_snapshot} quản lý theo từng mã riêng — hãy dùng Trả hàng rồi bán mới để khóa đúng mã.`);
     const remainingMilli = parseDbMilli(line.quantity) - parseDbMilli(line.returned_quantity);
     if (req.quantityMilli > remainingMilli) {
       throw new ApiError(409, 'return_quantity_exceeded', `${line.product_name_snapshot}: số lượng đổi trả vượt số lượng còn lại.`);
@@ -212,13 +213,17 @@ async function loadOrderAndReturns(client, storeId, orderId, returnItems) {
 async function prepareReplacementProducts(client, storeId, replacementWarehouseId, replacementItems, discountVnd) {
   const productIds = [...new Set(replacementItems.map((i) => i.productId))].sort();
   const prodRes = await client.query(
-    `SELECT id, sku, name, unit, sale_price_vnd::text AS sale_price_vnd, cost_vnd::text AS cost_vnd, inventory_tracked, status
+    `SELECT id, sku, name, unit, sale_price_vnd::text AS sale_price_vnd, cost_vnd::text AS cost_vnd, inventory_tracked, serial_tracked, status
      FROM products WHERE store_id = $1 AND id = ANY($2::uuid[]) ORDER BY id FOR UPDATE`,
     [storeId, productIds]
   );
   const productMap = new Map(prodRes.rows.map((p) => [p.id, p]));
   if (productMap.size !== productIds.length || prodRes.rows.some((p) => p.status !== 'active')) {
     throw new ApiError(409, 'product_unavailable', 'Có sản phẩm đổi mới đã ngừng bán hoặc không thuộc cửa hàng.');
+  }
+  const serialReplacement = prodRes.rows.find((p) => p.serial_tracked);
+  if (serialReplacement) {
+    throw new ApiError(409, 'serial_tracked_product', `${serialReplacement.name} quản lý theo từng mã riêng — hãy bán mới tại quầy để quét đúng mã.`);
   }
 
   let subtotalVnd = 0n;

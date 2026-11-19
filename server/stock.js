@@ -91,7 +91,7 @@ function registerStockRoutes(app, { pool, env }) {
                 p.sale_price_vnd::text AS sale_price_vnd,
                 CASE WHEN $5::boolean THEN p.cost_vnd::text ELSE NULL END AS cost_vnd,
                 CASE WHEN $5::boolean THEN p.purchase_pack ELSE NULL END AS purchase_pack,
-                p.low_stock_threshold::text AS low_stock_threshold, p.inventory_tracked, p.status, p.version,
+                p.low_stock_threshold::text AS low_stock_threshold, p.inventory_tracked, p.serial_tracked, p.status, p.version,
                 COALESCE(b.on_hand, 0)::text AS on_hand, COALESCE(b.reserved, 0)::text AS reserved, COALESCE(b.version, 1) AS inventory_version,
                 latest.movement_type AS latest_movement_type,
                 latest.quantity_delta::text AS latest_quantity_delta,
@@ -105,7 +105,7 @@ function registerStockRoutes(app, { pool, env }) {
            ORDER BY occurred_at DESC, id DESC LIMIT 1
          ) latest ON true
          WHERE p.store_id = $1 AND p.status = 'active' AND p.inventory_tracked = true
-           AND ($2 = '' OR p.name ILIKE '%' || $2 || '%' OR p.sku ILIKE '%' || $2 || '%' OR p.category ILIKE '%' || $2 || '%' OR p.barcode = $2)
+           AND ($2 = '' OR p.name ILIKE '%' || $2 || '%' OR p.sku ILIKE '%' || $2 || '%' OR p.category ILIKE '%' || $2 || '%' OR p.barcode = $2 OR $2 = ANY(p.extra_barcodes) OR EXISTS (SELECT 1 FROM product_serial_codes sc WHERE sc.store_id = p.store_id AND sc.product_id = p.id AND lower(sc.code) = lower($2)))
            AND ($7 = 'all' OR ($7 = 'out' AND COALESCE(b.on_hand, 0) = 0)
                 OR ($7 = 'low' AND b.on_hand > 0 AND b.on_hand <= p.low_stock_threshold))
          ORDER BY p.name, p.id LIMIT $3 OFFSET $4`,
@@ -150,7 +150,7 @@ function registerStockRoutes(app, { pool, env }) {
       if (!warehouse) throw new ApiError(404, 'warehouse_not_found', 'Không tìm thấy kho đang hoạt động.');
       const warehouseId = warehouse.id;
       const selected = await client.query(
-        `SELECT p.id, p.sku, p.name, p.unit, p.status, p.inventory_tracked,
+        `SELECT p.id, p.sku, p.name, p.unit, p.status, p.inventory_tracked, p.serial_tracked,
                 b.on_hand::text AS on_hand, b.reserved::text AS reserved, b.version AS inventory_version
          FROM products p JOIN inventory_balances b ON b.store_id = p.store_id AND b.product_id = p.id AND b.warehouse_id = $3
          WHERE p.store_id = $1 AND p.id = ANY($2::uuid[]) ORDER BY p.id`,
@@ -162,6 +162,7 @@ function registerStockRoutes(app, { pool, env }) {
         const row = byId.get(item.productId);
         if (!row || row.status !== 'active') return { valid: false, count: items.length, conflict: `Dòng ${item.sourceLine}: không tìm thấy sản phẩm đang hoạt động. Chưa có thay đổi nào được lưu.` };
         if (!row.inventory_tracked) return { valid: false, count: items.length, conflict: `Dòng ${item.sourceLine}: sản phẩm không theo dõi tồn kho nên không thể kiểm kê.` };
+        if (row.serial_tracked) return { valid: false, count: items.length, conflict: `Dòng ${item.sourceLine}: ${row.name} quản lý theo từng mã riêng — dùng “Thêm tồn / Quét mã” thay cho kiểm kê số lượng.` };
         if (Number(row.inventory_version) !== item.expectedInventoryVersion) return { valid: false, count: items.length, conflict: `Dòng ${item.sourceLine}: tồn kho đã thay đổi sau khi xuất tệp. Hãy xuất lại danh sách trước khi kiểm kê.` };
         const onHandMilli = quantityMilli(row.on_hand, 'Tồn kho hiện tại');
         const reservedMilli = quantityMilli(row.reserved, 'Số lượng đang giữ');
@@ -236,7 +237,7 @@ function registerStockRoutes(app, { pool, env }) {
 
       const productIds = items.map((item) => item.productId);
       const locked = await client.query(
-        `SELECT p.id, p.name, p.status, p.inventory_tracked,
+        `SELECT p.id, p.name, p.status, p.inventory_tracked, p.serial_tracked,
                 b.on_hand::text AS on_hand, b.reserved::text AS reserved, b.version AS inventory_version
          FROM products p JOIN inventory_balances b ON b.store_id = p.store_id AND b.product_id = p.id AND b.warehouse_id = $3
          WHERE p.store_id = $1 AND p.id = ANY($2::uuid[]) ORDER BY p.id FOR UPDATE OF p, b`,
@@ -248,6 +249,7 @@ function registerStockRoutes(app, { pool, env }) {
         const row = byId.get(item.productId);
         if (!row || row.status !== 'active') throw new ApiError(404, 'product_not_found', `Dòng ${item.sourceLine}: không tìm thấy sản phẩm đang hoạt động. Toàn bộ lô đã bị hủy.`);
         if (!row.inventory_tracked) throw new ApiError(409, 'inventory_not_tracked', `Dòng ${item.sourceLine}: sản phẩm không theo dõi tồn kho. Toàn bộ lô đã bị hủy.`);
+        if (row.serial_tracked) throw new ApiError(409, 'serial_tracked_product', `Dòng ${item.sourceLine}: ${row.name} quản lý theo từng mã riêng — dùng “Thêm tồn / Quét mã”. Toàn bộ lô đã bị hủy.`);
         if (Number(row.inventory_version) !== item.expectedInventoryVersion) throw new ApiError(409, 'inventory_version_conflict', `Dòng ${item.sourceLine}: tồn kho vừa thay đổi. Xuất lại danh sách rồi gửi lô mới; không dòng nào được ghi.`);
         const previousMilli = quantityMilli(row.on_hand, 'Tồn kho hiện tại');
         const reservedMilli = quantityMilli(row.reserved, 'Số lượng đang giữ');
@@ -356,13 +358,14 @@ function registerStockRoutes(app, { pool, env }) {
 
       await beginOffline(client, offline);
       const productResult = await client.query(
-        `SELECT p.id, p.name, p.status, p.inventory_tracked, b.on_hand::text AS on_hand, b.reserved::text AS reserved, b.version AS inventory_version
+        `SELECT p.id, p.name, p.status, p.inventory_tracked, p.serial_tracked, b.on_hand::text AS on_hand, b.reserved::text AS reserved, b.version AS inventory_version
          FROM products p JOIN inventory_balances b ON b.store_id = p.store_id AND b.product_id = p.id AND b.warehouse_id = $3
          WHERE p.store_id = $1 AND p.id = $2 FOR UPDATE OF p, b`,
         [storeId, body.productId, warehouseId]
       );
       if (!productResult.rowCount || productResult.rows[0].status !== 'active') throw new ApiError(404, 'product_not_found', 'Không tìm thấy sản phẩm đang hoạt động.');
       const product = productResult.rows[0];
+      if (product.serial_tracked) throw new ApiError(409, 'serial_tracked_product', `${product.name} quản lý theo từng mã riêng — dùng “Thêm tồn / Quét mã” để tồn kho luôn khớp số mã.`);
       if (Number(product.inventory_version) !== expectedInventoryVersion) throw new ApiError(409, 'inventory_version_conflict', 'Kho vừa thay đổi do một đơn bán hoặc thao tác khác. Hãy kiểm tra lại số lượng thực tế.');
       if (!product.inventory_tracked) throw new ApiError(409, 'inventory_not_tracked', 'Sản phẩm này không theo dõi tồn kho.');
       const previousMilli = quantityMilli(product.on_hand, 'Tồn kho hiện tại');

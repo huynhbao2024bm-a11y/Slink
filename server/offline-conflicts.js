@@ -72,7 +72,7 @@ async function loadProductsAndBalances(client, storeId, warehouseId, items, { lo
   const productResult = productIds.length
     ? await client.query(
       `SELECT id, sku, name, unit, sale_price_vnd::text AS sale_price_vnd,
-              cost_vnd::text AS cost_vnd, inventory_tracked, status
+              cost_vnd::text AS cost_vnd, inventory_tracked, serial_tracked, status
        FROM products WHERE store_id = $1 AND id = ANY($2::uuid[]) ORDER BY id${lockSql}`,
       [storeId, productIds]
     )
@@ -329,6 +329,9 @@ function parseResolveSaleRequest(body, idempotencyKey) {
   if (sale.appliedPromotionCode) {
     throw new ApiError(400, 'offline_promotion_requires_network', 'Đơn ngoại tuyến không hỗ trợ áp mã khuyến mãi trực tiếp khi xử lý xung đột.');
   }
+  if (sale.items.some((item) => item.serialCodes?.length)) {
+    throw new ApiError(400, 'offline_serial_requires_network', 'Đơn chứa hàng quản lý theo từng mã riêng cần bán trực tuyến để khóa mã.');
+  }
   const offline = normalizeOffline(salePayload?.offline);
   if (!offline) {
     throw new ApiError(400, 'offline_metadata_invalid', 'Thiếu thông tin thời gian và thiết bị của đơn ngoại tuyến.');
@@ -395,6 +398,9 @@ function assertStockAvailable(items, productIds, productMap, balanceMap) {
   }
   for (const productId of productIds) {
     const product = productMap.get(productId);
+    if (product?.serial_tracked) {
+      throw new ApiError(400, 'offline_serial_requires_network', `${product.name} quản lý theo từng mã riêng, cần bán trực tuyến để khóa mã.`);
+    }
     if (!product.inventory_tracked) continue;
     const balance = balanceMap.get(productId);
     if (!balance) throw new ApiError(409, 'inventory_unavailable', 'Chưa có số dư tồn kho cho một sản phẩm trong đơn.');

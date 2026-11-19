@@ -142,7 +142,7 @@ function registerPurchaseRoutes(app, { pool, env }) {
       await beginOffline(client, offline);
       const productIds = items.map((item) => item.productId);
       const selected = await client.query(
-        `SELECT p.id, p.name, p.sku, p.unit, p.status, p.inventory_tracked, p.version
+        `SELECT p.id, p.name, p.sku, p.unit, p.status, p.inventory_tracked, p.serial_tracked, p.version
          FROM products p WHERE p.store_id = $1 AND p.id = ANY($2::uuid[]) ORDER BY p.id FOR UPDATE`,
         [storeId, productIds]
       );
@@ -152,6 +152,7 @@ function registerPurchaseRoutes(app, { pool, env }) {
       for (const item of items) {
         const product = byId.get(item.productId);
         if (!product || product.status !== 'active') throw new ApiError(404, 'product_not_found', 'Một sản phẩm trong phiếu không còn hoạt động. Phiếu nhập chưa được ghi.');
+        if (product.serial_tracked) throw new ApiError(409, 'serial_tracked_product', `${product.name} quản lý theo từng mã riêng — dùng “Thêm tồn / Quét mã” để nhập từng mã.`);
       }
 
       // Take the store lock before the cash-session and supplier locks, matching supplier cash payments.

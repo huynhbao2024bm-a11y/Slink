@@ -1358,6 +1358,12 @@ function registerRecordRoutes(app, { pool, env }) {
           [storeId, order.customer_id, order.total_vnd, orderId, `Hủy đơn ${order.order_number}: ${reason}`, auth.userId]
         );
       }
+      await client.query(
+        `UPDATE product_serial_codes
+         SET status = 'in_stock', order_id = NULL, sold_at = NULL, warehouse_id = $3, updated_at = now()
+         WHERE store_id = $1 AND order_id = $2 AND status = 'sold'`,
+        [storeId, orderId, destination.rows[0].id]
+      );
       await client.query("UPDATE orders SET status = 'voided', void_restock_warehouse_id = $3, updated_at = now() WHERE store_id = $1 AND id = $2", [storeId, orderId, destination.rows[0].id]);
       await client.query(
         `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, reason, metadata)

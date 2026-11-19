@@ -970,7 +970,8 @@
 
   async function runApiRequest(url, options, method) {
     const readGeneration=localWriteGeneration;
-    if (method === 'POST' && offlineKind(url) && options?.body?._slinkOfflineVersion === 1 && !(offlineKind(url) === 'sale' && options.body.promotionCode)) return queueOfflineOperation(url, options);
+    const isSerialSale = offlineKind(url) === 'sale' && Array.isArray(options?.body?.items) && options.body.items.some(line => (Array.isArray(line.serialCodes) && line.serialCodes.length > 0) || !productById(line.productId) || Boolean(productById(line.productId)?.serialTracked));
+    if (method === 'POST' && offlineKind(url) && options?.body?._slinkOfflineVersion === 1 && !(offlineKind(url) === 'sale' && (options.body.promotionCode || isSerialSale))) return queueOfflineOperation(url, options);
     const scope = method === 'GET' ? cacheScope(url) : '';
     const snapshot = scope ? (scope === cachedBootScope && cachedBootSnapshot ? cachedBootSnapshot : await offlineDisk.snapshot(scope)) : null;
     if (scope && scope === cachedBootScope && snapshot) {
@@ -1146,6 +1147,7 @@
       reserved: Number(row.reserved),
       minStock: Number(row.low_stock_threshold),
       inventoryTracked: row.inventory_tracked,
+      serialTracked: Boolean(row.serial_tracked),
       inventoryVersion: Number(row.inventory_version) || 1,
       status: row.status,
       version: row.version,
@@ -3091,14 +3093,15 @@
     const canViewPriceHistory = ['owner', 'manager', 'stockkeeper', 'accountant'].includes(store.role);
     const showCost = store.role !== 'cashier';
     const attributes = Object.entries(product.variantAttributes || {}).map(function (entry) { return `${entry[0]}: ${entry[1]}`; }).join(' · ');
-    const extraCount = Array.isArray(product.extraBarcodes) && product.extraBarcodes.length ? ` (+${product.extraBarcodes.length} mã phụ)` : '';
-    return `<tr><td><div class='product-cell'>${productThumb(product)}<span class='product-name-stack'><strong>${esc(product.name)}</strong><small>${esc(product.sku)}${product.barcode ? ` · ${esc(product.barcode)}${esc(extraCount)}` : ''}${attributes ? ` · ${esc(attributes)}` : ''}</small></span></div></td><td>${esc(product.category)}</td><td class='text-right'>${money(product.price)}</td>${showCost ? `<td class='text-right'>${money(product.cost)}</td>` : ''}<td class='text-right'><span class='stock-number ${product.inventoryTracked && product.stock <= 0 ? 'out' : product.inventoryTracked && product.stock <= product.minStock ? 'low' : ''}'>${product.inventoryTracked ? `${number(product.stock)} ${esc(product.unit)}` : '—'}</span></td><td>${stockBadge(product)}</td><td class='text-right'>${canEdit ? `<button class='row-action' data-action='clone-product' data-id='${product.id}' aria-label='Thêm mã vạch hoặc món cùng loại với ${esc(product.name)}' title='Thêm mã vạch / món cùng loại'>＋</button>` : ''}<button class='row-action' data-action='print-barcode-single' data-id='${product.id}' aria-label='In tem mã vạch ${esc(product.name)}' title='In tem mã vạch'>${icon('scan', 15)}</button>${canViewPriceHistory ? `<button class='row-action' data-action='product-price-history' data-id='${product.id}' aria-label='Xem lịch sử giá ${esc(product.name)}' title='Lịch sử giá'>${icon('clock', 15)}</button>` : ''}${canEdit ? `<button class='row-action' data-action='edit-product' data-id='${product.id}' aria-label='Sửa ${esc(product.name)}'>•••</button>` : ''}</td></tr>`;
+    const serialBadge = product.serialTracked ? ` <span class='badge badge-neutral'>Mã riêng</span>` : '';
+    return `<tr><td><div class='product-cell'>${productThumb(product)}<span class='product-name-stack'><strong>${esc(product.name)}${serialBadge}</strong><small>${esc(product.sku)}${product.barcode ? ` · ${esc(product.barcode)}` : ''}${attributes ? ` · ${esc(attributes)}` : ''}</small></span></div></td><td>${esc(product.category)}</td><td class='text-right'>${money(product.price)}</td>${showCost ? `<td class='text-right'>${money(product.cost)}</td>` : ''}<td class='text-right'><span class='stock-number ${product.inventoryTracked && product.stock <= 0 ? 'out' : product.inventoryTracked && product.stock <= product.minStock ? 'low' : ''}'>${product.inventoryTracked ? `${number(product.stock)} ${esc(product.unit)}` : '—'}</span></td><td>${stockBadge(product)}</td><td class='text-right'>${canEdit ? `<button class='row-action' data-action='add-product-units' data-id='${product.id}' aria-label='Thêm tồn hoặc quét mã cho ${esc(product.name)}' title='Thêm tồn / Quét mã'>＋</button>` : ''}${product.serialTracked ? `<button class='row-action' data-action='view-product-serials' data-id='${product.id}' aria-label='Xem danh sách mã riêng của ${esc(product.name)}' title='Danh sách mã riêng'>#</button>` : ''}<button class='row-action' data-action='print-barcode-single' data-id='${product.id}' aria-label='In tem mã vạch ${esc(product.name)}' title='In tem mã vạch'>${icon('scan', 15)}</button>${canViewPriceHistory ? `<button class='row-action' data-action='product-price-history' data-id='${product.id}' aria-label='Xem lịch sử giá ${esc(product.name)}' title='Lịch sử giá'>${icon('clock', 15)}</button>` : ''}${canEdit ? `<button class='row-action' data-action='edit-product' data-id='${product.id}' aria-label='Sửa ${esc(product.name)}'>•••</button>` : ''}</td></tr>`;
   }
 
   function productMobileCard(product) {
     const canEdit = ['owner', 'manager', 'stockkeeper'].includes(store.role);
     const attributes = Object.entries(product.variantAttributes || {}).map(function (entry) { return `${entry[0]}: ${entry[1]}`; }).join(' · ');
-    const productMain = `${productThumb(product)}<span class='product-mobile-info'><strong>${esc(product.name)}</strong><small>${esc([product.sku, attributes || product.category].filter(Boolean).join(' · '))}</small></span><span class='product-mobile-side'><strong>${money(product.price)}</strong><small>${product.inventoryTracked ? (product.stock <= 0 ? 'Hết hàng' : `Còn ${number(product.stock)} ${esc(product.unit)}`) : 'Không theo dõi tồn'}</small></span>`;
+    const serialTag = product.serialTracked ? 'Mã riêng' : '';
+    const productMain = `${productThumb(product)}<span class='product-mobile-info'><strong>${esc(product.name)}</strong><small>${esc([product.sku, serialTag, attributes || product.category].filter(Boolean).join(' · '))}</small></span><span class='product-mobile-side'><strong>${money(product.price)}</strong><small>${product.inventoryTracked ? (product.stock <= 0 ? 'Hết hàng' : `Còn ${number(product.stock)} ${esc(product.unit)}`) : 'Không theo dõi tồn'}</small></span>`;
     return `<article class='product-mobile-card'>${canEdit ? `<button class='product-mobile-main' data-action='edit-product' data-id='${product.id}' aria-label='Sửa ${esc(product.name)}'>${productMain}</button>` : `<div class='product-mobile-main'>${productMain}</div>`}<button class='product-card-menu-button' data-action='product-card-menu' data-id='${product.id}' aria-label='Thao tác với ${esc(product.name)}' title='Thao tác'>${icon('more', 21)}</button></article>`;
   }
 
@@ -3108,11 +3111,12 @@
     const canEdit = ['owner', 'manager', 'stockkeeper'].includes(store.role);
     const canViewHistory = ['owner', 'manager', 'stockkeeper', 'accountant'].includes(store.role);
     const actions = [
+      canEdit ? ['add-units', '＋ Thêm tồn / Quét mã'] : null,
+      product.serialTracked ? ['serials', 'Danh sách mã riêng'] : null,
       canEdit ? ['edit', 'Sửa mặt hàng'] : null,
-      canEdit ? ['clone', '＋ Thêm mã vạch / món cùng loại'] : null,
       ['print', 'In tem mã vạch'],
       canViewHistory ? ['history', 'Lịch sử giá'] : null,
-      canEdit && product.inventoryTracked ? ['stock', 'Kiểm kê tồn kho'] : null,
+      canEdit && product.inventoryTracked && !product.serialTracked ? ['stock', 'Kiểm kê tồn kho'] : null,
     ].filter(Boolean);
     showModal(product.name, 'Chọn việc cần làm', `<div class='product-card-actions'>${actions.map(([kind, label]) => `<button type='button' class='btn btn-secondary' data-action='product-card-choice' data-kind='${kind}' data-id='${esc(id)}'>${label}</button>`).join('')}</div>`, '');
   }
@@ -3234,7 +3238,12 @@
   function cartRow(item) {
     const product = productById(item.id);
     if (!product) return '';
-    return `<div class='cart-row' data-cart-product='${esc(product.id)}'><div><div class='cart-item-name'>${esc(product.name)}</div><div class='cart-item-price'>${moneyVndText(cartUnitPrice(item))} / ${esc(product.unit)}</div></div><div class='qty-control'><button data-action='cart-qty' data-id='${esc(product.id)}' data-delta='-1' ${checkoutPendingPayload ? 'disabled' : ''} aria-label='Giảm'>−</button><button data-action='cart-qty-edit' data-id='${esc(product.id)}' ${checkoutPendingPayload ? 'disabled' : ''} aria-label='Sửa số lượng'>${number(item.qty)}</button><button data-action='cart-qty' data-id='${esc(product.id)}' data-delta='1' ${checkoutPendingPayload || (product.inventoryTracked && item.qty >= availableForSale(product)) ? 'disabled' : ''} aria-label='Tăng'>＋</button></div></div>`;
+    const serials = Array.isArray(item.serialCodes) ? item.serialCodes : [];
+    const hasSerials = serials.length > 0;
+    const serialChips = hasSerials
+      ? `<div class='cart-serial-chips'>${serials.map((code) => `<span class='serial-chip'><span>${esc(code)}</span><button type='button' data-action='cart-remove-serial' data-id='${esc(product.id)}' data-code='${esc(code)}' ${checkoutPendingPayload ? 'disabled' : ''} aria-label='Bỏ mã ${esc(code)}'>×</button></span>`).join('')}</div>`
+      : '';
+    return `<div class='cart-row' data-cart-product='${esc(product.id)}'><div><div class='cart-item-name'>${esc(product.name)}</div><div class='cart-item-price'>${moneyVndText(cartUnitPrice(item))} / ${esc(product.unit)}</div>${serialChips}</div><div class='qty-control'><button data-action='cart-qty' data-id='${esc(product.id)}' data-delta='-1' ${checkoutPendingPayload ? 'disabled' : ''} aria-label='Giảm'>−</button><button data-action='cart-qty-edit' data-id='${esc(product.id)}' ${checkoutPendingPayload || hasSerials ? 'disabled' : ''} aria-label='Sửa số lượng'>${number(item.qty)}</button><button data-action='cart-qty' data-id='${esc(product.id)}' data-delta='1' ${checkoutPendingPayload || hasSerials || (product.inventoryTracked && item.qty >= availableForSale(product)) ? 'disabled' : ''} aria-label='Tăng'>＋</button></div></div>`;
   }
 
   function fastCashPresets(total) {
@@ -3265,6 +3274,17 @@
     return totalMilli / 1000;
   }
 
+  function hasSerialInAnyPosBill(rawCode) {
+    const key = String(rawCode || '').trim().toLocaleLowerCase('vi');
+    if (!key) return false;
+    if (cart.some(item => Array.isArray(item.serialCodes) && item.serialCodes.some(c => String(c).toLocaleLowerCase('vi') === key))) return true;
+    for (const bill of posBills) {
+      if (bill.id === activePosBillId) continue;
+      if ((bill.items || []).some(item => Array.isArray(item.serialCodes) && item.serialCodes.some(c => String(c).toLocaleLowerCase('vi') === key))) return true;
+    }
+    return false;
+  }
+
   function syncActivePosBillFromCart() {
     let active = posBills.find(b => b.id === activePosBillId);
     if (!active) {
@@ -3272,7 +3292,12 @@
       posBills = [active];
       activePosBillId = active.id;
     }
-    active.items = cart.map(item => ({ id: item.id, qty: item.qty, unitPriceVnd: item.unitPriceVnd }));
+    active.items = cart.map(item => ({
+      id: item.id,
+      qty: item.qty,
+      unitPriceVnd: item.unitPriceVnd,
+      ...(Array.isArray(item.serialCodes) && item.serialCodes.length ? { serialCodes: item.serialCodes.slice() } : {}),
+    }));
     active.discount = Number(cart.discount || 0);
     active.customerId = cartCustomerId || '';
     active.note = posStandardNote || '';
@@ -3280,7 +3305,12 @@
   }
 
   function loadPosBillIntoCart(bill) {
-    const nextCart = (bill.items || []).map(item => ({ id: item.id, qty: item.qty, unitPriceVnd: item.unitPriceVnd }));
+    const nextCart = (bill.items || []).map(item => ({
+      id: item.id,
+      qty: item.qty,
+      unitPriceVnd: item.unitPriceVnd,
+      ...(Array.isArray(item.serialCodes) && item.serialCodes.length ? { serialCodes: item.serialCodes.slice() } : {}),
+    }));
     nextCart.discount = Number(bill.discount || 0);
     cart = nextCart;
     cartCustomerId = bill.customerId || '';
@@ -3443,6 +3473,8 @@
     } else if (!row) {
       items.querySelector('.cart-empty')?.remove();
       items.insertAdjacentHTML('beforeend', cartRow(item));
+    } else if (Array.isArray(item.serialCodes) && item.serialCodes.length || row.querySelector('.cart-serial-chips')) {
+      row.outerHTML = cartRow(item);
     } else {
       const product = productById(id);
       row.querySelector('[data-action="cart-qty-edit"]').textContent = number(item.qty);
@@ -5518,6 +5550,7 @@
   function requestCloseModal(afterClose) {
     if (modal.hidden) return;
     closeProductBarcode();
+    closeSerialCamera();
     const proceed = typeof afterClose === 'function' ? afterClose : dismissModal;
     const form = modal.querySelector('form[data-user-edited="true"]');
     if (activeWrites && form) {
@@ -5589,7 +5622,8 @@
   }
 
   const productImportBaseHeaders = ['Mã SKU', 'Mã vạch', 'Tên sản phẩm', 'Danh mục', 'Đơn vị', 'Giá bán (VND)', 'Giá vốn (VND)', 'Ngưỡng tồn tối thiểu', 'Theo dõi tồn kho (Có/Không)', 'Tồn đầu kỳ'];
-  const productImportHeaders = [...productImportBaseHeaders, 'Tên nhóm biến thể', 'Thuộc tính biến thể (Tên=Giá trị; ...)'];
+  const productImportVariantHeaders = [...productImportBaseHeaders, 'Tên nhóm biến thể', 'Thuộc tính biến thể (Tên=Giá trị; ...)'];
+  const productImportHeaders = [...productImportVariantHeaders, 'Danh sách mã riêng (Serial/IMEI)'];
   const customerImportHeaders = ['Tên khách hàng', 'Số điện thoại', 'Email', 'Công nợ ban đầu (VND)', 'Ghi chú'];
 
   function formatImportQuantity(value) {
@@ -5611,8 +5645,27 @@
     return whole + (fraction ? `,${fraction}` : '');
   }
 
+  function detectCsvDelimiter(source) {
+    let quoted = false;
+    let commas = 0;
+    let semicolons = 0;
+    for (let i = 0; i < source.length; i += 1) {
+      const ch = source[i];
+      if (ch === '"') {
+        if (quoted && source[i + 1] === '"') { i += 1; continue; }
+        quoted = !quoted;
+      } else if (!quoted) {
+        if (ch === '\n' || ch === '\r') break;
+        if (ch === ',') commas += 1;
+        else if (ch === ';') semicolons += 1;
+      }
+    }
+    return commas === 0 && semicolons >= 3 ? ';' : ',';
+  }
+
   function parseCsvDocument(text) {
     const source = String(text || '').replace(/^\uFEFF/, '');
+    const delimiter = detectCsvDelimiter(source);
     const rows = [];
     let row = [];
     let field = '';
@@ -5636,7 +5689,7 @@
       if (character === '"') {
         if (field.length || quoteClosed) throw new Error('Dấu ngoặc kép trong tệp CSV chưa đúng định dạng.');
         quoted = true;
-      } else if (character === ',') {
+      } else if (character === delimiter) {
         row.push(field); field = ''; quoteClosed = false;
       } else if (character === '\n' || character === '\r') {
         if (character === '\r' && source[index + 1] === '\n') index += 1;
@@ -5691,9 +5744,10 @@
     if (!rows.length) return { items: [], errors: ['Tệp CSV đang trống.'] };
     const headers = rows[0].cells.map(function (cell) { return String(cell || '').trim(); });
     const legacyTemplate = headers.length === productImportBaseHeaders.length && productImportBaseHeaders.every(function (header, index) { return headers[index] === header; });
-    const extendedTemplate = headers.length === productImportHeaders.length && productImportHeaders.every(function (header, index) { return headers[index] === header; });
-    if (!legacyTemplate && !extendedTemplate) {
-      return { items: [], errors: ['Tiêu đề cột không đúng mẫu Slink. Hãy tải mẫu CSV rồi điền dữ liệu vào.'] };
+    const variantTemplate = headers.length === productImportVariantHeaders.length && productImportVariantHeaders.every(function (header, index) { return headers[index] === header; });
+    const fullTemplate = headers.length === productImportHeaders.length && productImportHeaders.every(function (header, index) { return headers[index] === header; });
+    if (!legacyTemplate && !variantTemplate && !fullTemplate) {
+      return { items: [], errors: ['Tiêu đề cột không đúng mẫu Slink. Hãy tải tệp mẫu CSV rồi điền dữ liệu vào.'] };
     }
     const dataRows = rows.slice(1);
     const errors = [];
@@ -5701,6 +5755,7 @@
     if (dataRows.length > 200) errors.push('Mỗi lần nhập tối đa 200 sản phẩm. Hãy chia tệp thành nhiều phần.');
     const seenSkus = new Map();
     const seenBarcodes = new Map();
+    const seenSerials = new Map();
     const autoSeedBarcodes = new Set();
     dataRows.slice(0, 200).forEach(r => {
       const b = String(r.cells[1] || '').trim();
@@ -5708,14 +5763,15 @@
     });
     const variantGroups = new Map();
     const items = [];
-    dataRows.slice(0, 200).forEach(function (record) {
+    const expectedColumns = legacyTemplate ? productImportBaseHeaders.length : variantTemplate ? productImportVariantHeaders.length : productImportHeaders.length;
+    dataRows.slice(0, 200).forEach(function (record, rowIdx) {
       const line = record.line;
       const cells = record.cells;
       const rowErrors = [];
-      const expectedColumns = legacyTemplate ? productImportBaseHeaders.length : productImportHeaders.length;
       if (cells.length !== expectedColumns) rowErrors.push(`Dòng ${line}: số cột không khớp mẫu.`);
       const values = Array.from({ length: expectedColumns }, function (_value, cellIndex) { return String(cells[cellIndex] || '').trim(); });
-      const sku = values[0];
+      const rawSku = values[0];
+      const sku = rawSku || newProductSku();
       const rawBarcode = values[1];
       let barcode = rawBarcode || null;
       if (rawBarcode && isAutoBarcodeKeyword(rawBarcode)) {
@@ -5731,19 +5787,21 @@
       if (!name || name.length > 240) rowErrors.push(`Dòng ${line}: tên sản phẩm cần có từ 1 đến 240 ký tự.`);
       if (category.length > 120) rowErrors.push(`Dòng ${line}: danh mục tối đa 120 ký tự.`);
       if (unit.length > 40) rowErrors.push(`Dòng ${line}: đơn vị tối đa 40 ký tự.`);
-      if (barcode && (barcode.length < 3 || barcode.length > 80)) rowErrors.push(`Dòng ${line}: mã vạch phải có từ 3 đến 80 ký tự.`);
+      if (barcode && (barcode.length > 120 || /[\x00-\x1f\x7f]/.test(barcode))) rowErrors.push(`Dòng ${line}: mã vạch cần từ 1 đến 120 ký tự hợp lệ.`);
 
       function integerVnd(value, label, required) {
         if (!value && !required) return 0;
-        if (!/^\d+$/.test(value)) { rowErrors.push(`Dòng ${line}: ${label} phải là VND nguyên không âm, không dùng dấu phân cách.`); return 0; }
-        const amount = Number(value);
+        const cleaned = /^\d{1,3}(?:[.,]\d{3})+$/.test(value) ? value.replace(/[.,]/g, '') : value;
+        if (!/^\d+$/.test(cleaned)) { rowErrors.push(`Dòng ${line}: ${label} phải là số tiền VND nguyên không âm.`); return 0; }
+        const amount = Number(cleaned);
         if (!Number.isSafeInteger(amount)) { rowErrors.push(`Dòng ${line}: ${label} vượt giới hạn số an toàn.`); return 0; }
         return amount;
       }
       function quantity(value, label) {
-        if (!value) return 0;
-        if (!/^\d{1,10}(?:\.\d{1,3})?$/.test(value)) { rowErrors.push(`Dòng ${line}: ${label} phải không âm và có tối đa 3 chữ số thập phân.`); return 0; }
-        return value;
+        if (!value) return '0';
+        const cleaned = value.replace(',', '.');
+        if (!/^\d{1,10}(?:\.\d{1,3})?$/.test(cleaned)) { rowErrors.push(`Dòng ${line}: ${label} phải không âm và có tối đa 3 chữ số thập phân.`); return '0'; }
+        return cleaned;
       }
 
       const salePriceVnd = integerVnd(values[5], 'Giá bán', true);
@@ -5753,8 +5811,35 @@
       let inventoryTracked = true;
       if (trackedText === 'không' || trackedText === 'khong') inventoryTracked = false;
       else if (trackedText && trackedText !== 'có' && trackedText !== 'co') rowErrors.push(`Dòng ${line}: cột theo dõi tồn kho chỉ nhận “Có” hoặc “Không”.`);
-      const openingQuantity = quantity(values[9], 'Tồn đầu kỳ');
-      if (!inventoryTracked && openingQuantity > 0) rowErrors.push(`Dòng ${line}: sản phẩm không theo dõi tồn kho phải có tồn đầu kỳ bằng 0.`);
+      let openingQuantity = quantity(values[9], 'Tồn đầu kỳ');
+      const rawSerialsText = fullTemplate ? values[12] : '';
+      const serialCodes = [];
+      let serialTracked = false;
+      if (rawSerialsText) {
+        const parts = rawSerialsText.split(/[\r\n,;|]+/).map(s => s.trim()).filter(Boolean);
+        if (parts.length > 500) rowErrors.push(`Dòng ${line}: mỗi dòng sản phẩm tối đa 500 mã riêng.`);
+        for (const sc of parts) {
+          if (sc.length > 120 || /[\x00-\x1f\x7f]/.test(sc)) {
+            rowErrors.push(`Dòng ${line}: mã riêng “${sc.slice(0, 30)}” không hợp lệ.`);
+            continue;
+          }
+          const k = sc.toLocaleLowerCase('vi');
+          if (seenSerials.has(k)) rowErrors.push(`Dòng ${line}: mã riêng “${sc}” trùng với dòng ${seenSerials.get(k)} trong tệp.`);
+          else {
+            seenSerials.set(k, line);
+            serialCodes.push(sc);
+          }
+        }
+        if (serialCodes.length) {
+          serialTracked = true;
+          inventoryTracked = true;
+          if (values[9] && Number(openingQuantity) !== serialCodes.length) {
+            rowErrors.push(`Dòng ${line}: tồn đầu kỳ (${values[9]}) không khớp số mã riêng (${serialCodes.length}). Để trống cột Tồn đầu kỳ hoặc điền đúng ${serialCodes.length}.`);
+          }
+          openingQuantity = String(serialCodes.length);
+        }
+      }
+      if (!inventoryTracked && Number(openingQuantity) > 0) rowErrors.push(`Dòng ${line}: sản phẩm không theo dõi tồn kho phải có tồn đầu kỳ bằng 0.`);
       const normalizedSku = sku.toLocaleLowerCase('vi');
       if (sku && seenSkus.has(normalizedSku)) rowErrors.push(`Dòng ${line}: SKU trùng với dòng ${seenSkus.get(normalizedSku)} trong tệp.`);
       else if (sku) seenSkus.set(normalizedSku, line);
@@ -5785,7 +5870,11 @@
         } catch (error) { rowErrors.push(error.message); }
       }
       if (rowErrors.length) errors.push(...rowErrors);
-      else items.push({ sku: sku, barcode: barcode, name: name, category: category, unit: unit, salePriceVnd: salePriceVnd, costVnd: costVnd, lowStockThreshold: lowStockThreshold, inventoryTracked: inventoryTracked, openingQuantity: openingQuantity, sourceLine: line, ...(variantGroupName ? { variantGroupName: variantGroupName, variantAttributes: variantAttributes } : {}) });
+      else items.push({
+        sku, barcode, name, category, unit, salePriceVnd, costVnd, lowStockThreshold, inventoryTracked, openingQuantity, sourceLine: line,
+        ...(serialTracked ? { serialTracked: true, serialCodes } : {}),
+        ...(variantGroupName ? { variantGroupName, variantAttributes } : {}),
+      });
     });
     for (const group of variantGroups.values()) {
       if (group.count < 2) errors.push(`Nhóm “${group.name}” cần ít nhất 2 SKU trong cùng tệp.`);
@@ -6076,14 +6165,13 @@
         ? `Tồn đầu kỳ sẽ được ghi vào kho ${esc(productImportWarehouseName)}. ` : '';
       const variantGroupCount = new Set(productImportRows.map(function (item) { return item.variantGroupName?.toLocaleLowerCase('vi'); }).filter(Boolean)).size;
       const variantSummary = variantGroupCount ? ` · ${number(variantGroupCount)} nhóm biến thể` : '';
-      const missingBarcodeCount = productImportRows.filter(function (item) { return !item.barcode; }).length;
+      const missingBarcodeCount = productImportRows.filter(function (item) { return !item.barcode && !item.serialTracked; }).length;
+      const serialRowsCount = productImportRows.filter(function (item) { return item.serialTracked; }).length;
       const barcodeActionBanner = !productImportPending && missingBarcodeCount > 0 && window.SlinkBarcodeTools
-        ? `<div class='import-barcode-bar'><span>Có <strong>${number(missingBarcodeCount)}</strong> sản phẩm chưa có mã vạch.</span><button class='btn btn-secondary' type='button' data-action='import-fill-barcodes'>Tự tạo ${number(missingBarcodeCount)} mã vạch EAN-13</button></div>`
-        : !productImportPending && productImportRows.length > 0
-          ? `<div class='import-barcode-bar is-ready'><span>Tất cả <strong>${number(productImportRows.length)}</strong> sản phẩm đã có mã vạch riêng — sẵn sàng quét POS &amp; in tem sau khi nhập.</span></div>`
-          : '';
-      preview.innerHTML = `<div class='notice-item'><span>${icon('check', 18)}</span><span><strong>${number(productImportRows.length)} sản phẩm sẵn sàng xem trước${variantSummary}</strong><small>${warehouseSummary}Tổng tồn đầu kỳ: ${totalImportQuantity(productImportRows)}. Cuộn trong bảng để rà soát toàn bộ; mọi dòng sẽ được ghi cùng nhau hoặc không dòng nào được ghi.</small></span></div>${barcodeActionBanner}<div class='table-wrap'><table class='data-table'><thead><tr><th>SKU / mã vạch</th><th>Sản phẩm</th><th class='text-right'>Giá bán / giá vốn</th><th class='text-right'>Tồn đầu kỳ / ngưỡng</th><th>Theo dõi tồn</th></tr></thead><tbody>${productImportRows.map(function (item) { const attributes = Object.entries(item.variantAttributes || {}).map(function (entry) { return `${entry[0]}=${entry[1]}`; }).join('; '); const displayName = item.variantGroupName ? `${item.variantGroupName} · ${Object.values(item.variantAttributes || {}).join(' · ')}` : item.name; return `<tr><td><span class='product-name-stack'><strong>${esc(item.sku)}</strong><small>Mã vạch: ${esc(item.barcode || 'Chưa có')}</small></span></td><td><span class='product-name-stack'><strong>${esc(displayName)}</strong><small>${item.variantGroupName ? `Nhóm ${esc(item.variantGroupName)} · ${esc(attributes)}` : `${esc(item.category)} · ${esc(item.unit)}`}</small></span></td><td class='text-right'><span class='product-name-stack'><strong>${money(Number(item.salePriceVnd))}</strong><small>Giá vốn ${money(Number(item.costVnd))}</small></span></td><td class='text-right'><span class='product-name-stack'><strong>${formatImportQuantity(item.openingQuantity)} ${esc(item.unit)}</strong><small>Nhắc khi còn ${formatImportQuantity(item.lowStockThreshold)}</small></span></td><td>${item.inventoryTracked ? 'Có' : 'Không'}</td></tr>`; }).join('')}</tbody></table></div>`;
-    } else preview.innerHTML = `<div class='empty-state'><strong>Chưa chọn tệp</strong><span>Tải mẫu CSV, điền danh mục rồi chọn tệp để kiểm tra trước khi gửi.</span></div>`;
+        ? `<div class='import-barcode-bar'><span>Có <strong>${number(missingBarcodeCount)}</strong> sản phẩm chưa có mã vạch.</span><button class='btn btn-secondary' type='button' data-action='import-fill-barcodes'>Tự tạo ${number(missingBarcodeCount)} mã EAN-13</button></div>`
+        : '';
+      preview.innerHTML = `<div class='notice-item'><span>${icon('check', 18)}</span><span><strong>${number(productImportRows.length)} sản phẩm sẵn sàng${variantSummary}${serialRowsCount ? ` · ${number(serialRowsCount)} SP mã riêng` : ''}</strong><small>${warehouseSummary}Tổng tồn đầu: ${totalImportQuantity(productImportRows)}.</small></span></div>${barcodeActionBanner}<div class='table-wrap'><table class='data-table'><thead><tr><th>SKU / mã</th><th>Sản phẩm</th><th class='text-right'>Giá bán / vốn</th><th class='text-right'>Tồn đầu</th><th>Quản lý</th></tr></thead><tbody>${productImportRows.map(function (item) { const attributes = Object.entries(item.variantAttributes || {}).map(function (entry) { return `${entry[0]}=${entry[1]}`; }).join('; '); const displayName = item.variantGroupName ? `${item.variantGroupName} · ${Object.values(item.variantAttributes || {}).join(' · ')}` : item.name; const codeSub = item.serialTracked ? `${number(item.serialCodes?.length || 0)} mã riêng` : (item.barcode || 'Chưa có mã'); return `<tr><td><span class='product-name-stack'><strong>${esc(item.sku)}</strong><small>${esc(codeSub)}</small></span></td><td><span class='product-name-stack'><strong>${esc(displayName)}</strong><small>${item.variantGroupName ? `${esc(item.variantGroupName)} · ${esc(attributes)}` : `${esc(item.category)} · ${esc(item.unit)}`}</small></span></td><td class='text-right'><span class='product-name-stack'><strong>${money(Number(item.salePriceVnd))}</strong><small>Vốn ${money(Number(item.costVnd))}</small></span></td><td class='text-right'><strong>${formatImportQuantity(item.openingQuantity)} ${esc(item.unit)}</strong></td><td>${item.serialTracked ? 'Mã riêng' : item.inventoryTracked ? 'Số lượng' : 'Không tồn'}</td></tr>`; }).join('')}</tbody></table></div>`;
+    } else preview.innerHTML = `<div class='empty-state'><strong>Chưa chọn tệp</strong><span>Tải tệp mẫu CSV, điền hàng hóa rồi chọn tệp để xem trước.</span></div>`;
     const selectedWarehouseId = warehouseSelect?.value || '';
     const verified = productImportPending || productImportVerifiedWarehouseId === selectedWarehouseId;
     if (submit) submit.disabled = productImportReading || productImportRows.length === 0 || productImportErrors.length > 0 || !verified;
@@ -6212,9 +6300,9 @@
     const warehouseOptions = warehouses.map(function (warehouse) {
       return `<option value='${esc(warehouse.id)}' ${warehouse.id === requestedWarehouseId ? 'selected' : ''}>${esc(warehouse.name)}${warehouse.is_default ? ' · Mặc định' : ''}</option>`;
     }).join('');
-    const body = `<form id='entity-form' data-form='product-import'><div class='import-start-help'><strong>Có danh sách sẵn? Thêm một lần.</strong><span>Tải tệp mẫu, điền mặt hàng rồi chọn tệp bên dưới. Cột Mã vạch có thể gõ <code>AUTO</code>, để trống để Slink tự tạo hàng loạt ở bước xem trước, hoặc quét trực tiếp từ Excel.</span><div class='heading-actions'><button class='btn btn-secondary' type='button' data-action='download-product-import-template'>Tải tệp mẫu</button><button class='btn btn-secondary' type='button' data-action='download-product-import-sample'>Tải mẫu có ví dụ</button></div></div><div class='form-field full'><label class='input-label' for='product-import-file'>Chọn danh sách (.csv)</label><input class='input' id='product-import-file' type='file' accept='.csv,text/csv' ${pending ? 'disabled' : ''}/></div><div class='form-field full'><label class='input-label' for='product-import-warehouse'>Nơi đang giữ hàng</label><select class='input' id='product-import-warehouse' ${pending || !warehouses.length ? 'disabled' : ''}>${warehouseOptions || `<option value=''>Chưa tải được kho</option>`}</select><small>Số lượng đang có sẽ được ghi vào kho này.</small></div><details class='quick-product-details'><summary>Cách điền tệp &amp; mẹo mã vạch</summary><p>Tối đa 200 mặt hàng. Điền giá bằng số đồng, không dùng dấu ngăn cách hàng nghìn. Số lượng có tối đa 3 chữ số thập phân.</p><p><strong>Mã vạch:</strong> điền mã EAN/UPC có sẵn của hàng hóa, hoặc gõ <code>AUTO</code> / để trống rồi bấm “Tự tạo mã vạch EAN-13” trước khi lưu.</p><p>Nếu hàng có nhiều màu hoặc cỡ, dùng hai cột cuối để nhóm ít nhất 2 mã hàng. Nếu không, để trống hai cột đó.</p></details><div id='product-import-preview' class='product-import-preview' aria-live='polite'></div></form>`;
-    const footer = `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button><button class='btn btn-primary' type='submit' form='entity-form'>${pending ? 'Gửi lại lần nhập đang chờ' : 'Nhập sản phẩm'}</button>`;
-    showModal(pending ? 'Kiểm tra lần nhập đang chờ' : 'Nhập danh sách mặt hàng', pending ? 'Gửi lại để kiểm tra kết quả, không tạo trùng.' : 'Thêm mặt hàng, mã vạch và số lượng đang có cùng lúc.', body, footer, true);
+    const body = `<form id='entity-form' data-form='product-import'><div class='import-start-help'><div class='heading-actions'><button class='btn btn-secondary' type='button' data-action='download-product-import-template'>Tải tệp mẫu (.csv)</button><button class='btn btn-secondary' type='button' data-action='download-product-import-sample'>Tải mẫu có ví dụ</button></div></div><div class='form-grid'><div class='form-field'><label class='input-label' for='product-import-file'>Chọn tệp CSV</label><input class='input' id='product-import-file' type='file' accept='.csv,text/csv' ${pending ? 'disabled' : ''}/></div><div class='form-field'><label class='input-label' for='product-import-warehouse'>Kho nhận tồn đầu</label><select class='input' id='product-import-warehouse' ${pending || !warehouses.length ? 'disabled' : ''}>${warehouseOptions || `<option value=''>Chưa có kho</option>`}</select></div></div><details class='quick-product-details'><summary>Quy ước cột nhanh</summary><p>Để trống <strong>Mã SKU</strong> để Slink tự tạo. Cột <strong>Mã vạch</strong> nhận mã số, mã chữ/QR hoặc <code>AUTO</code>. Hàng quản lý theo từng mã riêng (Serial/IMEI) điền cột cuối, cách nhau bằng dấu <code>|</code> (tồn đầu tự tính theo số mã).</p></details><div id='product-import-preview' class='product-import-preview' aria-live='polite'></div></form>`;
+    const footer = `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button><button class='btn btn-primary' type='submit' form='entity-form'>${pending ? 'Gửi lại lần nhập đang chờ' : 'Nhập hàng hóa'}</button>`;
+    showModal(pending ? 'Kiểm tra lần nhập đang chờ' : 'Nhập hàng từ file', '', body, footer, true);
     renderProductImportPreview();
   }
 
@@ -6222,9 +6310,10 @@
     const quoteCsv = (cells) => cells.map(function (cell) { return '"' + String(cell ?? '').replace(/"/g, '""') + '"'; }).join(',');
     const sampleRows = withSample
       ? [
-        ['CF-SUADA', '8938505974194', 'Cà phê sữa đá đóng chai', 'Đồ uống', 'chai', '29000', '14000', '10', 'Có', '24', '', ''],
-        ['AO-THUN-M', 'AUTO', 'Áo thun cotton M', 'Thời trang', 'cái', '180000', '95000', '5', 'Có', '12', 'Áo thun cotton', 'Màu=Trắng; Cỡ=M'],
-        ['AO-THUN-L', 'AUTO', 'Áo thun cotton L', 'Thời trang', 'cái', '180000', '95000', '5', 'Có', '12', 'Áo thun cotton', 'Màu=Trắng; Cỡ=L'],
+        ['CF-SUADA', '8938505974194', 'Cà phê sữa đá đóng chai', 'Đồ uống', 'chai', '29000', '14000', '10', 'Có', '24', '', '', ''],
+        ['SACH-TA', '', 'Sách Tiếng Anh Giao Tiếp', 'Sách', 'cuốn', '120000', '75000', '5', 'Có', '', '', '', 'SACH-TA-01|SACH-TA-02|SACH-TA-03'],
+        ['AO-THUN-M', 'AUTO', 'Áo thun cotton M', 'Thời trang', 'cái', '180000', '95000', '5', 'Có', '12', 'Áo thun cotton', 'Màu=Trắng; Cỡ=M', ''],
+        ['AO-THUN-L', 'AUTO', 'Áo thun cotton L', 'Thời trang', 'cái', '180000', '95000', '5', 'Có', '12', 'Áo thun cotton', 'Màu=Trắng; Cỡ=L', ''],
       ]
       : [];
     const lines = [quoteCsv(productImportHeaders), ...sampleRows.map(quoteCsv)];
@@ -6238,7 +6327,7 @@
     let updated;
     try {
       updated = productImportSourceRows.map(function (item) {
-        if (item.barcode) { seen.add(item.barcode); return item; }
+        if (item.barcode || item.serialTracked) { if (item.barcode) seen.add(item.barcode); return item; }
         const barcode = window.SlinkBarcodeTools.generateUniqueEan13(seen, '20');
         return { ...item, barcode };
       });
@@ -6401,7 +6490,7 @@
         <button class='btn btn-secondary' type='button' data-action='stop-product-barcode'>Đóng camera</button>
       </section>`
       : '';
-    return `<div class='${fieldClass}'><label class='input-label' for='product-barcode'>Mã vạch</label><div class='editor-input-action'><input class='input' id='product-barcode' name='barcode' value='${esc(barcode || '')}' placeholder='Quét hoặc bấm Tạo mã' maxlength='80' autocomplete='off'/><button class='btn btn-secondary' type='button' data-action='generate-product-barcode' aria-label='Tạo mã vạch EAN-13' title='Tạo mã vạch EAN-13'>Tạo mã</button><button class='btn btn-secondary' type='button' data-action='scan-product-barcode' aria-label='Quét mã vạch bằng camera' title='Quét mã vạch'>${icon('scan', 19)}</button></div><div class='barcode-field-preview' data-barcode-field-preview ${preview ? '' : 'hidden'}>${preview}</div></div>${camera}`;
+    return `<div class='${fieldClass}'><label class='input-label' for='product-barcode'>Mã vạch / QR</label><div class='editor-input-action'><input class='input' id='product-barcode' name='barcode' value='${esc(barcode || '')}' placeholder='Quét mã số, mã chữ/QR hoặc Tạo mã' maxlength='120' autocomplete='off'/><button class='btn btn-secondary' type='button' data-action='generate-product-barcode' aria-label='Tạo mã vạch EAN-13' title='Tạo mã vạch EAN-13'>Tạo mã</button><button class='btn btn-secondary' type='button' data-action='scan-product-barcode' aria-label='Quét mã vạch bằng camera' title='Quét mã vạch'>${icon('scan', 19)}</button></div><div class='barcode-field-preview' data-barcode-field-preview ${preview ? '' : 'hidden'}>${preview}</div></div>${camera}`;
   }
 
   function productIdentityFields(product, barcode, grouped, sku = '', includeCost = true, includeBarcode = true) {
@@ -6433,14 +6522,138 @@
       <div class='form-grid editor-stock-fields'>${stock}<div class='form-field'><label class='input-label' for='product-stock-threshold'>Nhắc khi tồn ít</label><input class='input' id='product-stock-threshold' name='minStock' type='number' min='0' step='0.001' value='${esc(product?.minStock ?? 0)}'/></div></div>`;
   }
 
-  function renderMultiBarcodeRowHtml(row = {}, index = 2) {
-    return `<div class='multi-barcode-row' data-multi-barcode-row style='display:grid;grid-template-columns:1.2fr 1.5fr 0.8fr 0.9fr auto;gap:8px;align-items:end;padding:8px;border:1px solid var(--line);border-radius:10px;margin-bottom:8px;background:var(--surface-subtle, #f8faf8)'>
-      <label class='form-field' style='margin:0'><span class='input-label'>Phân loại / Hậu tố #${number(index)}</span><input class='input' data-mb-suffix value='${esc(row.suffix || '')}' maxlength='80' placeholder='VD: Màu Đỏ, Size L, Mẫu ${number(index)}'/></label>
-      <div class='form-field' style='margin:0'><span class='input-label'>Mã vạch riêng *</span><div class='editor-input-action'><input class='input' data-mb-barcode value='${esc(row.barcode || '')}' maxlength='80' placeholder='Quét hoặc bấm Tạo mã' autocomplete='off'/><button class='btn btn-secondary' type='button' data-action='generate-mb-row-barcode' title='Tạo mã EAN-13'>Tạo mã</button></div></div>
-      <label class='form-field' style='margin:0'><span class='input-label'>Tồn đầu</span><input class='input' data-mb-qty type='number' min='0' step='0.001' value='${esc(row.openingQuantity ?? '')}' placeholder='Theo món gốc'/></label>
-      <label class='form-field' style='margin:0'><span class='input-label'>Giá bán riêng</span><input class='input' data-mb-price type='number' min='0' step='1' value='${esc(row.salePriceVnd ?? '')}' placeholder='Theo giá gốc'/></label>
-      <button class='btn btn-secondary' type='button' data-action='remove-multi-barcode-row' aria-label='Xóa dòng mã vạch' title='Xóa dòng'>✕</button>
+  function readFormSerialCodes(form) {
+    if (!form) return [];
+    try {
+      const parsed = JSON.parse(form.dataset.serialCodes || '[]');
+      return Array.isArray(parsed) ? parsed : [];
+    } catch { return []; }
+  }
+
+  function renderFormSerialChips(form) {
+    if (!form) return;
+    const codes = readFormSerialCodes(form);
+    const list = form.querySelector('[data-serial-chips]');
+    const countEl = form.querySelector('[data-serial-count]');
+    if (countEl) countEl.textContent = number(codes.length);
+    if (!list) return;
+    if (!codes.length) {
+      list.innerHTML = `<div class='serial-chips-empty'>Chưa có mã nào — quét bằng máy/camera hoặc bấm Tự sinh mã.</div>`;
+      return;
+    }
+    list.innerHTML = codes.map((code, idx) => `<span class='serial-chip'><span>${esc(code)}</span><button type='button' data-action='remove-form-serial' data-index='${idx}' aria-label='Xóa mã ${esc(code)}'>×</button></span>`).join('');
+  }
+
+  function appendFormSerialCode(form, rawCode) {
+    if (!form) return { ok: false, reason: 'Biểu mẫu không tồn tại.' };
+    const code = String(rawCode || '').trim();
+    if (!code || code.length > 120 || /[\x00-\x1f\x7f]/.test(code)) {
+      return { ok: false, reason: 'Mã không hợp lệ (1–120 ký tự).' };
+    }
+    const codes = readFormSerialCodes(form);
+    if (codes.length >= 500) return { ok: false, reason: 'Tối đa 500 mã mỗi lần.' };
+    const key = code.toLocaleLowerCase('vi');
+    if (codes.some(c => c.toLocaleLowerCase('vi') === key)) {
+      return { ok: false, reason: `Mã “${code}” đã có trong danh sách.` };
+    }
+    codes.push(code);
+    form.dataset.serialCodes = JSON.stringify(codes);
+    renderFormSerialChips(form);
+    playScanBeep();
+    return { ok: true, code, total: codes.length };
+  }
+
+  function removeFormSerialCode(form, index) {
+    if (!form) return;
+    const codes = readFormSerialCodes(form);
+    if (index < 0 || index >= codes.length) return;
+    codes.splice(index, 1);
+    form.dataset.serialCodes = JSON.stringify(codes);
+    renderFormSerialChips(form);
+  }
+
+  function autoGenerateFormSerials(form, countRaw, prefixRaw) {
+    if (!form) return;
+    const count = Number.parseInt(String(countRaw || ''), 10);
+    if (!Number.isSafeInteger(count) || count < 1 || count > 200) {
+      return toast('Số lượng không hợp lệ', 'Nhập số lượng từ 1 đến 200 mã.', 'error');
+    }
+    const existing = readFormSerialCodes(form);
+    if (existing.length + count > 500) {
+      return toast('Vượt giới hạn', 'Tổng số mã mỗi lần tối đa 500.', 'error');
+    }
+    const used = knownBarcodeSet(existing);
+    existing.forEach(c => used.add(c.toLocaleLowerCase('vi')));
+    const cleanPrefix = String(prefixRaw || '').trim().replace(/[^A-Za-z0-9_-]/g, '').slice(0, 20);
+    const added = [];
+    for (let i = 0; i < count; i += 1) {
+      let candidate = '';
+      if (!cleanPrefix && window.SlinkBarcodeTools) {
+        candidate = window.SlinkBarcodeTools.generateUniqueEan13(used, '21');
+        used.add(candidate.toLocaleLowerCase('vi'));
+      } else {
+        const basePrefix = cleanPrefix || 'SP';
+        for (let attempt = 0; attempt < 64; attempt += 1) {
+          const seq = String(existing.length + i + 1 + attempt).padStart(3, '0');
+          const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
+          const trial = attempt === 0 ? `${basePrefix}-${seq}` : `${basePrefix}-${rand}`;
+          if (!used.has(trial) && !used.has(trial.toLocaleLowerCase('vi'))) {
+            candidate = trial;
+            used.add(trial);
+            used.add(trial.toLocaleLowerCase('vi'));
+            break;
+          }
+        }
+      }
+      if (candidate) added.push(candidate);
+    }
+    form.dataset.serialCodes = JSON.stringify([...existing, ...added]);
+    renderFormSerialChips(form);
+    toast('Đã tạo mã riêng', `Thêm ${number(added.length)} mã (tổng ${number(existing.length + added.length)}).`);
+  }
+
+  function serialCapturePanelHtml(initialPrefix = '') {
+    return `<div class='serial-builder-panel'>
+      <div class='editor-input-action'>
+        <input class='input' id='serial-rapid-input' type='search' maxlength='120' placeholder='Quét hoặc gõ mã số, mã chữ, QR rồi Enter…' autocomplete='off'/>
+        <button class='btn btn-secondary' type='button' data-action='add-serial-from-input'>＋ Thêm</button>
+        <button class='btn btn-secondary' type='button' data-action='scan-serial-list' aria-label='Quét mã bằng camera' title='Quét camera liên tiếp'>${icon('scan', 19)}</button>
+      </div>
+      <section class='editor-barcode-camera' data-scan-surface data-scan-mode='serial-list' data-scan-target='serial-rapid-input' hidden>
+        <video id='scan-camera-video' playsinline muted hidden aria-label='Camera quét liên tiếp mã riêng'></video>
+        <p id='scan-camera-status' role='status' aria-live='polite'></p>
+        <button class='btn btn-secondary' type='button' data-action='stop-serial-camera'>Đóng camera</button>
+      </section>
+      <div class='serial-autogen-row'>
+        <input class='input' id='serial-auto-count' type='number' min='1' max='200' step='1' inputmode='numeric' placeholder='Số lượng (VD: 10)' aria-label='Số lượng mã muốn tự tạo'/>
+        <input class='input' id='serial-auto-prefix' maxlength='20' value='${esc(initialPrefix)}' placeholder='Tiền tố (VD: SACH) hoặc trống = EAN-13' aria-label='Tiền tố mã tự tạo'/>
+        <button class='btn btn-secondary' type='button' data-action='autogen-form-serials'>⚡ Tự sinh mã</button>
+      </div>
+      <div class='serial-summary-line'><strong>Tổng tồn: <span data-serial-count>0</span></strong><span>1 mã = 1 đơn vị · bán xong tự khóa mã</span></div>
+      <div class='serial-chips-box' data-serial-chips></div>
     </div>`;
+  }
+
+  function switchQuickProductMode(form, mode) {
+    if (!form) return;
+    const isSerial = mode === 'serial';
+    form.dataset.stockMode = isSerial ? 'serial' : 'standard';
+    form.querySelectorAll('[data-action="switch-product-stock-mode"]').forEach(btn => {
+      const active = btn.dataset.mode === form.dataset.stockMode;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+    const stdBlock = form.querySelector('[data-stock-mode-panel="standard"]');
+    const serBlock = form.querySelector('[data-stock-mode-panel="serial"]');
+    if (stdBlock) stdBlock.hidden = isSerial;
+    if (serBlock) serBlock.hidden = !isSerial;
+    if (isSerial) {
+      if (form.elements.inventoryTracked) form.elements.inventoryTracked.checked = true;
+      renderFormSerialChips(form);
+      form.querySelector('#serial-rapid-input')?.focus();
+    } else {
+      closeSerialCamera();
+    }
   }
 
   function openQuickProduct(focusOrInitial = false) {
@@ -6452,45 +6665,37 @@
     }
     const opts = typeof focusOrInitial === 'object' && focusOrInitial !== null ? focusOrInitial : { focusName: focusOrInitial === true };
     const tpl = opts.templateProduct || null;
-    let initialBarcode = opts.barcode || '';
-    if (tpl && !initialBarcode) {
-      try { initialBarcode = nextUniqueBarcode() || ''; } catch { initialBarcode = ''; }
-    }
+    const initialBarcode = opts.barcode || '';
+    const initialMode = opts.mode === 'serial' ? 'serial' : 'standard';
     const idempotencyKey = newIdempotencyKey();
     const receiveAt = warehouses.length > 1 ? warehouses.find(warehouse => warehouse.id === selectedWarehouseId)?.name : '';
-    const initialExtraRows = Array.isArray(opts.multiRows) && opts.multiRows.length
-      ? opts.multiRows.map((r, i) => renderMultiBarcodeRowHtml(r, i + 2)).join('')
-      : '';
-    const body = `<form id='entity-form' class='product-editor-form' data-form='quick-product' data-idempotency-key='${esc(idempotencyKey)}'>
-      ${tpl ? `<div class='notice-item' style='margin-bottom:10px'><span>${icon('spark', 18)}</span><span><strong>Cùng loại với “${esc(tpl.name)}”</strong><small>Đã chép sẵn giá, danh mục và đơn vị.</small></span></div>` : ''}
+    const body = `<form id='entity-form' class='product-editor-form' data-form='quick-product' data-stock-mode='${initialMode}' data-serial-codes='[]' data-idempotency-key='${esc(idempotencyKey)}'>
       <section class='product-editor-section' aria-labelledby='product-quick-heading'>
-        <h3 id='product-quick-heading'>Thông tin bán hàng</h3>
-        <div class='product-editor-photo-name'>${productPhotoField()}<div class='form-field'><label class='input-label' for='quick-product-name'>Tên mặt hàng <span class='editor-required' aria-hidden='true'>*</span></label><input class='input' id='quick-product-name' name='name' value='${esc(opts.name || tpl?.name || '')}' required maxlength='240' placeholder='Ví dụ: Áo thun cotton'/></div></div>
-        ${productBarcodeFieldHtml(initialBarcode, true, 'form-field full')}
-        <details class='product-editor-section multi-barcode-builder' style='margin-top:8px;border:1px dashed var(--accent, #2e6b4e);border-radius:12px;padding:10px 12px' ${opts.openMultiBarcode || initialExtraRows ? 'open' : ''}>
-          <summary style='cursor:pointer;font-weight:600;color:var(--accent-strong, #1f5139)'>＋ Thêm nhiều mã vạch / phân loại</summary>
-          <div class='editor-input-action' style='margin:8px 0'>
-            <input class='input' id='multi-barcode-rapid-input' type='search' placeholder='Quét hoặc nhập mã vạch rồi Enter…' autocomplete='off'/>
-            <button class='btn btn-secondary' type='button' data-action='add-multi-barcode-row'>＋ Dòng</button>
-            <button class='btn btn-secondary' type='button' data-action='batch-generate-multi-barcodes'>⚡ Tạo 3 mã</button>
-          </div>
-          <div class='form-grid' style='margin-bottom:8px'>
-            <label class='form-field' style='margin:0'><span class='input-label'>Tên mẫu #1</span><input class='input' name='primaryVariantSuffix' value='${esc(opts.primarySuffix || '')}' maxlength='80' placeholder='VD: Mẫu 1, Màu Đen'/></label>
-            <label class='install-hint' style='display:flex;align-items:center;gap:8px;margin:0'><input type='checkbox' name='groupMultiBarcodesAsVariants'/><span>Gom thành 1 nhóm biến thể</span></label>
-          </div>
-          <div id='multi-barcode-rows'>${initialExtraRows}</div>
-        </details>
-        <div class='form-field full' style='margin-top:8px'><label class='input-label' for='quick-product-extra-barcodes'>Mã vạch phụ</label><input class='input' id='quick-product-extra-barcodes' name='extraBarcodes' value='' placeholder='Tùy chọn, cách nhau bằng dấu phẩy'/></div>
+        <h3 id='product-quick-heading'>Thông tin hàng hóa</h3>
+        <div class='product-editor-photo-name'>${productPhotoField()}<div class='form-field'><label class='input-label' for='quick-product-name'>Tên hàng hóa <span class='editor-required' aria-hidden='true'>*</span></label><input class='input' id='quick-product-name' name='name' value='${esc(opts.name || tpl?.name || '')}' required maxlength='240' placeholder='Ví dụ: Sách Tiếng Anh, Áo thun cotton'/></div></div>
         ${productSaleFields(tpl)}
-        <div class='form-field editor-opening-stock'><label class='input-label' for='quick-product-opening'>Số lượng đang có</label><input class='input' id='quick-product-opening' name='openingQuantity' type='number' min='0' step='0.001' inputmode='decimal' value='${esc(opts.openingQuantity ?? '')}' placeholder='0' aria-describedby='product-opening-hint'/><small id='product-opening-hint'>Dùng để ghi tồn ban đầu${receiveAt ? ` tại ${esc(receiveAt)}` : ''}. Hàng mới nhận thì ghi ở Nhập hàng.</small></div>
       </section>
-      <details class='product-editor-section editor-identity-details' ${tpl ? 'open' : ''}><summary>Mã SKU, danh mục và giá vốn</summary>${productIdentityFields(tpl ? { ...tpl, sku: '' } : null, '', false, opts.sku || '', true, false)}</details>
-      <section class='product-editor-section' aria-labelledby='product-stock-heading'><h3 id='product-stock-heading'>Quản lý kho và quy đổi</h3>${productTrackingFields(tpl, true)}${productPackFields(tpl)}</section>
+      <section class='product-editor-section' aria-labelledby='product-mode-heading'>
+        <h3 id='product-mode-heading'>Mã vạch &amp; tồn kho ban đầu${receiveAt ? ` · ${esc(receiveAt)}` : ''}</h3>
+        <div class='segmented-mode' role='group' aria-label='Kiểu quản lý tồn kho'>
+          <button type='button' class='segmented-btn ${initialMode === 'standard' ? 'active' : ''}' data-action='switch-product-stock-mode' data-mode='standard' aria-pressed='${initialMode === 'standard'}'>Hàng thường (theo số lượng)</button>
+          <button type='button' class='segmented-btn ${initialMode === 'serial' ? 'active' : ''}' data-action='switch-product-stock-mode' data-mode='serial' aria-pressed='${initialMode === 'serial'}'>Từng mã riêng (Serial / IMEI)</button>
+        </div>
+        <div data-stock-mode-panel='standard' ${initialMode === 'serial' ? 'hidden' : ''}>
+          ${productBarcodeFieldHtml(initialBarcode, true, 'form-field full')}
+          <div class='form-field editor-opening-stock'><label class='input-label' for='quick-product-opening'>Tồn kho ban đầu</label><input class='input' id='quick-product-opening' name='openingQuantity' type='number' min='0' step='0.001' inputmode='decimal' value='${esc(opts.openingQuantity ?? '')}' placeholder='0'/></div>
+        </div>
+        <div data-stock-mode-panel='serial' ${initialMode === 'serial' ? '' : 'hidden'}>
+          ${serialCapturePanelHtml(opts.sku || '')}
+        </div>
+      </section>
+      <details class='product-editor-section editor-identity-details' ${tpl ? 'open' : ''}><summary>Mã SKU, danh mục, giá vốn &amp; quy đổi</summary>${productIdentityFields(tpl ? { ...tpl, sku: '' } : null, '', false, opts.sku || '', true, false)}${productTrackingFields(tpl, true)}${productPackFields(tpl)}</details>
       <div class='auth-message error' data-quick-product-error role='alert' hidden></div>
     </form>`;
-    showModal(tpl ? 'Thêm mã vạch / món cùng loại' : 'Thêm mặt hàng', '', body, `<button class='btn btn-secondary' type='submit' form='entity-form' data-add-another='true'>Lưu &amp; thêm tiếp</button><button class='btn btn-secondary' type='submit' form='entity-form' data-print-after='true'>Lưu &amp; in tem</button><button class='btn btn-primary' type='submit' form='entity-form'>Lưu mặt hàng</button>`, true, { productEditor: true });
+    showModal('Thêm hàng hóa', '', body, `<button class='btn btn-secondary' type='submit' form='entity-form' data-add-another='true'>Lưu &amp; thêm tiếp</button><button class='btn btn-secondary' type='submit' form='entity-form' data-print-after='true'>Lưu &amp; in tem</button><button class='btn btn-primary' type='submit' form='entity-form'>Lưu hàng hóa</button>`, true, { productEditor: true });
     const form = modal.querySelector('[data-form="quick-product"]');
     loadProductEditorCategories(form);
+    renderFormSerialChips(form);
     if (opts.focusName) form.elements.name.focus();
   }
 
@@ -6500,12 +6705,12 @@
     const nextLabel = readyToSell && canSell ? 'Bắt đầu bán' : 'Xem kho hàng';
     const canReceive = !readyToSell && productById(productId) && ['owner', 'manager', 'stockkeeper', 'accountant'].includes(store.role);
     const next = canReceive
-      ? `<button class='btn btn-primary' data-action='receive-stock' data-id='${esc(productId)}'>Nhập hàng</button>`
+      ? `<button class='btn btn-primary' data-action='add-product-units' data-id='${esc(productId)}'>＋ Thêm tồn / Quét mã</button>`
       : `<button class='btn btn-primary' data-route='${nextRoute}'>${nextLabel}</button>`;
     const printImported = lastImportedPrintItems.length
       ? `<button class='btn btn-secondary' type='button' data-action='print-barcode-imported'>In tem (${number(lastImportedPrintItems.length)} SP)</button>`
       : '';
-    showModal('Đã lưu mặt hàng', readyToSell ? 'Bạn có thể in tem mã vạch, thêm hàng khác hoặc bắt đầu bán.' : 'Hàng đã được lưu. Có thể in tem trước hoặc ghi số lượng thực nhận để bắt đầu bán.', '', `${printImported}<button class='btn btn-secondary' data-action='new-product'>Thêm mặt hàng khác</button>${next}`);
+    showModal('Đã lưu hàng hóa', '', '', `${printImported}<button class='btn btn-secondary' data-action='new-product'>Thêm hàng khác</button>${next}`);
   }
 
   function resetCatalogFilters() {
@@ -6522,6 +6727,7 @@
   async function saveQuickProduct(form, submitter) {
     if (form.dataset.saving === 'true') return;
     closeProductBarcode();
+    closeSerialCamera();
     const requestStoreId = store.id;
     const requestSession = authSession;
     const sameContext = function () { return authSession === requestSession && store.id === requestStoreId; };
@@ -6535,56 +6741,48 @@
     const submitButton = submitButtons.find(function (button) { return !button.dataset.addAnother && !button.dataset.printAfter; });
     const reportError = function (message) {
       if (feedback) { feedback.hidden = false; feedback.textContent = message; }
-      else toast('Chưa lưu được mặt hàng', message, 'error');
+      else toast('Chưa lưu được hàng hóa', message, 'error');
     };
     let pending = loadPendingProductImport();
     if (pending && (pending.storeId !== store.id || pending.key !== key)) {
-      return reportError('Còn một lần nhập danh sách đang chờ xác nhận. Hãy mở mục Nhập danh sách để hoàn tất trước.');
+      return reportError('Còn một lần nhập danh sách đang chờ xác nhận. Hãy mở mục Nhập từ file để hoàn tất trước.');
     }
+    const isSerialMode = form.dataset.stockMode === 'serial';
+    const serialCodes = isSerialMode ? readFormSerialCodes(form) : [];
     if (!pending) {
       const name = String(formData.get('name') || '').trim();
       const price = Number(formData.get('price'));
       let cost = Number(formData.get('cost') || 0);
-      const inventoryTracked = formData.get('inventoryTracked') === 'on';
-      const openingQuantity = String(formData.get('openingQuantity') || '').trim() || '0';
+      const inventoryTracked = isSerialMode ? true : (formData.get('inventoryTracked') === 'on');
+      const openingQuantity = isSerialMode ? String(serialCodes.length) : (String(formData.get('openingQuantity') || '').trim() || '0');
       const quantityPattern = /^\d{1,10}(?:\.\d{1,3})?$/;
-      if (!name || name.length > 240) return reportError('Nhập tên mặt hàng từ 1 đến 240 ký tự.');
-      if (!String(formData.get('price') || '').trim() || !Number.isSafeInteger(price) || price < 0) return reportError('Nhập giá bán bằng số đồng, không có phần lẻ.');
+      if (!name || name.length > 240) return reportError('Nhập tên hàng hóa từ 1 đến 240 ký tự.');
+      if (!String(formData.get('price') || '').trim() || !Number.isSafeInteger(price) || price < 0) return reportError('Nhập giá bán bằng số VND nguyên không âm.');
       if (!Number.isSafeInteger(cost) || cost < 0) return reportError('Giá vốn phải là số VND nguyên không âm.');
-      if (!quantityPattern.test(openingQuantity)) return reportError('Số lượng đang có phải không âm và tối đa 3 chữ số thập phân.');
-      if (!inventoryTracked && Number(openingQuantity) !== 0) return reportError('Mặt hàng không theo dõi tồn cần để số lượng đang có bằng 0.');
+      if (!quantityPattern.test(openingQuantity)) return reportError('Tồn kho ban đầu phải không âm và tối đa 3 chữ số thập phân.');
+      if (!inventoryTracked && Number(openingQuantity) !== 0) return reportError('Mặt hàng không theo dõi tồn cần để tồn kho ban đầu bằng 0.');
       const rawSku = String(formData.get('sku') || '').trim();
       const sku = rawSku || newProductSku(key);
       const rawThreshold = String(formData.get('minStock') || '').trim() || '0';
       if (!quantityPattern.test(rawThreshold)) return reportError('Mức nhắc tồn phải không âm và tối đa 3 chữ số thập phân.');
       let image; try { image = readProductPhoto(form); } catch (error) { return reportError(error.message); }
-      let purchasePack; try { purchasePack=readProductPack(form); } catch(error) { return reportError(error.message); }
-      if(purchasePack&&!String(formData.get('cost')||'').trim())cost=Number(window.SlinkPurchaseUnits.fromPack(purchasePack).unitCostVnd);
-      if (purchasePack && cost > price && cost > Number(window.SlinkPurchaseUnits.fromPack(purchasePack).unitCostVnd) && !formData.get('confirmCostMismatch')) return reportError('Giá vốn cao hơn giá bán và giá nhập quy đổi. Chọn dùng giá quy đổi hoặc xác nhận giữ giá vốn.');
-      const rawBarcode = String(formData.get('barcode') || '').trim();
+      let purchasePack; try { purchasePack = readProductPack(form); } catch (error) { return reportError(error.message); }
+      if (purchasePack && !String(formData.get('cost') || '').trim()) cost = Number(window.SlinkPurchaseUnits.fromPack(purchasePack).unitCostVnd);
+      if (purchasePack && cost > price && cost > Number(window.SlinkPurchaseUnits.fromPack(purchasePack).unitCostVnd) && !formData.get('confirmCostMismatch')) return reportError('Giá vốn cao hơn giá bán và giá nhập quy đổi.');
+      const rawBarcode = isSerialMode ? '' : String(formData.get('barcode') || '').trim();
       let barcodeValue = rawBarcode || null;
-      if (!barcodeValue && printAfter) {
+      if (!isSerialMode && !barcodeValue && printAfter) {
         try { barcodeValue = nextUniqueBarcode() || null; }
         catch (error) { return reportError(error.message); }
       }
-      const extraBarcodesRaw = String(formData.get('extraBarcodes') || '').trim();
-      const extraBarcodes = extraBarcodesRaw
-        ? extraBarcodesRaw.split(/[\n,;]+/).map(s => s.trim()).filter(s => s && s !== barcodeValue)
-        : [];
       const categoryVal = readProductCategory(formData);
       const unitVal = String(formData.get('unit') || '').trim() || 'cái';
-      const extraRowEls = Array.from(form.querySelectorAll('[data-multi-barcode-row]'));
-      const groupAsVariants = formData.get('groupMultiBarcodesAsVariants') === 'on' && extraRowEls.length >= 1;
-      const primarySuffix = String(formData.get('primaryVariantSuffix') || '').trim() || (extraRowEls.length ? 'Mẫu 1' : '');
-      const usedBarcodes = new Set(barcodeValue ? [barcodeValue] : []);
-      const items = [{
-        ...(purchasePack ? {purchasePack} : {}),
+      const item = {
+        ...(purchasePack ? { purchasePack } : {}),
         image,
         sku,
         barcode: barcodeValue,
-        ...(extraBarcodes.length ? { extraBarcodes } : {}),
-        name: ((!groupAsVariants && extraRowEls.length && primarySuffix) ? `${name} · ${primarySuffix}` : name).slice(0, 240),
-        ...(groupAsVariants ? { variantGroupName: name, variantAttributes: { 'Phân loại': primarySuffix || 'Mẫu 1' } } : {}),
+        name,
         category: categoryVal,
         unit: unitVal,
         salePriceVnd: price,
@@ -6592,43 +6790,9 @@
         lowStockThreshold: rawThreshold,
         inventoryTracked,
         openingQuantity,
-      }];
-      for (let idx = 0; idx < extraRowEls.length; idx++) {
-        const rowEl = extraRowEls[idx];
-        let rowBarcode = String(rowEl.querySelector('[data-mb-barcode]')?.value || '').trim();
-        if (!rowBarcode) {
-          try { rowBarcode = nextUniqueBarcode(usedBarcodes) || ''; }
-          catch (error) { return reportError(error.message); }
-        }
-        if (rowBarcode && usedBarcodes.has(rowBarcode)) {
-          return reportError(`Mã vạch “${rowBarcode}” bị trùng giữa các dòng trong cùng biểu mẫu.`);
-        }
-        if (rowBarcode) usedBarcodes.add(rowBarcode);
-        const rowSuffix = String(rowEl.querySelector('[data-mb-suffix]')?.value || '').trim() || `Mẫu ${idx + 2}`;
-        const rowQtyRaw = String(rowEl.querySelector('[data-mb-qty]')?.value || '').trim();
-        const rowQty = rowQtyRaw || openingQuantity;
-        if (!quantityPattern.test(rowQty)) return reportError(`Dòng mã vạch #${idx + 2}: số lượng tồn đầu không hợp lệ.`);
-        const rowPriceRaw = String(rowEl.querySelector('[data-mb-price]')?.value || '').trim();
-        const rowPrice = rowPriceRaw !== '' ? Number(rowPriceRaw) : price;
-        if (!Number.isSafeInteger(rowPrice) || rowPrice < 0) return reportError(`Dòng mã vạch #${idx + 2}: giá bán phải là số VND nguyên không âm.`);
-        const rowSku = `${sku.slice(0, 76)}-${String(idx + 2).padStart(2, '0')}`;
-        items.push({
-          ...(purchasePack ? {purchasePack} : {}),
-          image,
-          sku: rowSku,
-          barcode: rowBarcode || null,
-          name: groupAsVariants ? name : `${name} · ${rowSuffix}`.slice(0, 240),
-          ...(groupAsVariants ? { variantGroupName: name, variantAttributes: { 'Phân loại': rowSuffix } } : {}),
-          category: categoryVal,
-          unit: unitVal,
-          salePriceVnd: rowPrice,
-          costVnd: cost,
-          lowStockThreshold: rawThreshold,
-          inventoryTracked,
-          openingQuantity: !inventoryTracked ? '0' : rowQty,
-        });
-      }
-      const payload = { items };
+        ...(isSerialMode ? { serialTracked: true, serialCodes } : {}),
+      };
+      const payload = { items: [item] };
       if (selectedWarehouseId) payload.warehouseId = selectedWarehouseId;
       pending = { storeId: store.id, key, payload };
     }
@@ -6648,7 +6812,7 @@
       const canContinue = requestGeneration === modalGeneration && !modal.hidden;
       if (canContinue) {
         resetCatalogFilters();
-        if (addAnother) openQuickProduct(true);
+        if (addAnother) openQuickProduct({ focusName: true, mode: isSerialMode ? 'serial' : 'standard' });
         else closeModal();
       }
       await loadProductsPage('', 0);
@@ -6660,18 +6824,16 @@
       const created = createdList[0];
       const fallback = pending.payload.items[0];
       const readyToSell = !(created?.inventory_tracked ?? fallback.inventoryTracked) || Number(created?.on_hand ?? fallback.openingQuantity) > 0;
-      const createdName = createdList.length > 1
-        ? `${createdList.length} mặt hàng / mã vạch (${fallback.name})`
-        : (created?.name || fallback.name || 'Mặt hàng mới');
-      toast('Đã thêm mặt hàng', readyToSell ? `${createdName} · có thể bán ngay.` : `${createdName} · ghi số lượng đang có để bắt đầu bán.`);
+      const createdName = created?.name || fallback.name || 'Hàng hóa mới';
+      toast('Đã lưu hàng hóa', readyToSell ? `${createdName} · sẵn sàng bán.` : `${createdName} · tồn 0, bấm ＋ để thêm tồn hoặc quét mã.`);
       if (printAfter && requestGeneration === modalGeneration && modal.hidden) {
-        const printItems = (createdList.length ? createdList : pending.payload.items).map((cRow, idx) => {
-          const itemFallback = pending.payload.items[idx] || fallback;
-          const mappedCreated = cRow?.id ? mapProduct(cRow) : { ...itemFallback, id: itemFallback.sku, price: itemFallback.salePriceVnd };
-          const qtyCopies = Math.max(1, Math.min(200, Math.round(Number(itemFallback.openingQuantity) || 1)));
-          return { ...mappedCreated, copies: qtyCopies };
-        });
-        openBarcodePrintModal(printItems);
+        const mappedCreated = created?.id ? mapProduct(created) : { ...fallback, id: fallback.sku, price: fallback.salePriceVnd };
+        if (isSerialMode && serialCodes.length) {
+          openBarcodePrintModal(serialCodes.map((code) => ({ ...mappedCreated, barcode: code, copies: 1 })));
+        } else {
+          const qtyCopies = Math.max(1, Math.min(200, Math.round(Number(fallback.openingQuantity) || 1)));
+          openBarcodePrintModal([{ ...mappedCreated, copies: qtyCopies }]);
+        }
       }
     } catch (error) {
       if (!sameContext()) return;
@@ -6686,14 +6848,173 @@
         updateProductHints(form);
         updateProductCategoryField(form.querySelector('[data-product-category]'));
         if (feedback) { feedback.hidden = false; feedback.textContent = error.message; }
-        if (submitButton) { submitButton.disabled = false; submitButton.textContent = 'Lưu mặt hàng'; }
+        if (submitButton) { submitButton.disabled = false; submitButton.textContent = 'Lưu hàng hóa'; }
       } else {
         if (feedback) { feedback.hidden = false; feedback.textContent = 'Chưa nhận được xác nhận. Bấm “Gửi lại để kiểm tra” để Slink kiểm tra đúng thao tác này, không tạo trùng.'; }
         if (submitButton) { submitButton.disabled = false; submitButton.textContent = 'Gửi lại để kiểm tra'; }
       }
-      if (!feedback) toast('Chưa lưu được mặt hàng', error.message, 'error');
+      if (!feedback) toast('Chưa lưu được hàng hóa', error.message, 'error');
     } finally {
       delete form.dataset.saving;
+    }
+  }
+
+  function closeSerialCamera() {
+    const surface = modal.querySelector('[data-scan-mode="serial-list"]:not([hidden])');
+    if (!surface) return false;
+    stopScanCamera();
+    surface.hidden = true;
+    return true;
+  }
+
+  function openAddProductUnits(productId) {
+    const product = productById(productId) || inventoryProducts.find(item => item.id === productId);
+    if (!product) return;
+    const defaultTab = product.serialTracked ? 'serial' : 'quantity';
+    const warehouse = warehouses.find(w => w.id === selectedWarehouseId) || warehouses[0];
+    const idempotencyKey = newIdempotencyKey();
+    const body = `<form id='entity-form' class='product-editor-form' data-form='add-product-units' data-id='${esc(product.id)}' data-mode='${defaultTab}' data-serial-codes='[]' data-idempotency-key='${esc(idempotencyKey)}'>
+      <div class='add-units-summary'>
+        <strong>${esc(product.name)}</strong>
+        <span>SKU: ${esc(product.sku)} · Tồn hiện tại: <strong>${number(product.stock)} ${esc(product.unit)}</strong> · Giá bán: ${money(product.price)}${warehouse ? ` · Kho: ${esc(warehouse.name)}` : ''}</span>
+      </div>
+      <div class='segmented-mode' role='group' aria-label='Cách thêm hàng vào kho'>
+        <button type='button' class='segmented-btn ${defaultTab === 'serial' ? 'active' : ''}' data-action='switch-add-units-mode' data-mode='serial' aria-pressed='${defaultTab === 'serial'}'>Quét / thêm từng mã riêng</button>
+        ${!product.serialTracked ? `<button type='button' class='segmented-btn ${defaultTab === 'quantity' ? 'active' : ''}' data-action='switch-add-units-mode' data-mode='quantity' aria-pressed='${defaultTab === 'quantity'}'>Nhập thêm số lượng</button>` : ''}
+      </div>
+      <div data-add-units-panel='serial' ${defaultTab === 'serial' ? '' : 'hidden'}>
+        ${serialCapturePanelHtml(product.sku.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 12))}
+      </div>
+      ${!product.serialTracked ? `<div data-add-units-panel='quantity' ${defaultTab === 'quantity' ? '' : 'hidden'}>
+        <div class='form-grid'>
+          <div class='form-field'><label class='input-label' for='add-units-qty'>Số lượng thêm (${esc(product.unit)}) *</label><input class='input' id='add-units-qty' name='addQty' type='number' min='0.001' step='0.001' inputmode='decimal' placeholder='Ví dụ: 10'/></div>
+          <div class='form-field'><label class='input-label' for='add-units-cost'>Giá nhập 1 ${esc(product.unit)} (đ)</label><input class='input' id='add-units-cost' name='unitCostVnd' type='number' min='0' step='1' value='${esc(product.cost || 0)}'/></div>
+        </div>
+        <div class='form-field'><label class='input-label' for='add-units-note'>Ghi chú</label><input class='input' id='add-units-note' name='note' maxlength='240' placeholder='Nhập thêm hàng cùng loại'/></div>
+      </div>` : ''}
+      <div class='auth-message error' data-add-units-error role='alert' hidden></div>
+    </form>`;
+    const footer = `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button><button class='btn btn-secondary' type='submit' form='entity-form' data-print-after='true'>Lưu &amp; in tem</button><button class='btn btn-primary' type='submit' form='entity-form'>Lưu vào kho</button>`;
+    showModal('Thêm tồn / Quét mã', '', body, footer, true);
+    const form = modal.querySelector('[data-form="add-product-units"]');
+    renderFormSerialChips(form);
+    if (defaultTab === 'serial') form.querySelector('#serial-rapid-input')?.focus();
+    else form.querySelector('#add-units-qty')?.focus();
+  }
+
+  async function saveAddProductUnits(form, submitter) {
+    if (form.dataset.saving === 'true') return;
+    closeSerialCamera();
+    const requestStoreId = store.id;
+    const requestSession = authSession;
+    const requestGeneration = modalGeneration;
+    const sameContext = () => authSession === requestSession && store.id === requestStoreId;
+    const productId = form.dataset.id;
+    const product = productById(productId) || inventoryProducts.find(item => item.id === productId);
+    if (!product) return;
+    const mode = form.dataset.mode || (product.serialTracked ? 'serial' : 'quantity');
+    const printAfter = submitter?.dataset.printAfter === 'true';
+    const feedback = form.querySelector('[data-add-units-error]');
+    const reportError = (msg) => {
+      if (feedback) { feedback.hidden = false; feedback.textContent = msg; }
+      else toast('Chưa thêm được hàng', msg, 'error');
+    };
+    const key = form.dataset.idempotencyKey || newIdempotencyKey();
+    form.dataset.idempotencyKey = key;
+    const submitButtons = Array.from(modal.querySelectorAll('button[type="submit"][form="entity-form"]'));
+    form.dataset.saving = 'true';
+    if (feedback) feedback.hidden = true;
+    submitButtons.forEach(b => { b.disabled = true; });
+    try {
+      if (mode === 'serial') {
+        const codes = readFormSerialCodes(form);
+        if (!codes.length) throw new Error('Quét hoặc bấm Tự sinh ít nhất 1 mã riêng trước khi lưu.');
+        const res = await apiRequest(`/api/stores/${encodeURIComponent(requestStoreId)}/products/${encodeURIComponent(productId)}/serials`, {
+          method: 'POST',
+          headers: { 'idempotency-key': key },
+          body: {
+            codes,
+            warehouseId: selectedWarehouseId || undefined,
+            note: 'Thêm mã riêng',
+          },
+        });
+        if (!sameContext()) return;
+        const canClose = requestGeneration === modalGeneration && !modal.hidden;
+        if (canClose) closeModal();
+        await Promise.all([loadProductsPage(searchTerms.products, 0), page === 'inventory' ? loadInventoryPage() : Promise.resolve()]);
+        if (!sameContext()) return;
+        const addedCodes = (res.serials || []).map(r => r.code);
+        toast('Đã thêm mã vào kho', `${product.name}: +${number(res.addedCount)} ${product.unit} (tồn mới: ${number(res.newOnHand)}).`);
+        if (printAfter && canClose && modal.hidden && addedCodes.length) {
+          openBarcodePrintModal(addedCodes.map(code => ({ ...product, barcode: code, copies: 1 })));
+        }
+      } else {
+        const fd = new FormData(form);
+        const qtyRaw = String(fd.get('addQty') || '').trim();
+        const qty = Number(qtyRaw);
+        if (!qtyRaw || !Number.isFinite(qty) || qty <= 0) throw new Error('Nhập số lượng lớn hơn 0.');
+        const unitCostVnd = Number(fd.get('unitCostVnd') || 0);
+        if (!Number.isSafeInteger(unitCostVnd) || unitCostVnd < 0) throw new Error('Giá nhập phải là số VND nguyên không âm.');
+        await apiRequest(`/api/stores/${encodeURIComponent(requestStoreId)}/purchases`, {
+          method: 'POST',
+          headers: { 'idempotency-key': key },
+          body: {
+            warehouseId: selectedWarehouseId || undefined,
+            paymentMethod: 'other',
+            paidAmountVnd: 0,
+            note: String(fd.get('note') || '').trim() || 'Nhập thêm tồn nhanh',
+            items: [{ productId, quantity: qty, unitCostVnd }],
+          },
+        });
+        if (!sameContext()) return;
+        const canClose = requestGeneration === modalGeneration && !modal.hidden;
+        if (canClose) closeModal();
+        await Promise.all([loadProductsPage(searchTerms.products, 0), page === 'inventory' ? loadInventoryPage() : Promise.resolve()]);
+        if (!sameContext()) return;
+        toast('Đã nhập thêm tồn kho', `${product.name}: +${number(qty)} ${product.unit}.`);
+        if (printAfter && canClose && modal.hidden) {
+          openBarcodePrintModal([{ ...product, copies: Math.min(200, Math.max(1, Math.round(qty))) }]);
+        }
+      }
+    } catch (error) {
+      if (!sameContext()) return;
+      if (error.status >= 400 && error.status < 500 && !['idempotency_conflict', 'request_in_progress'].includes(error.code)) {
+        form.dataset.idempotencyKey = newIdempotencyKey();
+      }
+      form.dataset.saving = 'false';
+      submitButtons.forEach(b => { b.disabled = false; });
+      reportError(error.message || 'Chưa lưu được tồn kho.');
+    } finally {
+      delete form.dataset.saving;
+    }
+  }
+
+  async function openProductSerials(productId, statusFilter = 'all') {
+    const product = productById(productId) || inventoryProducts.find(item => item.id === productId);
+    if (!product) return;
+    const canEdit = ['owner', 'manager', 'stockkeeper'].includes(store.role);
+    showModal(`Mã riêng · ${product.name}`, '', `<div class='empty-state'><span>Đang tải danh sách mã…</span></div>`, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button>`, true);
+    const gen = modalGeneration;
+    try {
+      const qs = new URLSearchParams({ status: statusFilter, limit: '200' });
+      if (selectedWarehouseId) qs.set('warehouseId', selectedWarehouseId);
+      const data = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/products/${encodeURIComponent(productId)}/serials?${qs.toString()}`, { preferFresh: true });
+      if (modal.hidden || modalGeneration !== gen) return;
+      const inStockCodes = (data.serials || []).filter(s => s.status === 'in_stock');
+      const tabs = `<div class='segmented-mode' style='margin-bottom:10px'>
+        <button type='button' class='segmented-btn ${statusFilter === 'all' ? 'active' : ''}' data-action='filter-product-serials' data-id='${esc(productId)}' data-status='all'>Tất cả (${number(data.counts.inStock + data.counts.sold)})</button>
+        <button type='button' class='segmented-btn ${statusFilter === 'in_stock' ? 'active' : ''}' data-action='filter-product-serials' data-id='${esc(productId)}' data-status='in_stock'>Còn trong kho (${number(data.counts.inStock)})</button>
+        <button type='button' class='segmented-btn ${statusFilter === 'sold' ? 'active' : ''}' data-action='filter-product-serials' data-id='${esc(productId)}' data-status='sold'>Đã bán (${number(data.counts.sold)})</button>
+      </div>`;
+      const rowsHtml = (data.serials || []).length
+        ? `<div class='table-wrap'><table class='data-table'><thead><tr><th>Mã riêng / QR</th><th>Kho</th><th>Trạng thái</th><th>Đơn hàng</th></tr></thead><tbody>${data.serials.map(s => `<tr><td><code>${esc(s.code)}</code></td><td>${esc(s.warehouse_name || '')}</td><td>${s.status === 'in_stock' ? `<span class='badge badge-success'>Còn trong kho</span>` : `<span class='badge badge-neutral'>Đã bán</span>`}</td><td>${s.order_number ? `<button type='button' class='link-button' data-action='order-detail' data-id='${esc(s.order_id)}'>${esc(s.order_number)}</button>` : '—'}</td></tr>`).join('')}</tbody></table></div>`
+        : `<div class='empty-state'><strong>Chưa có mã nào</strong></div>`;
+      const footer = `${canEdit ? `<button class='btn btn-secondary' type='button' data-action='add-product-units' data-id='${esc(productId)}'>＋ Thêm / quét mã</button>` : ''}${inStockCodes.length ? `<button class='btn btn-secondary' type='button' data-action='print-product-serials' data-id='${esc(productId)}'>In ${number(inStockCodes.length)} tem còn kho</button>` : ''}<button class='btn btn-primary' type='button' data-action='close-modal'>Đóng</button>`;
+      modal.dataset.productSerialsCache = JSON.stringify(inStockCodes.map(s => s.code));
+      showModal(`Mã riêng · ${product.name}`, '', tabs + rowsHtml, footer, true);
+    } catch (error) {
+      if (modal.hidden || modalGeneration !== gen) return;
+      showModal(`Mã riêng · ${product.name}`, '', `<div class='auth-message error'>${esc(error.message)}</div>`, `<button class='btn btn-primary' type='button' data-action='close-modal'>Đóng</button>`);
     }
   }
 
@@ -6703,7 +7024,7 @@
     if (id && !p) return;
     const scanned = !p && initial && initial.fromScan ? initial : null;
     const rawBarcode = p ? p.barcode : (scanned && scanned.barcode ? scanned.barcode : '');
-    const barcode = rawBarcode.length <= 80 ? rawBarcode : '';
+    const barcode = rawBarcode.length <= 120 ? rawBarcode : '';
     const suggestedSku = scanned
       ? (scanned.sku || (barcode && /^[A-Za-z0-9._-]+$/.test(barcode) ? barcode : `MH-${Date.now().toString(36).toUpperCase()}`))
       : '';
@@ -6730,9 +7051,10 @@
     </form>`;
     const footer = `<button class='btn btn-secondary' type='button' data-action='close-modal'>Hủy</button><button class='btn btn-primary' type='submit' form='entity-form'>${p ? 'Lưu thay đổi' : 'Thêm sản phẩm'}</button>`;
     const actions = p ? [
-      ['clone-product', '＋ Thêm mã vạch / món cùng loại'],
+      ['add-product-units', '＋ Thêm tồn / Quét mã'],
+      p.serialTracked ? ['view-product-serials', 'Danh sách mã riêng'] : null,
       ['print-barcode-single', 'In tem mã vạch'],
-      p.inventoryTracked && ['owner', 'manager', 'stockkeeper'].includes(store.role) ? ['adjust-stock', 'Kiểm kê tồn kho'] : null,
+      p.inventoryTracked && !p.serialTracked && ['owner', 'manager', 'stockkeeper'].includes(store.role) ? ['adjust-stock', 'Kiểm kê tồn kho'] : null,
       ['owner', 'manager', 'stockkeeper', 'accountant'].includes(store.role) ? ['product-price-history', 'Lịch sử giá'] : null,
       grouped ? ['add-product-to-existing-variant-group', 'Thêm SKU vào nhóm'] : null,
       ['owner', 'manager', 'stockkeeper'].includes(store.role) ? ['archive-product', 'Lưu trữ sản phẩm'] : null,
@@ -8590,7 +8912,7 @@
     openProduct('', { fromScan: true, barcode: barcode || '', sku: sku || '', photo: photo || '' });
   }
   function setScanCameraStatus(message, isError) {
-    const status = modal.querySelector('#scan-camera-status');
+    const status = modal.querySelector('[data-scan-surface]:not([hidden]) #scan-camera-status') || modal.querySelector('#scan-camera-status');
     if (!status) return;
     status.textContent = message;
     status.classList.toggle('error', Boolean(isError));
@@ -8672,14 +8994,13 @@
     scanPhotoFallbackTimer = 0;
     if (scanCameraStream) scanCameraStream.getTracks().forEach(function (track) { track.stop(); });
     scanCameraStream = null;
-    const video = modal.querySelector('[data-scan-surface] #scan-camera-video');
-    if (video) {
+    modal.querySelectorAll('[data-scan-surface] #scan-camera-video').forEach(function (video) {
       video.pause();
       video.srcObject = null;
       video.hidden = true;
       const surface = video.closest('[data-scan-surface]');
       if (surface) surface.classList.remove('camera-active');
-    }
+    });
     const button = modal.querySelector('[data-scan-surface] [data-action="start-camera-scan"]');
     const captureButton = modal.querySelector('[data-scan-surface] [data-action="capture-scan-photo"]');
     if (button && button.dataset.unsupported !== 'true') {
@@ -8700,7 +9021,8 @@
     const warehouseSearch = surface?.dataset.scanMode === 'warehouse-search';
     const productSearch = surface?.dataset.scanMode === 'product-search';
     const posCartScan = surface?.dataset.scanMode === 'pos-cart';
-    const inlineBarcode = surface?.dataset.scanMode === 'barcode-field' || warehouseSearch || productSearch || posCartScan;
+    const serialListScan = surface?.dataset.scanMode === 'serial-list';
+    const inlineBarcode = surface?.dataset.scanMode === 'barcode-field' || warehouseSearch || productSearch || posCartScan || serialListScan;
     if (!surface || !video || !codeInput || (!inlineBarcode && surface.dataset.scanMode !== 'order' && !form)) return;
     if (!window.isSecureContext || !navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
       setScanCameraStatus('Camera cần kết nối HTTPS và trình duyệt cho phép sử dụng camera. Bạn vẫn có thể nhập mã thủ công.', true);
@@ -8712,9 +9034,7 @@
       return;
     }
     scanCameraStarting = true;
-    const requestedFormats = surface.dataset.scanMode === 'order'
-      ? ['qr_code', 'ean_13', 'ean_8', 'code_128', 'code_39', 'upc_a', 'upc_e', 'itf']
-      : ['ean_13', 'ean_8', 'code_128', 'code_39', 'upc_a', 'upc_e', 'itf'];
+    const requestedFormats = ['qr_code', 'ean_13', 'ean_8', 'code_128', 'code_39', 'code_93', 'codabar', 'upc_a', 'upc_e', 'itf', 'data_matrix', 'pdf417', 'aztec'];
     try {
       if (typeof Detector !== 'function') {
         scanCameraDetector = null;
@@ -8738,7 +9058,7 @@
       setScanCameraStatus('Không thể tự đọc mã trên trình duyệt này. Mình sẽ mở camera để chụp ảnh mã cho bạn xem.');
     }
     if (requestGeneration !== scanCameraGeneration || modal.hidden) return;
-    if (button) { button.disabled = true; button.textContent = 'Đang mở camera…'; }
+    if (button && button.tagName === 'BUTTON') { button.disabled = true; button.textContent = 'Đang mở camera…'; }
     if (image) { image.hidden = true; image.removeAttribute('src'); }
     setScanCameraStatus('Đang mở camera. Cho phép truy cập camera, rồi đưa mã vào giữa khung.');
     try {
@@ -8762,7 +9082,7 @@
       }
       scanCameraRunning = true;
       scanCameraStarting = false;
-      if (button) button.textContent = 'Đang quét…';
+      if (button && button.tagName === 'BUTTON') button.textContent = 'Đang quét…';
       if (captureButton) captureButton.disabled = false;
       setScanCameraStatus(inlineBarcode ? 'Đưa mã vạch vào khung.' : 'Đưa mã vào khung.');
       if (!inlineBarcode) scanPhotoFallbackTimer = window.setTimeout(function () {
@@ -8778,8 +9098,21 @@
             const rawValue = detected ? detected.rawValue.trim() : '';
             if (rawValue) {
               if (inlineBarcode) {
-                if (rawValue.length < 3 || rawValue.length > codeInput.maxLength) {
+                const maxLen = codeInput.maxLength > 0 ? codeInput.maxLength : 120;
+                if (rawValue.length < 1 || rawValue.length > maxLen) {
                   setScanCameraStatus('Mã không hợp lệ.', true);
+                } else if (serialListScan) {
+                  const now = Date.now();
+                  if (posBarcodeScanState.lastCode === rawValue && now - posBarcodeScanState.lastAt < 1200) {
+                    if (scanCameraRunning && requestGeneration === scanCameraGeneration) scanCameraTimer = window.setTimeout(detectFrame, 180);
+                    return;
+                  }
+                  posBarcodeScanState.lastCode = rawValue;
+                  posBarcodeScanState.lastAt = now;
+                  const targetForm = surface.closest('form');
+                  const addedRes = appendFormSerialCode(targetForm, rawValue);
+                  if (addedRes.ok) setScanCameraStatus(`✓ Đã thêm mã ${addedRes.code} (tổng ${number(addedRes.total)})`);
+                  else setScanCameraStatus(addedRes.reason, true);
                 } else if (warehouseSearch) {
                   searchInventoryBarcode(rawValue);
                   return;
@@ -8914,7 +9247,7 @@
 
   let cartDraftReady = '', cartDraftLast = '';
   function cartDraftValue() {
-    return { items: cart.map(item => ({ id: item.id, qty: item.qty, unitPriceVnd: cartUnitPrice(item) })), customerId: cartCustomerId, discount: cart.discount || 0, warehouseId: selectedWarehouseId };
+    return { items: cart.map(item => ({ id: item.id, qty: item.qty, unitPriceVnd: cartUnitPrice(item), ...(Array.isArray(item.serialCodes) && item.serialCodes.length ? { serialCodes: item.serialCodes.slice() } : {}) })), customerId: cartCustomerId, discount: cart.discount || 0, warehouseId: selectedWarehouseId };
   }
   function saveCartDraft() {
     const scope = activeOfflineScope();
@@ -9083,10 +9416,61 @@
     showModal('Trợ giúp', 'Chọn việc cần làm hoặc xem lại hướng dẫn.', body, `<button class='btn btn-secondary' data-action='change-task-focus'>Đổi việc chính</button><button class='btn btn-secondary' data-action='replay-guided-tour'>Xem lại hướng dẫn</button><button class='btn btn-primary' data-action='close-modal'>Đóng</button>`, true);
   }
 
+  function addSerialToCart(product, serialCode) {
+    if (checkoutPendingPayload) { toast('Đang chờ xác nhận đơn', 'Hãy kiểm tra hoặc gửi lại đơn trước khi tạo đơn mới.', 'error'); return false; }
+    if (!product || !(availableForSale(product) > 0)) { toast('Không còn hàng để bán', 'Kiểm tra tồn kho và số hàng đang giữ.', 'error'); return false; }
+    if (hasSerialInAnyPosBill(serialCode)) { toast('Mã đã có trong giỏ', `Mã “${serialCode}” đã được quét vào đơn rồi.`, 'error'); return false; }
+    const current = cart.find(function (item) { return item.id === product.id; });
+    const inOtherBills = product.inventoryTracked ? qtyReservedInOtherPosBills(product.id) : 0;
+    const remaining = Math.round((availableForSale(product) - inOtherBills - (current ? current.qty : 0)) * 1000) / 1000;
+    if (!(remaining >= 1)) { toast('Đã chọn hết hàng có thể bán', inOtherBills > 0 ? 'Một phần hàng đang nằm ở đơn chờ khác.' : '', 'error'); return false; }
+    if (current) {
+      if (!Array.isArray(current.serialCodes) || !current.serialCodes.length) {
+        toast('Xóa dòng chọn tay trước', 'Sản phẩm này đang được chọn theo số lượng tay — hãy xóa dòng cũ rồi quét mã riêng.', 'error');
+        return false;
+      }
+      current.serialCodes.push(serialCode);
+      current.qty = current.serialCodes.length;
+    } else {
+      cart.push({ id: product.id, qty: 1, unitPriceVnd: product.price, serialCodes: [serialCode] });
+    }
+    if (page === 'pos') refreshCartPanels({ changedId: product.id });
+    else render();
+    return true;
+  }
+
+  function removeSerialFromCart(productId, serialCode) {
+    if (checkoutPendingPayload) return toast('Đang chờ xác nhận đơn', 'Hãy kiểm tra đơn đang chờ trước khi thay đổi giỏ hàng.', 'error');
+    const item = cart.find(x => x.id === productId);
+    if (!item || !Array.isArray(item.serialCodes)) return;
+    const key = String(serialCode || '').toLocaleLowerCase('vi');
+    item.serialCodes = item.serialCodes.filter(c => String(c).toLocaleLowerCase('vi') !== key);
+    item.qty = item.serialCodes.length;
+    if (item.qty <= 0) cart = cart.filter(x => x.id !== productId);
+    refreshCartPanels({ changedId: productId });
+  }
+
+  function buildSalePayloadItems() {
+    return cart.map(item => ({
+      productId: item.id,
+      quantity: item.qty,
+      expectedUnitPriceVnd: String(cartUnitPrice(item)),
+      ...(Array.isArray(item.serialCodes) && item.serialCodes.length ? { serialCodes: item.serialCodes.slice() } : {}),
+    }));
+  }
+
   function addProductToCart(product) {
     if (checkoutPendingPayload) { toast('Đang chờ xác nhận đơn', 'Hãy kiểm tra hoặc gửi lại đơn trước khi tạo đơn mới.', 'error'); return false; }
     if (!product || !(availableForSale(product) > 0)) { toast('Không còn hàng để bán', 'Kiểm tra tồn kho và số hàng đang giữ.', 'error'); return false; }
+    if (product.serialTracked && (!navigator.onLine || offlineState.pending)) {
+      toast('Cần kết nối mạng', 'Hàng quản lý theo từng mã riêng cần có mạng để khóa mã, tránh bán trùng.', 'error');
+      return false;
+    }
     const current = cart.find(function (item) { return item.id === product.id; });
+    if (current && Array.isArray(current.serialCodes) && current.serialCodes.length) {
+      toast('Quét mã riêng tiếp theo', 'Sản phẩm này đang chọn theo từng mã riêng — hãy quét mã kế tiếp.', 'error');
+      return false;
+    }
     const inOtherBills = product.inventoryTracked ? qtyReservedInOtherPosBills(product.id) : 0;
     const remaining = Math.round((availableForSale(product) - inOtherBills - (current ? current.qty : 0)) * 1000) / 1000;
     if (!(remaining > 0)) { toast('Đã chọn hết hàng có thể bán', inOtherBills > 0 ? 'Một phần hàng đang nằm ở đơn chờ khác.' : '', 'error'); return false; }
@@ -9105,6 +9489,15 @@
   function setCartQty(id, delta) {
     if (checkoutPendingPayload) return toast('Đang chờ xác nhận đơn', 'Hãy kiểm tra hoặc gửi lại đơn trước khi thay đổi giỏ hàng.', 'error');
     const item = cart.find(function (x) { return x.id === id; }); const p = productById(id); if (!item) return;
+    if (Array.isArray(item.serialCodes) && item.serialCodes.length) {
+      if (Number(delta) < 0) {
+        item.serialCodes.pop();
+        item.qty = item.serialCodes.length;
+        if (item.qty <= 0) cart = cart.filter(x => x.id !== id);
+        refreshCartPanels({ changedId: id });
+      }
+      return;
+    }
     const next = Math.round((item.qty + Number(delta)) * 1000) / 1000;
     const maxForThisBill = p && p.inventoryTracked ? Math.max(0, Math.round((availableForSale(p) - qtyReservedInOtherPosBills(p.id)) * 1000) / 1000) : Infinity;
     if (Number(delta) > 0 && p && next > maxForThisBill) return toast('Đã chọn hết hàng có thể bán', '', 'error');
@@ -9132,6 +9525,7 @@
     const quantity = Number(new FormData(form).get('quantity'));
     if (!item || !product) return closeModal();
     if (!Number.isFinite(quantity) || quantity <= 0 || Math.abs(quantity * 1000 - Math.round(quantity * 1000)) > 1e-6) return toast('Số lượng không hợp lệ', 'Nhập số lượng lớn hơn 0, tối đa 3 chữ số thập phân.', 'error');
+    if (product.serialTracked && !Number.isInteger(quantity)) return toast('Số lượng không hợp lệ', 'Hàng quản lý theo từng mã riêng chỉ bán số lượng nguyên.', 'error');
     if (quantity > availableForSale(product)) return toast('Không đủ hàng để bán', `Có thể bán ${number(availableForSale(product))} ${product.unit}.`, 'error');
     item.qty = quantity;
     closeModal();
@@ -9262,7 +9656,7 @@
       checkoutIdempotencyKey = checkoutIdempotencyKey || newIdempotencyKey();
       checkoutPendingPayload = {
         _slinkOfflineVersion: 1,
-        items: cart.map(item => ({ productId: item.id, quantity: item.qty, expectedUnitPriceVnd: String(cartUnitPrice(item)) })),
+        items: buildSalePayloadItems(),
         customerId: customerId,
         discountVnd: totals.discount,
         promotionCode: String(data.get('promotionCode') || '').trim().toUpperCase() || undefined,
@@ -9298,7 +9692,7 @@
     checkoutIdempotencyKey = newIdempotencyKey();
     checkoutPendingPayload = {
       _slinkOfflineVersion: 1,
-      items: cart.map(item => ({ productId: item.id, quantity: item.qty, expectedUnitPriceVnd: String(cartUnitPrice(item)) })),
+      items: buildSalePayloadItems(),
       customerId: cartCustomerId || null,
       discountVnd: totals.discount,
       method: safeMethod,
@@ -9323,7 +9717,7 @@
     checkoutIdempotencyKey = newIdempotencyKey();
     checkoutPendingPayload = {
       _slinkOfflineVersion: 1,
-      items: cart.map(item => ({ productId: item.id, quantity: item.qty, expectedUnitPriceVnd: String(cartUnitPrice(item)) })),
+      items: buildSalePayloadItems(),
       customerId: cartCustomerId || null,
       discountVnd: totals.discount,
       method: safeMethod,
@@ -9405,7 +9799,7 @@
     checkoutIdempotencyKey = newIdempotencyKey();
     checkoutPendingPayload = {
       _slinkOfflineVersion: 1,
-      items: cart.map(item => ({ productId: item.id, quantity: item.qty, expectedUnitPriceVnd: String(cartUnitPrice(item)) })),
+      items: buildSalePayloadItems(),
       customerId,
       discountVnd: totals.discount,
       method: prepaid ? 'bank_transfer' : 'cash',
@@ -9585,27 +9979,107 @@
     if (!options.fromCamera) lastPosBarcodeInput = { code, at: now };
     const requestStoreId = store.id;
     const requestSession = authSession;
+    const requestModalGen = modalGeneration;
+    const modalStillActive = () => !options.keepModalStatus || (!modal.hidden && modalGeneration === requestModalGen);
+    const clearPosInputIfUnchanged = () => {
+      const input = document.getElementById('pos-search');
+      if (input && !options.keepModalStatus && input.value.trim() === code) {
+        input.value = '';
+        searchPosProducts('');
+      }
+    };
+    const reportFail = (title, msg) => {
+      if (options.keepModalStatus) { if (modalStillActive()) setScanCameraStatus(msg, true); }
+      else toast(title, msg, 'error');
+    };
+
+    if (navigator.onLine && !offlineState.pending) {
+      let lookup;
+      try {
+        const qs = new URLSearchParams({ code });
+        if (selectedWarehouseId) qs.set('warehouseId', selectedWarehouseId);
+        lookup = await apiRequest(`/api/stores/${encodeURIComponent(requestStoreId)}/serials/lookup?${qs.toString()}`, { preferFresh: true });
+      } catch (error) {
+        if (store.id === requestStoreId && authSession === requestSession) {
+          reportFail('Chưa tìm được mã vạch', error.message);
+        }
+        return false;
+      }
+      if (store.id !== requestStoreId || authSession !== requestSession || !modalStillActive()) return false;
+      if (lookup.matchType === 'serial' && lookup.serial) {
+        const s = lookup.serial;
+        if (s.status !== 'in_stock') {
+          reportFail('Mã đã được bán', `Mã “${s.code}” đã bán${s.orderNumber ? ` (${s.orderNumber})` : ''} — không thể bán lại!`);
+          return false;
+        }
+        if (selectedWarehouseId && s.warehouseId !== selectedWarehouseId) {
+          reportFail('Sai kho bán', `Mã “${s.code}” đang ở kho ${s.warehouseName}.`);
+          return false;
+        }
+        if (hasSerialInAnyPosBill(s.code)) {
+          reportFail('Mã đã có trong đơn', `Mã “${s.code}” đã được quét vào đơn rồi.`);
+          return false;
+        }
+        if (!lookup.product) {
+          reportFail('Sản phẩm không khả dụng', `Sản phẩm của mã “${s.code}” không còn bán.`);
+          return false;
+        }
+        const matched = mapProduct(lookup.product);
+        if (addSerialToCart(matched, s.code)) {
+          playScanBeep();
+          clearPosInputIfUnchanged();
+          const itemInCart = cart.find(i => i.id === matched.id);
+          const qtyNow = itemInCart ? itemInCart.qty : 1;
+          if (options.keepModalStatus) setScanCameraStatus(`✓ ${matched.name} · #${s.code} (×${number(qtyNow)})`);
+          toast('Đã thêm vào đơn', `${matched.name} · mã ${s.code}`);
+          return true;
+        }
+        return false;
+      }
+      if (lookup.matchType === 'product' && lookup.product) {
+        const matched = mapProduct(lookup.product);
+        if (matched.inventoryTracked && !(availableForSale(matched) > 0)) {
+          reportFail('Sản phẩm đã hết hàng', `“${matched.name}” đã hết hàng (tồn: 0).`);
+          return false;
+        }
+        if (addProductToCart(matched)) {
+          playScanBeep();
+          clearPosInputIfUnchanged();
+          const itemInCart = cart.find(i => i.id === matched.id);
+          const qtyNow = itemInCart ? itemInCart.qty : 1;
+          if (options.keepModalStatus) setScanCameraStatus(`✓ ${matched.name} (×${number(qtyNow)})`);
+          toast('Đã thêm vào đơn', `${matched.name} · ×${number(qtyNow)}`);
+          return true;
+        }
+        if (options.keepModalStatus) {
+          setScanCameraStatus(checkoutPendingPayload ? 'Đang có đơn chờ xác nhận.' : `Đã chọn tối đa tồn kho của “${matched.name}”.`, true);
+        }
+        return false;
+      }
+      reportFail('Không khớp mã', `Không tìm thấy hàng hóa có mã “${code}”.`);
+      return false;
+    }
+
     let matched;
     try {
       matched = await findProductByBarcodeOrSku(code, { forSale: true });
     } catch (error) {
       if (store.id === requestStoreId && authSession === requestSession) {
-        if (options.keepModalStatus) setScanCameraStatus(error.message, true);
-        else toast('Chưa tìm được mã vạch', error.message, 'error');
+        reportFail('Chưa tìm được mã vạch', error.message);
       }
       return false;
     }
     if (store.id !== requestStoreId || authSession !== requestSession) return false;
     if (!matched) {
-      const msg = `Không tìm thấy sản phẩm có mã “${code}”.`;
-      if (options.keepModalStatus) setScanCameraStatus(msg, true);
-      else toast('Không khớp mã vạch', msg, 'error');
+      reportFail('Không khớp mã vạch', `Không tìm thấy sản phẩm có mã “${code}”.`);
+      return false;
+    }
+    if (matched.serialTracked) {
+      reportFail('Cần kết nối mạng', 'Hàng quản lý theo từng mã riêng cần có mạng để khóa mã, tránh bán trùng.');
       return false;
     }
     if (matched.inventoryTracked && !(availableForSale(matched) > 0)) {
-      const msg = `“${matched.name}” đã hết hàng (tồn: 0).`;
-      if (options.keepModalStatus) setScanCameraStatus(msg, true);
-      else toast('Sản phẩm đã hết hàng', msg, 'error');
+      reportFail('Sản phẩm đã hết hàng', `“${matched.name}” đã hết hàng (tồn: 0).`);
       return false;
     }
     if (addProductToCart(matched)) {
@@ -9638,7 +10112,7 @@
           <button class='btn btn-secondary' type='button' data-action='start-camera-scan'>Mở camera</button>
           <label class='scan-continuous-toggle'><input type='checkbox' id='pos-scan-continuous' ${posBarcodeScanState.continuous ? 'checked' : ''}/><span>Quét liên tiếp</span></label>
         </div>
-        <details class='scan-manual-entry'><summary>Nhập mã thủ công</summary><div class='editor-input-action' style='margin-top:8px'><input id='pos-scan-code' class='input' maxlength='80' autocomplete='off' placeholder='Nhập mã vạch hoặc SKU…'/><button class='btn btn-primary' type='submit'>Thêm</button></div></details>
+        <details class='scan-manual-entry'><summary>Nhập mã thủ công</summary><div class='editor-input-action' style='margin-top:8px'><input id='pos-scan-code' class='input' maxlength='120' autocomplete='off' placeholder='Nhập mã vạch, mã QR, Serial hoặc SKU…'/><button class='btn btn-primary' type='submit'>Thêm</button></div></details>
       </div></form>`;
     showModal('Quét mã bán hàng', '', body, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Xong</button>`);
     const gen = modalGeneration;
@@ -9985,7 +10459,9 @@
         <input class='input' type='number' name='retQty' min='0' max='${maxRet}' step='0.001' value='${maxRet}' aria-label='SL trả ${esc(item.name)}'/>
       </div>`;
     }).join('');
-    const repOpts = catalog.map(p => `<option value='${esc(p.id)}' data-price='${p.price}'>${esc(p.name)} · ${money(p.price)} (còn ${number(p.stock)})</option>`).join('');
+    const eligibleCatalog = catalog.filter(p => !p.serialTracked).sort((a, b) => ((b.inventoryTracked ? b.stock : 1) > 0 ? 1 : 0) - ((a.inventoryTracked ? a.stock : 1) > 0 ? 1 : 0));
+    if (!eligibleCatalog.length) return toast('Chưa có sản phẩm đổi', 'Sản phẩm quản lý theo từng mã riêng cần trả hàng và bán mới tại quầy.', 'error');
+    const repOpts = eligibleCatalog.map(p => `<option value='${esc(p.id)}' data-price='${p.price}'>${esc(p.name)} · ${money(p.price)} (còn ${number(p.stock)})</option>`).join('');
     const exKeyStorage = `slink-ex-key:${store.id}:${order.id}`;
     const form = `<form id='entity-form' data-form='order-exchange' data-id='${esc(order.id)}' data-key-storage='${esc(exKeyStorage)}' data-idempotency-key='${esc(readOrCreatePendingKey(exKeyStorage))}'>
       <div class='form-grid'>
@@ -12124,66 +12600,77 @@
       const kind = button.dataset.kind;
       const canEdit = ['owner', 'manager', 'stockkeeper'].includes(store.role);
       const canViewHistory = ['owner', 'manager', 'stockkeeper', 'accountant'].includes(store.role);
-      if (kind === 'edit' && canEdit) requestCloseModal(() => openProduct(id));
-      else if (kind === 'clone' && canEdit) requestCloseModal(() => openQuickProduct({ templateProduct: product, openMultiBarcode: true }));
+      if (kind === 'add-units' && canEdit) requestCloseModal(() => openAddProductUnits(id));
+      else if (kind === 'serials' && product.serialTracked) requestCloseModal(() => openProductSerials(id));
+      else if (kind === 'edit' && canEdit) requestCloseModal(() => openProduct(id));
       else if (kind === 'print') requestCloseModal(() => openBarcodePrintModal([{ ...product, copies: 1 }]));
       else if (kind === 'history' && canViewHistory) requestCloseModal(() => openProductPriceHistory(id));
       else if (kind === 'stock' && canEdit && product.inventoryTracked) requestCloseModal(() => openStockAdjust(id));
     }
     else if (action === 'edit-product') openProduct(id);
-    else if (action === 'clone-product') {
-      const prod = productById(id) || inventoryProducts.find(item => item.id === id);
-      if (prod) requestCloseModal(() => openQuickProduct({ templateProduct: prod, openMultiBarcode: true }));
+    else if (action === 'add-product-units') {
+      if (modal.hidden) openAddProductUnits(id);
+      else requestCloseModal(() => openAddProductUnits(id));
     }
-    else if (action === 'add-multi-barcode-row') {
-      const container = document.getElementById('multi-barcode-rows');
-      if (!container) return;
-      const count = container.querySelectorAll('[data-multi-barcode-row]').length;
-      if (count >= 49) return toast('Đã đạt giới hạn', 'Mỗi lần tạo nhanh hỗ trợ tối đa 50 mã vạch.', 'error');
-      const rapidInput = document.getElementById('multi-barcode-rapid-input');
-      const scannedCode = String(rapidInput?.value || '').trim();
-      container.insertAdjacentHTML('beforeend', renderMultiBarcodeRowHtml({ barcode: scannedCode }, count + 2));
-      if (rapidInput) { rapidInput.value = ''; rapidInput.focus(); }
+    else if (action === 'view-product-serials') {
+      if (modal.hidden) openProductSerials(id);
+      else requestCloseModal(() => openProductSerials(id));
     }
-    else if (action === 'batch-generate-multi-barcodes') {
-      const container = document.getElementById('multi-barcode-rows');
-      if (!container) return;
-      const used = new Set();
-      const mainBarcode = modal.querySelector('#product-barcode');
-      if (mainBarcode && !mainBarcode.value.trim()) {
-        try {
-          mainBarcode.value = nextUniqueBarcode(used) || '';
-          mainBarcode.dispatchEvent(new Event('input', { bubbles: true }));
-        } catch {}
-      }
-      if (mainBarcode?.value.trim()) used.add(mainBarcode.value.trim());
-      container.querySelectorAll('[data-mb-barcode]').forEach(inp => { if (inp.value.trim()) used.add(inp.value.trim()); });
-      for (let i = 0; i < 3; i++) {
-        const count = container.querySelectorAll('[data-multi-barcode-row]').length;
-        if (count >= 49) break;
-        let gen = '';
-        try { gen = nextUniqueBarcode(used) || ''; } catch {}
-        if (gen) used.add(gen);
-        container.insertAdjacentHTML('beforeend', renderMultiBarcodeRowHtml({ barcode: gen, suffix: `Mẫu ${count + 2}` }, count + 2));
-      }
-      toast('Đã tạo nhanh mã vạch EAN-13', 'Mỗi dòng mã vạch sẽ được lưu thành 1 mặt hàng riêng biệt.');
-    }
-    else if (action === 'generate-mb-row-barcode') {
-      const row = button.closest('[data-multi-barcode-row]');
-      const input = row?.querySelector('[data-mb-barcode]');
-      if (input) {
-        const used = new Set();
-        const mainBarcode = modal.querySelector('#product-barcode');
-        if (mainBarcode?.value.trim()) used.add(mainBarcode.value.trim());
-        modal.querySelectorAll('[data-mb-barcode]').forEach(inp => { if (inp.value.trim()) used.add(inp.value.trim()); });
-        try { input.value = nextUniqueBarcode(used) || ''; }
-        catch (err) { toast('Chưa tạo được mã', err.message, 'error'); }
+    else if (action === 'filter-product-serials') openProductSerials(id, button.dataset.status || 'all');
+    else if (action === 'print-product-serials') {
+      const product = productById(id) || inventoryProducts.find(item => item.id === id);
+      let codes = [];
+      try { codes = JSON.parse(modal.dataset.productSerialsCache || '[]'); } catch {}
+      if (product && codes.length) {
+        requestCloseModal(() => openBarcodePrintModal(codes.map(code => ({ ...product, barcode: code, copies: 1 }))));
       }
     }
-    else if (action === 'remove-multi-barcode-row') {
-      const row = button.closest('[data-multi-barcode-row]');
-      if (row) row.remove();
+    else if (action === 'switch-product-stock-mode') {
+      switchQuickProductMode(button.closest('form'), button.dataset.mode);
     }
+    else if (action === 'switch-add-units-mode') {
+      const form = button.closest('form');
+      if (!form) return;
+      const mode = button.dataset.mode === 'serial' ? 'serial' : 'quantity';
+      form.dataset.mode = mode;
+      form.querySelectorAll('[data-action="switch-add-units-mode"]').forEach(btn => {
+        const active = btn.dataset.mode === mode;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+      });
+      const ser = form.querySelector('[data-add-units-panel="serial"]');
+      const qty = form.querySelector('[data-add-units-panel="quantity"]');
+      if (ser) ser.hidden = mode !== 'serial';
+      if (qty) qty.hidden = mode !== 'quantity';
+      if (mode === 'serial') form.querySelector('#serial-rapid-input')?.focus();
+      else { closeSerialCamera(); form.querySelector('#add-units-qty')?.focus(); }
+    }
+    else if (action === 'add-serial-from-input') {
+      const form = button.closest('form');
+      const input = form?.querySelector('#serial-rapid-input');
+      if (!form || !input) return;
+      const res = appendFormSerialCode(form, input.value);
+      if (!res.ok) toast('Chưa thêm được mã', res.reason, 'error');
+      else input.value = '';
+      input.focus();
+    }
+    else if (action === 'remove-form-serial') {
+      removeFormSerialCode(button.closest('form'), Number(button.dataset.index));
+    }
+    else if (action === 'autogen-form-serials') {
+      const form = button.closest('form');
+      if (!form) return;
+      autoGenerateFormSerials(form, form.querySelector('#serial-auto-count')?.value, form.querySelector('#serial-auto-prefix')?.value);
+    }
+    else if (action === 'scan-serial-list') {
+      const form = button.closest('form');
+      const surface = form?.querySelector('[data-scan-mode="serial-list"]');
+      if (!surface) return;
+      surface.hidden = false;
+      startScanCamera(surface);
+    }
+    else if (action === 'stop-serial-camera') closeSerialCamera();
+    else if (action === 'cart-remove-serial') removeSerialFromCart(id, button.dataset.code || '');
     else if (action === 'quick-create-from-receive') {
       const code = button.dataset.barcode || '';
       requestCloseModal(() => openQuickProduct({ barcode: code, focusName: true }));
@@ -13017,6 +13504,7 @@
     else if (type === 'channel-order-status') saveChannelOrderStatus(form);
     else if (type === 'product') saveProduct(form);
     else if (type === 'quick-product') saveQuickProduct(form, event.submitter);
+    else if (type === 'add-product-units') saveAddProductUnits(form, event.submitter);
     else if (type === 'product-variants') saveProductVariantGroup(form);
     else if (type === 'product-variant-add') saveProductVariantAdd(form);
     else if (type === 'promotion-create') savePromotion(form);
@@ -13085,17 +13573,15 @@
       event.preventDefault();
       return;
     }
-    if (event.key === 'Enter' && event.target.id === 'multi-barcode-rapid-input') {
+    if (event.key === 'Enter' && event.target.id === 'serial-rapid-input') {
       event.preventDefault();
-      const container = document.getElementById('multi-barcode-rows');
+      const form = event.target.closest('form');
       const code = event.target.value.trim();
-      if (container && code) {
-        const count = container.querySelectorAll('[data-multi-barcode-row]').length;
-        if (count < 49) {
-          container.insertAdjacentHTML('beforeend', renderMultiBarcodeRowHtml({ barcode: code, suffix: `Mẫu ${count + 2}` }, count + 2));
-          event.target.value = '';
-          event.target.focus();
-        }
+      if (form && code) {
+        const res = appendFormSerialCode(form, code);
+        if (!res.ok) toast('Chưa thêm được mã', res.reason, 'error');
+        else event.target.value = '';
+        event.target.focus();
       }
       return;
     }
