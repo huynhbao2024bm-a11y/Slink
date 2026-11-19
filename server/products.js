@@ -6,6 +6,7 @@ const { UUID_PATTERN, withStore } = require('./db');
 const { prepareProductImage, writeProductImage } = require('./product-images');
 const { allowedWarehouseIds, findAccessibleWarehouse } = require('./warehouse-access');
 const { fromPack, isPackName } = require('../purchase-units');
+const { normalizeSerialCodeList } = require('./serials');
 
 const EDIT_ROLES = new Set(['owner', 'manager', 'stockkeeper']);
 const PRICE_HISTORY_READ_ROLES = new Set(['owner', 'manager', 'stockkeeper', 'accountant']);
@@ -63,7 +64,7 @@ function validateProduct(input, { partial = false } = {}) {
   }
   if (!partial || source.barcode !== undefined) {
     const barcode = source.barcode === undefined || source.barcode === null || source.barcode === '' ? null : String(source.barcode).trim();
-    if (barcode !== null && (barcode.length < 3 || barcode.length > 80)) throw new ApiError(400, 'validation_error', 'Mã vạch phải có từ 3 đến 80 ký tự.');
+    if (barcode !== null && (barcode.length < 1 || barcode.length > 120 || /[\x00-\x1f\x7f]/.test(barcode))) throw new ApiError(400, 'validation_error', 'Mã vạch phải có từ 1 đến 120 ký tự.');
     values.barcode = barcode;
   }
   if (!partial || source.extraBarcodes !== undefined) {
@@ -77,7 +78,7 @@ function validateProduct(input, { partial = false } = {}) {
     for (const entry of rawList) {
       const code = String(entry ?? '').trim();
       if (!code) continue;
-      if (code.length < 3 || code.length > 80) throw new ApiError(400, 'validation_error', 'Mã vạch phụ phải có từ 3 đến 80 ký tự.');
+      if (code.length < 1 || code.length > 120 || /[\x00-\x1f\x7f]/.test(code)) throw new ApiError(400, 'validation_error', 'Mã vạch phụ phải có từ 1 đến 120 ký tự.');
       if (code === values.barcode || seen.has(code)) continue;
       if (cleaned.length >= 20) throw new ApiError(400, 'validation_error', 'Mỗi sản phẩm hỗ trợ tối đa 20 mã vạch phụ.');
       seen.add(code);
@@ -89,6 +90,11 @@ function validateProduct(input, { partial = false } = {}) {
     const tracked = source.inventoryTracked ?? true;
     if (typeof tracked !== 'boolean') throw new ApiError(400, 'validation_error', 'Cấu hình theo dõi tồn kho không hợp lệ.');
     values.inventoryTracked = tracked;
+  }
+  if (!partial || source.serialTracked !== undefined) {
+    const serialTracked = source.serialTracked ?? false;
+    if (typeof serialTracked !== 'boolean') throw new ApiError(400, 'validation_error', 'Cấu hình quản lý theo mã riêng không hợp lệ.');
+    values.serialTracked = serialTracked;
   }
   if (source.variantAttributes !== undefined) {
     if (!source.variantAttributes || typeof source.variantAttributes !== 'object' || Array.isArray(source.variantAttributes)) {
@@ -130,11 +136,27 @@ function validateImportRows(input) {
     } catch (error) {
       throw new ApiError(400, 'validation_error', `Dòng ${line}: ${error.message}`);
     }
-    const rawOpeningQuantity = row?.openingQuantity === undefined || row.openingQuantity === '' ? '0' : String(row.openingQuantity).trim();
+    let rawSerialCodes = [];
+    try {
+      rawSerialCodes = row?.serialCodes !== undefined ? normalizeSerialCodeList(row.serialCodes, { maxCount: 500 }) : [];
+    } catch (error) {
+      throw new ApiError(400, 'validation_error', `Dòng ${line}: ${error.message}`);
+    }
+    const hasSerials = rawSerialCodes.length > 0;
+    if (hasSerials || product.serialTracked) {
+      product.serialTracked = true;
+      product.inventoryTracked = true;
+    }
+    const rawOpeningQuantity = hasSerials
+      ? String(rawSerialCodes.length)
+      : (row?.openingQuantity === undefined || row.openingQuantity === '' ? '0' : String(row.openingQuantity).trim());
     const quantityMatch = /^(\d{1,10})(?:\.(\d{1,3}))?$/.exec(rawOpeningQuantity);
     const openingQuantity = Number(rawOpeningQuantity);
     if (!quantityMatch || !Number.isFinite(openingQuantity) || openingQuantity < 0 || openingQuantity > 9_999_999_999.999) {
       throw new ApiError(400, 'validation_error', `Dòng ${line}: tồn đầu kỳ phải không âm và có tối đa 3 chữ số thập phân.`);
+    }
+    if (product.serialTracked && !hasSerials && openingQuantity > 0) {
+      throw new ApiError(400, 'validation_error', `Dòng ${line}: hàng quản lý theo từng mã riêng cần nhập danh sách mã tương ứng hoặc để tồn đầu kỳ bằng 0.`);
     }
     if (!product.inventoryTracked && openingQuantity !== 0) {
       throw new ApiError(400, 'validation_error', `Dòng ${line}: sản phẩm không theo dõi tồn kho phải có tồn đầu kỳ bằng 0.`);
@@ -179,7 +201,7 @@ function validateImportRows(input) {
     const wholeQuantity = quantityMatch[1].replace(/^0+(?=\d)/, '');
     const fractionQuantity = (quantityMatch[2] || '').replace(/0+$/, '');
     const openingQuantityText = wholeQuantity + (fractionQuantity ? `.${fractionQuantity}` : '');
-    return { ...product, variantGroupName, variantAttributes, groupKey, openingQuantity, openingQuantityText, sourceLine: line };
+    return { ...product, serialCodes: rawSerialCodes, variantGroupName, variantAttributes, groupKey, openingQuantity, openingQuantityText, sourceLine: line };
   });
   for (const group of groups.values()) {
     if (group.count < 2) throw new ApiError(400, 'variant_group_too_small', `Nhóm “${group.name}” cần ít nhất 2 SKU trong cùng tệp.`);
@@ -381,7 +403,7 @@ function registerProductRoutes(app, { pool, env }) {
         `SELECT p.id, p.sku, p.barcode, COALESCE(p.extra_barcodes, '{}'::text[]) AS extra_barcodes, p.name, p.category, p.unit,
                 p.sale_price_vnd::text AS sale_price_vnd,
                 CASE WHEN $5::boolean THEN p.cost_vnd::text ELSE NULL END AS cost_vnd,
-                p.low_stock_threshold::text AS low_stock_threshold, p.inventory_tracked,
+                p.low_stock_threshold::text AS low_stock_threshold, p.inventory_tracked, p.serial_tracked,
                 p.variant_group_id, p.variant_group_name, p.variant_attributes, p.image_version, p.image_content_type,
                 CASE WHEN $5::boolean THEN p.purchase_pack ELSE NULL END AS purchase_pack,
                 p.status, p.version, COALESCE(i.on_hand, 0)::text AS on_hand,
@@ -395,7 +417,8 @@ function registerProductRoutes(app, { pool, env }) {
            FROM inventory_balances b WHERE b.store_id = p.store_id AND b.product_id = p.id
          ) i ON true
          WHERE p.status = $1 AND ($8::uuid IS NULL OR p.id = $8) AND ($2 = '' OR p.name ILIKE '%' || $2 || '%' OR p.category ILIKE '%' || $2 || '%' OR p.variant_group_name ILIKE '%' || $2 || '%'
-           OR p.variant_attributes::text ILIKE '%' || $2 || '%' OR p.sku_normalized LIKE '%' || lower($2) || '%' OR p.barcode = $2 OR $2 = ANY(p.extra_barcodes))
+           OR p.variant_attributes::text ILIKE '%' || $2 || '%' OR p.sku_normalized LIKE '%' || lower($2) || '%' OR p.barcode = $2 OR $2 = ANY(p.extra_barcodes)
+           OR EXISTS (SELECT 1 FROM product_serial_codes sc WHERE sc.store_id = p.store_id AND sc.product_id = p.id AND (sc.code = $2 OR lower(sc.code) = lower($2))))
          ORDER BY p.name, p.id LIMIT $3 OFFSET $4`,
         [status, search, limit + 1, offset, canViewCost, requestedWarehouseId || null, warehouseIds, requestedProductId || null]
       );
@@ -552,6 +575,25 @@ function registerProductRoutes(app, { pool, env }) {
         const conflictMessage = describeImportConflict(products, existing.rows);
         if (conflictMessage) throw new ApiError(409, 'product_conflict', conflictMessage);
 
+        const allImportSerials = products.flatMap((p) => (p.serialCodes || []).map((code) => ({ code, line: p.sourceLine })));
+        if (allImportSerials.length) {
+          const seenImportSerial = new Map();
+          for (const entry of allImportSerials) {
+            const key = entry.code.toLocaleLowerCase('vi');
+            if (seenImportSerial.has(key)) {
+              throw new ApiError(400, 'duplicate_serial_code', `Dòng ${entry.line}: mã riêng “${entry.code}” bị trùng với dòng ${seenImportSerial.get(key)}.`);
+            }
+            seenImportSerial.set(key, entry.line);
+          }
+          const existingSerials = await client.query(
+            `SELECT code FROM product_serial_codes WHERE store_id = $1 AND lower(code) = ANY($2::text[]) LIMIT 1`,
+            [storeId, allImportSerials.map((e) => e.code.toLocaleLowerCase('vi'))]
+          );
+          if (existingSerials.rowCount) {
+            throw new ApiError(409, 'serial_code_exists', `Mã riêng “${existingSerials.rows[0].code}” đã tồn tại trong cửa hàng. Không có dòng nào được nhập.`);
+          }
+        }
+
         const variantGroupIds = new Map();
         for (const product of products) {
           if (product.groupKey && !variantGroupIds.has(product.groupKey)) variantGroupIds.set(product.groupKey, randomUUID());
@@ -562,19 +604,26 @@ function registerProductRoutes(app, { pool, env }) {
           const inserted = await client.query(
             `INSERT INTO products (
                store_id, sku, sku_normalized, barcode, extra_barcodes, name, category, unit,
-               sale_price_vnd, cost_vnd, low_stock_threshold, inventory_tracked, created_by,
+               sale_price_vnd, cost_vnd, low_stock_threshold, inventory_tracked, serial_tracked, created_by,
                variant_group_id, variant_group_name, variant_attributes, purchase_pack
-             ) VALUES ($1, $2, $3, $4, $17::text[], $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16::jsonb)
+             ) VALUES ($1, $2, $3, $4, $17::text[], $5, $6, $7, $8, $9, $10, $11, $18, $12, $13, $14, $15::jsonb, $16::jsonb)
              RETURNING id, sku, barcode, COALESCE(extra_barcodes, '{}'::text[]) AS extra_barcodes, name, category, unit, sale_price_vnd::text AS sale_price_vnd,
                        cost_vnd::text AS cost_vnd, low_stock_threshold::text AS low_stock_threshold,
-                       inventory_tracked, status, version, purchase_pack, variant_group_id, variant_group_name, variant_attributes, created_at`,
+                       inventory_tracked, serial_tracked, status, version, purchase_pack, variant_group_id, variant_group_name, variant_attributes, created_at`,
             [storeId, product.sku, product.sku.toLocaleLowerCase('vi'), product.barcode, product.name,
               product.category, product.unit, product.salePriceVnd, product.costVnd,
               product.lowStockThreshold, product.inventoryTracked, auth.userId, variantGroupId,
               product.variantGroupName, JSON.stringify(product.variantAttributes || {}), product.purchasePack ? JSON.stringify(product.purchasePack) : null,
-              product.extraBarcodes || []]
+              product.extraBarcodes || [], Boolean(product.serialTracked)]
           );
           const created = inserted.rows[0];
+          if (Array.isArray(product.serialCodes) && product.serialCodes.length) {
+            await client.query(
+              `INSERT INTO product_serial_codes (store_id, product_id, warehouse_id, code, status, created_by)
+               SELECT $1, $2, $3, c, 'in_stock', $4 FROM unnest($5::text[]) AS c`,
+              [storeId, created.id, warehouse.id, auth.userId, product.serialCodes]
+            );
+          }
           Object.assign(created, await writeProductImage(client, storeId, created.id, product.image, auth.userId));
           await client.query(
             `INSERT INTO product_sale_price_history (store_id, product_id, previous_price_vnd, new_price_vnd, source_type, source_id, actor_user_id)
@@ -911,18 +960,20 @@ function registerProductRoutes(app, { pool, env }) {
     try {
       return await withStore(pool, auth.userId, storeId, async (client, membership) => {
         requireEditor(membership.role);
+        const serialTracked = Boolean(product.serialTracked);
+        const inventoryTracked = serialTracked ? true : product.inventoryTracked;
         const inserted = await client.query(
           `INSERT INTO products (
              store_id, sku, sku_normalized, barcode, extra_barcodes, name, category, unit,
-             sale_price_vnd, cost_vnd, low_stock_threshold, inventory_tracked, created_by, purchase_pack
-           ) VALUES ($1, $2, $3, $4, $14::text[], $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb)
+             sale_price_vnd, cost_vnd, low_stock_threshold, inventory_tracked, serial_tracked, created_by, purchase_pack
+           ) VALUES ($1, $2, $3, $4, $14::text[], $5, $6, $7, $8, $9, $10, $11, $15, $12, $13::jsonb)
            RETURNING id, sku, barcode, COALESCE(extra_barcodes, '{}'::text[]) AS extra_barcodes, name, category, unit, sale_price_vnd::text AS sale_price_vnd,
                      cost_vnd::text AS cost_vnd, low_stock_threshold::text AS low_stock_threshold,
-                     inventory_tracked, status, version, purchase_pack, created_at`,
+                     inventory_tracked, serial_tracked, status, version, purchase_pack, created_at`,
           [storeId, product.sku, product.sku.toLocaleLowerCase('vi'), product.barcode, product.name,
             product.category, product.unit, product.salePriceVnd, product.costVnd,
-            product.lowStockThreshold, product.inventoryTracked, auth.userId, product.purchasePack ? JSON.stringify(product.purchasePack) : null,
-            product.extraBarcodes || []]
+            product.lowStockThreshold, inventoryTracked, auth.userId, product.purchasePack ? JSON.stringify(product.purchasePack) : null,
+            product.extraBarcodes || [], serialTracked]
         );
         const created = inserted.rows[0];
         Object.assign(created, await writeProductImage(client, storeId, created.id, image, auth.userId));
@@ -1266,6 +1317,9 @@ function registerProductRoutes(app, { pool, env }) {
           if (next.name.length > 240) throw new ApiError(400, 'validation_error', 'Tên hiển thị được ghép từ nhóm và thuộc tính vượt quá 240 ký tự.');
         }
         if (old.inventory_tracked && !next.inventoryTracked) {
+          if (old.serial_tracked) {
+            throw new ApiError(409, 'serial_tracking_requires_inventory', 'Sản phẩm quản lý theo từng mã riêng bắt buộc bật theo dõi tồn kho.');
+          }
           const balance = await client.query(
             `SELECT on_hand > 0 AS has_on_hand, reserved > 0 AS has_reserved
              FROM inventory_balances WHERE store_id = $1 AND product_id = $2 ORDER BY warehouse_id FOR UPDATE`,
@@ -1294,7 +1348,7 @@ function registerProductRoutes(app, { pool, env }) {
            WHERE store_id = $1 AND id = $2 AND version = $13
            RETURNING id, sku, barcode, COALESCE(extra_barcodes, '{}'::text[]) AS extra_barcodes, name, category, unit, sale_price_vnd::text AS sale_price_vnd,
                      cost_vnd::text AS cost_vnd, low_stock_threshold::text AS low_stock_threshold,
-                     inventory_tracked, status, version, purchase_pack, variant_group_id, variant_group_name, variant_attributes, updated_at`,
+                     inventory_tracked, serial_tracked, status, version, purchase_pack, variant_group_id, variant_group_name, variant_attributes, updated_at`,
           [storeId, productId, next.sku, next.sku.toLocaleLowerCase('vi'), next.barcode, next.name, next.category,
             next.unit, next.salePriceVnd, next.costVnd, next.lowStockThreshold, next.inventoryTracked, expectedVersion,
             JSON.stringify(next.variantAttributes), next.purchasePack ? JSON.stringify(next.purchasePack) : null,

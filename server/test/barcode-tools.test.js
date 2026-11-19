@@ -44,11 +44,14 @@ test('barcode tools encode Code128B cleanly with start/check/stop modules', () =
   const longEncoded = barcode.encodeCode128B(longAscii);
   assert.equal(longEncoded?.text, longAscii);
 
-  // Verify Vietnamese/non-ASCII codes fail explicitly rather than printing an altered barcode
+  // Verify Vietnamese/non-ASCII codes cannot be Code128B and render scannable QR SVG fallback, while invalid/overlong codes fail explicitly
   assert.equal(barcode.encodeCode128B('MÃ-ĐÁ-01'), null);
-  const rejectedSvg = barcode.renderBarcodeSvg('MÃ-ĐÁ-01');
-  assert.ok(rejectedSvg.includes('barcode-svg-empty'));
+  const vietQrSvg = barcode.renderBarcodeSvg('MÃ-ĐÁ-01');
+  assert.ok(vietQrSvg.includes('barcode-qr-svg'));
+  assert.ok(vietQrSvg.includes('MÃ-ĐÁ-01'));
   assert.equal(barcode.encodeCode128B('X'.repeat(81)), null);
+  assert.ok(barcode.renderBarcodeSvg('X'.repeat(121)).includes('barcode-svg-empty'));
+  assert.ok(barcode.renderBarcodeSvg('').includes('barcode-svg-empty'));
 });
 
 test('barcode tools escape XSS and cap total printed stickers cleanly', () => {

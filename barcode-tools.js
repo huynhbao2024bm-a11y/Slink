@@ -88,12 +88,28 @@
     throw new Error('Không thể tạo mã vạch duy nhất lúc này. Hãy thử lại.');
   }
 
+  function getQrRenderer() {
+    if (typeof globalThis !== 'undefined' && globalThis.SlinkVietQrTools && typeof globalThis.SlinkVietQrTools.renderQrSvg === 'function') {
+      return globalThis.SlinkVietQrTools.renderQrSvg;
+    }
+    if (typeof require === 'function') {
+      try {
+        const mod = require('./vietqr-tools');
+        if (mod && typeof mod.renderQrSvg === 'function') return mod.renderQrSvg;
+      } catch {}
+    }
+    return null;
+  }
+
   function validateCode128Input(raw) {
     const text = String(raw == null ? '' : raw).trim();
     if (!text) return { ok: false, reason: 'Mã vạch trống.' };
-    if (text.length > 80) return { ok: false, reason: 'Mã vượt quá 80 ký tự Code 128.' };
-    if (/[^\x20-\x7e]/.test(text)) {
-      return { ok: false, reason: 'Mã chứa ký tự có dấu hoặc ký tự đặc biệt — nên tạo mã EAN-13 để in chuẩn.' };
+    if (text.length > 120) return { ok: false, reason: 'Mã vượt quá 120 ký tự.' };
+    if (/[\x00-\x1f\x7f]/.test(text)) {
+      return { ok: false, reason: 'Mã chứa ký tự điều khiển không hợp lệ.' };
+    }
+    if (/[^\x20-\x7e]/.test(text) || text.length > 80) {
+      return { ok: false, useQr: true, text, reason: 'Mã chứa ký tự đặc biệt hoặc dài — hiển thị dạng QR để quét chuẩn.' };
     }
     return { ok: true, text };
   }
@@ -130,6 +146,18 @@
 
   function renderBarcodeSvg(code, options = {}) {
     const check = validateCode128Input(code);
+    if (!check.ok && check.useQr) {
+      const renderQr = getQrRenderer();
+      if (renderQr) {
+        try {
+          const qrSvg = renderQr(check.text, { label: `Mã QR ${check.text}`, quiet: 2, modulePx: 3 })
+            .replace("class='vietqr-svg'", "class='barcode-svg barcode-qr-svg'");
+          const showText = options.showText !== false;
+          const caption = showText ? `<div class='barcode-qr-caption'>${escapeHtml(check.text)}</div>` : '';
+          return `<div class='barcode-qr-wrap'>${qrSvg}${caption}</div>`;
+        } catch {}
+      }
+    }
     const encoded = check.ok ? encodeCode128B(check.text) : null;
     if (!encoded) {
       return `<div class='barcode-svg-empty'>${escapeHtml(check.reason || 'Mã không hợp lệ')}</div>`;

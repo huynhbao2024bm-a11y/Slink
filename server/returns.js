@@ -209,6 +209,20 @@ function registerReturnRoutes(app, { pool, env }) {
             [storeId, restockWarehouse.id, item.line.product_id, quantityText(restockedMilli), balance.rows[0].on_hand,
               `Trả hàng ${returnNumber}`, returnId, auth.userId]
           );
+          const wholeRestock = Math.floor(restockedMilli / 1000);
+          if (wholeRestock > 0) {
+            await client.query(
+              `UPDATE product_serial_codes
+               SET status = 'in_stock', order_id = NULL, sold_at = NULL, warehouse_id = $4, updated_at = now()
+               WHERE id IN (
+                 SELECT id FROM product_serial_codes
+                 WHERE store_id = $1 AND order_id = $2 AND product_id = $3 AND status = 'sold'
+                 ORDER BY sold_at DESC NULLS LAST, id DESC
+                 LIMIT $5
+               )`,
+              [storeId, orderId, item.line.product_id, restockWarehouse.id, wholeRestock]
+            );
+          }
         }
       }
       if (refundPayment > 0n) {

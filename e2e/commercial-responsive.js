@@ -359,6 +359,107 @@ async function runViewportAudit(browser, origin, viewport, label) {
     await page.locator(".modal [data-action='close-modal']").first().click();
     await page.waitForSelector('#modal[hidden]', { state: 'attached' });
 
+    // 5c. KiotViet/Sapo Individual Serial Tracking + Non-Numeric Barcode + Add Units + Block Reselling Sold Code
+    const serialCode1 = `SACH-${label.toUpperCase()}-01`;
+    const serialCode2 = `QR/${label.toUpperCase()}-02`;
+    const serialCode3 = `BOOK-${label.toUpperCase()}-03`;
+    await page.locator("[data-action='new-product']:visible").first().click();
+    await page.waitForSelector(".modal:not([hidden]) [data-action='switch-product-stock-mode'][data-mode='serial']");
+    await page.fill(".modal [name='name']", `Sách Tiếng Anh ${label}`);
+    await page.fill(".modal [name='price']", '120000');
+    await page.locator(".modal [data-action='switch-product-stock-mode'][data-mode='serial']").click();
+    await page.fill(".modal #serial-rapid-input", serialCode1);
+    await page.locator(".modal [data-action='add-serial-from-input']").click();
+    await page.fill(".modal #serial-rapid-input", serialCode2);
+    await page.locator(".modal [data-action='add-serial-from-input']").click();
+    assert.equal(await page.locator(".modal [data-serial-count]").textContent(), '2', `${label}: serial count must equal 2`);
+    const [serialCreateRes] = await Promise.all([
+      page.waitForResponse((res) => res.url().includes('/products/import') && !res.url().includes('/preview') && res.request().method() === 'POST'),
+      page.locator(".modal button[type='submit'][form='entity-form']:not([data-add-another]):not([data-print-after])").click(),
+    ]);
+    assert.equal(serialCreateRes.status(), 201, `${label}: serial product creation must return 201`);
+    await page.waitForSelector('#modal[hidden]', { state: 'attached' });
+
+    // Add 1 more unit to the existing product via "＋ Thêm tồn / Quét mã" without re-entering product info
+    if (viewport.width <= 640) {
+      const serialCard = page.locator('.product-mobile-card').filter({ hasText: `Sách Tiếng Anh ${label}` });
+      await serialCard.locator('[data-action="product-card-menu"]').click();
+      await page.locator('.modal [data-action="product-card-choice"][data-kind="add-units"]').click();
+    } else {
+      const serialRow = page.locator('table.data-table tbody tr').filter({ hasText: `Sách Tiếng Anh ${label}` });
+      await serialRow.locator('[data-action="add-product-units"]').click();
+    }
+    await page.waitForSelector(".modal:not([hidden]) [data-form='add-product-units'] #serial-rapid-input");
+    await page.fill(".modal #serial-rapid-input", serialCode3);
+    await page.locator(".modal [data-action='add-serial-from-input']").click();
+    const [addSerialRes] = await Promise.all([
+      page.waitForResponse((res) => res.url().includes('/serials') && res.request().method() === 'POST'),
+      page.locator(".modal button[type='submit'][form='entity-form']:not([data-print-after])").click(),
+    ]);
+    assert.equal(addSerialRes.status(), 201, `${label}: adding serial unit to existing product must return 201`);
+    await page.waitForSelector('#modal[hidden]', { state: 'attached' });
+
+    // Go to POS: sell serialCode1, verify rescanning serialCode1 is BLOCKED, verify serialCode2 SUCCEEDS
+    await page.locator("#topbar-pos-cta:visible, [data-route='pos']:visible").first().click();
+    await page.waitForSelector('#pos-search');
+    await page.locator("[data-action='pos-mode'][data-mode='standard']").click();
+    await page.fill('#pos-search', serialCode1);
+    const [lookupRes1] = await Promise.all([
+      page.waitForResponse((res) => res.url().includes('/serials/lookup') && res.request().method() === 'GET'),
+      page.locator('#pos-search').press('Enter'),
+    ]);
+    assert.equal(lookupRes1.status(), 200, `${label}: serial lookup must succeed`);
+    await page.waitForTimeout(150);
+    const payBtnSelector = viewport.width <= 640
+      ? ".pos-mobile-checkout[data-action='standard-pay']"
+      : ".pos-layout > .cart-panel [data-action='standard-pay']";
+    if (viewport.width > 640) {
+      assert.equal(await page.locator(".pos-layout > .cart-panel .cart-serial-chips .serial-chip").count(), 1, `${label}: cart must display scanned serial chip`);
+    }
+    const [serialSaleRes] = await Promise.all([
+      page.waitForResponse((res) => res.url().includes('/sales') && res.request().method() === 'POST'),
+      page.locator(payBtnSelector).click(),
+    ]);
+    assert.equal(serialSaleRes.status(), 201, `${label}: selling serialCode1 must return 201`);
+    await page.waitForSelector('.sale-saved');
+    if (await page.locator('.modal:not([hidden]) [data-action="close-modal"]').count()) {
+      await page.locator('.modal:not([hidden]) [data-action="close-modal"]').first().click();
+      await page.waitForSelector('#modal[hidden]', { state: 'attached' });
+    }
+    await page.waitForTimeout(150);
+
+    // Rescan ALREADY-SOLD serialCode1 -> MUST be blocked (cart stays 0!)
+    await page.fill('#pos-search', serialCode1);
+    const [lookupSoldRes] = await Promise.all([
+      page.waitForResponse((res) => res.url().includes('/serials/lookup') && res.request().method() === 'GET'),
+      page.locator('#pos-search').press('Enter'),
+    ]);
+    assert.equal(lookupSoldRes.status(), 200);
+    await page.waitForTimeout(150);
+    if (viewport.width > 640) {
+      assert.equal(await page.locator(".pos-layout > .cart-panel .cart-row").count(), 0, `${label}: rescanning sold serial must NOT add to cart`);
+    }
+
+    // Scan unsold non-numeric QR serialCode2 -> MUST succeed!
+    await page.fill('#pos-search', serialCode2);
+    const [lookupRes2] = await Promise.all([
+      page.waitForResponse((res) => res.url().includes('/serials/lookup') && res.request().method() === 'GET'),
+      page.locator('#pos-search').press('Enter'),
+    ]);
+    assert.equal(lookupRes2.status(), 200);
+    await page.waitForTimeout(150);
+    if (viewport.width > 640) {
+      assert.equal(await page.locator(".pos-layout > .cart-panel .cart-serial-chips .serial-chip").count(), 1, `${label}: unsold QR serial must add to cart`);
+      await page.locator(".pos-layout > .cart-panel [data-action='cart-remove-serial']").first().click();
+      await page.waitForTimeout(100);
+    } else {
+      await page.locator("[data-action='open-cart']:visible").first().click();
+      await page.waitForSelector("#drawer-cart.open .cart-serial-chips .serial-chip");
+      await page.locator("#drawer-cart [data-action='cart-remove-serial']").first().click();
+      await page.waitForTimeout(100);
+      await page.locator("#drawer-cart [data-action='close-cart']").click().catch(() => {});
+    }
+
     // 6. Switch to Kho hàng: test restructured sub-tabs including Trả NCC
     await page.locator("#primary-nav [data-route='inventory']:visible, #mobile-nav [data-route='inventory']:visible").first().click();
     await page.waitForSelector("[data-action='inventory-tab']");
@@ -402,7 +503,7 @@ async function runViewportAudit(browser, origin, viewport, label) {
     await page.locator("#primary-nav [data-route='orders']:visible, #mobile-nav [data-route='orders']:visible").first().click();
     await page.waitForSelector("[data-action='order-detail']", { timeout: 15000 });
     await assertNoHorizontalOverflow(page, `${label}:orders-segmented`);
-    await page.locator("[data-action='order-detail']").first().click();
+    await page.locator("[data-action='order-detail']").nth(2).click();
     await page.waitForSelector('.modal:not([hidden])');
     const exchangeBtn = page.locator(".modal [data-action='exchange-order']");
     if (!(await exchangeBtn.isVisible())) {
@@ -414,7 +515,7 @@ async function runViewportAudit(browser, origin, viewport, label) {
       page.waitForResponse((res) => res.url().includes('/exchange') && res.request().method() === 'POST'),
       page.locator(".modal button[type='submit'][form='entity-form']").click(),
     ]);
-    assert.equal(exchangeRes.status(), 201, `${label}: order exchange POST must succeed with 201`);
+    assert.equal(exchangeRes.status(), 201, `${label}: order exchange POST must succeed with 201 (${await exchangeRes.text()})`);
     await page.waitForTimeout(350);
     await page.locator(".modal [data-action='close-modal']").first().click().catch(() => {});
 

@@ -19,10 +19,12 @@ async function assertRuntimeSchema(pool) {
       AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='cash_movements' AND column_name='voucher_number')
       AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='memberships' AND column_name='commission_rate_bps')
       AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='customers' AND column_name='customer_code')
-      AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='products' AND column_name='extra_barcodes') AS compatible
+      AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='products' AND column_name='extra_barcodes')
+      AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='products' AND column_name='serial_tracked')
+      AND to_regclass('public.product_serial_codes') IS NOT NULL AS compatible
   `);
   if (result.rows[0]?.compatible !== true) {
-    throw new Error('Database schema is behind this application. Apply migrations through 20261118170000_kiotviet_sapo_staff_crm_barcodes.sql before deploying.');
+    throw new Error('Database schema is behind this application. Apply migrations through 20261119140000_product_serial_codes.sql before deploying.');
   }
 }
 

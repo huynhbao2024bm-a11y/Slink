@@ -7,6 +7,7 @@ const { lockActiveCashSession } = require('./cash-register');
 const { insertCashMovement } = require('./cashbook-ledger');
 const { normalizeOffline, beginOffline, recordOffline, expectedPrices } = require('./offline-operations');
 const { calculatePromotion, consumePromotion, promotionCode } = require('./promotions');
+const { normalizeSerialCodeList } = require('./serials');
 
 const MAX_BIGINT = 9223372036854775807n;
 const SELL_ROLES = new Set(['owner', 'manager', 'cashier']);
@@ -49,18 +50,34 @@ function normalizeSale(body) {
   }
   const items = [];
   const indices = new Map();
+  const seenSerials = new Set();
   for (const line of body.items) {
     if (!line || typeof line.productId !== 'string' || !UUID_PATTERN.test(line.productId)) {
       throw new ApiError(400, 'validation_error', 'Có sản phẩm không hợp lệ trong đơn hàng.');
     }
     const milli = quantityMilli(line.quantity);
+    const lineSerials = line.serialCodes !== undefined && line.serialCodes !== null
+      ? normalizeSerialCodeList(line.serialCodes, { maxCount: 200 })
+      : [];
+    if (lineSerials.length && milli !== lineSerials.length * 1000) {
+      throw new ApiError(400, 'validation_error', 'Số lượng bán phải khớp đúng số mã riêng đã quét (1 mã = 1 đơn vị).');
+    }
+    for (const sc of lineSerials) {
+      const k = sc.toLocaleLowerCase('vi');
+      if (seenSerials.has(k)) throw new ApiError(400, 'duplicate_serial_code', `Mã “${sc}” bị quét trùng trong cùng đơn hàng.`);
+      seenSerials.add(k);
+    }
     if (indices.has(line.productId)) {
       const index = indices.get(line.productId);
+      if ((items[index].serialCodes.length > 0) !== (lineSerials.length > 0)) {
+        throw new ApiError(400, 'validation_error', 'Không thể gộp dòng có mã riêng và dòng không có mã riêng cho cùng sản phẩm.');
+      }
       items[index].quantityMilli += milli;
       if (!Number.isSafeInteger(items[index].quantityMilli)) throw new ApiError(400, 'validation_error', 'Số lượng sản phẩm vượt giới hạn.');
+      items[index].serialCodes.push(...lineSerials);
     } else {
       indices.set(line.productId, items.length);
-      items.push({ productId: line.productId, quantityMilli: milli });
+      items.push({ productId: line.productId, quantityMilli: milli, serialCodes: lineSerials });
     }
   }
   const discountVnd = amount(body.discountVnd ?? 0, 'Khoản giảm giá');
@@ -131,7 +148,11 @@ function registerSalesRoutes(app, { pool, env }) {
     const offline = normalizeOffline(request.body?.offline);
     const prices = expectedPrices(request.body?.items, offline);
     const canonicalSale = {
-      items: sale.items,
+      items: sale.items.map((line) => (
+        line.serialCodes.length
+          ? { productId: line.productId, quantityMilli: line.quantityMilli, serialCodes: line.serialCodes }
+          : { productId: line.productId, quantityMilli: line.quantityMilli }
+      )),
       discountVnd: sale.discountVnd,
       amountReceivedVnd: sale.amountReceivedVnd,
       method: sale.method,
@@ -203,11 +224,14 @@ function registerSalesRoutes(app, { pool, env }) {
       const productIds = sale.items.map((line) => line.productId).sort();
       const productResult = await client.query(
         `SELECT id, sku, name, unit, sale_price_vnd::text AS sale_price_vnd,
-                cost_vnd::text AS cost_vnd, inventory_tracked, status
+                cost_vnd::text AS cost_vnd, inventory_tracked, serial_tracked, status
          FROM products WHERE store_id = $1 AND id = ANY($2::uuid[]) ORDER BY id FOR UPDATE`,
         [storeId, productIds]
       );
       const productMap = new Map(productResult.rows.map((product) => [product.id, product]));
+      if (offline && (sale.items.some((item) => item.serialCodes?.length) || productResult.rows.some((product) => product.serial_tracked))) {
+        throw new ApiError(400, 'offline_serial_requires_network', 'Hàng quản lý theo từng mã riêng cần kết nối mạng để khóa mã, không lưu đơn ngoại tuyến.');
+      }
       if (offline && productResult.rows.some(product => prices[product.id] !== product.sale_price_vnd)) {
         throw new ApiError(409, 'offline_price_changed', 'Giá trên máy chủ đã đổi. Đơn trên thiết bị vẫn được giữ để kiểm tra, chưa tự đổi số tiền đã thu.');
       }
@@ -231,6 +255,56 @@ function registerSalesRoutes(app, { pool, env }) {
         const reservedMilli = BigInt(Math.round(Number(balance.rows[0].reserved) * 1000));
         if (requested > onHandMilli - reservedMilli) {
           throw new ApiError(409, 'insufficient_stock', `${product.name} không đủ tồn kho để hoàn tất đơn.`);
+        }
+      }
+
+      const reservedSerialMap = new Map();
+      for (const productId of productIds) {
+        const product = productMap.get(productId);
+        const line = sale.items.find((item) => item.productId === productId);
+        if (line.serialCodes?.length) {
+          const lowerList = line.serialCodes.map((c) => c.toLocaleLowerCase('vi'));
+          const serialRes = await client.query(
+            `SELECT id, code, product_id, warehouse_id, status
+             FROM product_serial_codes
+             WHERE store_id = $1 AND lower(code) = ANY($2::text[])
+             ORDER BY id FOR UPDATE`,
+            [storeId, lowerList]
+          );
+          const byLower = new Map(serialRes.rows.map((r) => [r.code.toLocaleLowerCase('vi'), r]));
+          const lockedIds = [];
+          const canonicalCodes = [];
+          for (const reqCode of line.serialCodes) {
+            const row = byLower.get(reqCode.toLocaleLowerCase('vi'));
+            if (!row || row.product_id !== productId || row.warehouse_id !== warehouseId) {
+              throw new ApiError(409, 'serial_unavailable', `Mã “${reqCode}” không có trong kho bán hiện tại cho sản phẩm ${product.name}.`);
+            }
+            if (row.status !== 'in_stock') {
+              throw new ApiError(409, 'serial_already_sold', `Mã “${row.code}” đã được bán hoặc ngừng dùng — không thể bán lại.`);
+            }
+            lockedIds.push(row.id);
+            canonicalCodes.push(row.code);
+          }
+          reservedSerialMap.set(productId, { ids: lockedIds, codes: canonicalCodes });
+        } else if (product.serial_tracked && product.inventory_tracked) {
+          if (line.quantityMilli % 1000 !== 0) {
+            throw new ApiError(400, 'validation_error', `${product.name} quản lý theo từng mã riêng, chỉ bán số lượng nguyên.`);
+          }
+          const wholeQty = line.quantityMilli / 1000;
+          const fifoRes = await client.query(
+            `SELECT id, code FROM product_serial_codes
+             WHERE store_id = $1 AND product_id = $2 AND warehouse_id = $3 AND status = 'in_stock'
+             ORDER BY created_at ASC, id ASC
+             LIMIT $4 FOR UPDATE`,
+            [storeId, productId, warehouseId, wholeQty]
+          );
+          if (fifoRes.rowCount < wholeQty) {
+            throw new ApiError(409, 'insufficient_stock', `${product.name} không đủ mã khả dụng trong kho để bán.`);
+          }
+          reservedSerialMap.set(productId, {
+            ids: fifoRes.rows.map((r) => r.id),
+            codes: fifoRes.rows.map((r) => r.code),
+          });
         }
       }
 
@@ -341,6 +415,15 @@ function registerSalesRoutes(app, { pool, env }) {
             [storeId, warehouseId, line.product.id, quantityText(line.quantityMilli), after.rows[0].on_hand,
               `Bán hàng ${orderNumber}`, order.id, auth.userId]
           );
+          const serialLock = reservedSerialMap.get(line.product.id);
+          if (serialLock && serialLock.ids.length) {
+            await client.query(
+              `UPDATE product_serial_codes
+               SET status = 'sold', order_id = $3, sold_at = now(), updated_at = now()
+               WHERE store_id = $1 AND id = ANY($2::uuid[])`,
+              [storeId, serialLock.ids, order.id]
+            );
+          }
         }
       }
 
@@ -445,6 +528,7 @@ function registerSalesRoutes(app, { pool, env }) {
             unitPriceVnd: line.price.toString(),
             discountVnd: allocatedDiscount[index].toString(),
             lineTotalVnd: (line.grossVnd - allocatedDiscount[index]).toString(),
+            ...(reservedSerialMap.get(line.product.id)?.codes?.length ? { serialCodes: reservedSerialMap.get(line.product.id).codes } : {}),
           })),
         },
       };

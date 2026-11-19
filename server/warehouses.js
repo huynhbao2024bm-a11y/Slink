@@ -261,11 +261,13 @@ function registerWarehouseRoutes(app, { pool, env }) {
       if (locations.rows.some((row) => row.status !== 'active')) throw new ApiError(409, 'warehouse_inactive', 'Kho đã lưu trữ, không thể tạo điều chuyển mới.');
       const productIds = items.map((item) => item.id).sort();
       const products = await client.query(
-        `SELECT id, sku, name, unit, status, inventory_tracked FROM products WHERE store_id = $1 AND id = ANY($2::uuid[]) ORDER BY id FOR UPDATE`,
+        `SELECT id, sku, name, unit, status, inventory_tracked, serial_tracked FROM products WHERE store_id = $1 AND id = ANY($2::uuid[]) ORDER BY id FOR UPDATE`,
         [storeId, productIds]
       );
       const productMap = new Map(products.rows.map((product) => [product.id, product]));
       if (productMap.size !== productIds.length || products.rows.some((product) => product.status !== 'active' || !product.inventory_tracked)) throw new ApiError(409, 'product_not_transferable', 'Chỉ có thể điều chuyển sản phẩm đang hoạt động và có theo dõi tồn kho.');
+      const serialProduct = products.rows.find((product) => product.serial_tracked);
+      if (serialProduct) throw new ApiError(409, 'serial_tracked_product', `${serialProduct.name} quản lý theo từng mã riêng nên chưa thể chuyển kho theo số lượng.`);
       const sequence = await client.query(
         `UPDATE store_transfer_sequences SET next_transfer_number = next_transfer_number + 1
          WHERE store_id = $1 RETURNING next_transfer_number - 1 AS transfer_number`,
