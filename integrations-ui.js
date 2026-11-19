@@ -120,42 +120,19 @@
       ? `<div class='integration-hardware-bar' style='margin-top:12px'>
           <div>
             <strong>Máy in nhiệt USB / COM</strong>
-            <small>${caps.connected ? 'Đã kết nối sẵn sàng in trực tiếp.' : 'Chọn cổng máy in 58mm/80mm trên máy tính.'}</small>
+            <small>${caps.connected ? 'Đã kết nối' : 'Máy in 58mm / 80mm'}</small>
           </div>
           <div class='integration-hardware-actions'>
-            <button class='btn btn-secondary' type='button' data-action='escpos-connect'>${caps.connected ? 'Đổi máy in' : 'Kết nối máy in'}</button>
+            <button class='btn btn-secondary' type='button' data-action='escpos-connect'>${caps.connected ? 'Đổi máy in' : 'Kết nối'}</button>
             <button class='btn btn-secondary' type='button' data-action='escpos-test-print'>In thử</button>
             <button class='btn btn-secondary' type='button' data-action='escpos-kick-drawer'>Mở két</button>
           </div>
         </div>`
       : '';
 
-    return `<section class='panel settings-panel integrations-panel' id='integrations-panel'>
-      <div class='panel-header'>
-        <div>
-          <h2>Tài khoản nhận chuyển khoản (VietQR)</h2>
-        </div>
-      </div>
-      ${loading ? `<div class='install-hint' role='status'>Đang tải…</div>` : ''}
-      ${error ? `<div class='auth-message error' role='alert'>${esc(error)}</div>` : ''}
-      <form id='integration-settings-form' data-form='integration-settings'>
-        <div class='form-grid'>
-          <div class='form-field'>
-            <label class='input-label' for='int-bank-bin'>Ngân hàng</label>
-            <div class='select-wrap'><select class='input' id='int-bank-bin' name='bankBin' ${disabled}>${bankOptions}</select></div>
-          </div>
-          <div class='form-field'>
-            <label class='input-label' for='int-bank-account'>Số tài khoản</label>
-            <input class='input' id='int-bank-account' name='bankAccountNumber' value='${esc(settings.bankAccountNumber || '')}' maxlength='32' autocomplete='off' placeholder='Nhập số tài khoản' ${disabled}/>
-          </div>
-          <div class='form-field full'>
-            <label class='input-label' for='int-bank-owner'>Chủ tài khoản</label>
-            <input class='input' id='int-bank-owner' name='bankAccountName' value='${esc(settings.bankAccountName || '')}' maxlength='120' placeholder='VD: NGUYEN VAN A' ${disabled}/>
-          </div>
-          <div class='form-field full' id='int-vietqr-preview' ${previewQr ? '' : 'hidden'}>${previewQr}</div>
-        </div>
-        <details class='settings-advanced-fold' style='margin-top:14px' ${hasAdvancedConfigured ? 'open' : ''}>
-          <summary style='cursor:pointer;font-weight:600;color:var(--muted)'>Kết nối mở rộng (vận chuyển, hóa đơn điện tử, tự động đối soát)</summary>
+    const advancedBlock = hasAdvancedConfigured
+      ? `<details class='settings-advanced-fold' style='margin-top:14px'>
+          <summary style='cursor:pointer;font-weight:600;color:var(--muted)'>Kết nối mở rộng đã cấu hình</summary>
           <div class='form-grid' style='margin-top:12px'>
             <div class='form-field full'>
               <label class='input-label' for='int-shipping-provider'>Đơn vị vận chuyển${ghnShopId ? ` · GHN #${esc(ghnShopId)}` : ''}</label>
@@ -194,10 +171,37 @@
               <input class='input' id='int-einvoice-serial' name='einvoiceSerial' value='${esc(settings.einvoiceSerial || '')}' maxlength='40' placeholder='VD: 1C26TYY' ${disabled}/>
             </div>
           </div>
-          ${serialHardwareHtml}
-        </details>
-        ${canEdit ? `<div class='modal-footer' style='padding:17px 0 0;margin-top:12px'><button class='btn btn-primary' type='submit'>Lưu cài đặt thanh toán</button></div>` : ''}
+        </details>`
+      : '';
+
+    return `<section class='panel settings-panel integrations-panel' id='integrations-panel'>
+      <div class='panel-header'>
+        <div>
+          <h2>Tài khoản nhận chuyển khoản (VietQR)</h2>
+        </div>
+      </div>
+      ${loading ? `<div class='install-hint' role='status'>Đang tải…</div>` : ''}
+      ${error ? `<div class='auth-message error' role='alert'>${esc(error)}</div>` : ''}
+      <form id='integration-settings-form' data-form='integration-settings'>
+        <div class='form-grid'>
+          <div class='form-field'>
+            <label class='input-label' for='int-bank-bin'>Ngân hàng</label>
+            <div class='select-wrap'><select class='input' id='int-bank-bin' name='bankBin' ${disabled}>${bankOptions}</select></div>
+          </div>
+          <div class='form-field'>
+            <label class='input-label' for='int-bank-account'>Số tài khoản</label>
+            <input class='input' id='int-bank-account' name='bankAccountNumber' value='${esc(settings.bankAccountNumber || '')}' maxlength='32' autocomplete='off' placeholder='Nhập số tài khoản' ${disabled}/>
+          </div>
+          <div class='form-field full'>
+            <label class='input-label' for='int-bank-owner'>Chủ tài khoản</label>
+            <input class='input' id='int-bank-owner' name='bankAccountName' value='${esc(settings.bankAccountName || '')}' maxlength='120' placeholder='VD: NGUYEN VAN A' ${disabled}/>
+          </div>
+          <div class='form-field full' id='int-vietqr-preview' ${previewQr ? '' : 'hidden'}>${previewQr}</div>
+        </div>
+        ${advancedBlock}
+        ${canEdit ? `<div class='modal-footer' style='padding:17px 0 0;margin-top:12px'><button class='btn btn-primary' type='submit'>Lưu tài khoản VietQR</button></div>` : ''}
       </form>
+      ${serialHardwareHtml}
     </section>`;
   }
 
@@ -213,34 +217,36 @@
         amountVnd: order.dueVndText || String(order.due),
         orderNumber: order.number,
         note: `SLINK ${order.number}`,
-        subtitle: 'Khách quét mã sẽ điền sẵn đúng số tiền còn thiếu & mã đơn để đối soát.',
       })
       : '';
 
+    const hasEinvoice = Boolean(settings?.einvoiceProvider && settings.einvoiceProvider !== 'none');
     const einvoiceStatus = order.einvoiceStatus === 'issued'
-      ? `<span class='badge badge-success'><i class='badge-dot'></i>HĐĐT ${esc(order.einvoiceNumber || 'Đã phát hành')}${order.einvoiceLookupCode ? ` · Mã tra cứu: ${esc(order.einvoiceLookupCode)}` : ''}</span>`
-      : (canOperate && order.rawStatus !== 'voided'
-        ? `<button class='btn btn-secondary' type='button' data-action='issue-order-einvoice' data-id='${esc(order.id)}'>Xuất hóa đơn điện tử</button>`
+      ? `<span class='badge badge-success'><i class='badge-dot'></i>HĐĐT ${esc(order.einvoiceNumber || 'Đã phát hành')}${order.einvoiceLookupCode ? ` · ${esc(order.einvoiceLookupCode)}` : ''}</span>`
+      : (hasEinvoice && canOperate && order.rawStatus !== 'voided'
+        ? `<button class='btn btn-secondary' type='button' data-action='issue-order-einvoice' data-id='${esc(order.id)}'>Xuất HĐĐT</button>`
         : '');
 
+    const hasShipping = Boolean(settings?.shippingProvider && settings.shippingProvider !== 'none');
     const shippingStatus = order.shippingTrackingCode
       ? `<span class='badge badge-info'><i class='badge-dot'></i>Vận đơn ${esc((order.shippingProvider || '').toUpperCase())}: ${esc(order.shippingTrackingCode)}</span>`
-      : ((canOperate || role === 'stockkeeper') && order.rawStatus !== 'voided'
-        ? `<button class='btn btn-secondary' type='button' data-action='create-order-shipping' data-id='${esc(order.id)}'>Tạo vận đơn (GHN/GHTK)</button>`
+      : (hasShipping && (canOperate || role === 'stockkeeper') && order.rawStatus !== 'voided'
+        ? `<button class='btn btn-secondary' type='button' data-action='create-order-shipping' data-id='${esc(order.id)}'>Tạo vận đơn</button>`
         : '');
 
-    const momoBtn = (canOperate && order.due > 0 && order.rawStatus !== 'voided')
-      ? `<button class='btn btn-secondary' type='button' data-action='create-order-momo' data-id='${esc(order.id)}'>Thanh toán MoMo</button>`
+    const hasMomo = Boolean(settings?.momoConfigured);
+    const momoBtn = (hasMomo && canOperate && order.due > 0 && order.rawStatus !== 'voided')
+      ? `<button class='btn btn-secondary' type='button' data-action='create-order-momo' data-id='${esc(order.id)}'>MoMo</button>`
       : '';
 
     const serialSupported = Boolean(root.SlinkEscPosPrinter?.capabilities?.().serialSupported);
     const escposBtn = serialSupported
-      ? `<button class='btn btn-secondary' type='button' data-action='escpos-print-order' data-id='${esc(order.id)}'>In bill nhiệt ESC/POS</button>`
+      ? `<button class='btn btn-secondary' type='button' data-action='escpos-print-order' data-id='${esc(order.id)}'>In bill nhiệt</button>`
       : '';
 
     if (!qrHtml && !einvoiceStatus && !shippingStatus && !escposBtn && !momoBtn) return '';
 
-    return `${qrHtml}<div class='order-integration-bar'>${escposBtn}${momoBtn}${einvoiceStatus}${shippingStatus}</div>`;
+    return `${qrHtml}${escposBtn || momoBtn || einvoiceStatus || shippingStatus ? `<div class='order-integration-bar'>${escposBtn}${momoBtn}${einvoiceStatus}${shippingStatus}</div>` : ''}`;
   }
 
   return {
