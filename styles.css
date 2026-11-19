@@ -552,6 +552,19 @@ body{min-height:100vh;min-height:100dvh;overflow-x:hidden}
 .pos-fast-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .pos-fast-actions .btn{min-height:46px;justify-content:center;padding-inline:10px;font-size:12px}
 .pos-fast-more{justify-self:center;font-size:12px;padding-top:2px}
+.pos-bill-tabs{display:flex;align-items:center;gap:6px;padding:10px 14px 6px;overflow-x:auto;border-bottom:1px solid #e8efe9}
+.pos-bill-tab{display:inline-flex;align-items:center;border:1px solid #d7e3da;border-radius:9px;background:#f7faf8;flex:none}
+.pos-bill-tab.active{border-color:#123f35;background:#123f35;color:#fff}
+.pos-bill-tab button[role='tab']{padding:6px 10px;border:0;background:transparent;color:inherit;font-size:12px;font-weight:700;display:inline-flex;align-items:center;gap:5px}
+.pos-bill-badge{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:rgba(18,63,53,.12);font-size:11px}
+.pos-bill-tab.active .pos-bill-badge{background:rgba(255,255,255,.22);color:#fff}
+.pos-bill-close{padding:4px 7px 4px 2px;border:0;background:transparent;color:inherit;font-size:14px;opacity:.75}
+.pos-bill-add{min-width:30px;height:30px;border:1px dashed #b9ccb9;border-radius:9px;background:#fff;color:#204535;font-weight:700;flex:none}
+.pos-standard-note-wrap{padding:6px 14px 4px}
+.pos-standard-note-wrap .input{min-height:36px;font-size:13px}
+.pos-standard-pay{display:grid;gap:8px;width:100%}
+.pos-standard-methods{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+.scan-continuous-toggle{display:inline-flex;align-items:center;gap:7px;font-size:13px;font-weight:600;color:#224837;cursor:pointer;padding:6px 10px;border:1px solid #d7e3da;border-radius:10px;background:#f8fbf9}
 
 .pos-delivery-box{margin:8px 14px 4px;padding:12px;border:1px solid #dce6de;border-radius:12px;background:#f9fbf9;display:grid;gap:8px}
 .pos-delivery-head{display:flex;align-items:center;justify-content:space-between;font-size:12px;color:#204535}
