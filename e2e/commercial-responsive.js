@@ -220,14 +220,13 @@ async function runViewportAudit(browser, origin, viewport, label) {
     await page.press('#pos-search', 'Enter');
     await page.waitForTimeout(250);
 
-    // 3. Test Bán nhanh (1-tap sale without modal)
-    await page.locator("[data-action='pos-mode'][data-mode='fast']").click();
-    await page.waitForTimeout(150);
-    await assertNoHorizontalOverflow(page, `${label}:pos-fast`);
-    if (await page.locator(".pos-layout > .cart-panel [data-action='fast-pay'][data-method='cash']").isVisible()) {
-      await page.locator(".pos-layout > .cart-panel [data-action='fast-pay'][data-method='cash']").click();
+    // 3. Unified Sapo POS (1-tap sale with denomination chips without modal)
+    await assertNoHorizontalOverflow(page, `${label}:pos-unified`);
+    if (await page.locator(".pos-layout > .cart-panel [data-action='standard-pay']").isVisible()) {
+      await page.locator(".pos-layout > .cart-panel [data-action='fast-cash-preset']").first().click();
+      await page.locator(".pos-layout > .cart-panel [data-action='standard-pay']").click();
     } else {
-      await page.locator(".pos-mobile-checkout[data-action='fast-pay']").click();
+      await page.locator(".pos-mobile-checkout[data-action='standard-pay']").click();
     }
     await page.waitForSelector('.sale-saved');
 
@@ -238,9 +237,7 @@ async function runViewportAudit(browser, origin, viewport, label) {
     const soldOutCount = await page.locator('.pos-mobile-cart .mobile-cart-count').textContent();
     assert.equal(soldOutCount.trim(), '0', `${label}: already-sold barcode must not re-enter cart`);
 
-    // 3b. Test Bán thường multi-bill tabs (Đơn 1 -> add item -> open Đơn 2 -> empty -> switch back -> 1-click standard pay)
-    await page.locator("[data-action='pos-mode'][data-mode='standard']").click();
-    await page.waitForTimeout(150);
+    // 3b. Test multi-bill tabs in unified Tại quầy POS (Đơn 1 -> add item -> open Đơn 2 -> empty -> switch back -> 1-click pay)
     await page.fill('#pos-search', '8938505974194');
     await page.press('#pos-search', 'Enter');
     await page.waitForTimeout(250);

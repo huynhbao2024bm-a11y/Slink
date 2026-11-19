@@ -359,7 +359,7 @@
 .calm-ui .guided-tour-spotlight { transition: opacity .12s ease; }
 .calm-ui .form-message { margin: 12px 0 0; color: #833f2d; font-size: 15px; line-height: 1.5; }
 .calm-ui .guided-tour-card button { min-height: 44px; font-size: 15px; }
-.calm-ui .toast-stack { z-index: 1100; top: auto; bottom: 24px; right: 24px; left: auto; max-width: calc(100vw - 32px); width: 360px; pointer-events: none; }
+.calm-ui .toast-stack { z-index: 1100; top: 68px; bottom: auto; right: 20px; left: auto; max-width: calc(100vw - 32px); width: 360px; pointer-events: none; }
 .calm-ui .toast { padding: 14px 18px; border-radius: 8px; box-shadow: 0 4px 14px #18322515; } /* taste-skill-ignore: transient toast overlay */
 .calm-ui .toast strong, .calm-ui .toast small { font-size: 14px; line-height: 1.5; }
 .calm-ui .product-photo-field { display: flex; gap: 16px; align-items: center; margin-bottom: 24px; min-width: 0; }
