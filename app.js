@@ -281,9 +281,10 @@
       return {
         paperWidth: ['58mm', '80mm', 'a4'].includes(parsed.paperWidth) ? parsed.paperWidth : '80mm',
         autoPrint: Boolean(parsed.autoPrint),
+        requireFullPayment: Boolean(parsed.requireFullPayment),
       };
     } catch (_) {
-      return { paperWidth: '80mm', autoPrint: false };
+      return { paperWidth: '80mm', autoPrint: false, requireFullPayment: false };
     }
   }
   let posPrefs = loadPosPrefs();
@@ -3563,7 +3564,10 @@
       const label = posDelivery.collection === 'prepaid' ? 'Xác nhận đã thu & giao' : posDelivery.collection === 'debt' ? 'Tạo đơn giao · Ghi nợ' : 'Tạo đơn giao · COD';
       return `<button class='btn btn-primary' type='button' data-action='submit-delivery-sale' ${cart.length ? '' : 'disabled'}>${label} <span style='margin-left:auto'>${money(totals.total)} →</span></button>`;
     }
-    const methods = [['cash', 'Tiền mặt'], ['bank_transfer', 'Chuyển khoản'], ['debt', 'Ghi nợ']];
+    if (posPrefs.requireFullPayment && posStandardMethod === 'debt') posStandardMethod = 'cash';
+    const methods = posPrefs.requireFullPayment
+      ? [['cash', 'Tiền mặt'], ['bank_transfer', 'Chuyển khoản']]
+      : [['cash', 'Tiền mặt'], ['bank_transfer', 'Chuyển khoản'], ['debt', 'Ghi nợ']];
     const payLabel = posStandardMethod === 'debt' ? 'Ghi nợ khách' : posStandardMethod === 'bank_transfer' ? 'Thu chuyển khoản' : 'Thu tiền mặt';
     let cashBlock = '';
     if (posStandardMethod === 'cash' && cart.length) {
@@ -3852,7 +3856,12 @@
     </div>`;
     const mobileCheckoutAction = checkoutPendingPayload ? 'checkout' : (posMode === 'delivery' ? 'open-cart' : (posStandardMethod === 'debt' ? 'checkout' : 'standard-pay'));
     const mobileCheckoutLabel = checkoutPendingPayload ? 'Kiểm tra đơn chờ' : !cart.length ? 'Chọn hàng' : posMode === 'delivery' ? 'Nhập giao hàng' : 'Thanh toán';
-    const posHeaderActions = `${hasPerm('voidOrReturnOrder') ? `<button class='btn btn-secondary' type='button' data-action='pos-quick-return'>Đổi / Trả hàng</button>` : ''}${canManageProducts ? `<button class='link-button pos-add' data-action='new-product'>＋ Thêm hàng</button>` : ''}`;
+    const shiftBtn = hasPerm('operateCashShift')
+      ? (cashRegisterState.session
+        ? `<button class='btn btn-secondary' type='button' data-action='close-cash-session'>Ca: ${moneyVndText(cashRegisterState.session.expectedCashVnd)} · Đóng ca</button>`
+        : `<button class='btn btn-secondary' type='button' data-action='open-cash-session'>Mở ca</button>`)
+      : '';
+    const posHeaderActions = `${shiftBtn}${hasPerm('voidOrReturnOrder') ? `<button class='btn btn-secondary' type='button' data-action='pos-quick-return'>Đổi / Trả hàng</button>` : ''}${canManageProducts ? `<button class='link-button pos-add' data-action='new-product'>＋ Thêm hàng</button>` : ''}`;
     return pageHeading('Bán hàng', '', posHeaderActions) +
       `${renderLastSale()}${posModesBar}<div class='pos-layout'><div><div class='pos-tools ${warehouses.length > 1 ? 'has-warehouse' : ''}'><div class='pos-search-group'><div class='search-wrap pos-search' data-tour-target='pos-search'><span class='search-symbol'>⌕</span><input class='input' id='pos-search' type='search' placeholder='Tìm tên, mã hàng hoặc quét mã vạch…' value='${esc(query)}' aria-label='Tìm sản phẩm'></div><button class='btn btn-secondary pos-scan-btn' type='button' data-action='pos-scan' aria-label='Quét mã vạch bằng camera' title='Quét mã vạch'>${icon('scan', 19)}</button></div>${posWarehousePicker}</div><div class='category-scroll'>${categories.map(function (category) { return `<button class='pos-category ${categoryFilter === category ? 'active' : ''}' data-action='category' data-category='${esc(category)}'>${esc(category)}</button>`; }).join('')}</div><div class='pos-product-grid' id='pos-products'>${products.map(function (product) { return posProductButton(product); }).join('') || emptyProductState}</div></div>${cartPanel(totals, true)}</div><div class='pos-mobile-cart'><button class='btn pos-mobile-cart-edit' data-action='open-cart' aria-controls='drawer-cart' aria-expanded='false'><span class='mobile-cart-count'>${number(totals.count)}</span><span>Giỏ</span></button><button class='btn btn-primary pos-mobile-checkout' data-action='${mobileCheckoutAction}' ${posMode === 'fast' && !checkoutPendingPayload ? "data-method='cash'" : ''} data-tour-target='pos-cart-mobile' ${cart.length || checkoutPendingPayload ? '' : 'disabled'}><span>${mobileCheckoutLabel}</span><strong>${money(checkoutPendingPayload ? checkoutPendingPayload.totalVnd : totals.total)} →</strong></button></div><div class='drawer-cart' id='drawer-cart' role='dialog' aria-modal='true' aria-label='Giỏ hàng' aria-hidden='true' inert>${cartPanel(totals, false)}</div>`;
   }
@@ -4966,7 +4975,7 @@
   }
 
   function renderPosPrefsSettings() {
-    return `<section class='panel settings-panel'><h2>POS &amp; Hóa đơn</h2><form data-form='pos-prefs'><div class='form-grid'><div class='form-field'><label class='input-label' for='pos-pref-paper'>Khổ giấy in mặc định</label><div class='select-wrap'><select class='input' id='pos-pref-paper' name='paperWidth'><option value='80mm' ${posPrefs.paperWidth === '80mm' ? 'selected' : ''}>Khổ nhiệt 80mm (phổ biến)</option><option value='58mm' ${posPrefs.paperWidth === '58mm' ? 'selected' : ''}>Khổ nhiệt 58mm (mini)</option><option value='a4' ${posPrefs.paperWidth === 'a4' ? 'selected' : ''}>Khổ giấy A4 / A5</option></select></div></div><div class='form-field' style='display:flex;align-items:flex-end;padding-bottom:8px'><label style='display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:13px'><input type='checkbox' name='autoPrint' ${posPrefs.autoPrint ? 'checked' : ''}/><span>Tự động in hóa đơn sau thanh toán</span></label></div></div><div class='modal-footer' style='padding:14px 0 0;margin-top:8px'><button class='btn btn-primary' type='submit'>Lưu cấu hình POS</button></div></form></section>`;
+    return `<section class='panel settings-panel'><h2>POS &amp; Hóa đơn</h2><form data-form='pos-prefs'><div class='form-grid'><div class='form-field'><label class='input-label' for='pos-pref-paper'>Khổ giấy in mặc định</label><div class='select-wrap'><select class='input' id='pos-pref-paper' name='paperWidth'><option value='80mm' ${posPrefs.paperWidth === '80mm' ? 'selected' : ''}>Khổ nhiệt 80mm (phổ biến)</option><option value='58mm' ${posPrefs.paperWidth === '58mm' ? 'selected' : ''}>Khổ nhiệt 58mm (mini)</option><option value='a4' ${posPrefs.paperWidth === 'a4' ? 'selected' : ''}>Khổ giấy A4 / A5</option></select></div></div><div class='form-field' style='display:grid;gap:8px;align-content:end;padding-bottom:6px'><label style='display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:13px'><input type='checkbox' name='autoPrint' ${posPrefs.autoPrint ? 'checked' : ''}/><span>Tự động in hóa đơn sau thanh toán</span></label><label style='display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:13px'><input type='checkbox' name='requireFullPayment' ${posPrefs.requireFullPayment ? 'checked' : ''}/><span>Bắt buộc thanh toán đủ (ẩn Ghi nợ tại quầy)</span></label></div></div><div class='modal-footer' style='padding:14px 0 0;margin-top:8px'><button class='btn btn-primary' type='submit'>Lưu cấu hình POS</button></div></form></section>`;
   }
 
   function renderSettings() {
@@ -13942,7 +13951,7 @@
     else if (type === 'scan') addByCode(form);
     else if (type === 'pos-prefs') {
       const fd = new FormData(form);
-      savePosPrefs({ paperWidth: String(fd.get('paperWidth') || '80mm'), autoPrint: fd.get('autoPrint') === 'on' });
+      savePosPrefs({ paperWidth: String(fd.get('paperWidth') || '80mm'), autoPrint: fd.get('autoPrint') === 'on', requireFullPayment: fd.get('requireFullPayment') === 'on' });
       toast('Đã lưu cấu hình POS & Hóa đơn');
     }
     else if (type === 'discount') {
