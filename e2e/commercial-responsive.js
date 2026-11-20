@@ -629,7 +629,7 @@ async function runViewportAudit(browser, origin, viewport, label) {
     const settingsBtn = page.locator("[data-action='account-settings']:visible, #primary-nav [data-route='settings']:visible").first();
     await settingsBtn.click();
     await page.waitForSelector('.settings-areas', { timeout: 15000 });
-    const storeSettingsTab = page.locator("[data-action='settings-area']", { hasText: 'Cửa hàng' }).first();
+    const storeSettingsTab = page.locator("[data-action='settings-area']", { hasText: 'Bán hàng & Máy in' }).first();
     await storeSettingsTab.click();
     await page.waitForSelector('#integration-settings-form', { timeout: 15000 });
     const settingsText = await page.locator('#integrations-panel').textContent();
