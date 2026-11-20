@@ -231,6 +231,129 @@
   let guidedTourSeenInSessionKey = '';
   let guidedTourPositionFrame = 0;
 
+  const ROLE_CAPABILITIES = {
+    owner: {
+      posSell: true, posDiscount: true, viewOrders: true, voidOrReturnOrder: true,
+      viewProducts: true, editProducts: true, viewCostPrice: true, manageInventory: true,
+      viewFinance: true, recordCashbook: true, operateCashShift: true, viewReports: true,
+      manageCustomers: true, manageStaff: true, manageSettings: true, viewAudit: true, exportData: true,
+    },
+    manager: {
+      posSell: true, posDiscount: true, viewOrders: true, voidOrReturnOrder: true,
+      viewProducts: true, editProducts: true, viewCostPrice: true, manageInventory: true,
+      viewFinance: true, recordCashbook: true, operateCashShift: true, viewReports: true,
+      manageCustomers: true, manageStaff: false, manageSettings: true, viewAudit: true, exportData: true,
+    },
+    cashier: {
+      posSell: true, posDiscount: true, viewOrders: true, voidOrReturnOrder: false,
+      viewProducts: true, editProducts: false, viewCostPrice: false, manageInventory: false,
+      viewFinance: true, recordCashbook: false, operateCashShift: true, viewReports: false,
+      manageCustomers: true, manageStaff: false, manageSettings: false, viewAudit: false, exportData: false,
+    },
+    stockkeeper: {
+      posSell: false, posDiscount: false, viewOrders: false, voidOrReturnOrder: false,
+      viewProducts: true, editProducts: true, viewCostPrice: true, manageInventory: true,
+      viewFinance: true, recordCashbook: false, operateCashShift: false, viewReports: false,
+      manageCustomers: false, manageStaff: false, manageSettings: false, viewAudit: false, exportData: false,
+    },
+    accountant: {
+      posSell: false, posDiscount: false, viewOrders: true, voidOrReturnOrder: false,
+      viewProducts: true, editProducts: false, viewCostPrice: true, manageInventory: false,
+      viewFinance: true, recordCashbook: true, operateCashShift: false, viewReports: true,
+      manageCustomers: true, manageStaff: false, manageSettings: false, viewAudit: false, exportData: true,
+    },
+    affiliate: {
+      posSell: false, posDiscount: false, viewOrders: false, voidOrReturnOrder: false,
+      viewProducts: false, editProducts: false, viewCostPrice: false, manageInventory: false,
+      viewFinance: false, recordCashbook: false, operateCashShift: false, viewReports: false,
+      manageCustomers: false, manageStaff: false, manageSettings: false, viewAudit: false, exportData: false,
+    },
+  };
+
+  function hasPerm(capability) {
+    const caps = ROLE_CAPABILITIES[store.role] || {};
+    return Boolean(caps[capability]);
+  }
+
+  function loadPosPrefs() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem('slink-pos-prefs') || '{}');
+      return {
+        paperWidth: ['58mm', '80mm', 'a4'].includes(parsed.paperWidth) ? parsed.paperWidth : '80mm',
+        autoPrint: Boolean(parsed.autoPrint),
+      };
+    } catch (_) {
+      return { paperWidth: '80mm', autoPrint: false };
+    }
+  }
+  let posPrefs = loadPosPrefs();
+  function savePosPrefs(patch) {
+    posPrefs = { ...posPrefs, ...patch };
+    try { localStorage.setItem('slink-pos-prefs', JSON.stringify(posPrefs)); } catch (_) {}
+  }
+
+  let lastForegroundSyncAt = 0;
+  async function syncAfterMutation(scopes = []) {
+    if (!authSession || !store.id || offlineState.mode !== 'online') return;
+    const set = new Set(scopes);
+    const jobs = [];
+    if (set.has('me')) {
+      jobs.push(apiRequest('/api/auth/me', { preferFresh: true }).then((me) => {
+        if (!me || !me.user) return;
+        authSession = me;
+        const active = (me.stores || []).find(s => s.id === store.id);
+        if (active && active.role !== store.role) {
+          store.role = active.role;
+          if (!canAccessRoute(page)) page = defaultHomeRouteForRole();
+          render();
+          toast('Quyền truy cập đã cập nhật', `Vai trò hiện tại: ${staffRoleName(store.role)}`);
+        }
+      }).catch(() => {}));
+    }
+    if (set.has('products')) jobs.push(loadProductsPage(searchTerms.products, productOffset).catch(() => {}));
+    if (set.has('inventory') && canAccessRoute('inventory')) jobs.push(loadInventoryPage(searchTerms.inventory, inventoryOffset).catch(() => {}));
+    if (set.has('orders') && canAccessRoute('orders')) jobs.push(loadOrdersPage(searchTerms.orders, orderOffset).catch(() => {}));
+    if ((set.has('finance') || set.has('cashSession')) && canAccessRoute('finance')) jobs.push(loadFinancePage().catch(() => {}));
+    if (set.has('customers') && canAccessRoute('customers')) jobs.push(loadCustomersPage(searchTerms.customers, customerOffset).catch(() => {}));
+    if (set.has('dashboard') && page === 'dashboard' && hasPerm('viewReports')) jobs.push(loadAnalytics(1).catch(() => {}));
+    if (set.has('staff') && hasPerm('manageStaff')) jobs.push(loadStaffPage().catch(() => {}));
+    await Promise.allSettled(jobs);
+  }
+
+  async function printHtmlDocument(html, jobName) {
+    const cleanJob = String(jobName || 'Slink').slice(0, 80);
+    if (window.SlinkAndroid) {
+      try {
+        const sanitized = String(html).replace(/<script[\s\S]*?<\/script>/gi, '');
+        await nativeAction({ type: 'printHtml', jobName: cleanJob, html: sanitized });
+        return true;
+      } catch (error) {
+        toast('Không mở được trình in Android', error.message, 'error');
+        return false;
+      }
+    }
+    const existing = document.getElementById('slink-hidden-print-frame');
+    if (existing) existing.remove();
+    const frame = document.createElement('iframe');
+    frame.id = 'slink-hidden-print-frame';
+    frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
+    document.body.appendChild(frame);
+    const doc = frame.contentDocument || frame.contentWindow?.document;
+    if (!doc) {
+      const win = window.open('', '_blank', 'width=460,height=680');
+      if (!win) { toast('Trình duyệt đã chặn cửa sổ in', 'Hãy cho phép bật cửa sổ in rồi thử lại.', 'error'); return false; }
+      win.document.open(); win.document.write(html); win.document.close();
+      return true;
+    }
+    const cleanHtml = String(html).replace(/<script[\s\S]*?<\/script>/gi, '');
+    doc.open(); doc.write(cleanHtml); doc.close();
+    window.setTimeout(() => {
+      try { frame.contentWindow.focus(); frame.contentWindow.print(); } catch (_) {}
+      window.setTimeout(() => frame.remove(), 60000);
+    }, 180);
+    return true;
+  }
+
   function emptyStore() {
     return {
       businessProfile: '',
@@ -2984,7 +3107,7 @@
     if (route === 'promotions') return ['owner', 'manager'].includes(store.role);
     if (route === 'affiliate') return store.role === 'affiliate';
     if (store.role === 'affiliate') return ['affiliate', 'settings'].includes(route);
-    if (store.role === 'cashier' && !['pos', 'orders', 'settings'].includes(route)) return false;
+    if (store.role === 'cashier' && !['pos', 'orders', 'finance', 'customers', 'settings'].includes(route)) return false;
     if (route === 'staff' && store.role !== 'owner') return false;
     if (route === 'audit' && !['owner', 'manager'].includes(store.role)) return false;
     if (route === 'reports' && !['owner', 'manager', 'accountant'].includes(store.role)) return false;
@@ -2992,6 +3115,14 @@
     if (store.role === 'stockkeeper' && ['pos', 'orders', 'customers'].includes(route)) return false;
     if (store.role === 'accountant' && route === 'pos') return false;
     return true;
+  }
+
+  function defaultHomeRouteForRole() {
+    if (store.role === 'affiliate') return 'workspace';
+    if (store.role === 'cashier') return 'pos';
+    if (store.role === 'stockkeeper') return 'inventory';
+    if (store.role === 'accountant') return 'finance';
+    return taskFocusRoute || 'dashboard';
   }
 
   function renderShell() {
@@ -3018,17 +3149,25 @@
       : isCashier
         ? 'pos'
         : taskFocusRoute || (store.role === 'stockkeeper' ? 'inventory' : store.businessProfile === 'online' && canAccessRoute('channels') ? 'channels' : 'dashboard');
+    const profileNavIds = {
+      retail: ['dashboard', 'products', 'inventory', 'orders', 'finance', 'workspace'],
+      warehouse: ['dashboard', 'inventory', 'products', 'orders', 'finance', 'workspace'],
+      large_business: ['dashboard', 'orders', 'finance', 'reports', 'inventory', 'workspace'],
+      unsure: ['dashboard', 'products', 'inventory', 'orders', 'finance', 'workspace'],
+    };
     const ids = store.role === 'affiliate'
       ? ['workspace']
       : isCashier
-        ? ['pos', 'orders', 'workspace']
+        ? ['pos', 'orders', 'finance', 'workspace']
         : store.role === 'stockkeeper'
-          ? ['inventory', 'products', 'channels', 'workspace']
+          ? ['inventory', 'products', 'finance', 'workspace']
           : financeFirst
-            ? ['finance', 'customers', 'orders', 'workspace']
-            : ['dashboard', 'products', 'inventory', 'orders', 'workspace'];
+            ? ['finance', 'customers', 'orders', 'reports', 'workspace']
+            : (profileNavIds[store.businessProfile] || profileNavIds.retail);
     const navIds = Array.from(new Set(ids)).filter(canAccessRoute);
     const visibleNav = navIds.map(function (id) { const item = navItems.find(function (n) { return n.id === id; }); return { ...item, label: id === 'workspace' && ['affiliate', 'cashier'].includes(store.role) ? 'Tài khoản' : id === 'channels' ? 'Đơn online' : item.label }; });
+    const mobileNavIds = navIds.length > 5 ? [...navIds.filter(id => id !== 'workspace').slice(0, 4), 'workspace'] : navIds;
+    const visibleMobileNav = mobileNavIds.map(function (id) { return visibleNav.find(item => item.id === id); }).filter(Boolean);
     const topbarPosCta = document.getElementById('topbar-pos-cta');
     if (topbarPosCta) {
       const showTopbarPos = canAccessRoute('pos') && !isCashier && store.role !== 'affiliate';
@@ -3037,8 +3176,8 @@
       topbarPosCta.setAttribute('aria-current', page === 'pos' ? 'page' : 'false');
     }
     document.getElementById('primary-nav').innerHTML = visibleNav.map(function (item) { return navHtml(item, false); }).join('');
-    document.getElementById('mobile-nav').style.setProperty('--nav-count', String(visibleNav.length));
-    document.getElementById('mobile-nav').innerHTML = visibleNav.map(function (item) { return navHtml(item, true); }).join('');
+    document.getElementById('mobile-nav').style.setProperty('--nav-count', String(visibleMobileNav.length));
+    document.getElementById('mobile-nav').innerHTML = visibleMobileNav.map(function (item) { return navHtml(item, true); }).join('');
     const brand = document.querySelector('.mobile-brand');
     if (brand) { brand.dataset.route = isCashier ? 'pos' : home; brand.setAttribute('aria-label', visibleNav[0]?.label || 'Slink'); }
     const workspaceName = document.querySelector('.workspace-name');
@@ -3446,7 +3585,10 @@
       ${cashBlock}
       ${qrBtn}
       <button class='btn btn-primary' type='button' data-pos-primary-pay data-action='${posStandardMethod === 'debt' ? 'checkout' : 'standard-pay'}' ${cart.length ? '' : 'disabled'}>${payLabel} <span style='margin-left:auto'>${money(totals.total)} →</span></button>
-      <button class='link-button pos-fast-more' type='button' data-action='checkout' ${cart.length ? '' : 'disabled'}>Tách thanh toán / Mã giảm giá →</button>
+      <div style='display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:2px'>
+        <button class='link-button pos-fast-more' type='button' data-action='pos-proforma' ${cart.length ? '' : 'disabled'}>In tạm tính (F8)</button>
+        <button class='link-button pos-fast-more' type='button' data-action='checkout' ${cart.length ? '' : 'disabled'}>Chia thanh toán / Mã giảm →</button>
+      </div>
     </div>`;
   }
 
@@ -3710,7 +3852,8 @@
     </div>`;
     const mobileCheckoutAction = checkoutPendingPayload ? 'checkout' : (posMode === 'delivery' ? 'open-cart' : (posStandardMethod === 'debt' ? 'checkout' : 'standard-pay'));
     const mobileCheckoutLabel = checkoutPendingPayload ? 'Kiểm tra đơn chờ' : !cart.length ? 'Chọn hàng' : posMode === 'delivery' ? 'Nhập giao hàng' : 'Thanh toán';
-    return pageHeading('Bán hàng', '', canManageProducts ? "<button class='link-button pos-add' data-action='new-product'>＋ Thêm hàng</button>" : '') +
+    const posHeaderActions = `${hasPerm('voidOrReturnOrder') ? `<button class='btn btn-secondary' type='button' data-action='pos-quick-return'>Đổi / Trả hàng</button>` : ''}${canManageProducts ? `<button class='link-button pos-add' data-action='new-product'>＋ Thêm hàng</button>` : ''}`;
+    return pageHeading('Bán hàng', '', posHeaderActions) +
       `${renderLastSale()}${posModesBar}<div class='pos-layout'><div><div class='pos-tools ${warehouses.length > 1 ? 'has-warehouse' : ''}'><div class='pos-search-group'><div class='search-wrap pos-search' data-tour-target='pos-search'><span class='search-symbol'>⌕</span><input class='input' id='pos-search' type='search' placeholder='Tìm tên, mã hàng hoặc quét mã vạch…' value='${esc(query)}' aria-label='Tìm sản phẩm'></div><button class='btn btn-secondary pos-scan-btn' type='button' data-action='pos-scan' aria-label='Quét mã vạch bằng camera' title='Quét mã vạch'>${icon('scan', 19)}</button></div>${posWarehousePicker}</div><div class='category-scroll'>${categories.map(function (category) { return `<button class='pos-category ${categoryFilter === category ? 'active' : ''}' data-action='category' data-category='${esc(category)}'>${esc(category)}</button>`; }).join('')}</div><div class='pos-product-grid' id='pos-products'>${products.map(function (product) { return posProductButton(product); }).join('') || emptyProductState}</div></div>${cartPanel(totals, true)}</div><div class='pos-mobile-cart'><button class='btn pos-mobile-cart-edit' data-action='open-cart' aria-controls='drawer-cart' aria-expanded='false'><span class='mobile-cart-count'>${number(totals.count)}</span><span>Giỏ</span></button><button class='btn btn-primary pos-mobile-checkout' data-action='${mobileCheckoutAction}' ${posMode === 'fast' && !checkoutPendingPayload ? "data-method='cash'" : ''} data-tour-target='pos-cart-mobile' ${cart.length || checkoutPendingPayload ? '' : 'disabled'}><span>${mobileCheckoutLabel}</span><strong>${money(checkoutPendingPayload ? checkoutPendingPayload.totalVnd : totals.total)} →</strong></button></div><div class='drawer-cart' id='drawer-cart' role='dialog' aria-modal='true' aria-label='Giỏ hàng' aria-hidden='true' inert>${cartPanel(totals, false)}</div>`;
   }
 
@@ -4822,12 +4965,30 @@
     showModal(`Phiếu nhập ${purchase.number}`, 'Chi tiết hàng đã nhận và giá nhập được ghi vào sổ.', body, `<button class='btn btn-secondary' data-action='close-modal'>Đóng</button><button class='btn btn-primary' type='button' data-action='print-barcode-purchase' data-id='${esc(purchase.id)}'>In tem hàng nhập</button>`, true);
   }
 
+  function renderPosPrefsSettings() {
+    return `<section class='panel settings-panel'><h2>POS &amp; Hóa đơn</h2><form data-form='pos-prefs'><div class='form-grid'><div class='form-field'><label class='input-label' for='pos-pref-paper'>Khổ giấy in mặc định</label><div class='select-wrap'><select class='input' id='pos-pref-paper' name='paperWidth'><option value='80mm' ${posPrefs.paperWidth === '80mm' ? 'selected' : ''}>Khổ nhiệt 80mm (phổ biến)</option><option value='58mm' ${posPrefs.paperWidth === '58mm' ? 'selected' : ''}>Khổ nhiệt 58mm (mini)</option><option value='a4' ${posPrefs.paperWidth === 'a4' ? 'selected' : ''}>Khổ giấy A4 / A5</option></select></div></div><div class='form-field' style='display:flex;align-items:flex-end;padding-bottom:8px'><label style='display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:13px'><input type='checkbox' name='autoPrint' ${posPrefs.autoPrint ? 'checked' : ''}/><span>Tự động in hóa đơn sau thanh toán</span></label></div></div><div class='modal-footer' style='padding:14px 0 0;margin-top:8px'><button class='btn btn-primary' type='submit'>Lưu cấu hình POS</button></div></form></section>`;
+  }
+
   function renderSettings() {
-    if (['cashier', 'affiliate'].includes(store.role)) return pageHeading('Cài đặt', '', '') + renderAccountSummary() + renderChangePasswordForm() + renderAccountSecurity() + renderDeviceSettings();
     const canEdit = ['owner', 'manager'].includes(store.role);
     const disabled = canEdit ? '' : 'disabled';
-    return pageHeading('Cài đặt', '', '') + renderAccountSummary() + renderDeviceSettings() +
-      `<section class='panel settings-panel'><h2>Thông tin cửa hàng</h2><form id='entity-form' data-form='settings' data-version='${store.settings.version || 1}'><div class='form-grid'><div class='form-field full'><label class='input-label' for='setting-store-name'>Tên cửa hàng *</label><input class='input' id='setting-store-name' name='storeName' value='${esc(store.settings.storeName)}' required minlength='2' maxlength='160' ${disabled}/></div><div class='form-field'><label class='input-label' for='setting-phone'>Số điện thoại</label><input class='input' id='setting-phone' name='phone' value='${esc(store.settings.phone)}' inputmode='tel' maxlength='40' ${disabled}/></div><div class='form-field full'><label class='input-label' for='setting-address'>Địa chỉ</label><input class='input' id='setting-address' name='address' value='${esc(store.settings.address)}' maxlength='300' ${disabled}/></div><div class='form-field full'><label class='input-label' for='setting-footer'>Lời chào biên nhận</label><input class='input' id='setting-footer' name='receiptFooter' value='${esc(store.settings.receiptFooter)}' maxlength='240' placeholder='Cảm ơn quý khách' ${disabled}/></div></div>${canEdit ? `<div class='modal-footer' style='padding:17px 0 0;margin-top:12px'><button class='btn btn-primary' type='submit'>Lưu thay đổi</button></div>` : ''}</form></section>${renderBusinessProfileSettings(canEdit)}${canEdit && window.SlinkIntegrationsUI ? window.SlinkIntegrationsUI.renderIntegrationSettingsSection({ data: integrationState.data, loading: integrationState.loading, error: integrationState.error, canEdit }) : ''}${renderChangePasswordForm()}${renderAccountSecurity()}${canAccessRoute('audit') ? `<section class='panel settings-panel'><div class='panel-header'><div><h2>Nhật ký hoạt động</h2></div><button class='btn btn-secondary' data-route='audit'>Mở nhật ký</button></div></section>` : ''}`;
+    if (['cashier', 'affiliate'].includes(store.role)) {
+      return pageHeading('Cài đặt', '', '') +
+        `<section class='settings-panel settings-group' data-label='Tài khoản'>${renderAccountSummary()}${renderChangePasswordForm()}${renderAccountSecurity()}</section>` +
+        (store.role === 'cashier' ? `<section class='settings-panel settings-group' data-label='Bán hàng & Máy in'>${renderPosPrefsSettings()}</section>` : '') +
+        `<section class='settings-panel settings-group' data-label='Dữ liệu & Ứng dụng'>${renderDeviceSettings()}</section>`;
+    }
+    const storeInfoBlock = `<section class='panel settings-panel'><h2>Thông tin cửa hàng</h2><form id='entity-form' data-form='settings' data-version='${store.settings.version || 1}'><div class='form-grid'><div class='form-field full'><label class='input-label' for='setting-store-name'>Tên cửa hàng *</label><input class='input' id='setting-store-name' name='storeName' value='${esc(store.settings.storeName)}' required minlength='2' maxlength='160' ${disabled}/></div><div class='form-field'><label class='input-label' for='setting-phone'>Số điện thoại</label><input class='input' id='setting-phone' name='phone' value='${esc(store.settings.phone)}' inputmode='tel' maxlength='40' ${disabled}/></div><div class='form-field full'><label class='input-label' for='setting-address'>Địa chỉ</label><input class='input' id='setting-address' name='address' value='${esc(store.settings.address)}' maxlength='300' ${disabled}/></div><div class='form-field full'><label class='input-label' for='setting-footer'>Lời chào biên nhận</label><input class='input' id='setting-footer' name='receiptFooter' value='${esc(store.settings.receiptFooter)}' maxlength='240' placeholder='Cảm ơn quý khách' ${disabled}/></div></div>${canEdit ? `<div class='modal-footer' style='padding:17px 0 0;margin-top:12px'><button class='btn btn-primary' type='submit'>Lưu thay đổi</button></div>` : ''}</form></section>`;
+    const integrationsBlock = canEdit && window.SlinkIntegrationsUI
+      ? window.SlinkIntegrationsUI.renderIntegrationSettingsSection({ data: integrationState.data, loading: integrationState.loading, error: integrationState.error, canEdit })
+      : '';
+    const opsBlock = `<section class='panel settings-panel'><h2>Nhân sự &amp; Vận hành</h2>${renderWorkspaceLinks([{ title: '', routes: ['staff', 'inventory', 'promotions', 'audit'] }])}</section>`;
+    return pageHeading('Cài đặt', '', '') +
+      `<section class='settings-panel settings-group' data-label='Cửa hàng'>${storeInfoBlock}${renderBusinessProfileSettings(canEdit)}</section>` +
+      `<section class='settings-panel settings-group' data-label='Bán hàng & Máy in'>${renderPosPrefsSettings()}${integrationsBlock}</section>` +
+      `<section class='settings-panel settings-group' data-label='Nhân sự & Vận hành'>${opsBlock}</section>` +
+      `<section class='settings-panel settings-group' data-label='Tài khoản & Bảo mật'>${renderAccountSummary()}${renderChangePasswordForm()}${renderAccountSecurity()}</section>` +
+      `<section class='settings-panel settings-group' data-label='Dữ liệu & Ứng dụng'>${renderDeviceSettings()}</section>`;
   }
 
   function renderAccountSummary() {
@@ -4845,8 +5006,7 @@
   }
 
   function renderBusinessProfileSettings(canEdit) {
-    const options = `<option value='' disabled ${store.businessProfile ? '' : 'selected'}>Chọn mô hình</option>` + businessProfileOptions.map(function (item) { return `<option value='${item.value}' ${store.businessProfile === item.value ? 'selected' : ''}>${esc(item.label)}</option>`; }).join('');
-    return `<section class='panel settings-panel'><h2>Mô hình cửa hàng</h2><form data-form='business-profile'><div class='form-field'><label class='input-label' for='store-business-profile'>Bố cục menu</label><div class='select-wrap'><select class='input' id='store-business-profile' name='businessProfile' required ${canEdit ? '' : 'disabled'}>${options}</select></div></div>${canEdit ? `<div class='modal-footer' style='padding:17px 0 0;margin-top:12px'><button class='btn btn-primary' type='submit'>Lưu</button></div>` : ''}</form></section>`;
+    return `<section class='panel settings-panel'><h2>Mô hình cửa hàng</h2><form data-form='business-profile'><div class='business-profile-choices'>${renderBusinessProfileChoices(store.businessProfile || 'retail')}</div>${canEdit ? `<div class='modal-footer' style='padding:14px 0 0;margin-top:10px'><button class='btn btn-primary' type='submit'>Áp dụng mô hình</button></div>` : ''}</form></section>`;
   }
 
   function renderChangePasswordForm() {
@@ -4973,10 +5133,24 @@
       <article class='stat-card'><div class='stat-top'><span class='stat-label'>Lương &amp; Hoa hồng dự kiến</span><span class='stat-icon'>${icon('wallet', 15)}</span></div><div class='stat-value'>${moneyVndText(summary.totalEstimatedPayoutVnd)}</div><small class='muted'>Lương cơ bản + Hoa hồng doanh số</small></article>
     </div>`;
     const roleTabs = `<nav class='workspace-tabs' aria-label='Lọc vai trò nhân viên'>${[['', 'Tất cả'], ['cashier', 'Thu ngân'], ['stockkeeper', 'Nhân viên kho'], ['accountant', 'Kế toán'], ['manager', 'Quản lý']].map(([val, label]) => `<button type='button' data-action='staff-role-filter' data-role='${val}' ${staffRoleFilter === val ? "aria-current='page'" : ''}>${label}</button>`).join('')}</nav>`;
-    return pageHeading('Quản lý nhân viên', 'Tạo trực tiếp tài khoản nhân viên, phân quyền theo vai trò/kho và theo dõi doanh số, lương & hoa hồng chuẩn KiotViet / Sapo.', `<button class='btn btn-secondary' data-action='new-staff-invite' data-tour-target='staff-invite'>✉ Mời qua Email</button><button class='btn btn-primary' data-action='new-staff-direct'>${icon('plus', 15)} Tạo nhanh nhân viên</button>`) +
+    const permRows = [
+      ['Bán hàng tại quầy (POS)', 'posSell'],
+      ['Xem & tra cứu đơn hàng', 'viewOrders'],
+      ['Hủy đơn & Trả hàng', 'voidOrReturnOrder'],
+      ['Xem giá vốn sản phẩm', 'viewCostPrice'],
+      ['Thêm / sửa hàng hóa & Kho', 'manageInventory'],
+      ['Mở / Chốt ca tiền mặt', 'operateCashShift'],
+      ['Lập phiếu thu chi & Sổ quỹ', 'recordCashbook'],
+      ['Xem báo cáo doanh thu / lãi lỗ', 'viewReports'],
+      ['Quản lý khách hàng', 'manageCustomers'],
+      ['Quản lý nhân viên & phân quyền', 'manageStaff'],
+    ];
+    const permRoles = [['owner', 'Chủ'], ['manager', 'Quản lý'], ['cashier', 'Thu ngân'], ['stockkeeper', 'Kho'], ['accountant', 'Kế toán']];
+    const permMatrixHtml = `<section class='panel staff-panel'><div class='panel-header'><div><h2>Bảng phân quyền theo vai trò</h2><p>Quyền được áp dụng đồng thời cả trên giao diện và máy chủ API.</p></div></div><div class='table-wrap'><table class='data-table'><thead><tr><th>Chức năng</th>${permRoles.map(([, l]) => `<th class='text-right'>${l}</th>`).join('')}</tr></thead><tbody>${permRows.map(([label, key]) => `<tr><td>${label}</td>${permRoles.map(([r]) => `<td class='text-right'>${ROLE_CAPABILITIES[r]?.[key] ? `<span class='badge badge-success'>Có</span>` : `<span class='muted'>—</span>`}</td>`).join('')}</tr>`).join('')}</tbody></table></div></section>`;
+    return pageHeading('Quản lý nhân viên', '', `<button class='btn btn-secondary' data-action='new-staff-invite' data-tour-target='staff-invite'>✉ Mời qua Email</button><button class='btn btn-primary' data-action='new-staff-direct'>${icon('plus', 15)} Tạo nhanh nhân viên</button>`) +
       kpiHtml + roleTabs +
       `<div class='toolbar' style='margin-bottom:12px'><div class='toolbar-left'><div class='search-wrap'><span class='search-symbol'>⌕</span><input class='input' id='staff-search-input' type='search' placeholder='Tìm theo mã NV, họ tên, SĐT, chức danh hoặc email…' value='${esc(staffSearchTerm)}' aria-label='Tìm nhân viên'/></div></div></div>` +
-      `${staffState.error ? `<div class='auth-message error'>${esc(staffState.error)} <button class='link-button' data-action='reload-staff'>Tải lại</button></div>` : ''}<section class='panel staff-panel'><div class='panel-header'><div><h2>Hồ sơ &amp; Hiệu suất nhân viên</h2><p>Chủ cửa hàng không thể bị tạm khóa hoặc hạ quyền tại đây.</p></div><span class='badge badge-info'><i class='badge-dot'></i>${filteredMembers.length} nhân viên</span></div>${staffState.loading ? `<div class='empty-state'><strong>Đang tải thành viên…</strong></div>` : memberRows ? `<div class='staff-list'>${memberRows}</div>` : `<div class='empty-state'><strong>Chưa có nhân viên phù hợp</strong><span>Bấm “＋ Tạo nhanh nhân viên” để cấp tài khoản dùng ngay tại quầy hoặc mời qua email.</span></div>`}</section><section class='panel staff-panel'><div class='panel-header'><div><h2>Lời mời qua Email</h2><p>Liên kết chỉ dùng một lần, hết hạn sau 7 ngày và cần xác minh email.</p></div></div>${inviteRows ? `<div class='staff-list'>${inviteRows}</div>` : `<div class='empty-state'><strong>Chưa có lời mời</strong><span>Lời mời đang chờ sẽ xuất hiện ở đây.</span></div>`}</section><div class='staff-role-note'><strong>Vai trò không thể cấp quyền chủ cửa hàng.</strong><span>Quản lý nhân viên chỉ được thực hiện bởi chủ cửa hàng. Mọi thay đổi vai trò, lương hoa hồng và trạng thái đều được ghi vào nhật ký cửa hàng.</span></div>`;
+      `${staffState.error ? `<div class='auth-message error'>${esc(staffState.error)} <button class='link-button' data-action='reload-staff'>Tải lại</button></div>` : ''}<section class='panel staff-panel'><div class='panel-header'><div><h2>Hồ sơ &amp; Hiệu suất nhân viên</h2></div><span class='badge badge-info'><i class='badge-dot'></i>${filteredMembers.length} nhân viên</span></div>${staffState.loading ? `<div class='empty-state'><strong>Đang tải thành viên…</strong></div>` : memberRows ? `<div class='staff-list'>${memberRows}</div>` : `<div class='empty-state'><strong>Chưa có nhân viên phù hợp</strong><span>Bấm “＋ Tạo nhanh nhân viên” để cấp tài khoản dùng ngay tại quầy.</span></div>`}</section>${permMatrixHtml}<section class='panel staff-panel'><div class='panel-header'><div><h2>Lời mời qua Email</h2></div></div>${inviteRows ? `<div class='staff-list'>${inviteRows}</div>` : `<div class='empty-state'><strong>Chưa có lời mời</strong></div>`}</section>`;
   }
 
   const channelNames = { shopee: 'Shopee', lazada: 'Lazada', tiktok_shop: 'TikTok Shop', tiki: 'Tiki', sendo: 'Sendo', grabmart: 'GrabMart', website: 'Website', other: 'Kênh khác' };
@@ -5458,23 +5632,15 @@
       }
     }
     if (page === 'settings') {
-      const blocks = Array.from(root.querySelectorAll('.settings-panel'));
-      const groups = [
-        ['Tài khoản', ['Tài khoản', 'Thông tin tài khoản', 'Đổi mật khẩu', 'Bảo mật tài khoản']],
-        ['Cửa hàng', ['Thông tin cửa hàng', 'Tài khoản nhận chuyển khoản (VietQR)', 'Quản lý nhanh', 'Quản lý vận hành', 'Nhật ký hoạt động']],
-        ['Cách dùng', ['Mô hình cửa hàng', 'Cách bạn dùng cửa hàng', 'Màn hình mở đầu', 'Màn hình làm việc']],
-        ['Dữ liệu', ['Dữ liệu & sao lưu', 'Dữ liệu trên thiết bị', 'Phiên bản ứng dụng']],
-      ];
-      for (const [label, titles] of groups) {
-        const members = blocks.filter(block => titles.includes(block.querySelector('h2')?.textContent));
-        if (!members.length) continue;
-        const group = document.createElement('section'); group.className = 'settings-panel settings-group'; group.dataset.label = label;
-        members.forEach(block => { block.classList.remove('settings-panel'); block.classList.add('settings-block'); group.append(block); });
-        root.append(group);
-      }
-      const sections = Array.from(root.querySelectorAll('.settings-panel'));
+      const sections = Array.from(root.querySelectorAll(':scope > .settings-panel'));
+      sections.forEach(group => {
+        group.querySelectorAll('.settings-panel').forEach(child => {
+          child.classList.remove('settings-panel');
+          child.classList.add('settings-block');
+        });
+      });
       const tabs = document.createElement('div'); tabs.className = 'settings-areas'; tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Các phần cài đặt');
-      tabs.innerHTML = sections.map(function (section, i) { section.id = 'settings-area-' + i; section.setAttribute('role', 'tabpanel'); section.setAttribute('aria-labelledby', 'settings-tab-' + i); return "<button role='tab' id='settings-tab-" + i + "' aria-controls='" + section.id + "' data-action='settings-area' data-index='" + i + "'>" + esc(section.dataset.label || ({ 'Thông tin cửa hàng': 'Cửa hàng', 'Cách bạn dùng cửa hàng': 'Cách dùng', 'Đổi mật khẩu': 'Mật khẩu', 'Bảo mật tài khoản': 'Thiết bị', 'Nhật ký hoạt động': 'Nhật ký' })[section.querySelector('h2')?.textContent] || section.querySelector('h2')?.textContent || 'Tài khoản') + '</button>'; }).join('');
+      tabs.innerHTML = sections.map(function (section, i) { section.id = 'settings-area-' + i; section.setAttribute('role', 'tabpanel'); section.setAttribute('aria-labelledby', 'settings-tab-' + i); return "<button role='tab' id='settings-tab-" + i + "' aria-controls='" + section.id + "' data-action='settings-area' data-index='" + i + "'>" + esc(section.dataset.label || 'Cài đặt') + '</button>'; }).join('');
       root.querySelector('.page-heading')?.after(tabs); selectSettingsArea(activeSettingsArea);
       if (window.SlinkAndroid) nativeAction({ type: 'appUpdate', action: 'state' }).catch(() => {});
     }
@@ -7985,8 +8151,9 @@
       <div class='form-field full finance-party' data-voucher-party ${party && !isOtherParty ? '' : 'hidden'}><input class='input' id='voucher-party-search' name='partySearch' type='search' maxlength='80' autocomplete='off' aria-label='Tìm theo tên' placeholder='Tìm theo tên' value='${esc(!isOtherParty ? (party?.name || '') : '')}' ${disabled}/><div class='finance-party-options' data-voucher-options></div></div>
       <label class='form-field full' data-voucher-party-other ${isOtherParty ? '' : 'hidden'}><span class='input-label'>Tên đối tượng khác *</span><input class='input' id='voucher-party-other-name' name='partyOtherName' maxlength='80' placeholder='Ví dụ: EVN, Chủ mặt bằng, Grab…' value='${esc(isOtherParty ? (party?.name || '') : '')}' ${disabled}/></label>
       <label class='fv-checkbox-inline full'><input type='checkbox' name='includeInPnl' ${initialPnl ? 'checked' : ''} ${disabled}/><span>Hạch toán vào kết quả kinh doanh (Lãi/Lỗ)</span></label>
-      <label class='form-field full'><span class='input-label'>Ghi chú</span><textarea class='input finance-reminder-text' name='note' rows='2' maxlength='300' placeholder='Không bắt buộc' ${disabled}>${esc(payload.note)}</textarea></label></div>
-      ${pending ? `<p class='modal-note'>Phiếu đang chờ xác nhận. Gửi lại cùng nội dung để tránh ghi hai lần.</p>` : '<p class="modal-note">Để thu hoặc trả nợ, dùng mục Khách nợ hoặc Nhà cung cấp.</p>'}</form>`;
+      <label class='form-field full'><span class='input-label'>Ghi chú</span><textarea class='input finance-reminder-text' name='note' rows='2' maxlength='300' placeholder='Không bắt buộc' ${disabled}>${esc(payload.note)}</textarea></label>
+      ${pending ? '' : `<div class='form-field full'><span class='input-label'>Chọn nhanh lý do</span><div style='display:flex;flex-wrap:wrap;gap:6px'>${(payload.direction === 'in' ? ['Thu nợ khách', 'Góp vốn thêm', 'Thu hoàn trả', 'Thu khác'] : ['Tiền điện / nước', 'Thuê mặt bằng', 'Trả lương nhân viên', 'Nhập hàng lẻ', 'Phí vận chuyển', 'Chi vật tư']).map(r => `<button type='button' class='pos-fast-chip' data-action='expense-quick-note' data-note='${esc(r)}'>${esc(r)}</button>`).join('')}</div></div>`}</div>
+      ${pending ? `<p class='modal-note'>Phiếu đang chờ xác nhận. Gửi lại cùng nội dung để tránh ghi hai lần.</p>` : ''}</form>`;
     showModal(pending ? 'Kiểm tra phiếu đang chờ' : payload.direction === 'in' ? 'Thu tiền' : 'Chi tiền', '', form, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Hủy</button><button class='btn btn-primary' type='submit' form='entity-form'>${pending ? 'Thử lại phiếu' : 'Lưu phiếu'}</button>`);
     const element = modal.querySelector('[data-form="cash"]');
     const kind = element.elements.partyKind;
@@ -9279,9 +9446,17 @@
     }
   }
   function showDiscount() {
+    const subtotal = cartTotals().subtotal;
     const current = cart.discount || 0;
-    const form = `<form id='entity-form' data-form='discount'><div class='form-field'><label class='input-label'>Giảm giá đơn hàng (VND)</label><input class='input' name='discount' type='number' min='0' max='${cartTotals().subtotal}' step='1000' value='${current}' required/><small class='muted' style='display:block;margin-top:6px;font-size:9px'>Tạm tính hiện tại: ${money(cartTotals().subtotal)}</small></div></form>`;
-    modalForm('Áp dụng giảm giá', 'Số tiền giảm sẽ được lưu cùng đơn hàng.', form, 'Áp dụng');
+    const form = `<form id='entity-form' data-form='discount'>
+      <div class='form-grid'>
+        <div class='form-field'><label class='input-label' for='disc-mode'>Kiểu giảm</label><div class='select-wrap'><select class='input' id='disc-mode' name='discountMode'><option value='vnd'>Số tiền (₫)</option><option value='percent'>Phần trăm (%)</option></select></div></div>
+        <div class='form-field'><label class='input-label' for='disc-val'>Giá trị giảm</label><input class='input' id='disc-val' name='discount' type='number' min='0' max='${subtotal}' step='1' value='${current}' required/></div>
+      </div>
+      <div style='display:flex;flex-wrap:wrap;gap:6px;margin-top:10px'>${[['percent', 5, '5%'], ['percent', 10, '10%'], ['percent', 15, '15%'], ['percent', 20, '20%'], ['vnd', 0, 'Xóa giảm']].map(([m, v, l]) => `<button type='button' class='pos-fast-chip' data-action='quick-discount' data-mode='${m}' data-value='${v}'>${l}</button>`).join('')}</div>
+      <small class='muted' style='display:block;margin-top:8px'>Tạm tính hiện tại: ${money(subtotal)}</small>
+    </form>`;
+    modalForm('Giảm giá đơn hàng', '', form, 'Áp dụng');
   }
 
   async function openPromotions() {
@@ -9683,6 +9858,22 @@
         await loadProductsPage(posSearchTerm, 0, { preferFresh: true, silentLoading: true });
       }
       else toast(result.offlineQueued ? 'Đã lưu đơn trên máy' : 'Đã lưu đơn hàng', order.number);
+      if (!result.offlineQueued) {
+        syncAfterMutation(['inventory', 'orders', 'finance', 'cashSession', 'customers', 'dashboard']);
+        if (posPrefs.autoPrint && order?.id) {
+          apiRequest(`/api/stores/${encodeURIComponent(store.id)}/orders/${encodeURIComponent(order.id)}`).then(res => {
+            if (res?.order) {
+              const idx = store.orders.findIndex(o => o.id === res.order.id);
+              const mapped = mapOrder(res.order);
+              if (idx >= 0) store.orders[idx] = mapped; else store.orders.unshift(mapped);
+              const printer = window.SlinkEscPosPrinter;
+              const caps = printer?.capabilities?.();
+              if (printer && (caps?.btConnected || caps?.connected)) handleEscPosAction('escpos-print-order', order.id);
+              else printOrder(order.id);
+            }
+          }).catch(() => {});
+        }
+      }
     } catch (error) {
       if (!sameStore()) return;
       if (error.status === 401) showSignedOut('Phiên đăng nhập đã hết hạn. Đăng nhập lại để kiểm tra đơn đang chờ.', 'error');
@@ -10331,28 +10522,26 @@
       showStore: barcodePrintState.showStore,
       showPrice: barcodePrintState.showPrice,
     });
-    const prev = document.getElementById('barcode-print-root');
-    if (prev) prev.remove();
-    const container = document.createElement('div');
-    container.id = 'barcode-print-root';
-    container.innerHTML = html;
-    document.body.appendChild(container);
-    let cleaned = false;
-    const cleanup = () => {
-      if (cleaned) return;
-      cleaned = true;
-      document.body.classList.remove('printing-barcode-sheet');
-      container.remove();
-    };
-    document.body.classList.add('printing-barcode-sheet');
-    window.addEventListener('afterprint', cleanup, { once: true });
-    if (typeof window.matchMedia === 'function') {
-      const mql = window.matchMedia('print');
-      const onChange = (e) => { if (!e.matches) { cleanup(); mql.removeEventListener?.('change', onChange); } };
-      mql.addEventListener?.('change', onChange);
+    const standaloneHtml = `<!doctype html><html lang='vi'><head><meta charset='utf-8'><title>Tem mã vạch ${esc(store.settings.storeName || 'Slink')}</title><style>
+      @page{size:auto;margin:4mm}*{box-sizing:border-box}body{margin:0;padding:4mm;font-family:Arial,sans-serif;background:#fff;color:#111}
+      .barcode-print-sheet{display:grid;gap:3mm;background:#fff}
+      .barcode-print-sheet[data-paper='a4-65']{grid-template-columns:repeat(5,minmax(0,1fr))}
+      .barcode-print-sheet[data-paper='a4-40']{grid-template-columns:repeat(4,minmax(0,1fr))}
+      .barcode-print-sheet[data-paper='thermal-2up']{grid-template-columns:repeat(2,minmax(0,1fr));max-width:72mm}
+      .barcode-print-sheet[data-paper='thermal-1up']{grid-template-columns:1fr;max-width:52mm}
+      .barcode-sticker{padding:4px 5px;border:1px dashed #ccc;display:grid;gap:2px;text-align:center;break-inside:avoid}
+      .barcode-sticker-store{font-size:8px;font-weight:700;text-transform:uppercase;color:#333;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .barcode-sticker-name{font-size:9px;font-weight:600;line-height:1.2;overflow:hidden}
+      .barcode-sticker-svg{width:100%;max-height:42px}
+      .barcode-sticker-meta{display:flex;justify-content:space-between;align-items:center;gap:4px;font-size:9px}
+      .barcode-sticker-price{font-weight:700;white-space:nowrap}
+      .barcode-sheet-cap-note{display:none}
+    </style></head><body>${html}</body></html>`;
+    if (window.SlinkAndroid) {
+      printHtmlDocument(standaloneHtml, `Tem ma vach ${store.settings.storeName || 'Slink'}`);
+      return;
     }
-    window.print();
-    window.setTimeout(cleanup, 60000);
+    printHtmlDocument(standaloneHtml, `Tem ma vach ${store.settings.storeName || 'Slink'}`);
   }
 
   async function ensureCatalogProducts() {
@@ -11935,14 +12124,53 @@
     const showCashChange = BigInt(String(o.cashChangeVndText ?? o.cashChange ?? '0')) > 0n;
     const showDue = BigInt(String(o.dueVndText ?? o.due ?? '0')) > 0n;
     const showRefunded = BigInt(String(o.refundedVndText ?? o.refunded ?? '0')) > 0n;
+    const paperMaxW = posPrefs.paperWidth === '58mm' ? '54mm' : posPrefs.paperWidth === 'a4' ? '190mm' : '76mm';
     const html = `<html lang='vi'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Biên nhận ${esc(o.number)}</title><style>
-      @page{size:auto;margin:8mm}*{box-sizing:border-box}body{font:13px Arial,sans-serif;width:100%;max-width:76mm;margin:0 auto;padding:5mm 3mm;color:#222}h1{font-size:18px;line-height:1.25;margin:0 0 4px;overflow-wrap:anywhere}p{font-size:11px;line-height:1.4;margin:4px 0;color:#555;overflow-wrap:anywhere}.center{text-align:center}.muted{color:#666}.rule{border:0;border-top:1px dashed #999;margin:10px 0}.receipt-title{font-size:13px;font-weight:700;letter-spacing:.04em}.cancelled{display:inline-block;margin:8px 0;padding:5px 8px;border:1px solid #a33;color:#a33;font-weight:700}.item-line,.summary-line{display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px dashed #ddd;font-size:12px;break-inside:avoid}.item-copy{display:grid;gap:3px;min-width:0}.item-copy strong{overflow-wrap:anywhere}.item-copy small{color:#555;font-size:10px}.item-line>strong,.summary-line>strong{white-space:nowrap}.summary{margin-top:4px}.grand-total{font-size:15px;font-weight:700;border-bottom:0;padding-top:9px}.payment-line{padding-top:2px;padding-bottom:2px;border-bottom:0;color:#555}.footer{margin-top:16px}@media screen{body{margin:16px auto;padding:12px;border:1px solid #ddd;box-shadow:0 2px 12px #0001}}@media print{body{padding:0;border:0;box-shadow:none}} /* taste-skill-ignore: printable receipt preview paper, not app chrome */
-    </style></head><body><header class='center'><h1>${esc(store.settings.storeName || 'Slink')}</h1>${store.settings.address ? `<p>${esc(store.settings.address)}</p>` : ''}${store.settings.phone ? `<p>${esc(store.settings.phone)}</p>` : ''}<hr class='rule'><div class='receipt-title'>BIÊN NHẬN BÁN HÀNG</div><p>${esc(o.number)}<br>${humanDate(o.createdAt, true)}</p><p>Khách hàng: ${esc(customerName)}${customerPhone ? `<br>${esc(customerPhone)}` : ''}</p>${cancelled ? `<div class='cancelled'>ĐƠN HÀNG ĐÃ HỦY</div>` : ''}</header><hr class='rule'><main>${items || `<p class='muted'>Không có dòng sản phẩm.</p>`}<section class='summary'><div class='summary-line'><span>Tạm tính</span><strong>${moneyVndText(o.subtotalVndText ?? o.subtotal)}</strong></div>${showDiscount ? `<div class='summary-line'><span>Giảm giá đơn hàng</span><strong>−${moneyVndText(o.discountVndText ?? o.discount)}</strong></div>` : ''}${o.promotion ? `<div class='summary-line'><span>Mã ${esc(o.promotion.code)}</span><strong>−${moneyVndText(o.promotion.discountVnd)}</strong></div>` : ''}<div class='summary-line grand-total'><span>Tổng cộng</span><strong>${moneyVndText(o.totalVndText ?? o.total)}</strong></div><div class='summary-line'><span>Đã thanh toán</span><strong>${moneyVndText(o.paidVndText ?? o.paid)}</strong></div>${payments}${showCashReceived ? `<div class='summary-line'><span>Tiền mặt khách đưa</span><strong>${moneyVndText(o.cashReceivedVndText ?? o.cashReceived)}</strong></div>` : ''}${showCashChange ? `<div class='summary-line'><span>Tiền thối</span><strong>${moneyVndText(o.cashChangeVndText ?? o.cashChange)}</strong></div>` : ''}${showDue ? `<div class='summary-line'><span>Còn phải thu</span><strong>${moneyVndText(o.dueVndText ?? o.due)}</strong></div>` : ''}${returnLines}${!returnLines && showRefunded ? `<div class='summary-line'><span>Đã hoàn</span><strong>−${moneyVndText(o.refundedVndText ?? o.refunded)}</strong></div>` : ''}</section></main><footer class='center footer'><p>${esc(store.settings.receiptFooter || 'Cảm ơn quý khách!')}</p></footer><script>window.onload=function(){window.print()}<\/script></body></html>`;
-    const win = window.open('', '_blank', 'width=430,height=680');
-    if (!win) return toast('Trình duyệt đã chặn cửa sổ in', 'Cho phép cửa sổ bật lên rồi thử lại.', 'error');
-    win.document.open();
-    win.document.write(html);
-    win.document.close();
+      @page{size:auto;margin:6mm}*{box-sizing:border-box}body{font:13px Arial,sans-serif;width:100%;max-width:${paperMaxW};margin:0 auto;padding:5mm 3mm;color:#222}h1{font-size:18px;line-height:1.25;margin:0 0 4px;overflow-wrap:anywhere}p{font-size:11px;line-height:1.4;margin:4px 0;color:#555;overflow-wrap:anywhere}.center{text-align:center}.muted{color:#666}.rule{border:0;border-top:1px dashed #999;margin:10px 0}.receipt-title{font-size:13px;font-weight:700;letter-spacing:.04em}.cancelled{display:inline-block;margin:8px 0;padding:5px 8px;border:1px solid #a33;color:#a33;font-weight:700}.item-line,.summary-line{display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px dashed #ddd;font-size:12px;break-inside:avoid}.item-copy{display:grid;gap:3px;min-width:0}.item-copy strong{overflow-wrap:anywhere}.item-copy small{color:#555;font-size:10px}.item-line>strong,.summary-line>strong{white-space:nowrap}.summary{margin-top:4px}.grand-total{font-size:15px;font-weight:700;border-bottom:0;padding-top:9px}.payment-line{padding-top:2px;padding-bottom:2px;border-bottom:0;color:#555}.footer{margin-top:16px}@media screen{body{margin:16px auto;padding:12px;border:1px solid #ddd;box-shadow:0 2px 12px #0001}}@media print{body{padding:0;border:0;box-shadow:none}} /* taste-skill-ignore: printable receipt preview paper, not app chrome */
+    </style></head><body><header class='center'><h1>${esc(store.settings.storeName || 'Slink')}</h1>${store.settings.address ? `<p>${esc(store.settings.address)}</p>` : ''}${store.settings.phone ? `<p>${esc(store.settings.phone)}</p>` : ''}<hr class='rule'><div class='receipt-title'>BIÊN NHẬN BÁN HÀNG</div><p>${esc(o.number)}<br>${humanDate(o.createdAt, true)}</p><p>Khách hàng: ${esc(customerName)}${customerPhone ? `<br>${esc(customerPhone)}` : ''}</p>${cancelled ? `<div class='cancelled'>ĐƠN HÀNG ĐÃ HỦY</div>` : ''}</header><hr class='rule'><main>${items || `<p class='muted'>Không có dòng sản phẩm.</p>`}<section class='summary'><div class='summary-line'><span>Tạm tính</span><strong>${moneyVndText(o.subtotalVndText ?? o.subtotal)}</strong></div>${showDiscount ? `<div class='summary-line'><span>Giảm giá đơn hàng</span><strong>−${moneyVndText(o.discountVndText ?? o.discount)}</strong></div>` : ''}${o.promotion ? `<div class='summary-line'><span>Mã ${esc(o.promotion.code)}</span><strong>−${moneyVndText(o.promotion.discountVnd)}</strong></div>` : ''}<div class='summary-line grand-total'><span>Tổng cộng</span><strong>${moneyVndText(o.totalVndText ?? o.total)}</strong></div><div class='summary-line'><span>Đã thanh toán</span><strong>${moneyVndText(o.paidVndText ?? o.paid)}</strong></div>${payments}${showCashReceived ? `<div class='summary-line'><span>Tiền mặt khách đưa</span><strong>${moneyVndText(o.cashReceivedVndText ?? o.cashReceived)}</strong></div>` : ''}${showCashChange ? `<div class='summary-line'><span>Tiền thối</span><strong>${moneyVndText(o.cashChangeVndText ?? o.cashChange)}</strong></div>` : ''}${showDue ? `<div class='summary-line'><span>Còn phải thu</span><strong>${moneyVndText(o.dueVndText ?? o.due)}</strong></div>` : ''}${returnLines}${!returnLines && showRefunded ? `<div class='summary-line'><span>Đã hoàn</span><strong>−${moneyVndText(o.refundedVndText ?? o.refunded)}</strong></div>` : ''}</section></main><footer class='center footer'><p>${esc(store.settings.receiptFooter || 'Cảm ơn quý khách!')}</p></footer></body></html>`;
+    printHtmlDocument(html, `Bien nhan ${o.number}`);
+  }
+
+  async function printProformaBill() {
+    if (!cart.length) return toast('Giỏ hàng đang trống', 'Thêm sản phẩm trước khi in tạm tính.', 'error');
+    const totals = cartTotals();
+    const customer = customerById(cartCustomerId);
+    const printer = window.SlinkEscPosPrinter;
+    const caps = printer?.capabilities?.();
+    if (printer && (caps?.btConnected || caps?.connected)) {
+      try {
+        await printer.printReceipt({
+          storeName: store.settings.storeName || 'Slink',
+          address: store.settings.address || '',
+          phone: store.settings.phone || '',
+          orderNumber: 'PHIEU TAM TINH',
+          createdAt: humanDate(new Date().toISOString(), true),
+          customerName: customer?.name || 'Khach le',
+          items: cart.map(line => {
+            const p = productById(line.id);
+            const price = cartUnitPrice(line);
+            return { name: p?.name || 'Hang hoa', quantity: line.qty, unitPriceVnd: String(price), lineTotalVnd: String(Math.round(price * line.qty)) };
+          }),
+          subtotalVnd: String(totals.subtotal),
+          discountVnd: String(totals.discount),
+          totalVnd: String(totals.total),
+          paidVnd: '0',
+          footer: 'Phieu tam tinh - Chua thanh toan',
+        });
+        toast('Đã in phiếu tạm tính');
+        return;
+      } catch (_) { /* Fallback to HTML print dialog */ }
+    }
+    const paperMaxW = posPrefs.paperWidth === '58mm' ? '54mm' : posPrefs.paperWidth === 'a4' ? '190mm' : '76mm';
+    const itemsHtml = cart.map(line => {
+      const p = productById(line.id);
+      const price = cartUnitPrice(line);
+      return `<div class='item-line'><div class='item-copy'><strong>${esc(p?.name || 'Sản phẩm')}</strong><small>${number(line.qty)} ${esc(p?.unit || '')} × ${money(price)}</small></div><strong>${money(Math.round(price * line.qty))}</strong></div>`;
+    }).join('');
+    const html = `<html lang='vi'><head><meta charset='utf-8'><title>Phiếu tạm tính</title><style>
+      @page{size:auto;margin:6mm}*{box-sizing:border-box}body{font:13px Arial,sans-serif;width:100%;max-width:${paperMaxW};margin:0 auto;padding:5mm 3mm;color:#222}h1{font-size:17px;margin:0 0 4px}p{font-size:11px;margin:3px 0;color:#555}.center{text-align:center}.rule{border:0;border-top:1px dashed #999;margin:8px 0}.item-line,.summary-line{display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-bottom:1px dashed #ddd;font-size:12px}.item-copy{display:grid;gap:2px}.grand-total{font-size:15px;font-weight:700;border-bottom:0;padding-top:8px}
+    </style></head><body><header class='center'><h1>${esc(store.settings.storeName || 'Slink')}</h1>${store.settings.phone ? `<p>${esc(store.settings.phone)}</p>` : ''}<hr class='rule'><strong>PHIẾU TẠM TÍNH</strong><p>${humanDate(new Date().toISOString(), true)}</p><p>Khách: ${esc(customer?.name || 'Khách lẻ')}</p></header><hr class='rule'><main>${itemsHtml}<div class='summary-line'><span>Tạm tính</span><strong>${money(totals.subtotal)}</strong></div>${totals.discount ? `<div class='summary-line'><span>Giảm giá</span><strong>−${money(totals.discount)}</strong></div>` : ''}<div class='summary-line grand-total'><span>Cần thanh toán</span><strong>${money(totals.total)}</strong></div></main><footer class='center' style='margin-top:14px'><p>Phiếu tạm tính · Chưa ghi nhận thanh toán</p></footer></body></html>`;
+    await printHtmlDocument(html, 'Phieu tam tinh');
   }
 
   function digitalReceiptText(order) {
@@ -12137,9 +12365,6 @@
     const products = (Array.isArray(report.topProducts) ? report.topProducts : []).map(function (item, index) {
       return `<tr><td>${index + 1}</td><td>${esc(item.name)}</td><td>${esc(item.sku || '—')}</td><td class="num">${number(item.quantity_sold)} ${esc(item.unit || '')}</td><td class="num">${esc(moneyVndText(item.net_sales_vnd))}</td></tr>`;
     }).join('');
-    const popup = window.open('', '_blank', 'width=900,height=760');
-    if (!popup) return toast('Không mở được bản in', 'Trình duyệt đang chặn cửa sổ in. Hãy cho phép cửa sổ bật lên của Slink rồi thử lại.', 'error');
-
     const generatedAt = new Date().toLocaleString('vi-VN', { dateStyle: 'medium', timeStyle: 'short' });
     const storeName = store.settings && store.settings.storeName || 'Slink';
     const html = `<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Báo cáo bán hàng ${esc(report.range.from)}–${esc(report.range.to)}</title><style>
@@ -12148,11 +12373,8 @@
       <div class="cards"><div class="card"><small>Doanh thu thuần</small><strong>${esc(moneyVndText(summary.netSalesVnd))}</strong></div><div class="card"><small>Lãi gộp ước tính</small><strong>${esc(moneyVndText(summary.grossProfitVnd))}</strong></div><div class="card"><small>Chi phí vận hành</small><strong>${esc(moneyVndText(summary.operatingExpenseVnd || '0'))}</strong></div><div class="card"><small>Lãi ròng (Net Profit)</small><strong>${esc(moneyVndText(summary.netProfitVnd != null ? summary.netProfitVnd : summary.grossProfitVnd))}</strong></div><div class="card"><small>Số đơn trong kỳ</small><strong>${number(summary.orderCount)}</strong></div><div class="card"><small>Giá trị đơn trung bình</small><strong>${esc(moneyVndText(summary.averageTicketVnd))}</strong></div><div class="card"><small>Tiền đã thu ròng</small><strong>${esc(moneyVndText(summary.collectedVnd))}</strong></div><div class="card"><small>Còn phải thu</small><strong>${esc(moneyVndText(summary.receivableVnd))}</strong></div></div>
       <h2>Doanh thu thuần theo ngày</h2>${dailyRows ? `<table><thead><tr><th>Ngày</th><th class="num">Số đơn</th><th class="num">Doanh thu thuần</th></tr></thead><tbody>${dailyRows}</tbody></table>` : '<div class="empty">Không có dữ liệu theo ngày trong kỳ này.</div>'}
       <h2>Sản phẩm bán chạy</h2>${products ? `<table><thead><tr><th>#</th><th>Sản phẩm</th><th>Mã hàng</th><th class="num">Số lượng bán ròng</th><th class="num">Doanh thu thuần</th></tr></thead><tbody>${products}</tbody></table>` : '<div class="empty">Không có sản phẩm bán trong kỳ này.</div>'}
-      <div class="note">Lãi ròng = Lãi gộp ước tính + Thu khác − Chi phí vận hành (chỉ tính các phiếu có bật hạch toán KQKD, đã trừ phiếu hủy). Báo cáo lấy từ dữ liệu đã ghi sổ trong Slink; bản in không thay thế chứng từ kế toán hoặc hóa đơn thuế.</div><div class="footer">Dùng hộp thoại in của trình duyệt để in hoặc chọn “Lưu dưới dạng PDF”.</div><script>window.addEventListener('load',function(){setTimeout(function(){window.focus();window.print()},250)})<\/script></body></html>`;
-    popup.document.open();
-    popup.document.write(html.replace(/<script>[\s\S]*?<\/script>/, ''));
-    popup.document.close();
-    window.setTimeout(function () { popup.focus(); popup.print(); }, 250);
+      <div class="note">Lãi ròng = Lãi gộp ước tính + Thu khác − Chi phí vận hành (chỉ tính các phiếu có bật hạch toán KQKD, đã trừ phiếu hủy). Báo cáo lấy từ dữ liệu đã ghi sổ trong Slink; bản in không thay thế chứng từ kế toán hoặc hóa đơn thuế.</div><div class="footer">Dùng hộp thoại in của trình duyệt để in hoặc chọn “Lưu dưới dạng PDF”.</div></body></html>`;
+    printHtmlDocument(html, `Bao cao ${report.range.from}-${report.range.to}`);
   }
 
   function renderReports() {
@@ -13022,6 +13244,19 @@
     else if (action === 'bulk-stock-count') openStockBulkCount();
     else if (action === 'inventory-low') { searchTerms.inventory = ''; render(); const first = lowStockProducts()[0]; if (first) openStockAdjust(first.id); }
     else if (action === 'discount') showDiscount();
+    else if (action === 'pos-proforma') printProformaBill();
+    else if (action === 'pos-quick-return') { routeTo('orders'); toast('Chọn đơn cần đổi / trả hàng'); }
+    else if (action === 'expense-quick-note') {
+      const form = button.closest('form');
+      if (form?.elements?.note) { form.elements.note.value = button.dataset.note || ''; form.elements.note.focus(); }
+    }
+    else if (action === 'quick-discount') {
+      const form = button.closest('form');
+      if (form) {
+        if (form.elements.discountMode) form.elements.discountMode.value = button.dataset.mode || 'vnd';
+        if (form.elements.discount) form.elements.discount.value = button.dataset.value || '0';
+      }
+    }
     else if (action === 'scan') showScan();
     else if (action === 'scan-channel-order') showChannelOrderScanner();
     else if (action === 'start-camera-scan') startScanCamera(button);
@@ -13705,7 +13940,21 @@
     else if (type === 'staff-invite') saveStaffInvitation(form);
     else if (type === 'staff-direct-create') saveStaffDirectCreate(form);
     else if (type === 'scan') addByCode(form);
-    else if (type === 'discount') { if (checkoutPendingPayload) return toast('Đang chờ xác nhận đơn', 'Hãy kiểm tra đơn đang chờ trước khi thay đổi giảm giá.', 'error'); cart.discount = Math.max(0, Math.min(cartTotals().subtotal, Number(new FormData(form).get('discount')) || 0)); closeModal(); render(); toast('Đã áp dụng giảm giá', money(cart.discount)); }
+    else if (type === 'pos-prefs') {
+      const fd = new FormData(form);
+      savePosPrefs({ paperWidth: String(fd.get('paperWidth') || '80mm'), autoPrint: fd.get('autoPrint') === 'on' });
+      toast('Đã lưu cấu hình POS & Hóa đơn');
+    }
+    else if (type === 'discount') {
+      if (checkoutPendingPayload) return toast('Đang chờ xác nhận đơn', 'Hãy kiểm tra đơn đang chờ trước khi thay đổi giảm giá.', 'error');
+      const fd = new FormData(form);
+      const mode = String(fd.get('discountMode') || 'vnd');
+      const rawVal = Math.max(0, Number(fd.get('discount')) || 0);
+      const sub = cartTotals().subtotal;
+      const computed = mode === 'percent' ? Math.round(sub * Math.min(100, rawVal) / 100) : Math.round(rawVal);
+      cart.discount = Math.max(0, Math.min(sub, computed));
+      closeModal(); render(); toast('Đã áp dụng giảm giá', money(cart.discount));
+    }
   });
 
   backdrop.addEventListener('click', requestCloseModal);
@@ -13823,12 +14072,33 @@
   }, true);
   root.addEventListener('focusout', function () { window.setTimeout(refreshAfterOfflineSync, 0); });
   document.addEventListener('keydown', function (event) {
-    if (!event.target.matches('[data-action="settings-area"]') || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-    const buttons = Array.from(root.querySelectorAll('[data-action="settings-area"]'));
-    const index = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (buttons.indexOf(event.target) + (event.key === 'ArrowRight' ? 1 : buttons.length - 1)) % buttons.length;
-    event.preventDefault(); selectSettingsArea(index); buttons[index].focus();
+    if (event.target.matches('[data-action="settings-area"]') && ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+      const buttons = Array.from(root.querySelectorAll('[data-action="settings-area"]'));
+      const index = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (buttons.indexOf(event.target) + (event.key === 'ArrowRight' ? 1 : buttons.length - 1)) % buttons.length;
+      event.preventDefault(); selectSettingsArea(index); buttons[index].focus();
+      return;
+    }
+    if (page === 'pos' && modal.hidden && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      if (event.key === 'F1') { event.preventDefault(); root.querySelector('[data-action="add-pos-bill"]')?.click(); }
+      else if (event.key === 'F2') { event.preventDefault(); const inp = document.getElementById('pos-search'); inp?.focus(); inp?.select?.(); }
+      else if (event.key === 'F4') { event.preventDefault(); root.querySelector('[data-action="pick-customer"]')?.click(); }
+      else if (event.key === 'F6') { event.preventDefault(); showDiscount(); }
+      else if (event.key === 'F8') { event.preventDefault(); printProformaBill(); }
+      else if (event.key === 'F9') { event.preventDefault(); openCheckout(); }
+    }
   });
-  document.addEventListener('visibilitychange', function () { if (document.hidden) stopScanCamera(); else if (authSession) { offlineRowsChanged(false).catch(() => {}); startOfflineSync(); } });
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) stopScanCamera();
+    else if (authSession) {
+      offlineRowsChanged(false).catch(() => {});
+      startOfflineSync();
+      const now = Date.now();
+      if (now - lastForegroundSyncAt > 20000) {
+        lastForegroundSyncAt = now;
+        syncAfterMutation(['me', page === 'pos' ? 'products' : page]);
+      }
+    }
+  });
   window.SlinkHandleBack = function () {
     if (closeProductBarcode() || closeSerialCamera() || closeProductEditorMenu()) return true;
     if (!modal.hidden) { requestCloseModal(); return true; }

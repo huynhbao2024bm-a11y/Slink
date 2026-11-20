@@ -7,6 +7,9 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Bundle;
+import android.print.PrintAttributes;
+import android.print.PrintDocumentAdapter;
+import android.print.PrintManager;
 import android.provider.MediaStore;
 import android.view.View;
 import android.view.WindowInsets;
@@ -54,6 +57,7 @@ public class MainActivity extends Activity {
             "assets/slink-icon.svg", "assets/slink-icon-180.png", "assets/slink-icon-192.png",
             "assets/slink-icon-512.png", "assets/slink-icon-maskable-512.png"));
     private WebView web;
+    private WebView printWebView;
     private ValueCallback<Uri[]> fileCallback;
     private Uri capturedPhoto;
     private PermissionRequest cameraRequest;
@@ -263,7 +267,58 @@ public class MainActivity extends Activity {
             catch (ActivityNotFoundException error) { answer(reply, id, "error"); pendingSave = null; saveReply = null; }
         } else if (data.optString("type").equals("btPrinter")) {
             handleBtPrinterMessage(data, reply);
+        } else if (data.optString("type").equals("printHtml")) {
+            handlePrintHtmlMessage(data, reply);
         } else answer(reply, id, "error");
+    }
+
+    private void handlePrintHtmlMessage(JSONObject data, JavaScriptReplyProxy reply) {
+        String id = data.optString("id");
+        String rawJob = data.optString("jobName", "Slink").replaceAll("[\\r\\n\\p{Cntrl}]", " ").trim();
+        final String jobName = rawJob.isEmpty() ? "Slink" : rawJob.substring(0, Math.min(rawJob.length(), 80));
+        final String html = data.optString("html", "");
+        if (html.isEmpty() || html.length() > 4000000) {
+            try { reply.postMessage(new JSONObject().put("id", id).put("status", "error").put("message", "Nội dung in không hợp lệ.").toString()); }
+            catch (Exception ignored) {}
+            return;
+        }
+        runOnUiThread(() -> {
+            try {
+                if (printWebView != null) {
+                    printWebView.destroy();
+                    printWebView = null;
+                }
+                WebView pw = new WebView(MainActivity.this);
+                WebSettings ps = pw.getSettings();
+                ps.setJavaScriptEnabled(false);
+                ps.setAllowFileAccess(false);
+                ps.setAllowContentAccess(false);
+                ps.setBlockNetworkLoads(true);
+                pw.setWebViewClient(new WebViewClient() {
+                    @Override
+                    public void onPageFinished(WebView view, String url) {
+                        try {
+                            PrintManager pm = (PrintManager) getSystemService(PRINT_SERVICE);
+                            if (pm == null) {
+                                reply.postMessage(new JSONObject().put("id", id).put("status", "error").put("message", "Thiết bị không hỗ trợ dịch vụ in.").toString());
+                                return;
+                            }
+                            PrintDocumentAdapter adapter = view.createPrintDocumentAdapter(jobName);
+                            pm.print(jobName, adapter, new PrintAttributes.Builder().build());
+                            reply.postMessage(new JSONObject().put("id", id).put("status", "ok").toString());
+                        } catch (Exception error) {
+                            try { reply.postMessage(new JSONObject().put("id", id).put("status", "error").put("message", error.getMessage() != null ? error.getMessage() : "Không mở được hộp thoại in.").toString()); }
+                            catch (Exception ignored) {}
+                        }
+                    }
+                });
+                printWebView = pw;
+                pw.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null);
+            } catch (Exception error) {
+                try { reply.postMessage(new JSONObject().put("id", id).put("status", "error").put("message", error.getMessage() != null ? error.getMessage() : "Không khởi tạo được trình in.").toString()); }
+                catch (Exception ignored) {}
+            }
+        });
     }
 
     private void handleBtPrinterMessage(JSONObject data, JavaScriptReplyProxy reply) {
@@ -399,6 +454,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         btExecutor.shutdownNow();
+        if (printWebView != null) { printWebView.destroy(); printWebView = null; }
         if (fileCallback != null) fileCallback.onReceiveValue(null);
         if (cameraRequest != null) cameraRequest.deny();
         web.destroy();
