@@ -9,6 +9,12 @@ const { normalizeOffline, beginOffline, recordOffline, expectedPrices } = requir
 const { calculatePromotion, consumePromotion, promotionCode } = require('./promotions');
 const { normalizeSerialCodeList } = require('./serials');
 const { getPosMaxDiscountPct } = require('./rbac');
+const {
+  parseInlineCustomerInput,
+  resolveOrCreateInlineCustomer,
+  getCustomerPointsState,
+  settleCustomerPriorDebtFifo,
+} = require('./hr-crm');
 
 const MAX_BIGINT = 9223372036854775807n;
 const SELL_ROLES = new Set(['owner', 'manager', 'cashier']);
@@ -112,11 +118,37 @@ function normalizeSale(body) {
   if (customerId !== null && (typeof customerId !== 'string' || !UUID_PATTERN.test(customerId))) {
     throw new ApiError(400, 'validation_error', 'Khách hàng không hợp lệ.');
   }
+  const customerInline = typeof body.customerInline === 'string' ? body.customerInline.trim().slice(0, 160) : '';
+  const sellerId = body.sellerId && typeof body.sellerId === 'string' && UUID_PATTERN.test(body.sellerId)
+    ? body.sellerId.toLowerCase()
+    : null;
+  const redeemPoints = Boolean(body.redeemPoints);
+  const pointsToRedeem = Number.isSafeInteger(body.pointsToRedeem) && body.pointsToRedeem > 0 ? body.pointsToRedeem : 0;
+  const settlePriorDebt = Boolean(body.settlePriorDebt);
+  const prebillEventId = body.prebillEventId && typeof body.prebillEventId === 'string' && UUID_PATTERN.test(body.prebillEventId)
+    ? body.prebillEventId.toLowerCase()
+    : null;
   const note = typeof body.note === 'string' ? body.note.trim() : '';
   if (note.length > 500) throw new ApiError(400, 'validation_error', 'Ghi chú tối đa 500 ký tự.');
   const warehouseId = body.warehouseId || null;
   if (warehouseId !== null && (typeof warehouseId !== 'string' || !UUID_PATTERN.test(warehouseId))) throw new ApiError(400, 'validation_error', 'Kho bán hàng không hợp lệ.');
-  return { items, discountVnd, appliedPromotionCode, amountReceivedVnd, method, tenders, customerId, note, warehouseId: warehouseId?.toLowerCase() || null };
+  return {
+    items,
+    discountVnd,
+    appliedPromotionCode,
+    amountReceivedVnd,
+    method,
+    tenders,
+    customerId,
+    customerInline,
+    sellerId,
+    redeemPoints,
+    pointsToRedeem,
+    settlePriorDebt,
+    prebillEventId,
+    note,
+    warehouseId: warehouseId?.toLowerCase() || null,
+  };
 }
 
 function distributeDiscount(lines, discount, subtotal) {
@@ -162,6 +194,14 @@ function registerSalesRoutes(app, { pool, env }) {
     };
     if (sale.appliedPromotionCode) canonicalSale.promotionCode = sale.appliedPromotionCode;
     if (sale.warehouseId) canonicalSale.warehouseId = sale.warehouseId;
+    if (sale.customerInline) canonicalSale.customerInline = sale.customerInline;
+    if (sale.sellerId) canonicalSale.sellerId = sale.sellerId;
+    if (sale.redeemPoints || sale.pointsToRedeem > 0) {
+      canonicalSale.redeemPoints = true;
+      canonicalSale.pointsToRedeem = sale.pointsToRedeem;
+    }
+    if (sale.settlePriorDebt) canonicalSale.settlePriorDebt = true;
+    if (sale.prebillEventId) canonicalSale.prebillEventId = sale.prebillEventId;
     if (offline) {
       canonicalSale.offline = offline;
       canonicalSale.offlinePrices = prices;
@@ -206,14 +246,57 @@ function registerSalesRoutes(app, { pool, env }) {
           throw new ApiError(409, 'offline_already_synced', 'Đơn ngoại tuyến này đã được quản lý xử lý hoặc đồng bộ trước đó.');
         }
       }
+      let effectiveCustomerId = sale.customerId;
+      let inlineCreatedCustomer = null;
+      if (!effectiveCustomerId && sale.customerInline) {
+        const resolved = await resolveOrCreateInlineCustomer(client, {
+          storeId,
+          userId: auth.userId,
+          customerId: null,
+          customerInline: sale.customerInline,
+          requireExplicitNameForDebt: false,
+        });
+        effectiveCustomerId = resolved.customerId;
+        inlineCreatedCustomer = resolved.customer || null;
+      }
+
       let customerCreditLimit = null;
-      if (sale.customerId) {
+      let customerNameSnapshot = '';
+      if (effectiveCustomerId) {
         const customer = await client.query(
-          `SELECT id, credit_limit_vnd::text AS credit_limit_vnd FROM customers WHERE store_id = $1 AND id = $2 AND status = 'active' FOR UPDATE`,
-          [storeId, sale.customerId]
+          `SELECT id, name, credit_limit_vnd::text AS credit_limit_vnd FROM customers WHERE store_id = $1 AND id = $2 AND status = 'active' FOR UPDATE`,
+          [storeId, effectiveCustomerId]
         );
         if (!customer.rowCount) throw new ApiError(404, 'customer_not_found', 'Không tìm thấy khách hàng đang hoạt động.');
         customerCreditLimit = customer.rows[0].credit_limit_vnd;
+        customerNameSnapshot = customer.rows[0].name || '';
+      }
+
+      const storeLoyaltyRes = await client.query(
+        `SELECT COALESCE(loyalty_earn_unit_vnd, 100000)::text AS loyalty_earn_unit_vnd,
+                COALESCE(loyalty_redeem_value_vnd, 1000)::text AS loyalty_redeem_value_vnd,
+                COALESCE(protect_cost_margin, true) AS protect_cost_margin
+         FROM stores WHERE id = $1`,
+        [storeId]
+      );
+      const storeLoyalty = storeLoyaltyRes.rows[0] || {
+        loyalty_earn_unit_vnd: '100000',
+        loyalty_redeem_value_vnd: '1000',
+        protect_cost_margin: true,
+      };
+      const loyaltyEarnUnitVnd = BigInt(storeLoyalty.loyalty_earn_unit_vnd || '100000');
+      const loyaltyRedeemValueVnd = BigInt(storeLoyalty.loyalty_redeem_value_vnd || '1000');
+      const storeProtectCostMargin = Boolean(storeLoyalty.protect_cost_margin);
+
+      let effectiveSellerId = auth.userId;
+      if (sale.sellerId && sale.sellerId !== auth.userId) {
+        const sellerCheck = await client.query(
+          `SELECT user_id FROM memberships WHERE store_id = $1 AND user_id = $2 AND status = 'active'`,
+          [storeId, sale.sellerId]
+        );
+        if (sellerCheck.rowCount) {
+          effectiveSellerId = sale.sellerId;
+        }
       }
 
       const warehouseResult = sale.warehouseId
@@ -314,19 +397,17 @@ function registerSalesRoutes(app, { pool, env }) {
         const price = BigInt(product.sale_price_vnd);
         const cost = BigInt(product.cost_vnd);
         const grossVnd = (price * BigInt(line.quantityMilli) + 500n) / 1000n;
-        return { ...line, product, price, cost, grossVnd };
+        const lineCostVnd = (cost * BigInt(line.quantityMilli) + 500n) / 1000n;
+        return { ...line, product, price, cost, grossVnd, lineCostVnd };
       });
       const subtotal = lines.reduce((sum, line) => sum + line.grossVnd, 0n);
+      const totalCostVnd = lines.reduce((sum, line) => sum + line.lineCostVnd, 0n);
       const appliedPromotion = sale.appliedPromotionCode
         ? await calculatePromotion(client, {
-          storeId, code: sale.appliedPromotionCode, customerId: sale.customerId, subtotalVnd: subtotal, lock: true,
+          storeId, code: sale.appliedPromotionCode, customerId: effectiveCustomerId, subtotalVnd: subtotal, lock: true,
         })
         : null;
       const promotionDiscountVnd = appliedPromotion?.discountVnd || 0n;
-      const totalDiscountVnd = sale.discountVnd + promotionDiscountVnd;
-      if (subtotal > MAX_BIGINT || totalDiscountVnd > subtotal) {
-        throw new ApiError(400, 'validation_error', 'Khoản giảm giá không được vượt quá tiền hàng.');
-      }
       // Cap manual POS discount (store-approved promotionCode is governed by promotions.js).
       const maxDiscountPct = getPosMaxDiscountPct(membership);
       if (sale.discountVnd > 0n) {
@@ -339,42 +420,127 @@ function registerSalesRoutes(app, { pool, env }) {
               : `Mức giảm giá vượt giới hạn tối đa ${maxDiscountPct}% được cấp.`
           );
         }
+        if (storeProtectCostMargin && membership.role !== 'owner' && totalCostVnd > 0n && (subtotal - sale.discountVnd < totalCostVnd)) {
+          throw new ApiError(
+            403,
+            'margin_guard_violation',
+            'Chốt chặn bảo vệ giá vốn: Mức giảm giá làm giá bán thấp hơn giá vốn hàng hóa. Chỉ Chủ cửa hàng mới được phép bán dưới giá vốn.'
+          );
+        }
+      }
+
+      let pointsRedeemed = 0;
+      let pointsRedeemedVnd = 0n;
+      if (effectiveCustomerId && (sale.redeemPoints || sale.pointsToRedeem > 0)) {
+        const pointsState = await getCustomerPointsState(client, storeId, effectiveCustomerId);
+        const availablePoints = pointsState ? pointsState.redeemablePoints : 0;
+        const requestedPoints = sale.pointsToRedeem > 0
+          ? Math.min(sale.pointsToRedeem, availablePoints)
+          : availablePoints;
+        const remainingAfterBaseDiscount = subtotal > (sale.discountVnd + promotionDiscountVnd)
+          ? subtotal - (sale.discountVnd + promotionDiscountVnd)
+          : 0n;
+        const maxPointsForOrder = loyaltyRedeemValueVnd > 0n
+          ? Number(remainingAfterBaseDiscount / loyaltyRedeemValueVnd)
+          : 0;
+        pointsRedeemed = Math.max(0, Math.min(requestedPoints, maxPointsForOrder));
+        pointsRedeemedVnd = BigInt(pointsRedeemed) * loyaltyRedeemValueVnd;
+      }
+
+      const totalDiscountVnd = sale.discountVnd + promotionDiscountVnd + pointsRedeemedVnd;
+      if (subtotal > MAX_BIGINT || totalDiscountVnd > subtotal) {
+        throw new ApiError(400, 'validation_error', 'Khoản giảm giá không được vượt quá tiền hàng.');
       }
       const total = subtotal - totalDiscountVnd;
       if (offline && total.toString() !== canonicalSale.offlineTotalVnd) throw new ApiError(409, 'offline_total_changed', 'Tổng tiền trên thiết bị không khớp. Chưa ghi đơn; cần kiểm tra chứng từ chờ.');
+
+      let priorCustomerBalanceVnd = 0n;
+      if (effectiveCustomerId) {
+        const creditBalance = await client.query(
+          `SELECT COALESCE(SUM(debit_vnd - credit_vnd), 0)::text AS balance_vnd
+           FROM customer_ledger_entries WHERE store_id = $1 AND customer_id = $2`,
+          [storeId, effectiveCustomerId]
+        );
+        priorCustomerBalanceVnd = BigInt(creditBalance.rows[0].balance_vnd || '0');
+      }
+
+      const maxAllowedNonCashVnd = (sale.settlePriorDebt && effectiveCustomerId && priorCustomerBalanceVnd > 0n)
+        ? (total + priorCustomerBalanceVnd)
+        : total;
       const nonCashReceived = sale.tenders.filter((tender) => tender.method !== 'cash')
         .reduce((sum, tender) => sum + tender.amountReceivedVnd, 0n);
       const cashTender = sale.tenders.find((tender) => tender.method === 'cash');
       const cashReceived = cashTender ? cashTender.amountReceivedVnd : 0n;
-      if (nonCashReceived > total || (sale.amountReceivedVnd > total && cashReceived === 0n)) {
+      if (nonCashReceived > maxAllowedNonCashVnd || (sale.amountReceivedVnd > maxAllowedNonCashVnd && cashReceived === 0n)) {
         throw new ApiError(400, 'validation_error', 'Chỉ tiền mặt mới được nhận dư để thối; tổng thanh toán không tiền mặt không được vượt tổng đơn.');
       }
-      const cashApplied = cashReceived < (total - nonCashReceived) ? cashReceived : (total - nonCashReceived);
-      const paid = nonCashReceived + cashApplied;
-      if (paid < total && !sale.customerId) throw new ApiError(400, 'customer_required', 'Cần chọn khách hàng để ghi nhận phần còn nợ.');
+
+      // Priority Step 1: Apply payment to the NEW order first
+      const nonCashForNewOrder = nonCashReceived < total ? nonCashReceived : total;
+      const cashNeededForNewOrder = total - nonCashForNewOrder;
+      const cashApplied = cashReceived < cashNeededForNewOrder ? cashReceived : cashNeededForNewOrder;
+      const paid = nonCashForNewOrder + cashApplied;
+
+      if (paid < total && !effectiveCustomerId) {
+        throw new ApiError(400, 'customer_required', 'Cần chọn khách hàng để ghi nhận phần còn nợ.');
+      }
+      if (paid < total && sale.customerInline && !sale.customerId) {
+        const parsedInline = parseInlineCustomerInput(sale.customerInline);
+        if (!parsedInline || !parsedInline.explicitName) {
+          throw new ApiError(
+            400,
+            'customer_name_required_for_debt',
+            'Đơn mua nợ cần gõ kèm tên gợi nhớ cạnh SĐT (VD: 0912345678 Chị Lan).'
+          );
+        }
+      }
+
       let creditUsed = 0n;
-      if (sale.customerId && paid < total) {
-        const creditBalance = await client.query(
-          `SELECT COALESCE(SUM(debit_vnd - credit_vnd), 0)::text AS balance_vnd
-           FROM customer_ledger_entries WHERE store_id = $1 AND customer_id = $2`, [storeId, sale.customerId]
-        );
-        const currentBalance = BigInt(creditBalance.rows[0].balance_vnd);
-        if (customerCreditLimit !== null && currentBalance + total - paid > BigInt(customerCreditLimit)) {
+      if (effectiveCustomerId && paid < total) {
+        if (customerCreditLimit !== null && priorCustomerBalanceVnd + total - paid > BigInt(customerCreditLimit)) {
           throw new ApiError(409, 'customer_credit_limit', 'Khoản nợ mới vượt hạn mức của khách. Thu bớt tiền hoặc đổi hạn mức trong hồ sơ khách.');
         }
-        const available = -currentBalance;
+        const available = -priorCustomerBalanceVnd;
         if (available > 0n) creditUsed = available < total - paid ? available : total - paid;
       }
-      const change = sale.amountReceivedVnd - paid;
+
+      // Priority Step 2: If settlePriorDebt is enabled, allocate surplus payment above new order total to prior debt FIFO
+      const surplusAfterNewOrder = sale.amountReceivedVnd - paid;
+      const priorDebtToSettleVnd = (sale.settlePriorDebt && effectiveCustomerId && priorCustomerBalanceVnd > 0n && surplusAfterNewOrder > 0n)
+        ? (surplusAfterNewOrder < priorCustomerBalanceVnd ? surplusAfterNewOrder : priorCustomerBalanceVnd)
+        : 0n;
+
+      // Priority Step 3: Remaining cash after new order + prior debt becomes cash change
+      const change = sale.amountReceivedVnd - paid - priorDebtToSettleVnd;
       const cashSessionId = cashReceived > 0n || change > 0n ? await lockActiveCashSession(client, storeId) : null;
-      const appliedTenders = sale.tenders.map((tender) => ({
-        method: tender.method,
-        amountVnd: tender.method === 'cash' ? cashApplied : tender.amountReceivedVnd,
-        amountReceivedVnd: tender.amountReceivedVnd,
-      })).filter((tender) => tender.amountVnd > 0n);
+
+      let remainingNonCashForNewOrder = nonCashForNewOrder;
+      const appliedTenders = sale.tenders.map((tender) => {
+        if (tender.method === 'cash') {
+          return {
+            method: 'cash',
+            amountVnd: cashApplied,
+            cashMovementInVnd: cashApplied + change,
+          };
+        }
+        const usedForOrder = tender.amountReceivedVnd < remainingNonCashForNewOrder
+          ? tender.amountReceivedVnd
+          : remainingNonCashForNewOrder;
+        remainingNonCashForNewOrder -= usedForOrder;
+        return {
+          method: tender.method,
+          amountVnd: usedForOrder,
+          cashMovementInVnd: usedForOrder,
+        };
+      }).filter((tender) => tender.amountVnd > 0n || tender.cashMovementInVnd > 0n);
+
       const allocatedDiscount = distributeDiscount(lines, totalDiscountVnd, subtotal || 1n);
 
       if (appliedPromotion) await consumePromotion(client, { storeId, promotionId: appliedPromotion.id });
+
+      const pointsEarned = (effectiveCustomerId && loyaltyEarnUnitVnd > 0n)
+        ? Number((paid + creditUsed) / loyaltyEarnUnitVnd)
+        : 0;
 
       const sequenceResult = await client.query(
         `UPDATE store_sequences SET next_order_number = next_order_number + 1
@@ -384,21 +550,27 @@ function registerSalesRoutes(app, { pool, env }) {
       if (!sequenceResult.rowCount) throw new Error('Store order sequence is missing.');
       const orderNumber = `SL-${sequenceResult.rows[0].order_number}`;
       const orderResult = await client.query(
-        `INSERT INTO orders (store_id, order_number, customer_id, cashier_id, warehouse_id, status, subtotal_vnd,
-                             discount_vnd, tax_vnd, total_vnd, cash_received_vnd, cash_change_vnd, note)
-         VALUES ($1, $2, $3, $4, $5, 'completed', $6, $7, 0, $8, $9, $10, $11)
+        `INSERT INTO orders (store_id, order_number, customer_id, cashier_id, seller_id, warehouse_id, status, subtotal_vnd,
+                             discount_vnd, tax_vnd, total_vnd, cash_received_vnd, cash_change_vnd,
+                             points_redeemed, points_redeemed_vnd, points_earned, prebill_event_id, note)
+         VALUES ($1, $2, $3, $4, $5, $6, 'completed', $7, $8, 0, $9, $10, $11, $12, $13, $14, $15, $16)
          RETURNING id, order_number, status, subtotal_vnd::text AS subtotal_vnd,
                    discount_vnd::text AS discount_vnd, total_vnd::text AS total_vnd,
-                   cash_received_vnd::text AS cash_received_vnd, cash_change_vnd::text AS cash_change_vnd, occurred_at`,
-        [storeId, orderNumber, sale.customerId, auth.userId, warehouseId, subtotal.toString(), totalDiscountVnd.toString(),
-          total.toString(), cashReceived.toString(), change.toString(), sale.note]
+                   cash_received_vnd::text AS cash_received_vnd, cash_change_vnd::text AS cash_change_vnd,
+                   points_redeemed, points_redeemed_vnd::text AS points_redeemed_vnd, points_earned, occurred_at`,
+        [
+          storeId, orderNumber, effectiveCustomerId, auth.userId, effectiveSellerId, warehouseId,
+          subtotal.toString(), totalDiscountVnd.toString(), total.toString(),
+          cashReceived.toString(), change.toString(),
+          pointsRedeemed, pointsRedeemedVnd.toString(), pointsEarned, sale.prebillEventId, sale.note,
+        ]
       );
       const order = orderResult.rows[0];
       if (appliedPromotion) {
         await client.query(
           `INSERT INTO promotion_redemptions (store_id, promotion_id, order_id, customer_id, cashier_id, code_snapshot, discount_vnd)
            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [storeId, appliedPromotion.id, order.id, sale.customerId, auth.userId, appliedPromotion.code, promotionDiscountVnd.toString()]
+          [storeId, appliedPromotion.id, order.id, effectiveCustomerId, auth.userId, appliedPromotion.code, promotionDiscountVnd.toString()]
         );
       }
       for (let index = 0; index < lines.length; index += 1) {
@@ -456,6 +628,7 @@ function registerSalesRoutes(app, { pool, env }) {
       }
 
       for (const tender of appliedTenders) {
+        if (tender.amountVnd <= 0n) continue;
         await client.query(
           `INSERT INTO payments (store_id, order_id, method, status, amount_vnd, recorded_by)
            VALUES ($1, $2, $3, 'succeeded', $4, $5)`,
@@ -469,21 +642,22 @@ function registerSalesRoutes(app, { pool, env }) {
           [storeId, order.id, creditUsed.toString(), auth.userId]
         );
       }
-      for (const tender of sale.tenders) {
+      for (const tender of appliedTenders) {
+        if (tender.cashMovementInVnd <= 0n) continue;
         await insertCashMovement(client, {
           storeId,
           direction: 'in',
           category: 'Bán hàng',
-          amountVnd: tender.amountReceivedVnd.toString(),
+          amountVnd: tender.cashMovementInVnd.toString(),
           method: tender.method,
           sourceType: 'order_payment',
           sourceId: order.id,
           note: `Thu đơn ${orderNumber}`,
           actorUserId: auth.userId,
           cashSessionId: tender.method === 'cash' ? cashSessionId : null,
-          counterpartyKind: sale.customerId ? 'customer' : null,
-          counterpartyId: sale.customerId || null,
-          counterpartyName: sale.customerId ? '' : 'Khách lẻ',
+          counterpartyKind: effectiveCustomerId ? 'customer' : null,
+          counterpartyId: effectiveCustomerId || null,
+          counterpartyName: effectiveCustomerId ? customerNameSnapshot : 'Khách lẻ',
         });
       }
       if (change > 0n) {
@@ -498,38 +672,85 @@ function registerSalesRoutes(app, { pool, env }) {
           note: `Thối tiền đơn ${orderNumber}`,
           actorUserId: auth.userId,
           cashSessionId,
-          counterpartyKind: sale.customerId ? 'customer' : null,
-          counterpartyId: sale.customerId || null,
-          counterpartyName: sale.customerId ? '' : 'Khách lẻ',
+          counterpartyKind: effectiveCustomerId ? 'customer' : null,
+          counterpartyId: effectiveCustomerId || null,
+          counterpartyName: effectiveCustomerId ? customerNameSnapshot : 'Khách lẻ',
         });
       }
-      if (sale.customerId) {
+      if (effectiveCustomerId) {
         if (total > 0n) {
           await client.query(
             `INSERT INTO customer_ledger_entries (store_id, customer_id, entry_type, debit_vnd, source_type, source_id, note, actor_user_id)
              VALUES ($1, $2, 'sale_debit', $3, 'order', $4, $5, $6)`,
-            [storeId, sale.customerId, total.toString(), order.id, `Đơn ${orderNumber}`, auth.userId]
+            [storeId, effectiveCustomerId, total.toString(), order.id, `Đơn ${orderNumber}`, auth.userId]
           );
         }
         if (paid > 0n) {
           await client.query(
             `INSERT INTO customer_ledger_entries (store_id, customer_id, entry_type, credit_vnd, source_type, source_id, note, actor_user_id)
              VALUES ($1, $2, 'payment_credit', $3, 'order_payment', $4, $5, $6)`,
-            [storeId, sale.customerId, paid.toString(), order.id, `Thu tiền đơn ${orderNumber}`, auth.userId]
+            [storeId, effectiveCustomerId, paid.toString(), order.id, `Thu tiền đơn ${orderNumber}`, auth.userId]
+          );
+        }
+        if (pointsRedeemed > 0) {
+          await client.query(
+            `INSERT INTO customer_point_ledger_entries (store_id, customer_id, entry_type, points_delta, source_type, source_id, note, actor_user_id)
+             VALUES ($1, $2, 'redeem_sale', $3, 'order', $4, $5, $6)`,
+            [storeId, effectiveCustomerId, -pointsRedeemed, order.id, `Dùng ${pointsRedeemed} điểm trừ tiền đơn ${orderNumber}`, auth.userId]
+          );
+        }
+        if (pointsEarned > 0) {
+          await client.query(
+            `INSERT INTO customer_point_ledger_entries (store_id, customer_id, entry_type, points_delta, source_type, source_id, note, actor_user_id)
+             VALUES ($1, $2, 'earn_sale', $3, 'order', $4, $5, $6)`,
+            [storeId, effectiveCustomerId, pointsEarned, order.id, `Tích điểm đơn ${orderNumber}`, auth.userId]
           );
         }
       }
+
+      let priorDebtSettlement = { settledVnd: 0n, allocations: [], openingAllocations: [] };
+      if (priorDebtToSettleVnd > 0n && effectiveCustomerId) {
+        const debtSettleMethod = sale.tenders[0]?.method || sale.method || 'cash';
+        priorDebtSettlement = await settleCustomerPriorDebtFifo(client, {
+          storeId,
+          customerId: effectiveCustomerId,
+          customerName: customerNameSnapshot,
+          amountVnd: priorDebtToSettleVnd,
+          method: debtSettleMethod,
+          actorUserId: auth.userId,
+          cashSessionId,
+          orderNumber,
+          excludeOrderId: order.id,
+        });
+      }
+
+      if (sale.prebillEventId) {
+        await client.query(
+          `UPDATE pos_prebill_events
+           SET matched_order_id = $3,
+               status = CASE WHEN $4::bigint * 100 < expected_total_vnd * 85 THEN 'abandoned_or_shrunk' ELSE 'completed' END
+           WHERE store_id = $1 AND id = $2`,
+          [storeId, sale.prebillEventId, order.id, total.toString()]
+        );
+      }
+
       await client.query(
         `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, metadata)
          VALUES ($1, $2, 'sale.created', 'order', $3, $4::jsonb)`,
         [storeId, auth.userId, order.id, JSON.stringify({
           orderNumber,
+          sellerId: effectiveSellerId,
+          customerId: effectiveCustomerId,
           totalVnd: total.toString(),
           receivedVnd: sale.amountReceivedVnd.toString(),
           cashReceivedVnd: cashReceived.toString(),
           cashChangeVnd: change.toString(),
+          pointsRedeemed,
+          pointsRedeemedVnd: pointsRedeemedVnd.toString(),
+          pointsEarned,
+          priorDebtSettledVnd: priorDebtSettlement.settledVnd.toString(),
           promotion: appliedPromotion ? { code: appliedPromotion.code, discountVnd: promotionDiscountVnd.toString() } : null,
-          payments: appliedTenders.map((tender) => ({ method: tender.method, amountVnd: tender.amountVnd.toString() })),
+          payments: appliedTenders.filter((t) => t.amountVnd > 0n).map((tender) => ({ method: tender.method, amountVnd: tender.amountVnd.toString() })),
           customerCreditUsedVnd: creditUsed.toString(),
         })]
       );
@@ -538,15 +759,23 @@ function registerSalesRoutes(app, { pool, env }) {
           id: order.id,
           number: order.order_number,
           status: order.status,
+          customerId: effectiveCustomerId,
+          inlineCreatedCustomer,
+          sellerId: effectiveSellerId,
           subtotalVnd: order.subtotal_vnd,
           discountVnd: order.discount_vnd,
+          pointsRedeemed,
+          pointsRedeemedVnd: pointsRedeemedVnd.toString(),
+          pointsEarned,
+          priorDebtSettledVnd: priorDebtSettlement.settledVnd.toString(),
+          priorDebtAllocations: priorDebtSettlement.allocations,
           promotion: appliedPromotion ? { code: appliedPromotion.code, name: appliedPromotion.name, discountVnd: promotionDiscountVnd.toString() } : null,
           totalVnd: order.total_vnd,
           paidVnd: (paid + creditUsed).toString(),
           dueVnd: (total - paid - creditUsed).toString(),
           cashReceivedVnd: order.cash_received_vnd,
           changeVnd: change.toString(),
-          payments: appliedTenders.map((tender) => ({ method: tender.method, amountVnd: tender.amountVnd.toString() })).concat(creditUsed > 0n ? [{ method: 'customer_credit', amountVnd: creditUsed.toString() }] : []),
+          payments: appliedTenders.filter((t) => t.amountVnd > 0n).map((tender) => ({ method: tender.method, amountVnd: tender.amountVnd.toString() })).concat(creditUsed > 0n ? [{ method: 'customer_credit', amountVnd: creditUsed.toString() }] : []),
           occurredAt: order.occurred_at,
           items: lines.map((line, index) => {
             const serialLock = reservedSerialMap.get(line.product.id);

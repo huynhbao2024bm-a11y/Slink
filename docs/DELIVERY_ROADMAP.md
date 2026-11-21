@@ -4,6 +4,27 @@
 
 Status labels: **Not started**, **In progress**, **Blocked by external dependency**, **Evidence passed**. “Evidence passed” applies only to the named milestone, never to the whole product by implication.
 
+## Cập nhật Slink 3.0 — Bộ Vũ Khí Nhân Sự & Khách Hàng Zero-Touch Cạnh Tranh Trực Tiếp Sapo / KiotViet (2026-11-21)
+
+- **Kiến trúc đã được Chủ cửa hàng phê duyệt & Chuyên gia thực dụng phản biện (`docs/ZERO_TOUCH_HR_CRM_ARCHITECTURE.md`, `20261121210000_zero_touch_hr_crm.sql`, `server/hr-crm.js`):**
+  1. **Trợ lý Khách Quen 4 Số Cuối & Gộp Thu Nợ 1 Mã QR ngay trên POS:**
+     - Ô nhập thông minh 1 dòng trên POS (`#pos-customer-inline-input`): gõ 4 số cuối SĐT (`6886`) tự nhận diện khách quen (`GET /api/stores/:storeId/pos/customer-assistant`) và bung thẻ Trợ lý 2 dòng hiển thị Hạng VIP, Điểm khả dụng (`1-chạm Dùng điểm`), Top 3 món hay mua (`1-chạm ＋ Thêm vào giỏ`), số sản phẩm còn bảo hành và Nợ cũ; gõ `"0912345678 Chị Lan"` cho khách mới tự tách SĐT + Tên và tạo hồ sơ khách ngay trong giao dịch `POST /api/stores/:storeId/sales` (0 popup; chỉ bắt buộc ghi tên khi đơn có ghi nợ `paid < total`).
+     - **Gộp thu luôn nợ cũ (`settlePriorDebt: true`):** 1 chạm trên thẻ Trợ lý cộng gộp `Đơn mới + Nợ cũ` vào cùng 1 mã VietQR / lần thu tiền và hạch toán nguyên tử: (1) thanh toán dứt điểm đơn mới trước + (2) gạch nợ các đơn nợ cũ / nợ đầu kỳ theo chuẩn FIFO (`settleCustomerPriorDebtFifo`), ghi đầy đủ `payments`, `customer_ledger_entries`, và `cash_movements`.
+     - **Thanh chọn nhanh Người bán (`.pos-seller-pills`):** 1 chạm gắn `seller_id` trên đơn hàng để tính doanh số thực thu & hoa hồng chính xác cho nhân viên tư vấn.
+  2. **Bảng Lương Tự Động 1 Trang + Ảnh Phiếu Lương PNG (`<canvas>`) & Mã VietQR Lương Nhân Viên:**
+     - `GET /api/stores/:storeId/payroll?month=YYYY-MM`: tự động đếm ngày có mặt / số ca từ nhật ký mở/chốt ca, tạo đơn và kiểm kho; tự động tính doanh số thực thu & hoa hồng của những đơn **đã thu đủ tiền** (tự động trừ hoàn trả hàng cùng kỳ và khấu trừ âm `cross-month clawback` đối với đơn tháng trước bị trả hàng trong tháng này; không tính đơn đang nợ); tự động gom các khoản ứng lương chưa khấu trừ và tiền lệch két âm chưa trừ (kèm nút tích `[x] Trừ lệch két`).
+     - `POST /api/stores/:storeId/payroll/settle`: 1 chạm chốt lương tạo phiếu `staff_payslips` (`PL-YYYYMM-xxx`), tự động ghi phiếu chi lương vào Sổ quỹ (`cash_movements`, mặc định `bank_transfer` để chốt lương buổi tối không cần mở ca tiền mặt), khóa danh sách `settled_advance_ids` và `settled_shortage_session_ids` chống trừ trùng, và xuất **Ảnh Phiếu Lương PNG sắc nét** (`window.SlinkReceiptImage.renderPayslipPng`) nhúng sẵn mã VietQR tài khoản ngân hàng của nhân viên để gửi Zalo.
+  3. **Ứng Lương Nhanh 1 Chạm (`POST /api/stores/:storeId/staff/:userId/advances`):**
+     - Nút `[💸 Ứng lương]` ngay trên từng dòng nhân viên tự động lập phiếu chi sổ quỹ (`source_type = 'salary_advance'`, `counterparty_kind = 'staff'`) và tự động nhảy vào cột `Đã ứng` của kỳ lương tháng đó.
+  4. **Radar Bắt Gian Lận Thực Chiến (`pos_prebill_events` & `GET /api/stores/:storeId/loss-prevention-radar`):**
+     - Bấm `In tạm tính (F8)` tự động ghi snapshot `POST /pos/prebill-events`. Nếu giỏ hàng bị đóng/xóa (`POST /pos/prebill-events/:id/abandon`) hoặc thanh toán thấp hơn `< 85%` số tiền tạm tính, tab `Cảnh báo thất thoát` hiển thị thẻ cảnh báo tiếng Việt rõ ràng cùng danh sách đơn hoàn trả tiền mặt và ca lệch két âm (kèm nút 1 chạm `Bỏ qua lệch két` `POST /cash-sessions/:id/waive-variance`).
+  5. **Tích Điểm Bảo Vệ Giá Vốn (`Margin Guard`) & 4 Tệp Khách Hàng Hái Ra Tiền:**
+     - Sổ cái điểm `customer_point_ledger_entries` nguyên tử (`100.000 ₫ thực thu = 1 điểm`, `1 điểm = 1.000 ₫`); khi trả hàng có dùng điểm, hệ thống hoàn trả lại điểm đã dùng trước (chặn trục lợi điểm thành tiền mặt) và thu hồi điểm thưởng đã cộng (cho phép âm điểm như `-3 điểm`, không trừ lẹm tiền hoàn của khách).
+     - **Chốt chặn Bảo vệ giá vốn (`stores.protect_cost_margin`):** chặn nhân viên (không phải chủ cửa hàng) giảm giá + tiêu điểm làm giá thực thu rơi xuống dưới tổng giá vốn (`403 margin_guard_violation`).
+     - 4 tab lọc nhanh khách hàng (`Đang nợ tiền`, `VIP Mua nhiều`, `>30 ngày chưa ghé`, `Chưa mua lần nào`) kèm nút `Xuất Excel / CSV` 1 chạm.
+  6. **Khắc phục triệt để xung đột thứ tự Deploy Render vs. Migration (`server/index.js`):** Bổ sung vòng lặp tự thử lại `assertRuntimeSchema(pool)` tối đa 24 lần (60 giây) trên môi trường Render/Production để không bị dừng container khi Render tự động khởi chạy cùng lúc với `production-migrate.yml`.
+- **Bằng chứng kiểm thử:** `102/102` bài kiểm tra máy chủ (`node --test server/test/*.test.js`, bao gồm `server/test/slink3-hr-crm.test.js`) đạt 100% (`0 fail`).
+
 ## Cập nhật Slink 2.0 — 0-Hardware POS, Đồng bộ tức thì, Bảo hành theo Serial & Phân quyền chi tiết (Đợt 1 + Đợt 2 — 2026-11-21)
 
 - **Bán hàng 0-phần-cứng (`pos-hardware.js`, `receipt-image.js`, `MainActivity.java`):**

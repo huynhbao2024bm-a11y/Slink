@@ -52,6 +52,35 @@ function validateStaffProfileFields(body = {}, { partial = true } = {}) {
     }
     out.baseSalaryVnd = raw;
   }
+  if (!partial || body.salaryMode !== undefined) {
+    const mode = body.salaryMode == null || body.salaryMode === '' ? 'monthly' : String(body.salaryMode).trim();
+    if (!['monthly', 'shift', 'hourly'].includes(mode)) {
+      throw new ApiError(400, 'validation_error', 'Hình thức tính lương không hợp lệ.');
+    }
+    out.salaryMode = mode;
+  }
+  if (!partial || body.standardDaysPerMonth !== undefined) {
+    const days = body.standardDaysPerMonth == null || body.standardDaysPerMonth === '' ? 26 : Number(body.standardDaysPerMonth);
+    if (!Number.isSafeInteger(days) || days < 1 || days > 31) {
+      throw new ApiError(400, 'validation_error', 'Số ngày công chuẩn trong tháng phải từ 1 đến 31.');
+    }
+    out.standardDaysPerMonth = days;
+  }
+  if (!partial || body.bankBin !== undefined) {
+    const bankBin = body.bankBin == null ? '' : String(body.bankBin).trim();
+    if (bankBin.length > 20) throw new ApiError(400, 'validation_error', 'Mã ngân hàng tối đa 20 ký tự.');
+    out.bankBin = bankBin || null;
+  }
+  if (!partial || body.bankAccountNumber !== undefined) {
+    const acc = body.bankAccountNumber == null ? '' : String(body.bankAccountNumber).trim();
+    if (acc.length > 40) throw new ApiError(400, 'validation_error', 'Số tài khoản ngân hàng tối đa 40 ký tự.');
+    out.bankAccountNumber = acc || null;
+  }
+  if (!partial || body.bankAccountOwner !== undefined) {
+    const ownerName = body.bankAccountOwner == null ? '' : String(body.bankAccountOwner).trim();
+    if (ownerName.length > 120) throw new ApiError(400, 'validation_error', 'Tên chủ tài khoản ngân hàng tối đa 120 ký tự.');
+    out.bankAccountOwner = ownerName || null;
+  }
   if (body.displayName !== undefined) {
     const displayName = typeof body.displayName === 'string' ? body.displayName.trim() : '';
     if (displayName.length < 2 || displayName.length > 120) {
@@ -266,6 +295,24 @@ function registerStaffRoutes(app, { pool, env }) {
     return { status: 'accepted', storeId: result.storeId };
   });
 
+  app.get('/api/stores/:storeId/pos/sellers', async (request) => {
+    const auth = await authenticate(pool, request);
+    const storeId = request.params.storeId;
+    if (!UUID_PATTERN.test(storeId)) throw new ApiError(400, 'validation_error', 'Cửa hàng không hợp lệ.');
+    return withStore(pool, auth.userId, storeId, async (client) => {
+      const res = await client.query(
+        `SELECT m.user_id, u.display_name, m.role, m.staff_code
+         FROM memberships m
+         JOIN users u ON u.id = m.user_id
+         WHERE m.store_id = $1 AND m.status = 'active'
+         ORDER BY (m.role = 'owner') DESC, m.created_at ASC, u.display_name ASC
+         LIMIT 50`,
+        [storeId]
+      );
+      return { sellers: res.rows };
+    });
+  });
+
   app.get('/api/stores/:storeId/staff', async (request) => {
     const auth = await authenticate(pool, request);
     const storeId = request.params.storeId;
@@ -278,6 +325,11 @@ function registerStaffRoutes(app, { pool, env }) {
                 m.staff_code, m.phone, COALESCE(m.job_title, '') AS job_title, COALESCE(m.note, '') AS note,
                 COALESCE(m.commission_rate_bps, 0)::int AS commission_rate_bps,
                 COALESCE(m.base_salary_vnd, 0)::text AS base_salary_vnd,
+                COALESCE(m.salary_mode, 'monthly') AS salary_mode,
+                COALESCE(m.standard_days_per_month, 26)::int AS standard_days_per_month,
+                COALESCE(m.bank_bin, '') AS bank_bin,
+                COALESCE(m.bank_account_number, '') AS bank_account_number,
+                COALESCE(m.bank_account_owner, '') AS bank_account_owner,
                 m.warehouse_scope_mode,
                 COALESCE((SELECT json_agg(mws.warehouse_id ORDER BY mws.warehouse_id)
                           FROM membership_warehouse_scopes mws
@@ -295,7 +347,7 @@ function registerStaffRoutes(app, { pool, env }) {
                   COALESCE(SUM(o.total_vnd - COALESCE((SELECT SUM(r.refund_total_vnd) FROM returns r
                     WHERE r.store_id = o.store_id AND r.order_id = o.id AND r.status = 'completed'), 0)), 0)::bigint AS revenue_vnd
            FROM orders o
-           WHERE o.store_id = m.store_id AND o.cashier_id = m.user_id AND o.status <> 'voided'
+           WHERE o.store_id = m.store_id AND COALESCE(o.seller_id, o.cashier_id) = m.user_id AND o.status <> 'voided'
          ) perf ON true
          LEFT JOIN LATERAL (
            SELECT COUNT(*)::int AS shifts_count
@@ -433,12 +485,15 @@ function registerStaffRoutes(app, { pool, env }) {
         await client.query(
           `INSERT INTO memberships (
              store_id, user_id, role, status, invited_by, joined_at,
-             warehouse_scope_mode, staff_code, phone, job_title, note, commission_rate_bps, base_salary_vnd, permissions
-           ) VALUES ($1, $2, $3, 'active', $4, now(), $5, $6, $7, $8, $9, $10, $11, $12::jsonb)`,
+             warehouse_scope_mode, staff_code, phone, job_title, note, commission_rate_bps, base_salary_vnd, permissions,
+             salary_mode, standard_days_per_month, bank_bin, bank_account_number, bank_account_owner
+           ) VALUES ($1, $2, $3, 'active', $4, now(), $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15, $16, $17)`,
           [
             storeId, userId, role, auth.userId, scopeMode,
             staffCode, profile.phone, profile.jobTitle, profile.note,
             profile.commissionRateBps, profile.baseSalaryVnd, JSON.stringify(permissions),
+            profile.salaryMode || 'monthly', profile.standardDaysPerMonth || 26,
+            profile.bankBin || null, profile.bankAccountNumber || null, profile.bankAccountOwner || null,
           ]
         );
       } catch (err) {
@@ -570,6 +625,9 @@ function registerStaffRoutes(app, { pool, env }) {
         `SELECT m.user_id, m.role, m.status, m.warehouse_scope_mode,
                 COALESCE(m.permissions, '{}'::jsonb) AS permissions,
                 m.staff_code, m.phone, m.job_title, m.note, m.commission_rate_bps, m.base_salary_vnd::text AS base_salary_vnd,
+                COALESCE(m.salary_mode, 'monthly') AS salary_mode,
+                COALESCE(m.standard_days_per_month, 26)::int AS standard_days_per_month,
+                m.bank_bin, m.bank_account_number, m.bank_account_owner,
                 u.email, u.display_name
          FROM memberships m JOIN users u ON u.id = m.user_id
          WHERE m.store_id = $1 AND m.user_id = $2 FOR UPDATE OF m`, [storeId, userId]
@@ -605,6 +663,11 @@ function registerStaffRoutes(app, { pool, env }) {
       const nextNote = profileUpdates.note !== undefined ? profileUpdates.note : (current.note || '');
       const nextCommissionBps = profileUpdates.commissionRateBps !== undefined ? profileUpdates.commissionRateBps : (current.commission_rate_bps || 0);
       const nextBaseSalaryVnd = profileUpdates.baseSalaryVnd !== undefined ? profileUpdates.baseSalaryVnd : (current.base_salary_vnd || '0');
+      const nextSalaryMode = profileUpdates.salaryMode !== undefined ? profileUpdates.salaryMode : (current.salary_mode || 'monthly');
+      const nextStandardDays = profileUpdates.standardDaysPerMonth !== undefined ? profileUpdates.standardDaysPerMonth : (current.standard_days_per_month || 26);
+      const nextBankBin = profileUpdates.bankBin !== undefined ? profileUpdates.bankBin : current.bank_bin;
+      const nextBankAccountNumber = profileUpdates.bankAccountNumber !== undefined ? profileUpdates.bankAccountNumber : current.bank_account_number;
+      const nextBankAccountOwner = profileUpdates.bankAccountOwner !== undefined ? profileUpdates.bankAccountOwner : current.bank_account_owner;
       const previousPermissions = normalizeStoredPermissions(current.permissions);
       const nextPermissions = requestedPermissions !== undefined
         ? requestedPermissions
@@ -615,9 +678,15 @@ function registerStaffRoutes(app, { pool, env }) {
           `UPDATE memberships
            SET role = $3, status = $4, warehouse_scope_mode = $5,
                staff_code = $6, phone = $7, job_title = $8, note = $9,
-               commission_rate_bps = $10, base_salary_vnd = $11, permissions = $12::jsonb
+               commission_rate_bps = $10, base_salary_vnd = $11, permissions = $12::jsonb,
+               salary_mode = $13, standard_days_per_month = $14,
+               bank_bin = $15, bank_account_number = $16, bank_account_owner = $17
            WHERE store_id = $1 AND user_id = $2`,
-          [storeId, userId, role, status, scopeMode, nextStaffCode, nextPhone, nextJobTitle, nextNote, nextCommissionBps, nextBaseSalaryVnd, JSON.stringify(nextPermissions)]
+          [
+            storeId, userId, role, status, scopeMode, nextStaffCode, nextPhone, nextJobTitle, nextNote,
+            nextCommissionBps, nextBaseSalaryVnd, JSON.stringify(nextPermissions),
+            nextSalaryMode, nextStandardDays, nextBankBin, nextBankAccountNumber, nextBankAccountOwner,
+          ]
         );
       } catch (err) {
         if (err.code === '23505') throw new ApiError(409, 'staff_code_conflict', 'Mã nhân viên này đã tồn tại trong cửa hàng.');
