@@ -716,3 +716,99 @@
   .calm-ui .product-mobile-info small { margin-top: 2px; }
   .calm-ui .product-mobile-side strong { color: var(--primary); }
 }
+
+/* Slink M3: Fullscreen VietQR (placed after @media(max-width:600px) bottom-sheet override) & Calm UI rules */
+.calm-ui .modal.modal-vietqr-fullscreen {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  max-width: 100vw;
+  height: 100dvh;
+  max-height: 100dvh;
+  margin: 0;
+  border-radius: 0;
+  border: none;
+  padding: max(20px, env(safe-area-inset-top)) 20px max(24px, env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  background: #ffffff;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.calm-ui .modal.modal-vietqr-fullscreen .modal-head {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.calm-ui .modal.modal-vietqr-fullscreen .vietqr-fullscreen-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  flex: 1 1 auto;
+  padding: 16px 0;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.calm-ui .modal.modal-vietqr-fullscreen .vietqr-fullscreen-amount {
+  font-size: clamp(28px, 6vw, 40px);
+  font-weight: 800;
+  color: #0f766e;
+  font-variant-numeric: tabular-nums;
+}
+.calm-ui .modal.modal-vietqr-fullscreen .vietqr-svg {
+  width: min(76vw, 340px);
+  height: auto;
+  max-width: 340px;
+  background: #ffffff;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+}
+.calm-ui .modal.modal-vietqr-fullscreen .vietqr-fullscreen-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  width: 100%;
+  max-width: 480px;
+  margin: 0 auto;
+}
+.calm-ui .modal.modal-vietqr-fullscreen .vietqr-fullscreen-actions .btn {
+  flex: 1 1 160px;
+  min-height: 48px;
+}
+.calm-ui .dashboard-real-numbers {
+  gap: 12px;
+}
+.calm-ui .real-num-card {
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+.calm-ui .dashboard-action-item,
+.calm-ui .staff-perm-toggle,
+.calm-ui .scan-continuous-toggle,
+.calm-ui .receipt-png-actions .btn,
+.calm-ui .serial-chip {
+  min-height: 44px;
+}
+@media (max-width: 600px) {
+  .calm-ui .modal.modal-vietqr-fullscreen {
+    border-radius: 0;
+    inset: 0;
+    height: 100dvh;
+    max-height: 100dvh;
+  }
+  .calm-ui .stock-count-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .calm-ui .staff-perm-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .calm-ui .modal.modal-vietqr-fullscreen,
+  .calm-ui .scan-feedback-pill {
+    transition: none;
+    animation: none;
+  }
+}

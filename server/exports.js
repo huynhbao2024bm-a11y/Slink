@@ -3,19 +3,29 @@
 const { ApiError, authenticate } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
 const { allowedWarehouseIds, findAccessibleWarehouse } = require('./warehouse-access');
+const { hasPermission } = require('./rbac');
 
 const MAX_EXPORT_ROWS = 50_000;
-const FINANCE_EXPORT_ROLES = new Set(['owner', 'manager', 'accountant']);
-const STOCK_EXPORT_ROLES = new Set(['owner', 'manager', 'stockkeeper', 'accountant']);
-const CHANNEL_ORDER_EXPORT_ROLES = new Set(['owner', 'manager', 'stockkeeper']);
-const EXPORT_ROLES = {
-  products: STOCK_EXPORT_ROLES, inventory: STOCK_EXPORT_ROLES, 'inventory-movements': STOCK_EXPORT_ROLES,
-  customers: FINANCE_EXPORT_ROLES, 'customer-ledger': FINANCE_EXPORT_ROLES,
-  orders: FINANCE_EXPORT_ROLES, 'order-lines': FINANCE_EXPORT_ROLES, payments: FINANCE_EXPORT_ROLES,
-  'channel-orders': CHANNEL_ORDER_EXPORT_ROLES,
-  returns: FINANCE_EXPORT_ROLES, refunds: FINANCE_EXPORT_ROLES, cashbook: FINANCE_EXPORT_ROLES,
-  suppliers: STOCK_EXPORT_ROLES, 'supplier-ledger': FINANCE_EXPORT_ROLES, purchases: STOCK_EXPORT_ROLES, 'purchase-orders': STOCK_EXPORT_ROLES,
-};
+const COST_COLUMN_KEYS = new Set(['cost_vnd', 'update_cost_vnd', 'stock_value_vnd', 'unit_cost_vnd']);
+
+function canExportDataset(membership, key) {
+  if ([
+    'customers', 'customer-ledger', 'orders', 'order-lines',
+    'payments', 'returns', 'refunds', 'cashbook', 'supplier-ledger',
+  ].includes(key)) {
+    return hasPermission(membership, 'view_reports');
+  }
+  if ([
+    'products', 'inventory', 'inventory-movements',
+    'suppliers', 'purchases', 'purchase-orders',
+  ].includes(key)) {
+    return hasPermission(membership, 'edit_products') || hasPermission(membership, 'view_reports');
+  }
+  if (key === 'channel-orders') {
+    return hasPermission(membership, 'edit_products');
+  }
+  return false;
+}
 
 // These queries and their column definitions are deliberately static. The route
 // never accepts SQL fragments or column names from the request.
@@ -400,9 +410,12 @@ function csvCell(value, kind) {
   return `"${text.replace(/"/g, '""')}"`;
 }
 
-function makeCsv(dataset, rows) {
-  const header = dataset.columns.map(([label]) => csvCell(label, 'text')).join(',');
-  const body = rows.map((row) => dataset.columns.map(([, key, kind]) => csvCell(row[key], kind)).join(','));
+function makeCsv(dataset, rows, { includeCostColumns = true } = {}) {
+  const columns = includeCostColumns
+    ? dataset.columns
+    : dataset.columns.filter(([, colKey]) => !COST_COLUMN_KEYS.has(colKey));
+  const header = columns.map(([label]) => csvCell(label, 'text')).join(',');
+  const body = rows.map((row) => columns.map(([, key, kind]) => csvCell(row[key], kind)).join(','));
   return `\uFEFF${[header, ...body].join('\r\n')}\r\n`;
 }
 
@@ -418,7 +431,8 @@ function registerExportRoutes(app, { pool }) {
     if (from && to && from > to) throw new ApiError(400, 'validation_error', 'Ngày bắt đầu phải trước hoặc bằng ngày kết thúc.');
 
     const result = await withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!EXPORT_ROLES[key]?.has(membership.role)) throw new ApiError(403, 'forbidden', 'Vai trò này không có quyền tải bộ dữ liệu cửa hàng.');
+      if (!canExportDataset(membership, key)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền tải bộ dữ liệu cửa hàng.');
+      const canViewCost = hasPermission(membership, 'view_cost_price');
       const allowedIds = allowedWarehouseIds(membership);
       let scopedWarehouseId = null;
       let scopedWarehouseIds = null;
@@ -460,7 +474,7 @@ function registerExportRoutes(app, { pool }) {
          VALUES ($1, $2, 'data.exported', 'store', $1, '', jsonb_build_object('dataset', $3::text, 'row_count', $4::integer, 'from', $5::text, 'to', $6::text, 'warehouse_id', $7::text))`,
         [storeId, auth.userId, key, rows.rowCount, from, to, scopedWarehouseId]
       );
-      return rows.rows;
+      return { rows: rows.rows, canViewCost };
     });
 
     reply
@@ -468,7 +482,7 @@ function registerExportRoutes(app, { pool }) {
       .header('X-Content-Type-Options', 'nosniff')
       .header('Content-Disposition', `attachment; filename="${dataset.filename}"`)
       .type('text/csv; charset=utf-8')
-      .send(makeCsv(dataset, result));
+      .send(makeCsv(dataset, result.rows, { includeCostColumns: result.canViewCost }));
   });
 }
 

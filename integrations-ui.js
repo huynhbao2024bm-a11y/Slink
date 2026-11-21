@@ -210,9 +210,14 @@
     </section>`;
   }
 
-  function renderOrderIntegrationSection({ order, settings, role } = {}) {
+  function renderOrderIntegrationSection({ order, settings, role, canOperate: canOperateOpt, canShipping: canShippingOpt } = {}) {
     if (!order) return '';
-    const canOperate = ['owner', 'manager', 'cashier', 'accountant'].includes(role);
+    const canOperate = canOperateOpt !== undefined
+      ? Boolean(canOperateOpt)
+      : ['owner', 'manager', 'cashier', 'accountant'].includes(role);
+    const canShipping = canShippingOpt !== undefined
+      ? Boolean(canShippingOpt)
+      : (canOperate || role === 'stockkeeper');
     const qrHtml = (order.due > 0 && settings?.bankBin && settings?.bankAccountNumber)
       ? renderVietQrCard({
         bankBin: settings.bankBin,
@@ -235,7 +240,7 @@
     const hasShipping = Boolean(settings?.shippingProvider && settings.shippingProvider !== 'none');
     const shippingStatus = order.shippingTrackingCode
       ? `<span class='badge badge-info'><i class='badge-dot'></i>Vận đơn ${esc((order.shippingProvider || '').toUpperCase())}: ${esc(order.shippingTrackingCode)}</span>`
-      : (hasShipping && (canOperate || role === 'stockkeeper') && order.rawStatus !== 'voided'
+      : (hasShipping && canShipping && order.rawStatus !== 'voided'
         ? `<button class='btn btn-secondary' type='button' data-action='create-order-shipping' data-id='${esc(order.id)}'>Tạo vận đơn</button>`
         : '');
 

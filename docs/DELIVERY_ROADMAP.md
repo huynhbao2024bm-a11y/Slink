@@ -4,6 +4,21 @@
 
 Status labels: **Not started**, **In progress**, **Blocked by external dependency**, **Evidence passed**. “Evidence passed” applies only to the named milestone, never to the whole product by implication.
 
+## Cập nhật Slink 2.0 — 0-Hardware POS, Đồng bộ tức thì, Bảo hành theo Serial & Phân quyền chi tiết (Đợt 1 + Đợt 2 — 2026-11-21)
+
+- **Bán hàng 0-phần-cứng (`pos-hardware.js`, `receipt-image.js`, `MainActivity.java`):**
+  - **Loa thần tài tích hợp (Ting-Ting + đọc số tiền tiếng Việt):** Cầu nối Android `TextToSpeech` (`vi-VN`) kèm `ToneGenerator` chime và dự phòng Web Speech API + Web Audio API; có nút gạt `🔊 Đọc tiền khi thu` ngay trên thanh đầu POS và kiểm thử loa trong `Cài đặt → Bán hàng & Máy in`.
+  - **VietQR toàn màn hình & giữ sáng 100%:** Mở rộng bảng mã VietQR toàn màn hình cho khách quét tại quầy kèm cầu nối Android `screenBrightness` (`1.0f` + `FLAG_KEEP_SCREEN_ON`) và dự phòng Web `navigator.wakeLock`.
+  - **Hóa đơn ảnh PNG & Phiếu nhắc nợ 1 chạm (`receipt-image.js`):** Dựng ảnh PNG sắc nét thuần HTML5 `<canvas>` (hóa đơn bán hàng kèm QR thanh toán / thời hạn bảo hành từng Serial và phiếu đối chiếu công nợ khách hàng), hỗ trợ chia sẻ trực tiếp qua Zalo/Messenger bằng Android `FileProvider` (`Intent.ACTION_SEND`, `image/png`), Web Share API L2 hoặc tải ảnh PNG.
+  - **Quét mã vạch liên tục (`pos-hardware.js`):** Giữ camera mở liên tục trên cả 3 luồng **POS Bán hàng, Nhập hàng, và Kiểm kho**, chống trùng mã trong cửa sổ `1200ms`, phát tiếng bíp + rung `40ms` + thẻ nổi `+1 Tên hàng (Tồn / Đã đếm)`.
+- **Đồng bộ dữ liệu tức thì (`sync-bus.js`) & Trang Tổng quan "3 Con Số Thật" (`server/dashboard.js`):**
+  - `window.SlinkSyncBus` phát sự kiện theo miền (`products`, `stock`, `orders`, `cashbook`, `debts`, `customers`, `suppliers`, `staff`, `reports`, `dashboard`, `me`) ngay sau mọi thao tác ghi và qua `BroadcastChannel` đa tab để tự động xóa bộ đệm cũ và làm mới màn hình đang mở mà không cần F5.
+  - `GET /api/stores/:storeId/dashboard` trả về 3 chỉ số vận hành thực tế (`Doanh thu hôm nay`, `Tiền thực trong quỹ = Tiền mặt + Ngân hàng`, `Lãi ròng thật hôm nay`) cùng danh sách việc cần xử lý ngay (tồn thấp, nợ quá hạn, trạng thái ca). Tự động ẩn số dư quỹ và lãi ròng đối với nhân viên không có quyền tài chính/báo cáo (`view_reports` / `record_cashbook` / `view_cost_price`).
+- **Bảo hành điện tử theo Serial/IMEI & Phân quyền chi tiết từng nút (`20261121100000_warranty_granular_rbac.sql`, `server/rbac.js`):**
+  - Bổ sung `products.warranty_months` (`0..1200`) và `product_serial_codes.warranty_expires_at`; tự động kích hoạt hạn bảo hành khi bán, xóa khi hoàn trả/hủy đơn, và tra cứu trạng thái bảo hành (`Còn bảo hành` / `Hết hạn bảo hành`) theo mã Serial/IMEI hoặc SĐT khách hàng.
+  - Bổ sung `memberships.permissions jsonb` và mô-đun `server/rbac.js` kiểm soát 6 quyền chi tiết ở cả máy chủ và giao diện: `view_cost_price` (ẩn giá vốn ở mọi API sản phẩm/tồn kho/đơn nhập khi tắt), `pos_max_discount_pct` (`0..100%`, chặn chiết khấu vượt trần tại `POST /sales`), `void_or_return_order`, `record_cashbook`, `view_reports`, `edit_products`.
+- **Bằng chứng kiểm thử:** `101/101` bài kiểm tra máy chủ (`node --test server/test/*.test.js`, bao gồm `server/test/slink2-m1.test.js`) đạt (`0 fail`); Playwright E2E `e2e/commercial-responsive.js` và biên dịch Android `assembleRelease` (`android-v0.6.0`, `versionCode: 3014`) đạt 100%.
+
 ## Cập nhật sẵn sàng thương mại Production (Tracks B, C, D, E — 2026-11-19)
 
 - **Track B (Sao lưu mã hóa hằng ngày, Diễn tập khôi phục & Giám sát Uptime):** Bổ sung workflow `.github/workflows/production-backup.yml` (02:00 VN hằng ngày, gọi `scripts/postgres-backup.js create` + `verify` AES-256-GCM với `upload-artifact` ghim SHA bất biến), `.github/workflows/uptime-monitor.yml` (kiểm tra `/api/ready` mỗi 15 phút, tự mở/bình luận Issue sự cố hoặc gọi `ALERT_WEBHOOK_URL`), và `scripts/restore-drill.js` (diễn tập mã hóa → xác thực SHA-256 → giải mã → phục hồi trên DB mới, đo RTO).

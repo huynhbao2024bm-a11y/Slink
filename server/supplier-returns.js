@@ -7,11 +7,10 @@ const { lockActiveCashSession } = require('./cash-register');
 const { insertCashMovement } = require('./cashbook-ledger');
 const { findAccessibleWarehouse, requireWarehouseAccess, allowedWarehouseIds } = require('./warehouse-access');
 const { quantityMilli, quantityText } = require('./sales');
+const { hasPermission } = require('./rbac');
 
 const MAX_BIGINT = 9223372036854775807n;
 const MAX_LINES = 50;
-const RETURN_ROLES = new Set(['owner', 'manager', 'stockkeeper', 'accountant']);
-const FINANCE_ROLES = new Set(['owner', 'manager', 'accountant']);
 const METHODS = new Set(['cash', 'bank_transfer', 'bank_qr', 'card', 'other']);
 
 function parseVnd(value, label) {
@@ -148,7 +147,7 @@ async function assertLinkedPurchaseAllowances(client, storeId, membership, suppl
 }
 
 async function prepareSupplierReturnData(client, storeId, membership, req) {
-  const canAdjustCost = FINANCE_ROLES.has(membership.role);
+  const canAdjustCost = hasPermission(membership, 'record_cashbook');
   if (!req.purchaseId && !canAdjustCost && req.items.some((i) => i.unitCostVnd !== null)) {
     throw new ApiError(403, 'forbidden', 'Chỉ Chủ cửa hàng, Quản lý hoặc Kế toán được tự nhập đơn giá trả ngoài phiếu nhập.');
   }
@@ -335,7 +334,7 @@ function registerSupplierReturnRoutes(app, { pool, env }) {
     }
 
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!RETURN_ROLES.has(membership.role)) {
+      if (!hasPermission(membership, 'edit_products') && !hasPermission(membership, 'record_cashbook')) {
         throw new ApiError(403, 'forbidden', 'Tài khoản không có quyền xem phiếu trả nhà cung cấp.');
       }
       const allowedWh = allowedWarehouseIds(membership);
@@ -378,11 +377,11 @@ function registerSupplierReturnRoutes(app, { pool, env }) {
     const reqHash = digestReturn(req);
 
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!RETURN_ROLES.has(membership.role)) {
+      if (!hasPermission(membership, 'edit_products') && !hasPermission(membership, 'record_cashbook')) {
         throw new ApiError(403, 'forbidden', 'Tài khoản không có quyền lập phiếu trả nhà cung cấp.');
       }
-      if (req.refundReceivedVnd > 0n && !FINANCE_ROLES.has(membership.role)) {
-        throw new ApiError(403, 'forbidden', 'Chỉ Chủ cửa hàng, Quản lý hoặc Kế toán được ghi nhận tiền hoàn từ nhà cung cấp.');
+      if (req.refundReceivedVnd > 0n && !hasPermission(membership, 'record_cashbook')) {
+        throw new ApiError(403, 'forbidden', 'Tài khoản không có quyền ghi nhận tiền hoàn từ nhà cung cấp.');
       }
 
       const reserved = await client.query(

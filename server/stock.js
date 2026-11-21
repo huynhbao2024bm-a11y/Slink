@@ -5,8 +5,7 @@ const { createHash, randomUUID } = require('node:crypto');
 const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
 const { findAccessibleWarehouse } = require('./warehouse-access');
-
-const STOCK_ROLES = new Set(['owner', 'manager', 'stockkeeper']);
+const { hasPermission, requirePermission } = require('./rbac');
 
 function quantityMilli(value, label) {
   const text = typeof value === 'number' && Number.isFinite(value) ? String(value) : value;
@@ -74,7 +73,7 @@ function registerStockRoutes(app, { pool, env }) {
       throw new ApiError(400, 'validation_error', 'Kho không hợp lệ.');
     }
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
-      const canViewCost = ['owner', 'manager', 'stockkeeper', 'accountant'].includes(membership.role);
+      const canViewCost = hasPermission(membership, 'view_cost_price');
       const warehouse = await findAccessibleWarehouse(client, storeId, membership, requestedWarehouseId || null);
       if (!warehouse) throw new ApiError(404, 'warehouse_not_found', 'Không tìm thấy kho đang hoạt động.');
       const summaryResult = await client.query(
@@ -145,7 +144,7 @@ function registerStockRoutes(app, { pool, env }) {
     const requestedWarehouseId = request.body?.warehouseId;
     if (requestedWarehouseId !== undefined && (typeof requestedWarehouseId !== 'string' || !UUID_PATTERN.test(requestedWarehouseId))) throw new ApiError(400, 'validation_error', 'Kho không hợp lệ.');
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!STOCK_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền kiểm kê tồn kho.');
+      requirePermission(membership, 'edit_products', 'Tài khoản này không có quyền kiểm kê tồn kho.');
       const warehouse = await findAccessibleWarehouse(client, storeId, membership, requestedWarehouseId || null);
       if (!warehouse) throw new ApiError(404, 'warehouse_not_found', 'Không tìm thấy kho đang hoạt động.');
       const warehouseId = warehouse.id;
@@ -214,7 +213,7 @@ function registerStockRoutes(app, { pool, env }) {
     const digest = createHash('sha256').update(JSON.stringify(canonical)).digest();
     const batchId = randomUUID();
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!STOCK_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền kiểm kê tồn kho.');
+      requirePermission(membership, 'edit_products', 'Tài khoản này không có quyền kiểm kê tồn kho.');
       const warehouse = await findAccessibleWarehouse(client, storeId, membership, requestedWarehouseId || null, { lock: true });
       if (!warehouse) throw new ApiError(404, 'warehouse_not_found', 'Không tìm thấy kho đang hoạt động.');
       const warehouseId = warehouse.id;
@@ -335,7 +334,7 @@ function registerStockRoutes(app, { pool, env }) {
     const digest = createHash('sha256').update(JSON.stringify(value)).digest();
 
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!STOCK_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền điều chỉnh tồn kho.');
+      requirePermission(membership, 'edit_products', 'Tài khoản này không có quyền điều chỉnh tồn kho.');
       const warehouse = await findAccessibleWarehouse(client, storeId, membership, requestedWarehouseId || null, { lock: true });
       if (!warehouse) throw new ApiError(404, 'warehouse_not_found', 'Không tìm thấy kho đang hoạt động.');
       const warehouseId = warehouse.id;

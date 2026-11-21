@@ -61,6 +61,85 @@
     help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 4.5 1.5c-1.1 1.1-2 1.3-2 3m0 3h.01"/>'
   };
 
+  const ROLE_CAPABILITIES = {
+    owner: {
+      posSell: true, posDiscount: true, viewOrders: true, voidOrReturnOrder: true,
+      viewProducts: true, editProducts: true, viewCostPrice: true, manageInventory: true,
+      viewFinance: true, recordCashbook: true, operateCashShift: true, viewReports: true,
+      manageCustomers: true, manageStaff: true, manageSettings: true, viewAudit: true, exportData: true,
+    },
+    manager: {
+      posSell: true, posDiscount: true, viewOrders: true, voidOrReturnOrder: true,
+      viewProducts: true, editProducts: true, viewCostPrice: true, manageInventory: true,
+      viewFinance: true, recordCashbook: true, operateCashShift: true, viewReports: true,
+      manageCustomers: true, manageStaff: false, manageSettings: true, viewAudit: true, exportData: true,
+    },
+    cashier: {
+      posSell: true, posDiscount: true, viewOrders: true, voidOrReturnOrder: false,
+      viewProducts: true, editProducts: false, viewCostPrice: false, manageInventory: false,
+      viewFinance: true, recordCashbook: false, operateCashShift: true, viewReports: false,
+      manageCustomers: true, manageStaff: false, manageSettings: false, viewAudit: false, exportData: false,
+    },
+    stockkeeper: {
+      posSell: false, posDiscount: false, viewOrders: false, voidOrReturnOrder: false,
+      viewProducts: true, editProducts: true, viewCostPrice: true, manageInventory: true,
+      viewFinance: false, recordCashbook: false, operateCashShift: false, viewReports: false,
+      manageCustomers: false, manageStaff: false, manageSettings: false, viewAudit: false, exportData: false,
+    },
+    accountant: {
+      posSell: false, posDiscount: false, viewOrders: true, voidOrReturnOrder: false,
+      viewProducts: true, editProducts: false, viewCostPrice: true, manageInventory: false,
+      viewFinance: true, recordCashbook: true, operateCashShift: false, viewReports: true,
+      manageCustomers: true, manageStaff: false, manageSettings: false, viewAudit: false, exportData: true,
+    },
+    affiliate: {
+      posSell: false, posDiscount: false, viewOrders: false, voidOrReturnOrder: false,
+      viewProducts: false, editProducts: false, viewCostPrice: false, manageInventory: false,
+      viewFinance: false, recordCashbook: false, operateCashShift: false, viewReports: false,
+      manageCustomers: false, manageStaff: false, manageSettings: false, viewAudit: false, exportData: false,
+    },
+  };
+
+  const GRANULAR_PERM_KEYS = [
+    'view_cost_price',
+    'pos_max_discount_pct',
+    'void_or_return_order',
+    'record_cashbook',
+    'view_reports',
+    'edit_products',
+  ];
+
+  const CAP_TO_GRANULAR = {
+    viewCostPrice: 'view_cost_price',
+    view_cost_price: 'view_cost_price',
+    voidOrReturnOrder: 'void_or_return_order',
+    void_or_return_order: 'void_or_return_order',
+    recordCashbook: 'record_cashbook',
+    record_cashbook: 'record_cashbook',
+    viewReports: 'view_reports',
+    view_reports: 'view_reports',
+    editProducts: 'edit_products',
+    edit_products: 'edit_products',
+    pos_max_discount_pct: 'pos_max_discount_pct',
+  };
+
+  const GRANULAR_TO_CAP = {
+    view_cost_price: 'viewCostPrice',
+    void_or_return_order: 'voidOrReturnOrder',
+    record_cashbook: 'recordCashbook',
+    view_reports: 'viewReports',
+    edit_products: 'editProducts',
+  };
+
+  const ROLE_DEFAULT_DISCOUNT_PCT = {
+    owner: 100,
+    manager: 100,
+    cashier: 10,
+    stockkeeper: 0,
+    accountant: 0,
+    affiliate: 0,
+  };
+
   let page = 'pos';
   let taskFocusRoute = '';
   let store = emptyStore();
@@ -131,6 +210,12 @@
   let analyticsLoading = false;
   let analyticsError = '';
   let analyticsRequestNumber = 0;
+  let dashboardState = { data: null, loading: false, error: '', fallback: false, loadedAt: 0 };
+  let dashboardRequestNumber = 0;
+  let posCatalogStale = false;
+  let vietqrBrightnessActive = false;
+  let rapidStockCountState = { warehouseId: '', items: [], products: [], loading: false, submitting: false };
+  let receiveCameraActive = false;
   const integrationState = { data: null, loading: false, error: '', requestNumber: 0, storeId: '' };
   let customerTotal = 0;
   let customerListLoaded = false;
@@ -163,7 +248,7 @@
   let posBills = [{ id: 1, label: 'Đơn 1', items: [], discount: 0, customerId: '', note: '', method: 'cash' }];
   let activePosBillId = 1;
   let nextPosBillNumber = 2;
-  let posBarcodeScanState = { continuous: false, lastCode: '', lastAt: 0, busy: false };
+  let posBarcodeScanState = { continuous: true, lastCode: '', lastAt: 0, busy: false };
   let posDelivery = { receiverName: '', receiverPhone: '', address: '', carrier: '', collection: 'cod', note: '' };
   let posFastCashInput = '';
   let inventoryTab = 'stock';
@@ -231,48 +316,175 @@
   let guidedTourSeenInSessionKey = '';
   let guidedTourPositionFrame = 0;
 
-  const ROLE_CAPABILITIES = {
-    owner: {
-      posSell: true, posDiscount: true, viewOrders: true, voidOrReturnOrder: true,
-      viewProducts: true, editProducts: true, viewCostPrice: true, manageInventory: true,
-      viewFinance: true, recordCashbook: true, operateCashShift: true, viewReports: true,
-      manageCustomers: true, manageStaff: true, manageSettings: true, viewAudit: true, exportData: true,
-    },
-    manager: {
-      posSell: true, posDiscount: true, viewOrders: true, voidOrReturnOrder: true,
-      viewProducts: true, editProducts: true, viewCostPrice: true, manageInventory: true,
-      viewFinance: true, recordCashbook: true, operateCashShift: true, viewReports: true,
-      manageCustomers: true, manageStaff: false, manageSettings: true, viewAudit: true, exportData: true,
-    },
-    cashier: {
-      posSell: true, posDiscount: true, viewOrders: true, voidOrReturnOrder: false,
-      viewProducts: true, editProducts: false, viewCostPrice: false, manageInventory: false,
-      viewFinance: true, recordCashbook: false, operateCashShift: true, viewReports: false,
-      manageCustomers: true, manageStaff: false, manageSettings: false, viewAudit: false, exportData: false,
-    },
-    stockkeeper: {
-      posSell: false, posDiscount: false, viewOrders: false, voidOrReturnOrder: false,
-      viewProducts: true, editProducts: true, viewCostPrice: true, manageInventory: true,
-      viewFinance: true, recordCashbook: false, operateCashShift: false, viewReports: false,
-      manageCustomers: false, manageStaff: false, manageSettings: false, viewAudit: false, exportData: false,
-    },
-    accountant: {
-      posSell: false, posDiscount: false, viewOrders: true, voidOrReturnOrder: false,
-      viewProducts: true, editProducts: false, viewCostPrice: true, manageInventory: false,
-      viewFinance: true, recordCashbook: true, operateCashShift: false, viewReports: true,
-      manageCustomers: true, manageStaff: false, manageSettings: false, viewAudit: false, exportData: true,
-    },
-    affiliate: {
-      posSell: false, posDiscount: false, viewOrders: false, voidOrReturnOrder: false,
-      viewProducts: false, editProducts: false, viewCostPrice: false, manageInventory: false,
-      viewFinance: false, recordCashbook: false, operateCashShift: false, viewReports: false,
-      manageCustomers: false, manageStaff: false, manageSettings: false, viewAudit: false, exportData: false,
-    },
-  };
+  function resolveEffectivePermissions(role, overrides, serverEffective) {
+    const base = ROLE_CAPABILITIES[role] || {};
+    const out = {};
+    Object.keys(base).forEach(function (k) { out[k] = Boolean(base[k]); });
+    out.view_cost_price = Boolean(base.viewCostPrice);
+    out.void_or_return_order = Boolean(base.voidOrReturnOrder);
+    out.record_cashbook = Boolean(base.recordCashbook);
+    out.view_reports = Boolean(base.viewReports);
+    out.edit_products = Boolean(base.editProducts);
+    out.pos_max_discount_pct = ROLE_DEFAULT_DISCOUNT_PCT[role] != null ? ROLE_DEFAULT_DISCOUNT_PCT[role] : 0;
+
+    const applyMap = function (map) {
+      if (!map || typeof map !== 'object') return;
+      Object.keys(map).forEach(function (key) {
+        const val = map[key];
+        if (val === undefined || val === null) return;
+        if (key === 'pos_max_discount_pct' || key === 'posMaxDiscountPct') {
+          const pct = Math.max(0, Math.min(100, Math.trunc(Number(val))));
+          if (Number.isFinite(pct)) out.pos_max_discount_pct = pct;
+          return;
+        }
+        const granularKey = CAP_TO_GRANULAR[key];
+        if (granularKey) {
+          const boolVal = Boolean(val);
+          out[granularKey] = boolVal;
+          const camelKey = GRANULAR_TO_CAP[granularKey];
+          if (camelKey) out[camelKey] = boolVal;
+          return;
+        }
+        if (key === 'posDiscount') {
+          out.posDiscount = Boolean(val);
+          return;
+        }
+        out[key] = Boolean(val);
+      });
+    };
+
+    applyMap(overrides);
+    applyMap(serverEffective);
+    out.posDiscount = role === 'affiliate' ? false : (Boolean(out.posSell) && Number(out.pos_max_discount_pct || 0) > 0);
+    return out;
+  }
 
   function hasPerm(capability) {
-    const caps = ROLE_CAPABILITIES[store.role] || {};
+    if (!capability) return false;
+    const effective = store && store.effectivePermissions
+      ? store.effectivePermissions
+      : resolveEffectivePermissions(store?.role, store?.permissions, null);
+    if (capability === 'pos_max_discount_pct' || capability === 'posMaxDiscountPct') {
+      return Number(effective.pos_max_discount_pct || 0) > 0;
+    }
+    if (capability === 'posDiscount') {
+      return Boolean(effective.posSell) && Number(effective.pos_max_discount_pct || 0) > 0;
+    }
+    const granularKey = CAP_TO_GRANULAR[capability];
+    if (granularKey && granularKey in effective) {
+      return Boolean(effective[granularKey]);
+    }
+    if (capability in effective) {
+      return Boolean(effective[capability]);
+    }
+    const caps = ROLE_CAPABILITIES[store?.role] || {};
     return Boolean(caps[capability]);
+  }
+
+  function getMaxDiscountPct() {
+    const effective = store && store.effectivePermissions
+      ? store.effectivePermissions
+      : resolveEffectivePermissions(store?.role, store?.permissions, null);
+    if (!effective.posSell) return 0;
+    const raw = Number(effective.pos_max_discount_pct);
+    if (!Number.isFinite(raw)) return 0;
+    return Math.max(0, Math.min(100, Math.trunc(raw)));
+  }
+
+  function scrubRestrictedState() {
+    if (!hasPerm('view_cost_price')) {
+      (store.products || []).forEach(function (p) { if (p) p.cost = null; });
+      (posCatalog || []).forEach(function (p) { if (p) p.cost = null; });
+      (posProducts || []).forEach(function (p) { if (p) p.cost = null; });
+      (inventoryProducts || []).forEach(function (p) { if (p) p.cost = null; });
+      productCache.forEach(function (p) { if (p) p.cost = null; });
+      posKnownProducts.forEach(function (p) { if (p) p.cost = null; });
+      if (inventorySummary) inventorySummary.stockValueVnd = null;
+    }
+    if (!hasPerm('view_reports')) {
+      analyticsData = null;
+    }
+    if (!hasPerm('view_reports') && !hasPerm('record_cashbook') && !hasPerm('view_cost_price')) {
+      dashboardState.data = null;
+    }
+    if (getMaxDiscountPct() <= 0 && cart && Number(cart.discount || 0) > 0) {
+      cart.discount = 0;
+    }
+  }
+
+  function emitSyncDomains(domains, meta) {
+    try {
+      if (window.SlinkSyncBus && typeof window.SlinkSyncBus.emit === 'function') {
+        window.SlinkSyncBus.emit(domains, meta || {});
+      }
+    } catch (_) {}
+  }
+
+  let syncBusInitialized = false;
+  function initSyncBus() {
+    if (syncBusInitialized || !window.SlinkSyncBus) return;
+    syncBusInitialized = true;
+    const bus = window.SlinkSyncBus;
+    bus.onInvalidate(function (domains) {
+      const set = new Set(domains || []);
+      if (set.has('products')) {
+        productCache.clear();
+        posCatalogStale = true;
+      }
+      if (set.has('customers')) {
+        customerCache.clear();
+      }
+      if (set.has('dashboard') || set.has('orders') || set.has('cashbook') || set.has('debts') || set.has('stock') || set.has('me')) {
+        dashboardState.loadedAt = 0;
+      }
+      if (set.has('cashbook') || set.has('debts') || set.has('suppliers')) {
+        financeDataReady = false;
+      }
+    });
+    bus.on('*', function (ev) {
+      if (!authSession || !store.id || offlineState.mode !== 'online') return;
+      const set = new Set(ev?.domains || []);
+      const jobs = [];
+      if (set.has('me')) {
+        jobs.push(syncAfterMutation(['me']));
+      }
+      if (set.has('products') && (page === 'products' || page === 'pos' || page === 'inventory')) {
+        if (page === 'pos' && typeof loadPosCatalog === 'function') {
+          jobs.push(loadPosCatalog().catch(function () {}));
+        }
+        if (page === 'products') {
+          jobs.push(loadProductsPage(searchTerms.products, productOffset).catch(function () {}));
+        }
+      }
+      if (set.has('stock') && (page === 'inventory' || page === 'pos')) {
+        if (page === 'inventory') {
+          jobs.push(loadInventoryPage(searchTerms.inventory, inventoryOffset).catch(function () {}));
+        } else if (page === 'pos' && typeof loadPosCatalog === 'function') {
+          jobs.push(loadPosCatalog().catch(function () {}));
+        }
+      }
+      if (set.has('orders') && page === 'orders' && canAccessRoute('orders')) {
+        jobs.push(loadOrdersPage(searchTerms.orders, orderOffset).catch(function () {}));
+      }
+      if ((set.has('cashbook') || set.has('debts') || set.has('suppliers')) && page === 'finance' && canAccessRoute('finance')) {
+        jobs.push(loadFinancePage().catch(function () {}));
+      }
+      if (set.has('customers') && (page === 'customers' || page === 'pos') && canAccessRoute('customers')) {
+        jobs.push(loadCustomersPage(searchTerms.customers, customerOffset).catch(function () {}));
+      }
+      if (set.has('staff') && page === 'staff' && hasPerm('manageStaff')) {
+        jobs.push(loadStaffPage().catch(function () {}));
+      }
+      if (set.has('reports') && page === 'reports' && hasPerm('viewReports')) {
+        jobs.push(loadAnalytics(chartRange === '30 ngày' ? 30 : 7).catch(function () {}));
+      }
+      if ((set.has('dashboard') || set.has('orders') || set.has('cashbook') || set.has('debts') || set.has('stock') || set.has('me')) && page === 'dashboard' && typeof loadDashboardPage === 'function') {
+        jobs.push(loadDashboardPage({ silent: true }).catch(function () {}));
+      }
+      if (jobs.length) {
+        Promise.allSettled(jobs).then(function () { if (authSession) render(); });
+      }
+    });
   }
 
   function loadPosPrefs() {
@@ -298,16 +510,24 @@
     if (!authSession || !store.id || offlineState.mode !== 'online') return;
     const set = new Set(scopes);
     const jobs = [];
-    if (set.has('me')) {
+      if (set.has('me')) {
       jobs.push(apiRequest('/api/auth/me', { preferFresh: true }).then((me) => {
         if (!me || !me.user) return;
         authSession = me;
         const active = (me.stores || []).find(s => s.id === store.id);
-        if (active && active.role !== store.role) {
+        if (active) {
+          const prevPermsJson = JSON.stringify(store.effectivePermissions || {});
+          const prevRole = store.role;
           store.role = active.role;
-          if (!canAccessRoute(page)) page = defaultHomeRouteForRole();
-          render();
-          toast('Quyền truy cập đã cập nhật', `Vai trò hiện tại: ${staffRoleName(store.role)}`);
+          store.permissions = active.permissions || {};
+          store.effectivePermissions = resolveEffectivePermissions(active.role, active.permissions, active.effectivePermissions);
+          const nextPermsJson = JSON.stringify(store.effectivePermissions || {});
+          if (active.role !== prevRole || nextPermsJson !== prevPermsJson) {
+            scrubRestrictedState();
+            if (!canAccessRoute(page)) page = defaultHomeRouteForRole();
+            render();
+            toast('Quyền truy cập đã cập nhật', `Vai trò hiện tại: ${staffRoleName(store.role)}`);
+          }
         }
       }).catch(() => {}));
     }
@@ -316,7 +536,10 @@
     if (set.has('orders') && canAccessRoute('orders')) jobs.push(loadOrdersPage(searchTerms.orders, orderOffset).catch(() => {}));
     if ((set.has('finance') || set.has('cashSession')) && canAccessRoute('finance')) jobs.push(loadFinancePage().catch(() => {}));
     if (set.has('customers') && canAccessRoute('customers')) jobs.push(loadCustomersPage(searchTerms.customers, customerOffset).catch(() => {}));
-    if (set.has('dashboard') && page === 'dashboard' && hasPerm('viewReports')) jobs.push(loadAnalytics(1).catch(() => {}));
+    if (set.has('dashboard') && page === 'dashboard') {
+      if (typeof loadDashboardPage === 'function') jobs.push(loadDashboardPage({ silent: true }).catch(() => {}));
+      else if (hasPerm('viewReports')) jobs.push(loadAnalytics(1).catch(() => {}));
+    }
     if (set.has('staff') && hasPerm('manageStaff')) jobs.push(loadStaffPage().catch(() => {}));
     await Promise.allSettled(jobs);
   }
@@ -357,6 +580,9 @@
 
   function emptyStore() {
     return {
+      role: 'cashier',
+      permissions: {},
+      effectivePermissions: resolveEffectivePermissions('cashier', null, null),
       businessProfile: '',
       onboardingCompletedAt: null,
       settings: { storeName: 'Slink', ownerName: '', phone: '', address: '', receiptFooter: '', version: 1 },
@@ -803,8 +1029,9 @@
     updateOfflineStatus();
     if (notifyOthers) offlineChannel?.postMessage({ scope });
   }
-  async function collectOfflineResponses(storeId, role, confirmed) {
+  async function collectOfflineResponses(storeId, role, confirmed, permissions) {
     const base = '/api/stores/' + encodeURIComponent(storeId), rows = [];
+    const eff = resolveEffectivePermissions(role, permissions, null);
     const take = async url => { const value = await networkRequest(url); rows.push({ url, value, fetchedAt: new Date().toISOString() }); return value; };
     const [, list] = await Promise.all([take(base + '/settings'), take(base + '/warehouses?view=picker')]);
     const active = list.warehouses.filter(item => item.status === 'active');
@@ -817,17 +1044,21 @@
         offset = result.nextOffset ?? null;
       }
     })));
-    if (role !== 'stockkeeper') {
+    if (eff.operateCashShift || eff.posSell) {
       tasks.push(take(base + '/cash-register'));
+    }
+    if (eff.manageCustomers) {
       tasks.push(take(base + '/customers?view=picker&limit=100&q='));
     }
-    if (role !== 'cashier') {
+    if (eff.viewFinance) {
       tasks.push(take(base + '/finance'));
+    }
+    if (eff.manageInventory) {
       tasks.push(take(base + '/warehouses'));
       tasks.push(take(base + '/warehouse-transfers?limit=100'));
       active.forEach(warehouse => tasks.push(take(base + '/inventory?limit=100&offset=0&q=&warehouseId=' + encodeURIComponent(warehouse.id))));
     }
-    if (role !== 'stockkeeper') {
+    if (eff.viewOrders) {
       tasks.push((async () => {
         const orders = await take(base + '/orders?limit=100&offset=0&q=&status=all');
         // Reconciliation only needs the receipts for newly sent sales.
@@ -839,9 +1070,11 @@
         }
       })());
     }
-    if (['owner', 'manager', 'accountant'].includes(role)) {
+    if (eff.viewReports) {
       tasks.push(take(base + '/analytics?days=7'));
       tasks.push(take(base + '/analytics?days=30'));
+    }
+    if (eff.manageCustomers && eff.viewReports) {
       tasks.push(take(base + '/customers?limit=100&offset=0&q='));
     }
     await Promise.all(tasks);
@@ -863,12 +1096,12 @@
     const scope = activeOfflineScope();
     if (!scope || !navigator.onLine) return;
     if ((await offlineDisk.operations(scope)).some(row => row.state !== 'acknowledged')) { startOfflineSync(); return; }
-    const generation = ++offlinePreparation, storeId = store.id, role = store.role;
+      const generation = ++offlinePreparation, storeId = store.id, role = store.role, perms = store.effectivePermissions || store.permissions;
     offlineState.preparing = true; updateOfflineStatus();
     try {
       await offlineDisk.requestPersistence();
       const epoch = await offlineDisk.getMeta('epoch|' + scope) || '';
-      const rows = await collectOfflineResponses(storeId, role);
+      const rows = await collectOfflineResponses(storeId, role, null, perms);
       if (scope !== activeOfflineScope() || generation !== offlinePreparation) return;
       const saved = await offlineDisk.replaceResponses(scope, rows, epoch);
       if (saved) offlineState.storageIssue = '';
@@ -890,9 +1123,10 @@
       send: networkRequest,
       refresh: async confirmed => {
         const identity = await networkRequest('/api/auth/me');
-        const role = identity.stores.find(row => row.id === storeId && identity.user.id === userId)?.role;
+        const active = identity.stores.find(row => row.id === storeId && identity.user.id === userId);
+        const role = active?.role;
         if (!role) { const error = new Error('Đăng nhập đúng tài khoản còn quyền vào cửa hàng để đồng bộ.'); error.status = 403; throw error; }
-        return collectOfflineResponses(storeId, role, confirmed);
+        return collectOfflineResponses(storeId, role, confirmed, active.effectivePermissions || active.permissions);
       },
       onChange: event => {
         if (scope !== activeOfflineScope()) return;
@@ -910,6 +1144,7 @@
           inventoryWarehouseId = null;
           offlineDisk.putMeta('cache-stale|' + scope, new Date().toISOString()).catch(() => {});
           offlineRefreshDue = true;
+          emitSyncDomains(['orders', 'stock', 'cashbook', 'debts', 'customers', 'dashboard', 'reports'], { source: 'offline-sync' });
           refreshAfterOfflineSync();
         }
         if (event.type === 'issue' || event.type === 'conflict') offlineState.issue = event.status === 401 ? 'Phiên đã hết hạn. Đăng nhập lại để đồng bộ các việc đã lưu.' : event.message;
@@ -943,13 +1178,17 @@
     else if (page === 'orders') { await loadOrdersPage(searchTerms.orders, 0); if (page === 'orders') render(); }
     else if (page === 'customers') { await loadCustomersPage(searchTerms.customers, customerOffset); if (page === 'customers') render(); }
     else if (page === 'dashboard') {
-      const loads = [loadInventoryPage('', 0)];
-      if (['owner', 'manager', 'accountant'].includes(store.role)) loads.push(loadAnalytics(1), loadOrdersPage('', 0), loadFinancePage());
-      else if (store.role === 'cashier') loads.push(loadOrdersPage('', 0));
-      else if (store.role === 'stockkeeper') loads.push(loadFinancePage());
-      await Promise.all(loads);
+      if (typeof loadDashboardPage === 'function') {
+        await loadDashboardPage({ silent: true });
+      } else {
+        const loads = [loadInventoryPage('', 0)];
+        if (hasPerm('viewReports') || hasPerm('recordCashbook')) loads.push(loadFinancePage());
+        if (hasPerm('viewReports')) loads.push(loadAnalytics(1));
+        if (hasPerm('viewOrders')) loads.push(loadOrdersPage('', 0));
+        await Promise.all(loads);
+      }
       if (page === 'dashboard') render();
-    } else if (page === 'reports') await loadAnalytics(chartRange === '30 ngày' ? 30 : 7);
+    } else if (page === 'reports' && hasPerm('viewReports')) await loadAnalytics(chartRange === '30 ngày' ? 30 : 7);
   }
   function offlineKind(url) {
     const tail = url.replace(/^\/api\/stores\/[^/]+/, '');
@@ -994,7 +1233,7 @@
     } else {
       // The register must be known before saving money, including the first online sale.
       const base = '/api/stores/' + encodeURIComponent(store.id);
-      if (store.role !== 'stockkeeper' && !snapshot.responses.some(row => row.url === base + '/cash-register') && !snapshot.operations.some(row => row.state !== 'acknowledged') && navigator.onLine) {
+      if ((hasPerm('operateCashShift') || hasPerm('posSell')) && !snapshot.responses.some(row => row.url === base + '/cash-register') && !snapshot.operations.some(row => row.state !== 'acknowledged') && navigator.onLine) {
         await offlineDisk.cacheResponse(scope, base + '/cash-register', await networkRequest(base + '/cash-register'));
         snapshot = await offlineDisk.snapshot(scope);
       }
@@ -1266,12 +1505,13 @@
       unit: row.unit,
       purchasePack: row.purchase_pack || null,
       price: Number(row.sale_price_vnd),
-      cost: Number(row.cost_vnd),
+      cost: row.cost_vnd == null ? null : Number(row.cost_vnd),
       stock: Number(row.on_hand),
       reserved: Number(row.reserved),
       minStock: Number(row.low_stock_threshold),
       inventoryTracked: row.inventory_tracked,
       serialTracked: Boolean(row.serial_tracked),
+      warrantyMonths: Number(row.warranty_months || 0),
       inventoryVersion: Number(row.inventory_version) || 1,
       status: row.status,
       version: row.version,
@@ -1377,7 +1617,7 @@
 
   async function loadCustomersPage(query, offset) {
     if (!authSession || !store.id) return;
-    if (store.role === 'stockkeeper') {
+    if (!hasPerm('manageCustomers')) {
       customerRequestNumber += 1;
       store.customers = [];
       customerTotal = 0;
@@ -1408,7 +1648,7 @@
 
   async function loadPosCustomers(query) {
     if (!authSession || !store.id) return;
-    if (store.role === 'stockkeeper') {
+    if (!hasPerm('manageCustomers')) {
       customerRequestNumber += 1;
       store.customers = [];
       customerListLoaded = true;
@@ -1429,7 +1669,7 @@
   }
 
   async function loadCustomerSavedSegments(force) {
-    if (!authSession || !store.id || store.role === 'stockkeeper') return;
+    if (!authSession || !store.id || !hasPerm('manageCustomers')) return;
     if (!force && customerSavedSegmentsStoreId === store.id) return;
     const requestedStoreId = store.id;
     customerSavedSegmentsStoreId = requestedStoreId;
@@ -1452,7 +1692,7 @@
 
   async function loadOrdersPage(query, offset) {
     if (!authSession || !store.id) return;
-    if (store.role === 'stockkeeper') {
+    if (!hasPerm('viewOrders')) {
       orderRequestNumber += 1;
       store.orders = [];
       orderTotal = 0;
@@ -1553,10 +1793,10 @@
 
   function taskFocusOptions() {
     const candidates = [];
-    if (['owner', 'manager'].includes(store.role)) candidates.push({ route: 'dashboard', label: store.role === 'owner' ? 'Chủ cửa hàng' : 'Quản lý cửa hàng', detail: 'Xem việc cần làm và tình hình hôm nay.' });
-    if (['owner', 'manager', 'cashier'].includes(store.role)) candidates.push({ route: 'pos', label: 'Người bán hàng', detail: 'Chọn mặt hàng, thu tiền và xem đơn.' });
-    if (['owner', 'manager', 'stockkeeper'].includes(store.role)) candidates.push({ route: 'inventory', label: 'Phụ trách hàng hóa và kho', detail: 'Nhận hàng, kiểm tra số lượng và mặt hàng.' });
-    if (['owner', 'manager', 'accountant'].includes(store.role)) candidates.push({ route: 'finance', label: 'Theo dõi thu chi', detail: 'Ghi nhận tiền và xem các khoản còn lại.' });
+    if (hasPerm('viewReports') || hasPerm('manageSettings')) candidates.push({ route: 'dashboard', label: store.role === 'owner' ? 'Chủ cửa hàng' : 'Quản lý cửa hàng', detail: 'Xem việc cần làm và tình hình hôm nay.' });
+    if (hasPerm('posSell')) candidates.push({ route: 'pos', label: 'Người bán hàng', detail: 'Chọn mặt hàng, thu tiền và xem đơn.' });
+    if (hasPerm('manageInventory') || hasPerm('editProducts')) candidates.push({ route: 'inventory', label: 'Phụ trách hàng hóa và kho', detail: 'Nhận hàng, kiểm tra số lượng và mặt hàng.' });
+    if (hasPerm('viewFinance') || hasPerm('recordCashbook')) candidates.push({ route: 'finance', label: 'Theo dõi thu chi', detail: 'Ghi nhận tiền và xem các khoản còn lại.' });
     return candidates.filter(function (option) { return canAccessRoute(option.route) && isProfileRouteEnabled(option.route); });
   }
 
@@ -1693,10 +1933,10 @@
       add('pos', 'pos-search', 'Tìm hàng & quét mã vạch', 'Gõ tên/mã hàng, dùng máy tít hoặc bấm biểu tượng quét camera để thêm ngay vào đơn.');
       add('pos', 'pos-cart', 'Bán nhanh, bán thường & giao hàng', 'Chuyển chế độ bán ngay phía trên. Bán thường hỗ trợ giữ nhiều đơn cùng lúc và ghi nợ khách.');
     }
-    if (['owner', 'manager', 'stockkeeper'].includes(store.role)) {
+    if (hasPerm('editProducts')) {
       add('products', 'products-add', 'Thêm hàng & in tem mã vạch', 'Tạo sản phẩm mới, thêm nhiều mã vạch cùng loại và in tem ngay tại đây.');
     }
-    if (['owner', 'manager', 'accountant'].includes(store.role)) {
+    if (hasPerm('recordCashbook') || hasPerm('viewReports')) {
       add('finance', 'finance-income', 'Thu chi & công nợ', 'Ghi phiếu thu chi, mở ca tiền mặt và theo dõi công nợ khách hàng / nhà cung cấp.');
     }
     steps.push({ route: page, target: 'settings-gear', title: 'Cài đặt cửa hàng', detail: 'Cập nhật thông tin cửa hàng, tài khoản nhận VietQR và xem lại hướng dẫn khi cần.' });
@@ -1955,6 +2195,9 @@
     productImportSourceRows = [];
     authSession = null;
     store = emptyStore();
+    dashboardState = { data: null, loading: false, error: '', fallback: false, loadedAt: 0 };
+    posCatalogStale = false;
+    if (window.SlinkSyncBus) window.SlinkSyncBus.setContext({ storeId: '', userId: '' });
     page = 'products';
     authMode = 'login';
     pendingCompatibilityStoreId = '';
@@ -1968,12 +2211,15 @@
   async function enterAffiliate(session) {
     offlineState.pending = 0; offlineState.conflicts = 0; offlineState.issue = '';
     authSession = { user: session.user, stores: session.stores || [] };
-    store = emptyStore(); store.role = 'affiliate'; store.settings.storeName = 'Không gian Affiliate';
+    store = emptyStore(); store.role = 'affiliate'; store.permissions = {}; store.effectivePermissions = resolveEffectivePermissions('affiliate', null, null); store.settings.storeName = 'Không gian Affiliate';
+    dashboardState = { data: null, loading: false, error: '', fallback: false, loadedAt: 0 };
+    posCatalogStale = false;
+    if (window.SlinkSyncBus) window.SlinkSyncBus.setContext({ storeId: '', userId: session?.user?.id || '' });
     cart = []; cartCustomerId = ''; posStandardMethod = 'cash'; posStandardNote = '';
     posBills = [{ id: 1, label: 'Đơn 1', items: [], discount: 0, customerId: '', note: '', method: 'cash' }];
     activePosBillId = 1; nextPosBillNumber = 2;
     posDelivery = { receiverName: '', receiverPhone: '', address: '', carrier: '', collection: 'cod', note: '' };
-    posFastCashInput = ''; posBarcodeScanState = { continuous: false, lastCode: '', lastAt: 0, busy: false };
+    posFastCashInput = ''; posBarcodeScanState = { continuous: true, lastCode: '', lastAt: 0, busy: false };
     integrationState.data = null; integrationState.storeId = '';
     productCache.clear(); customerCache.clear(); lastCompletedSale = null;
     affiliateState = { links: [], total: 0, nextOffset: null, loading: false, error: '' };
@@ -2131,8 +2377,14 @@
     store = emptyStore();
     store.id = activeStore.id;
     resetPosCatalog();
+    posCatalogStale = false;
     posSearchTerm = '';
     store.role = activeStore.role;
+    store.permissions = activeStore.permissions || {};
+    store.effectivePermissions = resolveEffectivePermissions(activeStore.role, activeStore.permissions, activeStore.effectivePermissions);
+    scrubRestrictedState();
+    dashboardState = { data: null, loading: false, error: '', fallback: false, loadedAt: 0 };
+    if (window.SlinkSyncBus) window.SlinkSyncBus.setContext({ storeId: activeStore.id, userId: session.user.id });
     store.businessProfile = activeStore.business_profile || '';
     store.onboardingCompletedAt = activeStore.onboarding_completed_at || null;
     taskFocusRoute = readTaskFocusRoute();
@@ -2174,11 +2426,15 @@
     } else if (page === 'finance') {
       await loadFinancePage();
     } else if (page === 'dashboard') {
-      const dashboardLoads = [loadWarehouses({ includeTransfers: false }), loadInventoryPage('', 0)];
-      if (['owner', 'manager', 'accountant'].includes(store.role)) dashboardLoads.push(loadAnalytics(1), loadOrdersPage('', 0), loadFinancePage());
-      else if (store.role === 'cashier') dashboardLoads.push(loadOrdersPage('', 0));
-      else if (store.role === 'stockkeeper') dashboardLoads.push(loadFinancePage());
-      await Promise.all(dashboardLoads);
+      if (typeof loadDashboardPage === 'function') {
+        await loadDashboardPage();
+      } else {
+        const dashboardLoads = [loadWarehouses({ includeTransfers: false }), loadInventoryPage('', 0)];
+        if (hasPerm('viewReports')) dashboardLoads.push(loadAnalytics(1));
+        if (hasPerm('viewOrders')) dashboardLoads.push(loadOrdersPage('', 0));
+        if (hasPerm('viewFinance') || hasPerm('recordCashbook')) dashboardLoads.push(loadFinancePage());
+        await Promise.all(dashboardLoads);
+      }
     }
     if (['pos', 'orders', 'settings'].includes(page)) loadIntegrationStatus();
     if (page === 'pos' && checkoutPendingPayload) {
@@ -2235,6 +2491,10 @@
         showSignedOut('Quyền hoặc tài khoản đã thay đổi. Đăng nhập lại để tiếp tục.', 'error');
         return;
       }
+      store.permissions = membership.permissions || {};
+      store.effectivePermissions = resolveEffectivePermissions(membership.role, membership.permissions, membership.effectivePermissions);
+      scrubRestrictedState();
+      if (!canAccessRoute(page)) page = defaultHomeRouteForRole();
       await rememberOfflineSession(current);
       if (authSession !== session) return;
       offlineState.mode = 'online'; updateOfflineStatus();
@@ -2393,11 +2653,15 @@
       if (!warehouses.some(function (warehouse) { return warehouse.id === selectedWarehouseId; })) {
         selectedWarehouseId = (warehouses.find(function (warehouse) { return warehouse.is_default; }) || warehouses[0] || {}).id || '';
       }
-      if (store.role === 'cashier' || (options && options.includeTransfers === false)) warehouseTransfers = [];
-      else {
-        const transfers = await apiRequest(`/api/stores/${encodeURIComponent(requestStoreId)}/warehouse-transfers?limit=100`);
-        if (!isCurrent()) return;
-        warehouseTransfers = transfers.transfers || [];
+      if (hasPerm('viewReports') || hasPerm('manageInventory')) {
+        if (!hasPerm('manageInventory') || (options && options.includeTransfers === false)) warehouseTransfers = [];
+        else {
+          const transfers = await apiRequest(`/api/stores/${encodeURIComponent(requestStoreId)}/warehouse-transfers?limit=100`);
+          if (!isCurrent()) return;
+          warehouseTransfers = transfers.transfers || [];
+        }
+      } else {
+        warehouseTransfers = [];
       }
     } catch (error) {
       if (!isCurrent()) return;
@@ -2431,9 +2695,9 @@
     try {
       const [result, register] = await Promise.all([
         apiRequest(`/api/stores/${encodeURIComponent(store.id)}/finance`),
-        store.role === 'stockkeeper'
-          ? Promise.resolve({ session: null, lastClosed: null, recentClosed: [], canOperate: false, canOpen: false, canClose: false })
-          : apiRequest(`/api/stores/${encodeURIComponent(store.id)}/cash-register`),
+        (hasPerm('operateCashShift') || hasPerm('posSell'))
+          ? apiRequest(`/api/stores/${encodeURIComponent(store.id)}/cash-register`)
+          : Promise.resolve({ session: null, lastClosed: null, recentClosed: [], canOperate: false, canOpen: false, canClose: false }),
       ]);
       if (!current()) return;
       store.cashbook = result.movements.map(function (row) {
@@ -2455,9 +2719,9 @@
       financeDataReady = true;
       if (page === 'finance') refreshFinanceBody();
       if (page === 'finance' && financeTab === 'receivables') loadFinanceReceivables(financeReceivables.offset);
-      if (page === 'finance' && ['cashbook', 'vouchers'].includes(financeTab) && store.role !== 'stockkeeper') loadFinanceCashbook(financeCashbook.offset || 0);
-      if (page === 'finance' && (financeTab === 'payables' || store.role === 'stockkeeper')) loadFinancePayables(financePayables.offset || 0);
-      if (['owner', 'manager', 'accountant'].includes(store.role)) loadFinanceCategories();
+      if (page === 'finance' && ['cashbook', 'vouchers'].includes(financeTab) && (hasPerm('viewReports') || hasPerm('recordCashbook') || hasPerm('operateCashShift'))) loadFinanceCashbook(financeCashbook.offset || 0);
+      if (page === 'finance' && (financeTab === 'payables' || (!hasPerm('recordCashbook') && !hasPerm('operateCashShift') && hasPerm('manageInventory')))) loadFinancePayables(financePayables.offset || 0);
+      if (hasPerm('recordCashbook') || hasPerm('viewReports')) loadFinanceCategories();
     } catch (error) {
       if (!current()) return;
       financeLoading = false;
@@ -2469,7 +2733,7 @@
   }
 
   async function loadFinanceReceivables(offset = 0) {
-    if (!authSession || !store.id || !['owner', 'manager', 'accountant'].includes(store.role)) return;
+    if (!authSession || !store.id || !hasPerm('manageCustomers')) return;
     const state = financeReceivables;
     const requestNumber = ++state.requestNumber;
     const session = authSession, storeId = store.id, query = state.query;
@@ -2498,7 +2762,7 @@
   }
 
   async function loadFinanceCashbook(offset = 0) {
-    if (!authSession || !store.id || store.role === 'stockkeeper') return;
+    if (!authSession || !store.id || (!hasPerm('viewReports') && !hasPerm('recordCashbook') && !hasPerm('operateCashShift') && !hasPerm('posSell'))) return;
     if (offlineState.mode !== 'online') return;
     const state = financeCashbook;
     const requestNumber = ++state.requestNumber;
@@ -2537,7 +2801,7 @@
   }
 
   async function loadFinanceCategories() {
-    if (!authSession || !store.id || !['owner', 'manager', 'accountant'].includes(store.role)) return;
+    if (!authSession || !store.id || (!hasPerm('recordCashbook') && !hasPerm('viewReports'))) return;
     if (offlineState.mode !== 'online') return;
     const state = financeCategories;
     const requestNumber = ++state.requestNumber;
@@ -2558,7 +2822,7 @@
   }
 
   async function loadFinancePayables(offset = 0) {
-    if (!authSession || !store.id || !['owner', 'manager', 'accountant'].includes(store.role)) return;
+    if (!authSession || !store.id || (!hasPerm('recordCashbook') && !hasPerm('viewReports'))) return;
     if (offlineState.mode !== 'online') return;
     const state = financePayables;
     const requestNumber = ++state.requestNumber;
@@ -2637,7 +2901,7 @@
   }
 
   async function saveIntegrationSettings(form) {
-    if (!['owner', 'manager'].includes(store.role)) return;
+    if (!hasPerm('manageSettings')) return;
     const data = new FormData(form);
     const submit = form.querySelector('[type="submit"]');
     const payload = {
@@ -2977,7 +3241,7 @@
   }
 
   async function loadAuditEvents(filters, offset) {
-    if (!authSession || !store.id || !['owner', 'manager'].includes(store.role)) return;
+    if (!authSession || !store.id || !hasPerm('viewAudit')) return;
     if (filters) auditState.filters = { from: filters.from || '', to: filters.to || '', q: filters.q || '' };
     const requestNumber = ++auditState.requestNumber;
     auditState.offset = Math.max(0, Number(offset) || 0);
@@ -3008,7 +3272,7 @@
 
   async function loadAnalytics(days) {
     if (!authSession || !store.id) return;
-    if (!['owner', 'manager', 'accountant'].includes(store.role)) {
+    if (!hasPerm('viewReports')) {
       analyticsRequestNumber += 1;
       analyticsData = null;
       analyticsLoading = false;
@@ -3105,16 +3369,21 @@
 
   function canAccessRoute(route) {
     if (route === 'workspace') return Boolean(authSession);
-    if (route === 'promotions') return ['owner', 'manager'].includes(store.role);
     if (route === 'affiliate') return store.role === 'affiliate';
     if (store.role === 'affiliate') return ['affiliate', 'settings'].includes(route);
-    if (store.role === 'cashier' && !['pos', 'orders', 'finance', 'customers', 'settings'].includes(route)) return false;
-    if (route === 'staff' && store.role !== 'owner') return false;
-    if (route === 'audit' && !['owner', 'manager'].includes(store.role)) return false;
-    if (route === 'reports' && !['owner', 'manager', 'accountant'].includes(store.role)) return false;
-    if (route === 'channels' && !['owner', 'manager', 'stockkeeper'].includes(store.role)) return false;
-    if (store.role === 'stockkeeper' && ['pos', 'orders', 'customers'].includes(route)) return false;
-    if (store.role === 'accountant' && route === 'pos') return false;
+    if (route === 'staff') return store.role === 'owner';
+    if (route === 'settings') return true;
+    if (route === 'pos') return hasPerm('posSell');
+    if (route === 'orders') return hasPerm('viewOrders');
+    if (route === 'customers') return hasPerm('manageCustomers');
+    if (route === 'products') return hasPerm('editProducts') || hasPerm('manageInventory') || hasPerm('viewReports');
+    if (route === 'inventory') return hasPerm('manageInventory') || hasPerm('viewCostPrice');
+    if (route === 'finance') return hasPerm('viewFinance') || hasPerm('recordCashbook');
+    if (route === 'reports') return hasPerm('viewReports');
+    if (route === 'channels') return hasPerm('manageInventory') || hasPerm('manageSettings');
+    if (route === 'promotions') return hasPerm('manageSettings');
+    if (route === 'audit') return hasPerm('viewAudit');
+    if (route === 'dashboard') return hasPerm('viewReports') || hasPerm('recordCashbook') || hasPerm('manageInventory') || hasPerm('manageSettings');
     return true;
   }
 
@@ -3249,51 +3518,53 @@
   }
 
   function productRow(product) {
-    const canEdit = ['owner', 'manager', 'stockkeeper'].includes(store.role);
-    const canViewPriceHistory = ['owner', 'manager', 'stockkeeper', 'accountant'].includes(store.role);
-    const showCost = store.role !== 'cashier';
+    const canEdit = hasPerm('editProducts');
+    const canViewPriceHistory = hasPerm('viewCostPrice') || hasPerm('editProducts') || hasPerm('viewReports');
+    const showCost = hasPerm('viewCostPrice');
     const attributes = Object.entries(product.variantAttributes || {}).map(function (entry) { return `${entry[0]}: ${entry[1]}`; }).join(' · ');
     const serialBadge = product.serialTracked ? ` <span class='badge badge-neutral'>Mã riêng</span>` : '';
-    return `<tr><td><div class='product-cell'>${productThumb(product)}<span class='product-name-stack'><strong>${esc(product.name)}${serialBadge}</strong><small>${esc(product.sku)}${product.barcode ? ` · ${esc(product.barcode)}` : ''}${attributes ? ` · ${esc(attributes)}` : ''}</small></span></div></td><td>${esc(product.category)}</td><td class='text-right'>${money(product.price)}</td>${showCost ? `<td class='text-right'>${money(product.cost)}</td>` : ''}<td class='text-right'><span class='stock-number ${product.inventoryTracked && product.stock <= 0 ? 'out' : product.inventoryTracked && product.stock <= product.minStock ? 'low' : ''}'>${product.inventoryTracked ? `${number(product.stock)} ${esc(product.unit)}` : '—'}</span></td><td>${stockBadge(product)}</td><td class='text-right'>${canEdit ? `<button class='row-action' data-action='add-product-units' data-id='${product.id}' aria-label='Thêm tồn hoặc quét mã cho ${esc(product.name)}' title='Thêm tồn / Quét mã'>＋</button>` : ''}${product.serialTracked ? `<button class='row-action' data-action='view-product-serials' data-id='${product.id}' aria-label='Xem danh sách mã riêng của ${esc(product.name)}' title='Danh sách mã riêng'>#</button>` : ''}<button class='row-action' data-action='print-barcode-single' data-id='${product.id}' aria-label='In tem mã vạch ${esc(product.name)}' title='In tem mã vạch'>${icon('scan', 15)}</button>${canViewPriceHistory ? `<button class='row-action' data-action='product-price-history' data-id='${product.id}' aria-label='Xem lịch sử giá ${esc(product.name)}' title='Lịch sử giá'>${icon('clock', 15)}</button>` : ''}${canEdit ? `<button class='row-action' data-action='edit-product' data-id='${product.id}' aria-label='Sửa ${esc(product.name)}'>•••</button>` : ''}</td></tr>`;
+    const warrantyBadge = product.warrantyMonths > 0 ? ` <span class='badge badge-info serial-warranty-badge'>BH ${number(product.warrantyMonths)}T</span>` : '';
+    return `<tr><td><div class='product-cell'>${productThumb(product)}<span class='product-name-stack'><strong>${esc(product.name)}${serialBadge}${warrantyBadge}</strong><small>${esc(product.sku)}${product.barcode ? ` · ${esc(product.barcode)}` : ''}${attributes ? ` · ${esc(attributes)}` : ''}</small></span></div></td><td>${esc(product.category)}</td><td class='text-right'>${money(product.price)}</td>${showCost ? `<td class='text-right'>${product.cost == null ? '—' : money(product.cost)}</td>` : ''}<td class='text-right'><span class='stock-number ${product.inventoryTracked && product.stock <= 0 ? 'out' : product.inventoryTracked && product.stock <= product.minStock ? 'low' : ''}'>${product.inventoryTracked ? `${number(product.stock)} ${esc(product.unit)}` : '—'}</span></td><td>${stockBadge(product)}</td><td class='text-right'>${canEdit ? `<button class='row-action' data-action='add-product-units' data-id='${product.id}' aria-label='Thêm tồn hoặc quét mã cho ${esc(product.name)}' title='Thêm tồn / Quét mã'>＋</button>` : ''}${product.serialTracked ? `<button class='row-action' data-action='view-product-serials' data-id='${product.id}' aria-label='Xem danh sách mã riêng của ${esc(product.name)}' title='Danh sách mã riêng'>#</button>` : ''}<button class='row-action' data-action='print-barcode-single' data-id='${product.id}' aria-label='In tem mã vạch ${esc(product.name)}' title='In tem mã vạch'>${icon('scan', 15)}</button>${canViewPriceHistory ? `<button class='row-action' data-action='product-price-history' data-id='${product.id}' aria-label='Xem lịch sử giá ${esc(product.name)}' title='Lịch sử giá'>${icon('clock', 15)}</button>` : ''}${canEdit ? `<button class='row-action' data-action='edit-product' data-id='${product.id}' aria-label='Sửa ${esc(product.name)}'>•••</button>` : ''}</td></tr>`;
   }
 
   function productMobileCard(product) {
-    const canEdit = ['owner', 'manager', 'stockkeeper'].includes(store.role);
+    const canEdit = hasPerm('editProducts');
     const attributes = Object.entries(product.variantAttributes || {}).map(function (entry) { return `${entry[0]}: ${entry[1]}`; }).join(' · ');
     const serialTag = product.serialTracked ? 'Mã riêng' : '';
-    const productMain = `${productThumb(product)}<span class='product-mobile-info'><strong>${esc(product.name)}</strong><small>${esc([product.sku, serialTag, attributes || product.category].filter(Boolean).join(' · '))}</small></span><span class='product-mobile-side'><strong>${money(product.price)}</strong><small>${product.inventoryTracked ? (product.stock <= 0 ? 'Hết hàng' : `Còn ${number(product.stock)} ${esc(product.unit)}`) : 'Không theo dõi tồn'}</small></span>`;
+    const warrantyTag = product.warrantyMonths > 0 ? `BH ${number(product.warrantyMonths)}T` : '';
+    const productMain = `${productThumb(product)}<span class='product-mobile-info'><strong>${esc(product.name)}</strong><small>${esc([product.sku, serialTag, warrantyTag, attributes || product.category].filter(Boolean).join(' · '))}</small></span><span class='product-mobile-side'><strong>${money(product.price)}</strong><small>${product.inventoryTracked ? (product.stock <= 0 ? 'Hết hàng' : `Còn ${number(product.stock)} ${esc(product.unit)}`) : 'Không theo dõi tồn'}</small></span>`;
     return `<article class='product-mobile-card'>${canEdit ? `<button class='product-mobile-main' data-action='edit-product' data-id='${product.id}' aria-label='Sửa ${esc(product.name)}'>${productMain}</button>` : `<div class='product-mobile-main'>${productMain}</div>`}<button class='product-card-menu-button' data-action='product-card-menu' data-id='${product.id}' aria-label='Thao tác với ${esc(product.name)}' title='Thao tác'>${icon('more', 21)}</button></article>`;
   }
 
   function openProductCardMenu(id) {
     const product = productById(id);
     if (!product) return;
-    const canEdit = ['owner', 'manager', 'stockkeeper'].includes(store.role);
-    const canViewHistory = ['owner', 'manager', 'stockkeeper', 'accountant'].includes(store.role);
+    const canEdit = hasPerm('editProducts');
+    const canViewHistory = hasPerm('viewCostPrice') || hasPerm('editProducts') || hasPerm('viewReports');
     const actions = [
       canEdit ? ['add-units', '＋ Thêm tồn / Quét mã'] : null,
       product.serialTracked ? ['serials', 'Danh sách mã riêng'] : null,
       canEdit ? ['edit', 'Sửa mặt hàng'] : null,
       ['print', 'In tem mã vạch'],
       canViewHistory ? ['history', 'Lịch sử giá'] : null,
-      canEdit && product.inventoryTracked && !product.serialTracked ? ['stock', 'Kiểm kê tồn kho'] : null,
+      hasPerm('manageInventory') && product.inventoryTracked && !product.serialTracked ? ['stock', 'Kiểm kê tồn kho'] : null,
     ].filter(Boolean);
     showModal(product.name, 'Chọn việc cần làm', `<div class='product-card-actions'>${actions.map(([kind, label]) => `<button type='button' class='btn btn-secondary' data-action='product-card-choice' data-kind='${kind}' data-id='${esc(id)}'>${label}</button>`).join('')}</div>`, '');
   }
 
   function renderProducts() {
-    const canEdit = ['owner', 'manager', 'stockkeeper'].includes(store.role);
-    const moreActions = (canEdit ? `<button class='btn btn-secondary' data-action='new-product-variant-group'>Thêm hàng có nhiều màu, cỡ</button><button class='btn btn-secondary' data-action='bulk-update-products'>Cập nhật hàng loạt bằng tệp</button>` : '') + (canExportData() ? `<button class='btn btn-secondary' data-action='open-export'>Xuất danh sách</button>` : '');
+    const canEdit = hasPerm('editProducts');
+    const moreActions = (canEdit ? `<button class='btn btn-secondary' data-action='new-product-variant-group'>Thêm hàng có nhiều màu, cỡ</button><button class='btn btn-secondary' data-action='bulk-update-products'>Cập nhật hàng loạt bằng tệp</button>` : '') + `<button class='btn btn-secondary' data-action='open-warranty-lookup'>Tra cứu bảo hành Serial/IMEI</button>` + (canExportData() ? `<button class='btn btn-secondary' data-action='open-export'>Xuất danh sách</button>` : '');
     const actions = (canEdit ? `<button class='btn btn-primary' data-action='new-product'>＋ Thêm mặt hàng</button><button class='btn btn-secondary' data-action='import-products'>Nhập danh sách</button>` : '') + `<button class='btn btn-secondary' data-action='print-barcode-batch'>In tem</button>` + (moreActions ? `<details class='catalog-more'><summary class='btn btn-secondary'>Thao tác khác</summary><div>${moreActions}</div></details>` : '');
     return pageHeading('Sản phẩm', '', actions) +
       (canEdit || canExportData() ? `<details class='product-secondary-actions'><summary>Nhập danh sách và thao tác khác</summary><div>${canEdit ? `<button type='button' class='btn btn-secondary' data-action='import-products'>Nhập danh sách có sẵn</button>` : ''}${moreActions}</div></details>` : '') +
-      `<div class='mobile-task-actions product-task-actions'>${canEdit ? `<button class='btn btn-primary' data-action='new-product'>＋ Thêm hàng</button>` : ''}<button class='btn btn-secondary' data-action='product-scan'>Quét mã</button><button class='btn btn-secondary' data-action='print-barcode-batch'>In tem</button></div>` +
+      `<div class='mobile-task-actions product-task-actions'>${canEdit ? `<button class='btn btn-primary' data-action='new-product'>＋ Thêm hàng</button>` : ''}<button class='btn btn-secondary' data-action='product-scan'>Quét mã</button><button class='btn btn-secondary' data-action='open-warranty-lookup'>Bảo hành</button></div>` +
       `<div class='toolbar'><div class='toolbar-left'><div class='search-wrap product-search-wrap'><span class='search-symbol'>⌕</span><input class='input' id='product-search' type='search' placeholder='Tìm tên, mã hàng hoặc mã vạch…' value='${esc(searchTerms.products)}' aria-label='Tìm sản phẩm'><button class='icon-button inventory-scan' type='button' data-action='product-scan' aria-label='Quét mã vạch tìm sản phẩm' title='Quét mã vạch'>${icon('scan', 19)}</button></div><span class='result-count' data-product-result-count>${productLoading ? 'Đang tải…' : `${number(productTotal)} sản phẩm`}</span></div></div>` + renderProductList();
   }
 
   function renderProductList() {
     const products = filteredProducts(searchTerms.products, 'Tất cả');
-    const showCost = store.role !== 'cashier';
+    const showCost = hasPerm('viewCostPrice');
     const empty = productLoading ? 'Đang tải danh mục…' : productError ? esc(productError) : searchTerms.products ? 'Không tìm thấy sản phẩm phù hợp.' : 'Thêm sản phẩm đầu tiên để bắt đầu quản lý danh mục.';
     return `<section class='panel' data-product-result-list><div class='table-wrap desktop-table'><table class='data-table'><thead><tr><th>Sản phẩm</th><th>Danh mục</th><th class='text-right'>Giá bán</th>${showCost ? `<th class='text-right'>Giá vốn</th>` : ''}<th class='text-right'>Tồn kho</th><th>Trạng thái</th><th></th></tr></thead><tbody>${products.map(productRow).join('') || `<tr><td colspan='${showCost ? 7 : 6}'><div class='empty-state'><strong>${esc(empty)}</strong></div></td></tr>`}</tbody></table></div><div class='product-list-mobile'>${products.map(productMobileCard).join('') || `<div class='panel empty-state'><strong>${esc(empty)}</strong></div>`}</div><div class='pagination'><span>Hiển thị ${products.length} trên ${number(productTotal)} sản phẩm</span><span class='pagination-actions'>${productOffset > 0 ? `<button class='page-button' data-action='products-page' data-offset='${Math.max(0, productOffset - 100)}'>‹</button>` : ''}<span class='page-button current'>${Math.floor(productOffset / 100) + 1}</span>${productNextOffset !== null ? `<button class='page-button' data-action='products-page' data-offset='${productNextOffset}'>›</button>` : ''}</span></div></section>`;
   }
@@ -3610,7 +3881,7 @@
       ? (customer ? `<div class='cart-customer'><button data-action='pick-customer' ${disabled}><span class='avatar' style='width:22px;height:22px;font-size:8px'>${esc(initials(customer.name))}</span><span>${esc(customer.name)}</span><strong>Đổi</strong></button></div>` : '')
       : `<div class='cart-customer'><button data-action='pick-customer' ${disabled}><span class='avatar' style='width:24px;height:24px;font-size:8px'>${customer ? esc(initials(customer.name)) : '+'}</span><span>${customer ? esc(customer.name) : 'Chọn khách hàng'}${customer && customer.debt > 0 ? ` <small class='stock-number low'>· Nợ ${money(customer.debt)}</small>` : ''}</span><strong>${customer ? esc(customer.phone || 'Đổi') : '＋'}</strong></button></div>`;
     const cartTitle = posMode === 'delivery' ? `<h2>Đơn giao hàng</h2>` : '';
-    return `<section class='panel cart-panel' ${isDesktop ? "data-tour-target='pos-cart-desktop'" : ''}>${billsBar}<div class='cart-heading ${cartTitle ? '' : 'is-compact'}'>${cartTitle}<div class='cart-heading-actions'><span>${number(totals.count)} SP</span><button class='cart-close mobile-only' data-action='close-cart' aria-label='Đóng giỏ hàng'>×</button></div></div>${customerBlock}<div class='cart-add-product mobile-only'><button class='btn btn-secondary' data-action='add-more-products' ${disabled}>＋ Thêm sản phẩm</button></div>${pendingNote}<div class='cart-items'>${rows || `<div class='cart-empty'><div>${checkoutPendingPayload ? 'Đơn đang chờ xác nhận.' : 'Chạm sản phẩm hoặc quét mã vạch'}</div></div>`}</div>${standardNoteRow}${deliverySection}<div class='cart-totals'><div class='cart-total-line'><span>Tạm tính</span><strong>${money(totals.subtotal)}</strong></div><button class='cart-total-line' data-action='discount' ${disabled} style='border:0;background:transparent;padding:0;text-align:left'><span>Giảm giá <span style='color:#4a7b58'>＋</span></span><strong>${totals.discount ? '−' + money(totals.discount) : 'Thêm'}</strong></button><div class='cart-total-line total'><span>Khách cần trả</span><strong>${money(totals.total)}</strong></div></div><div class='cart-footer'>${renderPosModeFooter(totals, disabled)}</div></section>`;
+    return `<section class='panel cart-panel' ${isDesktop ? "data-tour-target='pos-cart-desktop'" : ''}>${billsBar}<div class='cart-heading ${cartTitle ? '' : 'is-compact'}'>${cartTitle}<div class='cart-heading-actions'><span>${number(totals.count)} SP</span><button class='cart-close mobile-only' data-action='close-cart' aria-label='Đóng giỏ hàng'>×</button></div></div>${customerBlock}<div class='cart-add-product mobile-only'><button class='btn btn-secondary' data-action='add-more-products' ${disabled}>＋ Thêm sản phẩm</button></div>${pendingNote}<div class='cart-items'>${rows || `<div class='cart-empty'><div>${checkoutPendingPayload ? 'Đơn đang chờ xác nhận.' : 'Chạm sản phẩm hoặc quét mã vạch'}</div></div>`}</div>${standardNoteRow}${deliverySection}<div class='cart-totals'><div class='cart-total-line'><span>Tạm tính</span><strong>${money(totals.subtotal)}</strong></div>${getMaxDiscountPct() > 0 ? `<button class='cart-total-line' data-action='discount' ${disabled} style='border:0;background:transparent;padding:0;text-align:left'><span>Giảm giá <span style='color:#4a7b58'>＋</span></span><strong>${totals.discount ? '−' + money(totals.discount) : 'Thêm'}</strong></button>` : `<div class='cart-total-line'><span>Giảm giá</span><strong>${totals.discount ? '−' + money(totals.discount) : '0đ'}</strong></div>`}<div class='cart-total-line total'><span>Khách cần trả</span><strong>${money(totals.total)}</strong></div></div><div class='cart-footer'>${renderPosModeFooter(totals, disabled)}</div></section>`;
   }
 
   function updateProductSelections(changedId) {
@@ -3649,7 +3920,8 @@
     }
     panel.querySelector('.cart-heading-actions > span').textContent = `${number(totals.count)} SP`;
     panel.querySelector('.cart-totals > div:first-child strong').textContent = money(totals.subtotal);
-    panel.querySelector('[data-action="discount"] strong').textContent = totals.discount ? '−' + money(totals.discount) : 'Thêm';
+    const discBtn = panel.querySelector('[data-action="discount"] strong');
+    if (discBtn) discBtn.textContent = totals.discount ? '−' + money(totals.discount) : 'Thêm';
     panel.querySelector('.cart-total-line.total strong').textContent = money(totals.total);
     const activeTabBtn = panel.querySelector(".pos-bill-tab.active button[role='tab']");
     if (activeTabBtn) {
@@ -3818,7 +4090,7 @@
     if (!lastCompletedSale) return '';
     const sale = lastCompletedSale;
     const id = esc(sale.id);
-    const receipt = sale.offlineQueued ? '' : `<button class='btn btn-secondary' type='button' data-action='latest-receipt' data-id='${id}'>Biên nhận</button>`;
+    const receipt = sale.offlineQueued ? '' : `<button class='btn btn-secondary' type='button' data-action='latest-receipt-png' data-id='${id}'>Gửi ảnh</button><button class='btn btn-secondary' type='button' data-action='latest-receipt' data-id='${id}'>Biên nhận</button>`;
     return `<div class='sale-saved'><span role='status'>${icon('check', 16)} ${sale.offlineQueued ? 'Đã lưu trên máy' : 'Đã lưu'} ${esc(sale.number)} · ${moneyVndText(sale.total)}${Number(sale.change) ? ` · Trả lại khách ${moneyVndText(sale.change)}` : ''}</span><div class='sale-saved-actions'><button class='link-button' type='button' data-action='order-detail' data-id='${id}'>Xem đơn</button>${receipt}</div></div>`;
   }
 
@@ -3827,7 +4099,7 @@
     const products = visiblePosProducts();
     const categories = ['Tất cả'].concat(Array.from(new Set(posCatalog.map(product => product.category))));
     const totals = cartTotals();
-    const canManageProducts = ['owner', 'manager', 'stockkeeper'].includes(store.role);
+    const canManageProducts = hasPerm('editProducts');
     const hasCatalog = productTotal > 0 || store.products.length > 0;
     let emptyProductState = `<div class='panel empty-state pos-empty-start' style='grid-column:1/-1'><strong>Đang tải mặt hàng…</strong></div>`;
     if (productError || warehouseError) {
@@ -3878,7 +4150,7 @@
 
   function renderOrders() {
     const orders = filteredOrders();
-    return pageHeading('Đơn hàng', '', `${canAccessRoute('pos') ? `<button class='btn btn-primary' data-route='pos'><span class='btn-icon'>＋</span> Bán hàng</button>` : ''}${canExportData() ? `<button class='btn btn-secondary' data-action='open-export'>Xuất CSV</button>` : ''}`) +
+    return pageHeading('Đơn hàng', '', `${canAccessRoute('pos') ? `<button class='btn btn-primary' data-route='pos'><span class='btn-icon'>＋</span> Bán hàng</button>` : ''}<button class='btn btn-secondary' data-action='open-warranty-lookup'>Tra cứu bảo hành</button>${canExportData() ? `<button class='btn btn-secondary' data-action='open-export'>Xuất CSV</button>` : ''}`) +
       `<div class='toolbar'><div class='toolbar-left'><div class='search-wrap'><span class='search-symbol'>⌕</span><input class='input' id='order-search' type='search' placeholder='Tìm đơn, tên hoặc số điện thoại…' value='${esc(searchTerms.orders)}' aria-label='Tìm đơn hàng hoặc SKU'></div></div><div class='toolbar-right'><div class='segmented'>${['Tất cả', 'Hoàn tất', 'Còn nợ', 'Trả một phần', 'Đã trả hàng'].map(function (status) { return `<button class='segment ${orderFilter === status ? 'active' : ''}' data-action='order-filter' data-filter='${status}'>${status}</button>`; }).join('')}</div></div></div><section class='panel'><div class='table-wrap'><table class='data-table'><thead><tr><th>Mã đơn</th><th>Khách hàng</th><th>Thời gian</th><th>Sản phẩm</th><th class='text-right'>Giá trị</th><th>Trạng thái</th><th></th></tr></thead><tbody>${orderRows(orders) || `<tr><td colspan='7'><div class='empty-state'><strong>${orderNextOffset === null && !orderOffset ? 'Chưa có đơn hàng' : 'Không tìm thấy đơn hàng'}</strong><span>Đơn bán mới sẽ xuất hiện ở đây.</span></div></td></tr>`}</tbody></table></div><div class='pagination'><span>Hiển thị ${orders.length} trên ${number(orderTotal)} đơn</span><span class='pagination-actions'>${orderOffset > 0 ? `<button class='page-button' data-action='orders-page' data-offset='${Math.max(0, orderOffset - 100)}'>‹</button>` : ''}<span class='page-button current'>${Math.floor(orderOffset / 100) + 1}</span>${orderNextOffset !== null ? `<button class='page-button' data-action='orders-page' data-offset='${orderNextOffset}'>›</button>` : ''}</span></div></section>`;
   }
 
@@ -3902,9 +4174,9 @@
 
   function renderCustomers() {
     const customers = store.customers;
-    const canEdit = ['owner', 'manager', 'cashier', 'accountant'].includes(store.role);
-    const canImport = ['owner', 'manager', 'accountant'].includes(store.role);
-    const canManageSegments = ['owner', 'manager', 'accountant'].includes(store.role);
+    const canEdit = hasPerm('manageCustomers');
+    const canImport = hasPerm('manageCustomers') && (hasPerm('viewReports') || hasPerm('recordCashbook') || hasPerm('manageSettings'));
+    const canManageSegments = canImport;
     const hasCustomerFilters = Boolean(searchTerms.customers || customerTagFilter || customerSegmentFilter || customerMinSpentVnd);
     const hasSavedCriteria = Boolean(customerTagFilter.trim() || customerSegmentFilter || customerMinSpentVnd !== '');
     const filterToggleLabel = customerAdvancedOpen ? 'Ẩn bộ lọc' : hasSavedCriteria ? 'Lọc thêm · đang lọc' : 'Lọc thêm';
@@ -3941,12 +4213,13 @@
   function inventoryRows(products) {
     return products.map(function (product) {
       const movement = store.movements.find(function (item) { return item.productId === product.id; });
-      return `<tr><td><div class='product-cell'>${productThumb(product)}<span class='product-name-stack'><strong>${esc(product.name)}</strong><small>${esc(product.sku)}${product.barcode ? ` · ${esc(product.barcode)}` : ''}</small></span></div></td><td>${esc(product.category)}</td><td class='text-right'><span class='stock-number ${product.stock <= 0 ? 'out' : product.stock <= product.minStock ? 'low' : ''}'>${number(product.stock)} ${esc(product.unit)}</span>${product.reserved > 0 ? `<small class='table-subtitle'>Giữ ${number(product.reserved)} · Bán được ${number(availableForSale(product))}</small>` : ''}</td><td class='text-right'>${number(product.minStock)} ${esc(product.unit)}</td><td>${movement ? `<span class='product-name-stack'><strong>${movementLabel(movement)}</strong><small>${humanDate(movement.createdAt, true)} · ${esc(movement.reason)}</small></span>` : `<span class='muted'>Chưa có biến động</span>`}</td><td>${movement ? `<span class='stock-number ${movement.delta > 0 ? '' : 'low'}'>${movement.delta > 0 ? '+' : ''}${number(movement.delta)}</span>` : '—'}</td><td class='text-right'><button class='row-action' data-action='print-barcode-single' data-id='${product.id}' aria-label='In tem mã vạch ${esc(product.name)}' title='In tem mã vạch'>${icon('scan', 15)}</button>${['owner', 'manager', 'stockkeeper'].includes(store.role) ? `<button class='row-action' data-action='adjust-stock' data-id='${product.id}' aria-label='Kiểm kê ${esc(product.name)}' title='Kiểm kê'>＋</button>` : ''}</td></tr>`;
+      return `<tr><td><div class='product-cell'>${productThumb(product)}<span class='product-name-stack'><strong>${esc(product.name)}</strong><small>${esc(product.sku)}${product.barcode ? ` · ${esc(product.barcode)}` : ''}</small></span></div></td><td>${esc(product.category)}</td><td class='text-right'><span class='stock-number ${product.stock <= 0 ? 'out' : product.stock <= product.minStock ? 'low' : ''}'>${number(product.stock)} ${esc(product.unit)}</span>${product.reserved > 0 ? `<small class='table-subtitle'>Giữ ${number(product.reserved)} · Bán được ${number(availableForSale(product))}</small>` : ''}</td><td class='text-right'>${number(product.minStock)} ${esc(product.unit)}</td><td>${movement ? `<span class='product-name-stack'><strong>${movementLabel(movement)}</strong><small>${humanDate(movement.createdAt, true)} · ${esc(movement.reason)}</small></span>` : `<span class='muted'>Chưa có biến động</span>`}</td><td>${movement ? `<span class='stock-number ${movement.delta > 0 ? '' : 'low'}'>${movement.delta > 0 ? '+' : ''}${number(movement.delta)}</span>` : '—'}</td><td class='text-right'><button class='row-action' data-action='print-barcode-single' data-id='${product.id}' aria-label='In tem mã vạch ${esc(product.name)}' title='In tem mã vạch'>${icon('scan', 15)}</button>${hasPerm('manageInventory') ? `<button class='row-action' data-action='adjust-stock' data-id='${product.id}' aria-label='Kiểm kê ${esc(product.name)}' title='Kiểm kê'>＋</button>` : ''}</td></tr>`;
     }).join('');
   }
 
   function inventoryStatText(key) {
     if (inventoryWarehouseId !== selectedWarehouseId) return '—';
+    if (key === 'stockValueVnd' && (!hasPerm('viewCostPrice') || inventorySummary.stockValueVnd == null)) return '—';
     return key === 'stockValueVnd' ? money(inventorySummary.stockValueVnd) : number(inventorySummary[key]);
   }
 
@@ -3955,7 +4228,7 @@
   }
 
   function renderInventoryPurchases() {
-    const canReceive = ['owner', 'manager', 'stockkeeper', 'accountant'].includes(store.role);
+    const canReceive = hasPerm('manageInventory') || hasPerm('recordCashbook');
     const receiptRows = (purchaseHistory || []).slice(0, 20).map(function (p) {
       return `<tr><td><button class='link-button order-ref' data-action='purchase-detail' data-id='${esc(p.id)}'>${esc(p.number)}</button></td><td>${esc(p.supplierName || 'Không chỉ định NCC')}</td><td>${humanDate(p.receivedAt, true)}</td><td class='text-right'>${moneyVndText(p.totalVnd)}</td><td class='text-right'><button class='btn btn-secondary' data-action='print-barcode-purchase' data-id='${esc(p.id)}'>In tem</button></td></tr>`;
     }).join('');
@@ -3967,7 +4240,7 @@
   }
 
   function renderInventorySupplierReturns() {
-    const canReturnSupplier = ['owner', 'manager', 'stockkeeper', 'accountant'].includes(store.role);
+    const canReturnSupplier = hasPerm('manageInventory') || hasPerm('recordCashbook');
     const listHtml = window.SlinkReturnsExchangeUI
       ? window.SlinkReturnsExchangeUI.renderSupplierReturnListHtml(supplierReturnsList)
       : '<p>Đang tải công cụ trả hàng…</p>';
@@ -3975,28 +4248,29 @@
   }
 
   function renderInventoryStockCount() {
-    const canCount = ['owner', 'manager', 'stockkeeper'].includes(store.role);
+    const canCount = hasPerm('manageInventory');
     const needReview = (inventoryProducts || []).filter(function (p) { return p.inventoryTracked && p.stock <= p.minStock; }).slice(0, 15);
-    return `<section class='panel'><div class='panel-header'><div><h2>Kiểm kê &amp; cân bằng kho</h2><p>Đối chiếu tồn thực tế tại kho đang chọn, hỗ trợ kiểm kê từng mã hoặc nhập bảng CSV.</p></div>${canCount ? `<div class='heading-actions'><button class='btn btn-secondary' data-action='bulk-stock-count'>Kiểm kê từ tệp CSV</button><button class='btn btn-primary' data-action='adjust-stock-picker'>＋ Kiểm kê sản phẩm</button></div>` : ''}</div><div class='table-wrap'><table class='data-table'><thead><tr><th>Sản phẩm sắp hết / cần kiểm</th><th>SKU</th><th class='text-right'>Tồn hệ thống</th><th class='text-right'>Định mức tối thiểu</th><th></th></tr></thead><tbody>${needReview.map(function (p) {
+    return `<section class='panel'><div class='panel-header'><div><h2>Kiểm kê &amp; cân bằng kho</h2><p>Đối chiếu tồn thực tế tại kho đang chọn, hỗ trợ quét camera liên tục, kiểm kê từng mã hoặc nhập bảng CSV.</p></div>${canCount ? `<div class='heading-actions'><button class='btn btn-secondary' data-action='bulk-stock-count'>Kiểm kê từ tệp CSV</button><button class='btn btn-secondary' data-action='adjust-stock-picker'>＋ Kiểm kê sản phẩm</button><button class='btn btn-primary' data-action='rapid-stock-count'>${icon('scan', 16)} Quét camera kiểm kho</button></div>` : ''}</div><div class='table-wrap'><table class='data-table'><thead><tr><th>Sản phẩm sắp hết / cần kiểm</th><th>SKU</th><th class='text-right'>Tồn hệ thống</th><th class='text-right'>Định mức tối thiểu</th><th></th></tr></thead><tbody>${needReview.map(function (p) {
       return `<tr><td><strong>${esc(p.name)}</strong></td><td>${esc(p.sku)}</td><td class='text-right'><span class='stock-number ${p.stock <= 0 ? 'out' : 'low'}'>${number(p.stock)} ${esc(p.unit)}</span></td><td class='text-right'>${number(p.minStock)} ${esc(p.unit)}</td><td class='text-right'>${canCount ? `<button class='btn btn-secondary' data-action='adjust-stock' data-id='${esc(p.id)}'>Đếm lại</button>` : ''}</td></tr>`;
-    }).join('') || `<tr><td colspan='5'><div class='empty-state'><strong>Các mặt hàng đang kiểm tra đều đủ định mức</strong><span>Chọn “＋ Kiểm kê sản phẩm” để cập nhật số đếm thực tế bất kỳ mặt hàng nào.</span></div></td></tr>`}</tbody></table></div></section>`;
+    }).join('') || `<tr><td colspan='5'><div class='empty-state'><strong>Các mặt hàng đang kiểm tra đều đủ định mức</strong><span>Chọn “Quét camera kiểm kho” hoặc “＋ Kiểm kê sản phẩm” để cập nhật số đếm thực tế.</span></div></td></tr>`}</tbody></table></div></section>`;
   }
 
   function renderInventory() {
     const currentWarehouse = inventoryWarehouseId === selectedWarehouseId && inventoryLoadedFilter === inventoryStockFilter && inventoryLoadedQuery === searchTerms.inventory;
     const total = currentWarehouse ? inventoryTotal : 0;
-    const canCount = ['owner', 'manager', 'stockkeeper'].includes(store.role);
-    const canReceive = ['owner', 'manager', 'stockkeeper', 'accountant'].includes(store.role);
-    const canManageWarehouse = ['owner', 'manager'].includes(store.role);
+    const canCount = hasPerm('manageInventory');
+    const canReceive = hasPerm('manageInventory') || hasPerm('recordCashbook');
+    const canManageWarehouse = hasPerm('manageSettings');
+    const showCostValue = hasPerm('viewCostPrice');
     const warehouseOptions = warehouses.map(warehouse => `<option value='${esc(warehouse.id)}' ${warehouse.id === selectedWarehouseId ? 'selected' : ''}>${esc(warehouseOptionName(warehouse))}</option>`).join('');
     const defaultWarehouseSelected = warehouses.some(function (warehouse) { return warehouse.id === selectedWarehouseId && warehouse.is_default; });
-    const advanced = `${canCount ? `<button class='btn btn-secondary' data-action='adjust-stock-picker'>Đếm lại hàng</button>` : ''}${canManageWarehouse ? `<button class='btn btn-secondary' data-action='new-warehouse'>Thêm kho</button>` : ''}${canCount ? `<button class='btn btn-secondary' data-action='bulk-stock-count'>Kiểm kê bằng tệp</button>` : ''}${canExportData() ? `<button class='btn btn-secondary' data-action='open-export'>Xuất danh sách</button>` : ''}${canManageWarehouse && selectedWarehouseId && !defaultWarehouseSelected ? `<button class='btn btn-secondary' data-action='archive-warehouse' data-id='${esc(selectedWarehouseId)}'>Lưu trữ kho</button>` : ''}${canCount && warehouses.length > 1 ? `<button class='btn btn-secondary' data-action='new-warehouse-transfer'>Điều chuyển kho</button>` : ''}`;
+    const advanced = `${canCount ? `<button class='btn btn-secondary' data-action='rapid-stock-count'>Quét camera kiểm kho</button><button class='btn btn-secondary' data-action='adjust-stock-picker'>Đếm lại hàng</button>` : ''}${canManageWarehouse ? `<button class='btn btn-secondary' data-action='new-warehouse'>Thêm kho</button>` : ''}${canCount ? `<button class='btn btn-secondary' data-action='bulk-stock-count'>Kiểm kê bằng tệp</button>` : ''}${canExportData() ? `<button class='btn btn-secondary' data-action='open-export'>Xuất danh sách</button>` : ''}${canManageWarehouse && selectedWarehouseId && !defaultWarehouseSelected ? `<button class='btn btn-secondary' data-action='archive-warehouse' data-id='${esc(selectedWarehouseId)}'>Lưu trữ kho</button>` : ''}${canCount && warehouses.length > 1 ? `<button class='btn btn-secondary' data-action='new-warehouse-transfer'>Điều chuyển kho</button>` : ''}`;
     const tabs = [
       ['stock', 'Tồn kho'],
       ['purchases', 'Nhập hàng'],
-      store.role !== 'cashier' ? ['supplier-returns', 'Trả hàng NCC'] : null,
+      canReceive ? ['supplier-returns', 'Trả hàng NCC'] : null,
       canCount ? ['stock-count', 'Kiểm kê'] : null,
-      store.role !== 'cashier' ? ['transfers', 'Điều chuyển'] : null,
+      canReceive ? ['transfers', 'Điều chuyển'] : null,
     ].filter(Boolean);
     const activeTab = tabs.some(function (t) { return t[0] === inventoryTab; }) ? inventoryTab : 'stock';
     const tabBar = `<div class='inventory-subtabs' role='tablist' aria-label='Nghiệp vụ kho hàng'>${tabs.map(function (t) {
@@ -4007,7 +4281,7 @@
     else if (activeTab === 'supplier-returns') tabBody = renderInventorySupplierReturns();
     else if (activeTab === 'stock-count') tabBody = renderInventoryStockCount();
     else if (activeTab === 'transfers') tabBody = `${canCount && warehouses.length > 1 ? `<div style='margin-bottom:12px;display:flex;justify-content:flex-end'><button class='btn btn-primary' data-action='new-warehouse-transfer'>＋ Tạo phiếu điều chuyển</button></div>` : ''}${renderWarehouseTransfers()}`;
-    else tabBody = `<div class='stat-grid inventory-stats'><article class='stat-card'><div class='stat-top'><span class='stat-label'>Tổng mặt hàng</span><span class='stat-icon'>${icon('box', 15)}</span></div><div class='stat-value' data-inventory-stat='total'>${inventoryStatText('total')}</div></article><article class='stat-card'><div class='stat-top'><span class='stat-label'>Sắp hết hàng</span><span class='stat-icon'>${icon('alert', 15)}</span></div><div class='stat-value' data-inventory-stat='low'>${inventoryStatText('low')}</div></article><article class='stat-card'><div class='stat-top'><span class='stat-label'>Hết hàng</span><span class='stat-icon'>${icon('layers', 15)}</span></div><div class='stat-value' data-inventory-stat='out'>${inventoryStatText('out')}</div></article>${store.role !== 'cashier' ? `<article class='stat-card'><div class='stat-top'><span class='stat-label'>Giá trị tồn ước tính</span><span class='stat-icon'>${icon('wallet', 15)}</span></div><div class='stat-value' style='font-size:17px' data-inventory-stat='stockValueVnd'>${inventoryStatText('stockValueVnd')}</div></article>` : ''}</div>` +
+    else tabBody = `<div class='stat-grid inventory-stats'><article class='stat-card'><div class='stat-top'><span class='stat-label'>Tổng mặt hàng</span><span class='stat-icon'>${icon('box', 15)}</span></div><div class='stat-value' data-inventory-stat='total'>${inventoryStatText('total')}</div></article><article class='stat-card'><div class='stat-top'><span class='stat-label'>Sắp hết hàng</span><span class='stat-icon'>${icon('alert', 15)}</span></div><div class='stat-value' data-inventory-stat='low'>${inventoryStatText('low')}</div></article><article class='stat-card'><div class='stat-top'><span class='stat-label'>Hết hàng</span><span class='stat-icon'>${icon('layers', 15)}</span></div><div class='stat-value' data-inventory-stat='out'>${inventoryStatText('out')}</div></article>${showCostValue ? `<article class='stat-card'><div class='stat-top'><span class='stat-label'>Giá trị tồn ước tính</span><span class='stat-icon'>${icon('wallet', 15)}</span></div><div class='stat-value' style='font-size:17px' data-inventory-stat='stockValueVnd'>${inventoryStatText('stockValueVnd')}</div></article>` : ''}</div>` +
       `<div class='toolbar inventory-search-tools'><div class='toolbar-left'><div class='search-wrap inventory-search-wrap' data-tour-target='inventory-search'><span class='search-symbol' aria-hidden='true'>⌕</span><input class='input' id='inventory-search' type='search' placeholder='Tìm tên, mã hàng hoặc mã vạch…' value='${esc(searchTerms.inventory)}' aria-label='Tìm trong kho'><button class='icon-button inventory-scan' type='button' data-action='inventory-scan' aria-label='Quét mã vạch tìm hàng' title='Quét mã vạch'>${icon('scan', 20)}</button></div><span class='result-count' data-inventory-result-count aria-live='polite'>${inventoryLoading ? 'Đang tải…' : inventoryError ? 'Chưa tải được' : `${number(total)} mặt hàng`}</span></div></div>
       <div class='inventory-stock-filters' role='group' aria-label='Lọc theo tồn kho'>${[['all', 'Tất cả'], ['low', 'Sắp hết'], ['out', 'Hết hàng']].map(([value, label]) => `<button type='button' data-action='inventory-stock-filter' data-stock='${value}' aria-pressed='${inventoryStockFilter === value}'>${label}</button>`).join('')}</div>` + renderInventoryList();
     return pageHeading('Kho hàng', '', `${canReceive ? `<button class='btn btn-primary' data-action='receive-stock' data-tour-target='inventory-receive'>＋ Nhập hàng</button>` : ''}${advanced ? `<details class='catalog-more'><summary class='btn btn-secondary'>Thao tác khác</summary><div>${advanced}</div></details>` : ''}`) +
@@ -4057,7 +4331,7 @@
   }
 
   function openNewWarehouse() {
-    if (!['owner', 'manager'].includes(store.role)) return toast('Không có quyền', 'Chỉ chủ cửa hàng hoặc quản lý được thêm kho.', 'error');
+    if (!hasPerm('manageSettings')) return toast('Không có quyền', 'Chỉ chủ cửa hàng hoặc quản lý được thêm kho.', 'error');
     const pending = readPendingWarehouseMutation('warehouse-create', 'new');
     const disabled = pending ? 'disabled' : '';
     const form = `<form id='entity-form' data-form='warehouse-create'><div class='form-grid'><div class='form-field'><label class='input-label' for='warehouse-code'>Mã kho *</label><input class='input' id='warehouse-code' name='code' value='${esc(pending?.payload.code || '')}' maxlength='32' required autocomplete='off' placeholder='VD: CN-02' ${disabled}/></div><div class='form-field'><label class='input-label' for='warehouse-name'>Tên kho *</label><input class='input' id='warehouse-name' name='name' value='${esc(pending?.payload.name || '')}' maxlength='120' required placeholder='VD: Kho chi nhánh 2' ${disabled}/></div></div><div class='modal-note'>${pending ? 'Thao tác tạo kho đang chờ máy chủ. Gửi lại đúng dữ liệu để tránh tạo trùng.' : 'Sản phẩm đang theo dõi tồn sẽ được tạo số dư 0 tại kho mới. Tồn kho được ghi nhận riêng theo từng địa điểm.'}</div></form>`;
@@ -4072,7 +4346,7 @@
   }
 
   function openWarehouseTransfer() {
-    if (!['owner', 'manager', 'stockkeeper'].includes(store.role)) return toast('Không có quyền', 'Vai trò của bạn không được điều chuyển tồn kho.', 'error');
+    if (!hasPerm('manageInventory')) return toast('Không có quyền', 'Vai trò của bạn không được điều chuyển tồn kho.', 'error');
     const active = warehouses.filter(function (warehouse) { return warehouse.status === 'active'; });
     if (active.length < 2) return toast('Cần thêm kho nhận', 'Tạo thêm một kho để bắt đầu điều chuyển hàng.', 'error');
     const pending = readPendingWarehouseMutation('transfer-create', 'new');
@@ -4142,7 +4416,7 @@
 
   function openArchiveWarehouse(warehouseId) {
     const warehouse = warehouses.find(function (item) { return item.id === warehouseId; });
-    if (!warehouse || warehouse.is_default || !['owner', 'manager'].includes(store.role)) return;
+    if (!warehouse || warehouse.is_default || !hasPerm('manageSettings')) return;
     const pending = readPendingWarehouseMutation('warehouse-archive', warehouseId);
     const form = `<form id='entity-form' data-form='warehouse-archive' data-id='${esc(warehouse.id)}'><div class='modal-note'>Kho chỉ lưu trữ được khi không còn tồn hoặc hàng đang điều chuyển. Lịch sử cũ vẫn được giữ.</div><div class='form-field'><label class='input-label' for='warehouse-archive-reason'>Lý do lưu trữ *</label><textarea class='input' id='warehouse-archive-reason' name='reason' required minlength='3' maxlength='500' ${pending ? 'disabled' : ''}>${esc(pending?.payload.reason || '')}</textarea></div>${pending ? `<div class='modal-note'>Lệnh lưu trữ đang chờ máy chủ. Gửi lại đúng lý do để đối chiếu kết quả.</div>` : ''}</form>`;
     showModal(pending ? 'Kiểm tra lệnh lưu trữ đang chờ' : `Lưu trữ ${warehouse.name}`, 'Kho sẽ không còn nhận hàng, bán hàng hoặc điều chuyển mới.', form, `<button class='btn btn-secondary' data-action='close-modal'>${pending ? 'Để sau' : 'Hủy'}</button><button class='btn btn-danger' type='submit' form='entity-form'>${pending ? 'Thử lại lưu trữ' : 'Lưu trữ kho'}</button>`);
@@ -4323,7 +4597,7 @@
   function openCashMovement(id) {
     const movement = findCashMovementById(id);
     if (!movement) return;
-    const canRecord = ['owner', 'manager', 'accountant'].includes(store.role);
+    const canRecord = hasPerm('recordCashbook');
     const direction = movement.movementKind === 'transfer' ? 'Chuyển quỹ nội bộ' : movement.movementKind === 'reversal' ? 'Phiếu đảo / hủy' : movement.type === 'in' ? 'Khoản thu' : 'Khoản chi';
     const sourceId = esc(movement.id || '');
     const orderId = movement.orderId || (['order_payment', 'order_change'].includes(movement.sourceType) ? movement.id : '');
@@ -4360,7 +4634,7 @@
     const detail = receivableDetail && shownCustomers.some(row => row.id === receivableDetail.customer.id)
       ? `<section class='panel finance-debt-detail'><div class='panel-header'><h2>${esc(receivableDetail.customer.name)}</h2><button type='button' class='link-button' data-action='close-receivable'>Đóng</button></div>
         <div class='finance-balance'><span>Còn nợ</span><strong>${moneyVndText(receivableDetail.balanceVnd)}</strong></div>
-        <div class='finance-debt-actions'><button type='button' class='btn btn-primary' data-action='collect-customer-payment' data-id='${esc(receivableDetail.customer.id)}'>Thu tiền</button><button type='button' class='btn btn-secondary' data-action='add-customer-opening-debt' data-id='${esc(receivableDetail.customer.id)}'>Thêm khoản nợ cũ</button><button type='button' class='btn btn-secondary' data-action='finance-reminder' data-id='${esc(receivableDetail.customer.id)}'>Nhắc nợ</button></div>
+        <div class='finance-debt-actions'><button type='button' class='btn btn-primary' data-action='collect-customer-payment' data-id='${esc(receivableDetail.customer.id)}'>Thu tiền</button><button type='button' class='btn btn-secondary' data-action='add-customer-opening-debt' data-id='${esc(receivableDetail.customer.id)}'>Thêm khoản nợ cũ</button><button type='button' class='btn btn-secondary' data-action='finance-reminder' data-id='${esc(receivableDetail.customer.id)}'>Nhắc nợ QR</button></div>
         <h3>Các khoản còn nợ</h3><div class='activity-list'>${receivableDetail.orders.map(row => `<div class='activity-item'><span class='activity-text'><strong>Đơn ${esc(row.order_number)}</strong><small>${humanDate(row.occurred_at)}</small></span><strong>${moneyVndText(row.due_vnd)}</strong></div>`).join('')}${(receivableDetail.openingItems || []).map(row => `<div class='activity-item'><span class='activity-text'><strong>${esc(row.note || 'Nợ cũ')}</strong><small>${humanDate(row.occurredAt)}</small></span><strong>${moneyVndText(row.dueVnd)}</strong></div>`).join('')}</div>
         <h3>Lịch sử công nợ</h3><div class='activity-list'>${receivableDetail.timeline.map(row => `<div class='activity-item'><span class='activity-text'><strong>${esc(row.note || (BigInt(row.debit_vnd) > 0n ? 'Phát sinh nợ' : 'Đã thu'))}</strong><small>${humanDate(row.occurred_at, true)}</small></span><strong>${BigInt(row.debit_vnd) > 0n ? '+' + moneyVndText(row.debit_vnd) : '−' + moneyVndText(row.credit_vnd)}</strong></div>`).join('')}</div></section>` : '';
     return `<div class='finance-balance'><span>Tổng cần thu</span><strong>${financeDataReady ? moneyVndText(financeSummary.customerDebtVnd) : '—'}</strong></div>
@@ -4428,14 +4702,72 @@
     }
   }
 
-  function openDebtReminder(id) {
+  let activeDebtQrPreview = { dataUrl: '', blob: null, filename: '', text: '' };
+
+  async function openDebtReminder(id) {
     const customer = financeReceivables.rows.find(item => item.id === id)
-      || financeTopCustomers.find(item => item.id === id);
+      || financeTopCustomers.find(item => item.id === id)
+      || customerById(id);
     if (!customer) return;
-    const message = `Chào ${customer.name}, ${store.settings.storeName} xin nhắc khoản còn phải thanh toán là ${moneyVndText(customer.debt)}. Nếu bạn đã thanh toán, vui lòng phản hồi để cửa hàng kiểm tra. Cảm ơn bạn!`;
-    const body = `<label class='form-field'><span class='input-label'>Lời nhắc${customer.phone ? ' · ' + esc(customer.phone) : ''}</span><textarea class='input finance-reminder-text' rows='4' data-finance-reminder>${esc(message)}</textarea></label>`;
-    const share = window.SlinkAndroid || typeof navigator.share === 'function' ? `<button class='btn btn-primary' type='button' data-action='share-finance-reminder'>Chia sẻ qua Zalo/SMS</button>` : '';
-    showModal('Nhắc nợ', 'Xem lại lời nhắc rồi chọn người nhận trong ứng dụng nhắn tin.', body, `<button class='btn ${share ? 'btn-secondary' : 'btn-primary'}' type='button' data-action='copy-finance-reminder'>Sao chép</button>${share}`);
+    const debtVnd = Math.max(0, Math.trunc(Number(customer.debt || customer.balanceVnd || 0)));
+    const message = `Chào ${customer.name}, ${store.settings.storeName} xin nhắc khoản còn phải thanh toán là ${moneyVndText(debtVnd)}. Nếu bạn đã thanh toán, vui lòng phản hồi để cửa hàng kiểm tra. Cảm ơn bạn!`;
+    if (!integrationState.data && !integrationState.loading && typeof loadIntegrationStatus === 'function') {
+      await loadIntegrationStatus().catch(function () {});
+    }
+    const bankSettings = integrationState.data?.settings || {};
+    const hasBankQr = Boolean(bankSettings.bankBin && bankSettings.bankAccountNumber && debtVnd > 0 && window.SlinkReceiptImage && window.SlinkVietQrTools);
+    activeDebtQrPreview = { dataUrl: '', blob: null, filename: '', text: message };
+    let qrCardHtml = '';
+    if (hasBankQr) {
+      try {
+        const card = await window.SlinkReceiptImage.renderDebtVietQrCardPng({
+          storeName: store.settings.storeName || 'Cửa hàng Slink',
+          customerName: customer.name,
+          customerPhone: customer.phone || '',
+          amountVnd: debtVnd,
+          bankBin: bankSettings.bankBin,
+          accountNumber: bankSettings.bankAccountNumber,
+          accountName: bankSettings.bankAccountName || '',
+          bankName: bankSettings.bankName || '',
+          description: `NO ${customer.phone || customer.name}`.slice(0, 40),
+        });
+        activeDebtQrPreview = {
+          dataUrl: card.dataUrl,
+          blob: card.blob,
+          filename: `nhac-no-${String(customer.name || 'khach').replace(/[^a-zA-Z0-9_-]+/g, '-').slice(0, 32)}.png`,
+          text: message,
+        };
+        qrCardHtml = `<div class='debt-qr-png-preview'><img src='${card.dataUrl}' alt='Thẻ VietQR nhắc nợ ${esc(customer.name)}'/></div>
+          <div class='receipt-png-actions'>
+            <button class='btn btn-primary' type='button' data-action='share-debt-qr-png'>Chia sẻ ảnh QR</button>
+            <button class='btn btn-secondary' type='button' data-action='download-debt-qr-png'>Tải ảnh QR</button>
+          </div>`;
+      } catch (_) {}
+    } else if (debtVnd > 0) {
+      qrCardHtml = `<div class='modal-note'>Thiết lập tài khoản ngân hàng VietQR trong Cài đặt để tạo thẻ ảnh QR kèm số tiền nợ tự động.</div>`;
+    }
+    const body = `${qrCardHtml}<label class='form-field' style='margin-top:10px'><span class='input-label'>Lời nhắc${customer.phone ? ' · ' + esc(customer.phone) : ''}</span><textarea class='input finance-reminder-text' rows='4' data-finance-reminder>${esc(message)}</textarea></label>`;
+    const share = window.SlinkAndroid || typeof navigator.share === 'function' ? `<button class='btn ${hasBankQr ? 'btn-secondary' : 'btn-primary'}' type='button' data-action='share-finance-reminder'>Chia sẻ lời nhắc</button>` : '';
+    showModal('Nhắc nợ & VietQR', 'Gửi thẻ ảnh VietQR hoặc sao chép lời nhắc gửi khách hàng.', body, `<button class='btn btn-secondary' type='button' data-action='copy-finance-reminder'>Sao chép</button>${share}`);
+  }
+
+  async function shareOrDownloadDebtQr(downloadOnly) {
+    if (!activeDebtQrPreview.dataUrl || !window.SlinkReceiptImage) {
+      return toast('Chưa có ảnh QR', 'Kiểm tra lại thông tin ngân hàng VietQR.', 'error');
+    }
+    if (downloadOnly) {
+      window.SlinkReceiptImage.triggerDownload(activeDebtQrPreview.dataUrl, activeDebtQrPreview.filename || 'nhac-no-vietqr.png');
+      toast('Đã tải ảnh thẻ VietQR');
+      return;
+    }
+    const res = await window.SlinkReceiptImage.sharePng({
+      dataUrl: activeDebtQrPreview.dataUrl,
+      blob: activeDebtQrPreview.blob,
+      filename: activeDebtQrPreview.filename || 'nhac-no-vietqr.png',
+      title: 'Nhắc thanh toán công nợ',
+      text: activeDebtQrPreview.text || '',
+    });
+    if (res?.method === 'download') toast('Đã tải ảnh thẻ VietQR');
   }
 
   async function useDebtReminder(share) {
@@ -4474,7 +4806,7 @@
   }
 
   async function openSupplierBalance(id) {
-    if (!['owner', 'manager', 'accountant'].includes(store.role)) return;
+    if (!hasPerm('recordCashbook') && !hasPerm('viewReports')) return;
     const supplier = store.suppliers.find(row => row.id === id);
     if (!supplier) return;
     const generation = modalGeneration, session = authSession, storeId = store.id, openedOn = page;
@@ -4517,11 +4849,11 @@
   }
 
   function renderFinanceContent() {
-    const isStockkeeper = store.role === 'stockkeeper';
-    const canViewFullFinance = ['owner', 'manager', 'accountant'].includes(store.role);
-    const canViewCashbook = canViewFullFinance || store.role === 'cashier';
-    const canRecord = ['owner', 'manager', 'accountant'].includes(store.role);
-    const canManageSuppliers = canRecord || isStockkeeper;
+    const canViewFullFinance = hasPerm('recordCashbook') || hasPerm('viewReports');
+    const isStockkeeper = !canViewFullFinance && !hasPerm('operateCashShift') && hasPerm('manageInventory');
+    const canViewCashbook = canViewFullFinance || hasPerm('operateCashShift') || hasPerm('posSell');
+    const canRecord = hasPerm('recordCashbook');
+    const canManageSuppliers = canRecord || hasPerm('manageInventory');
     const canReceivePurchases = canManageSuppliers;
     if (isStockkeeper || (canViewFullFinance && financeTab === 'payables')) {
       const payablesHtml = canViewFullFinance && window.SlinkFinanceUI && offlineState.mode === 'online'
@@ -4567,7 +4899,7 @@
         ${cashSessionHistory ? `<details class='work-details' data-finance-fold='shift-closed'><summary>Xem các ca đã chốt</summary>${cashSessionHistory}</details>` : ''}</section>`;
     }
     const metrics = canViewFullFinance ? `<div class='stat-grid finance-today'><article class='stat-card'><div class='stat-label'>${financeSummary.periodDate || offlineState.mode !== 'online' || offlineState.pending ? 'Thu' + (financeSummary.periodDate ? ' ' + financeSummary.periodDate : '') + ' · trên máy' : 'Đã thu hôm nay'}</div><div class='stat-value'>${financeDataReady ? moneyVndText(financeSummary.todayInVnd) : '—'}</div></article><article class='stat-card'><div class='stat-label'>${financeSummary.periodDate || offlineState.mode !== 'online' || offlineState.pending ? 'Chi' + (financeSummary.periodDate ? ' ' + financeSummary.periodDate : '') + ' · trên máy' : 'Đã chi hôm nay'}</div><div class='stat-value'>${financeDataReady ? moneyVndText(financeSummary.todayOutVnd) : '—'}</div></article></div>` : '';
-    if (financeTab === 'shifts' || store.role === 'cashier') return cashSessionPanel;
+    if (financeTab === 'shifts' || (!canViewFullFinance && !isStockkeeper && hasPerm('operateCashShift'))) return cashSessionPanel;
     if (financeTab === 'vouchers' && canRecord) {
       if (window.SlinkFinanceUI && offlineState.mode === 'online') {
         return window.SlinkFinanceUI.renderVouchersPanel({
@@ -4635,14 +4967,16 @@
   }
 
   function renderFinance() {
-    const stockkeeper = store.role === 'stockkeeper';
-    const canRecord = ['owner', 'manager', 'accountant'].includes(store.role);
+    const canRecord = hasPerm('recordCashbook');
+    const canViewFullFinance = canRecord || hasPerm('viewReports');
+    const stockkeeper = !canViewFullFinance && !hasPerm('operateCashShift') && hasPerm('manageInventory');
+    const cashierOnly = !canViewFullFinance && !stockkeeper && hasPerm('operateCashShift');
     const actions = stockkeeper ? `<button class='btn btn-secondary' data-action='new-purchase-order'>＋ Đặt hàng</button><button class='btn btn-primary' data-action='receive-stock'>＋ Nhập hàng</button>`
       : canRecord ? `<button class='btn btn-primary' data-action='new-expense' data-direction='in'>＋ Thu tiền</button><button class='btn btn-secondary finance-quick-out' data-action='new-expense' data-direction='out'>− Chi tiền</button><button class='btn btn-secondary' data-action='open-cash-transfer'>⇄ Chuyển quỹ</button>` : '';
     const heading = pageHeading(stockkeeper ? 'Nhập hàng' : 'Thu chi', '', actions);
-    const tabOptions = canRecord ? [['cashbook', 'Sổ quỹ'], ['vouchers', 'Phiếu thu / chi'], ['shifts', 'Ca & két tiền'], ['receivables', 'Khách nợ'], ['payables', 'Nhà cung cấp']]
-      : store.role === 'cashier' ? [['shifts', 'Ca tiền mặt'], ['cashbook', 'Giao dịch']] : [];
-    if (store.role === 'cashier' && !tabOptions.some(([value]) => value === financeTab)) financeTab = 'shifts';
+    const tabOptions = canViewFullFinance ? [['cashbook', 'Sổ quỹ'], ['vouchers', 'Phiếu thu / chi'], ['shifts', 'Ca & két tiền'], ['receivables', 'Khách nợ'], ['payables', 'Nhà cung cấp']]
+      : cashierOnly ? [['shifts', 'Ca tiền mặt'], ['cashbook', 'Giao dịch']] : [];
+    if (cashierOnly && !tabOptions.some(([value]) => value === financeTab)) financeTab = 'shifts';
     const tabs = tabOptions.length ? `<nav class='workspace-tabs finance-tabs' aria-label='Các phần thu chi'>${tabOptions.map(([value, label]) => `<button type='button' data-action='finance-tab' data-tab='${value}' ${financeTab === value ? `aria-current='page'` : ''}>${label}</button>`).join('')}</nav>` : '';
     const mobileActions = canRecord ? `<div class='mobile-task-actions finance-task-actions'><button class='btn btn-primary' data-action='new-expense' data-direction='in'>＋ Thu tiền</button><button class='btn btn-secondary finance-quick-out' data-action='new-expense' data-direction='out'>− Chi tiền</button></div>`
       : stockkeeper ? `<div class='mobile-task-actions finance-task-actions'><button class='btn btn-primary' data-action='receive-stock'>＋ Nhập hàng</button><button class='btn btn-secondary' data-action='new-purchase-order'>＋ Đặt hàng</button></div>` : '';
@@ -4767,7 +5101,7 @@
       const displayedQuantity = pending ? pendingQuantity : maximum;
       return `<article class='purchase-line-card' data-receipt-line data-id='${item.id}' data-cost='${esc(item.unitCostVnd)}'><div class='purchase-line-head'><strong>${esc(item.productName)} <small>${esc(item.sku)}</small></strong><span>${pending ? `Lần trước đã gửi ${number(Number(displayedQuantity))} ${esc(item.unit)}` : `Còn lại ${number(Number(maximum))} ${esc(item.unit)}`}</span></div><div class='form-field'><label class='input-label' for='receipt-quantity-${item.id}'>Số lượng chuyến này</label><input class='input' id='receipt-quantity-${item.id}' data-receipt-quantity type='number' min='0' ${pending ? `max='${esc(displayedQuantity)}'` : `max='${esc(maximum)}'`} step='0.001' value='${esc(displayedQuantity)}' ${pending ? 'disabled' : ''}/></div></article>`;
     }).join('');
-    const canPay = ['owner', 'manager', 'accountant'].includes(store.role);
+    const canPay = hasPerm('recordCashbook') || hasPerm('viewReports');
     const disabled = pending ? 'disabled' : '';
     const payload = pending?.payload || {};
     const form = `<form id='entity-form' data-form='purchase-order-receipt' data-id='${order.id}'><div class='form-grid'><div class='form-field full'><div class='purchase-order-receipt-lines'>${rows}</div><div class='checkout-total' style='margin:12px 0 0'><span>Giá trị chuyến nhận</span><strong id='purchase-order-receipt-total'>Đang tính…</strong></div></div>${canPay ? `<div class='form-field'><label class='input-label' for='receipt-paid'>Thanh toán lần này (VND)</label><input class='input' id='receipt-paid' name='paid' type='number' min='0' step='1' value='${esc(payload.amountPaidVnd ?? '0')}' ${disabled}/></div><div class='form-field'><label class='input-label' for='receipt-method'>Phương thức</label><div class='select-wrap'><select class='input' id='receipt-method' name='method' ${disabled}><option value='cash' ${!payload.method || payload.method === 'cash' ? 'selected' : ''}>Tiền mặt</option><option value='bank_transfer' ${payload.method === 'bank_transfer' ? 'selected' : ''}>Chuyển khoản</option><option value='bank_qr' ${payload.method === 'bank_qr' ? 'selected' : ''}>QR ngân hàng</option><option value='card' ${payload.method === 'card' ? 'selected' : ''}>Thẻ</option><option value='other' ${payload.method === 'other' ? 'selected' : ''}>Khác</option></select></div></div>` : ''}<div class='form-field full'><label class='input-label' for='receipt-note'>Ghi chú chuyến nhận</label><input class='input' id='receipt-note' name='note' maxlength='500' value='${esc(payload.note || '')}' ${disabled}/></div></div>${pending ? `<div class='modal-note'>Phiếu nhận đang chờ máy chủ xác nhận. Gửi lại cùng nội dung để tránh cộng tồn kho hai lần.</div>` : `<div class='modal-note'>Chỉ số lượng chuyến này được cộng kho và ghi công nợ. Số còn lại vẫn nằm trong đơn đặt hàng.</div>`}</form>`;
@@ -4948,6 +5282,7 @@
       closeModal();
       await loadFinancePage();
       await loadInventoryPage(searchTerms.inventory, inventoryOffset);
+      emitSyncDomains(['stock', 'products', 'dashboard'], { source: 'stock-bulk-count' });
       await loadProductsPage(searchTerms.products, productOffset);
       render();
       toast('Đã ghi nhận chuyến hàng', `${result.purchase.number} · ${result.purchaseOrder.number} · ${moneyVndText(result.purchase.totalVnd)}`);
@@ -4979,12 +5314,12 @@
   }
 
   function renderSettings() {
-    const canEdit = ['owner', 'manager'].includes(store.role);
+    const canEdit = hasPerm('manageSettings');
     const disabled = canEdit ? '' : 'disabled';
-    if (['cashier', 'affiliate'].includes(store.role)) {
+    if (store.role === 'affiliate' || (!canEdit && !hasPerm('manageInventory') && !hasPerm('viewReports') && !hasPerm('recordCashbook'))) {
       return pageHeading('Cài đặt', '', '') +
         `<section class='settings-panel settings-group' data-label='Tài khoản'>${renderAccountSummary()}${renderChangePasswordForm()}${renderAccountSecurity()}</section>` +
-        (store.role === 'cashier' ? `<section class='settings-panel settings-group' data-label='Bán hàng & Máy in'>${renderPosPrefsSettings()}</section>` : '') +
+        (hasPerm('posSell') ? `<section class='settings-panel settings-group' data-label='Bán hàng & Máy in'>${renderPosPrefsSettings()}</section>` : '') +
         `<section class='settings-panel settings-group' data-label='Dữ liệu & Ứng dụng'>${renderDeviceSettings()}</section>`;
     }
     const storeInfoBlock = `<section class='panel settings-panel'><h2>Thông tin cửa hàng</h2><form id='entity-form' data-form='settings' data-version='${store.settings.version || 1}'><div class='form-grid'><div class='form-field full'><label class='input-label' for='setting-store-name'>Tên cửa hàng *</label><input class='input' id='setting-store-name' name='storeName' value='${esc(store.settings.storeName)}' required minlength='2' maxlength='160' ${disabled}/></div><div class='form-field'><label class='input-label' for='setting-phone'>Số điện thoại</label><input class='input' id='setting-phone' name='phone' value='${esc(store.settings.phone)}' inputmode='tel' maxlength='40' ${disabled}/></div><div class='form-field full'><label class='input-label' for='setting-address'>Địa chỉ</label><input class='input' id='setting-address' name='address' value='${esc(store.settings.address)}' maxlength='300' ${disabled}/></div><div class='form-field full'><label class='input-label' for='setting-footer'>Lời chào biên nhận</label><input class='input' id='setting-footer' name='receiptFooter' value='${esc(store.settings.receiptFooter)}' maxlength='240' placeholder='Cảm ơn quý khách' ${disabled}/></div></div>${canEdit ? `<div class='modal-footer' style='padding:17px 0 0;margin-top:12px'><button class='btn btn-primary' type='submit'>Lưu thay đổi</button></div>` : ''}</form></section>`;
@@ -5102,6 +5437,21 @@
   let staffRoleFilter = '';
   let staffSearchTerm = '';
 
+  function renderStaffPermFieldset(member) {
+    const eff = resolveEffectivePermissions(member.role, member.permissions, member.effectivePermissions);
+    const uid = esc(member.user_id);
+    const toggles = [
+      ['view_cost_price', 'Xem giá vốn & lãi gộp'],
+      ['edit_products', 'Thêm / sửa sản phẩm'],
+      ['void_or_return_order', 'Hủy đơn & đổi / trả hàng'],
+      ['record_cashbook', 'Ghi phiếu thu chi & sổ quỹ'],
+      ['view_reports', 'Xem báo cáo & doanh thu'],
+    ].map(function ([key, label]) {
+      return `<label class='staff-perm-toggle'><input type='checkbox' data-member-perm='${uid}' data-perm-key='${key}' ${eff[key] ? 'checked' : ''}/><span>${label}</span></label>`;
+    }).join('');
+    return `<fieldset class='staff-perms' data-member-perms='${uid}'><div class='staff-perm-header'><span class='staff-perm-title'>Quyền chi tiết theo nhân viên</span><button class='link-button' type='button' data-action='reset-member-perms' data-id='${uid}'>Đặt lại theo vai trò</button></div><div class='staff-perm-grid'>${toggles}</div><label class='staff-perm-discount'><span>Mức giảm giá tối đa tại POS (%)</span><input class='input' type='number' min='0' max='100' step='1' data-member-perm='${uid}' data-perm-key='pos_max_discount_pct' value='${esc(String(eff.pos_max_discount_pct ?? 0))}'/></label></fieldset>`;
+  }
+
   function renderStaff() {
     if (store.role !== 'owner') return `<section class='panel locked-page'><div class='empty-icon'>${icon('users', 23)}</div><h2>Không có quyền quản lý nhân viên</h2><p>Chỉ chủ cửa hàng mới có thể mời, phân quyền hoặc tạm khóa thành viên.</p></section>`;
     const q = staffSearchTerm.trim().toLocaleLowerCase('vi');
@@ -5121,7 +5471,7 @@
       const codeBadge = member.staff_code ? `<span class='badge badge-neutral' style='margin-right:6px'>${esc(member.staff_code)}</span>` : '';
       const commPercent = Number(member.commission_rate_bps || 0) / 100;
       const perfSummary = `${number(member.orders_count || 0)} đơn bán · Doanh số ${moneyVndText(member.revenue_vnd || '0')}${commPercent > 0 ? ` · Hoa hồng (${commPercent}%): ${moneyVndText(member.commission_vnd || '0')}` : ''}${Number(member.base_salary_vnd || 0) > 0 ? ` · Lương cứng: ${moneyVndText(member.base_salary_vnd)}` : ''}${Number(member.shifts_count || 0) > 0 ? ` · ${number(member.shifts_count)} ca thu ngân` : ''}`;
-      return `<article class='staff-row'><div class='staff-person'><span class='avatar'>${esc(initials(member.display_name))}</span><span><div>${codeBadge}<button type='button' class='link-button' data-action='staff-activity' data-id='${esc(member.user_id)}'>${esc(member.display_name)}</button>${member.job_title ? ` <small class='muted'>(${esc(member.job_title)})</small>` : ''}</div><small>${esc(member.email)}${member.phone ? ` · SĐT: ${esc(member.phone)}` : ''}</small><small>${esc(staffRoleName(member.role))} · ${member.status === 'suspended' ? 'Tạm khóa' : 'Đang làm'} · Tham gia ${esc(joined)}</small><small style='color:var(--accent-strong);font-weight:600'>${perfSummary}</small></span></div><details class='staff-details' data-staff-detail='${esc(member.user_id)}' ${staffExpandedIds.has(member.user_id) ? 'open' : ''}><summary>Sửa hồ sơ, lương hoa hồng &amp; quyền</summary><div class='staff-controls' style='display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px'><label><span>Họ tên</span><input class='input' data-member-name='${member.user_id}' value='${esc(member.display_name || '')}' maxlength='120'/></label><label><span>Mã NV</span><input class='input' data-member-code='${member.user_id}' value='${esc(member.staff_code || '')}' maxlength='40' placeholder='NV-001'/></label><label><span>Số điện thoại</span><input class='input' data-member-phone='${member.user_id}' value='${esc(member.phone || '')}' maxlength='32' placeholder='09xx...'/></label><label><span>Chức danh / Ca</span><input class='input' data-member-title='${member.user_id}' value='${esc(member.job_title || '')}' maxlength='120' placeholder='Thu ngân ca sáng'/></label><label><span>Vai trò</span><select class='input' data-member-role='${member.user_id}'>${Array.from(['manager', 'cashier', 'stockkeeper', 'accountant']).map(function (role) { return `<option value='${role}' ${member.role === role ? 'selected' : ''}>${staffRoleName(role)}</option>`; }).join('')}</select></label><label><span>Trạng thái</span><select class='input' data-member-status='${member.user_id}'><option value='active' ${member.status === 'active' ? 'selected' : ''}>Đang hoạt động</option><option value='suspended' ${member.status === 'suspended' ? 'selected' : ''}>Tạm khóa</option></select></label><label><span>Lương cơ bản (đ/tháng)</span><input class='input' type='number' min='0' step='1' data-member-salary='${member.user_id}' value='${esc(member.base_salary_vnd || '0')}'/></label><label><span>Hoa hồng doanh số (%)</span><input class='input' type='number' min='0' max='100' step='0.1' data-member-commission='${member.user_id}' value='${esc(commPercent)}'/></label><label style='grid-column:1 / -1'><span>Ghi chú hồ sơ</span><input class='input' data-member-note='${member.user_id}' value='${esc(member.note || '')}' maxlength='500' placeholder='Ghi chú hợp đồng, ca làm việc...'/></label><div style='grid-column:1 / -1;display:flex;justify-content:flex-end'><button class='btn btn-primary' data-action='save-staff-member' data-id='${member.user_id}'>Lưu hồ sơ &amp; quyền</button></div></div><fieldset class='staff-scope' data-member-scope='${member.user_id}' ${member.role === 'stockkeeper' ? '' : 'hidden'}><legend>Phạm vi kho của nhân viên kho</legend><label class='staff-scope-mode'><span>Kho được phép truy cập</span><select class='input' data-member-scope-mode='${member.user_id}'><option value='all' ${scopeMode === 'all' ? 'selected' : ''}>Tất cả kho hiện tại và kho mới</option><option value='selected' ${scopeMode === 'selected' ? 'selected' : ''}>Chỉ các kho đã chọn</option></select></label><div class='staff-warehouse-options' data-member-warehouse-list='${member.user_id}' ${scopeMode === 'selected' ? '' : 'hidden'}>${warehouseChecks || `<small>Chưa có kho đang hoạt động.</small>`}</div><small>Kho mới chỉ tự cấp cho nhân viên ở chế độ “Tất cả kho”.</small></fieldset></details></article>`;
+      return `<article class='staff-row'><div class='staff-person'><span class='avatar'>${esc(initials(member.display_name))}</span><span><div>${codeBadge}<button type='button' class='link-button' data-action='staff-activity' data-id='${esc(member.user_id)}'>${esc(member.display_name)}</button>${member.job_title ? ` <small class='muted'>(${esc(member.job_title)})</small>` : ''}</div><small>${esc(member.email)}${member.phone ? ` · SĐT: ${esc(member.phone)}` : ''}</small><small>${esc(staffRoleName(member.role))} · ${member.status === 'suspended' ? 'Tạm khóa' : 'Đang làm'} · Tham gia ${esc(joined)}</small><small style='color:var(--accent-strong);font-weight:600'>${perfSummary}</small></span></div><details class='staff-details' data-staff-detail='${esc(member.user_id)}' ${staffExpandedIds.has(member.user_id) ? 'open' : ''}><summary>Sửa hồ sơ, lương hoa hồng &amp; quyền</summary><div class='staff-controls' style='display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px'><label><span>Họ tên</span><input class='input' data-member-name='${member.user_id}' value='${esc(member.display_name || '')}' maxlength='120'/></label><label><span>Mã NV</span><input class='input' data-member-code='${member.user_id}' value='${esc(member.staff_code || '')}' maxlength='40' placeholder='NV-001'/></label><label><span>Số điện thoại</span><input class='input' data-member-phone='${member.user_id}' value='${esc(member.phone || '')}' maxlength='32' placeholder='09xx...'/></label><label><span>Chức danh / Ca</span><input class='input' data-member-title='${member.user_id}' value='${esc(member.job_title || '')}' maxlength='120' placeholder='Thu ngân ca sáng'/></label><label><span>Vai trò</span><select class='input' data-member-role='${member.user_id}'>${Array.from(['manager', 'cashier', 'stockkeeper', 'accountant']).map(function (role) { return `<option value='${role}' ${member.role === role ? 'selected' : ''}>${staffRoleName(role)}</option>`; }).join('')}</select></label><label><span>Trạng thái</span><select class='input' data-member-status='${member.user_id}'><option value='active' ${member.status === 'active' ? 'selected' : ''}>Đang hoạt động</option><option value='suspended' ${member.status === 'suspended' ? 'selected' : ''}>Tạm khóa</option></select></label><label><span>Lương cơ bản (đ/tháng)</span><input class='input' type='number' min='0' step='1' data-member-salary='${member.user_id}' value='${esc(member.base_salary_vnd || '0')}'/></label><label><span>Hoa hồng doanh số (%)</span><input class='input' type='number' min='0' max='100' step='0.1' data-member-commission='${member.user_id}' value='${esc(commPercent)}'/></label><label style='grid-column:1 / -1'><span>Ghi chú hồ sơ</span><input class='input' data-member-note='${member.user_id}' value='${esc(member.note || '')}' maxlength='500' placeholder='Ghi chú hợp đồng, ca làm việc...'/></label><div style='grid-column:1 / -1;display:flex;justify-content:flex-end'><button class='btn btn-primary' data-action='save-staff-member' data-id='${member.user_id}'>Lưu hồ sơ &amp; quyền</button></div></div>${renderStaffPermFieldset(member)}<fieldset class='staff-scope' data-member-scope='${member.user_id}' ${member.role === 'stockkeeper' ? '' : 'hidden'}><legend>Phạm vi kho của nhân viên kho</legend><label class='staff-scope-mode'><span>Kho được phép truy cập</span><select class='input' data-member-scope-mode='${member.user_id}'><option value='all' ${scopeMode === 'all' ? 'selected' : ''}>Tất cả kho hiện tại và kho mới</option><option value='selected' ${scopeMode === 'selected' ? 'selected' : ''}>Chỉ các kho đã chọn</option></select></label><div class='staff-warehouse-options' data-member-warehouse-list='${member.user_id}' ${scopeMode === 'selected' ? '' : 'hidden'}>${warehouseChecks || `<small>Chưa có kho đang hoạt động.</small>`}</div><small>Kho mới chỉ tự cấp cho nhân viên ở chế độ “Tất cả kho”.</small></fieldset></details></article>`;
     }).join('');
     const inviteRows = staffState.invitations.map(function (invite) {
       const pendingInvite = invite.status === 'pending';
@@ -5352,6 +5702,7 @@
       });
       closeModal();
       channelState.view = 'orders';
+      emitSyncDomains(['channels', 'stock', 'dashboard'], { source: 'channel-order-create' });
       await loadChannelOrders(0);
       render();
       toast('Đơn kênh đã được ghi nhận', `${result.order.externalOrderRef} · ${moneyVndText(result.order.totalVnd)} · tồn đã được giữ tại ${result.order.warehouseName}.`);
@@ -5383,6 +5734,7 @@
         body: { status, version: Number(form.dataset.version), reason },
       });
       closeModal();
+      emitSyncDomains(['channels', 'stock', 'dashboard'], { source: 'channel-order-status' });
       await loadChannelOrders(channelState.orderOffset);
       toast('Đã cập nhật đơn kênh', channelOrderStatusNames[status]);
     } catch (error) {
@@ -5526,6 +5878,7 @@
         method: id ? 'PUT' : 'POST', headers: { 'idempotency-key': form.dataset.idempotencyKey }, body: payload,
       });
       closeModal();
+      emitSyncDomains(['channels'], { source: 'channel-profile' });
       await loadChannelCatalog(channelState.offset);
       toast('Đã lưu gian hàng', 'Trạng thái kết nối vẫn là chưa kết nối.');
     } catch (error) {
@@ -5552,6 +5905,7 @@
         method: id ? 'PUT' : 'POST', headers: { 'idempotency-key': form.dataset.idempotencyKey }, body: payload,
       });
       closeModal();
+      emitSyncDomains(['channels'], { source: 'channel-profile' });
       await loadChannelCatalog(channelState.offset);
       toast('Đã lưu ánh xạ SKU', 'Ánh xạ chỉ phục vụ đối chiếu thủ công trong Slink.');
     } catch (error) {
@@ -5579,6 +5933,7 @@
         method: 'POST', headers: { 'idempotency-key': form.dataset.idempotencyKey }, body: { version: Number(form.dataset.version) },
       });
       closeModal();
+      emitSyncDomains(['channels'], { source: 'channel-profile' });
       await loadChannelCatalog(channelState.offset);
       toast(kind === 'profile' ? 'Đã lưu trữ gian hàng' : 'Đã lưu trữ ánh xạ SKU', 'Lịch sử được giữ trong cửa hàng.');
     } catch (error) {
@@ -5720,8 +6075,16 @@
     }
   }
 
+  function restoreVietQrBrightness() {
+    if (vietqrBrightnessActive) {
+      vietqrBrightnessActive = false;
+      window.SlinkPosHardware?.setScreenBrightness(-1);
+    }
+  }
+
   function showModal(title, subtitle, body, footer, wide, options = {}) {
     stopScanCamera();
+    restoreVietQrBrightness();
     document.querySelectorAll('details.catalog-more[open]').forEach(function (d) { d.open = false; });
     if (modal.hidden) {
       const active = document.activeElement;
@@ -5777,6 +6140,8 @@
   function closeModal() {
     const wasOpen = !modal.hidden;
     stopScanCamera();
+    restoreVietQrBrightness();
+    modal.classList.remove('modal-vietqr-fullscreen');
     modal.hidden = true;
     backdrop.hidden = true;
     modalEditedField = null;
@@ -6689,19 +7054,22 @@
   }
 
   function productIdentityFields(product, barcode, grouped, sku = '', includeCost = true, includeBarcode = true) {
+    const showCost = includeCost && hasPerm('viewCostPrice');
     return `<div class='form-grid'>
       <div class='form-field'><label class='input-label' for='product-sku'>Mã hàng (SKU)${product ? " <span class='editor-required' aria-hidden='true'>*</span>" : ''}</label><div class='editor-input-action'><input class='input' id='product-sku' name='sku' value='${esc(product?.sku ?? sku)}' placeholder='Để trống, Slink tự tạo' maxlength='80' ${product ? 'required' : ''}/><button class='btn btn-secondary' type='button' data-action='generate-product-sku' aria-label='Tạo mã SKU' title='Tạo mã SKU'>${icon('spark', 19)}</button></div></div>
       ${includeBarcode ? productBarcodeFieldHtml(barcode, true) : ''}
       ${productEditorCategory(product, grouped)}
-      ${includeCost ? productCostField(product) : ''}
+      ${showCost ? productCostField(product) : ''}
     </div>`;
   }
 
   function productSaleFields(product, grouped, includeCost = false) {
+    const showCost = includeCost && hasPerm('viewCostPrice');
     return `<div class='form-grid editor-sale-fields'>
       <div class='form-field'><label class='input-label' for='quick-product-price'>Giá bán (đ) <span class='editor-required' aria-hidden='true'>*</span></label><input class='input' id='quick-product-price' name='price' type='number' min='0' step='1' value='${esc(product?.price ?? '')}' required aria-describedby='product-sale-unit product-price-warning'/><small id='product-sale-unit'>Giá của 1 <span data-product-sale-unit>${esc(product?.unit || 'cái')}</span></small></div>
       <div class='form-field'><label class='input-label' for='product-base-unit'>Đơn vị tính</label><input class='input' id='product-base-unit' name='unit' value='${esc(product?.unit || 'cái')}' list='product-base-units' maxlength='40' ${grouped ? 'readonly' : ''}/><datalist id='product-base-units'><option value='cái'></option><option value='chiếc'></option><option value='tờ'></option><option value='hộp'></option><option value='quyển'></option><option value='kg'></option></datalist></div>
-      ${includeCost ? productCostField(product) : ''}
+      ${showCost ? productCostField(product) : ''}
+      <div class='form-field'><label class='input-label' for='product-warranty-months'>Bảo hành (tháng)</label><input class='input' id='product-warranty-months' name='warrantyMonths' type='number' min='0' max='120' step='1' inputmode='numeric' value='${esc(product?.warrantyMonths ?? 0)}' placeholder='0'/></div>
       <p class='editor-field-note editor-price-warning full' id='product-price-warning' data-product-price-warning role='status' hidden>Giá bán thấp hơn giá vốn mỗi đơn vị. Kiểm tra lại số tiền trước khi lưu.</p>
       <div class='editor-field-note editor-price-warning full' data-product-cost-conflict role='status' hidden><span data-cost-conflict-text></span> <button type='button' class='link-button' data-action='use-pack-cost'>Dùng giá nhập quy đổi</button><label><input type='checkbox' name='confirmCostMismatch'/> Giữ giá vốn đã nhập</label></div>
     </div>`;
@@ -6898,7 +7266,7 @@
     const canSell = canAccessRoute('pos');
     const nextRoute = readyToSell && canSell ? 'pos' : 'inventory';
     const nextLabel = readyToSell && canSell ? 'Bắt đầu bán' : 'Xem kho hàng';
-    const canReceive = !readyToSell && productById(productId) && ['owner', 'manager', 'stockkeeper', 'accountant'].includes(store.role);
+    const canReceive = !readyToSell && productById(productId) && (hasPerm('manageInventory') || hasPerm('recordCashbook'));
     const next = canReceive
       ? `<button class='btn btn-primary' data-action='add-product-units' data-id='${esc(productId)}'>＋ Thêm tồn / Quét mã</button>`
       : `<button class='btn btn-primary' data-route='${nextRoute}'>${nextLabel}</button>`;
@@ -6960,6 +7328,11 @@
       const sku = rawSku || newProductSku(key);
       const rawThreshold = String(formData.get('minStock') || '').trim() || '0';
       if (!quantityPattern.test(rawThreshold)) return reportError('Mức nhắc tồn phải không âm và tối đa 3 chữ số thập phân.');
+      const rawWarranty = String(formData.get('warrantyMonths') ?? '0').trim() || '0';
+      const warrantyMonths = Number(rawWarranty);
+      if (!/^\d+$/.test(rawWarranty) || !Number.isSafeInteger(warrantyMonths) || warrantyMonths < 0 || warrantyMonths > 120) {
+        return reportError('Thời gian bảo hành phải là số nguyên từ 0 đến 120 tháng.');
+      }
       let image; try { image = readProductPhoto(form); } catch (error) { return reportError(error.message); }
       let purchasePack; try { purchasePack = readProductPack(form); } catch (error) { return reportError(error.message); }
       if (purchasePack && !String(formData.get('cost') || '').trim()) cost = Number(window.SlinkPurchaseUnits.fromPack(purchasePack).unitCostVnd);
@@ -6983,6 +7356,7 @@
         salePriceVnd: price,
         costVnd: cost,
         lowStockThreshold: rawThreshold,
+        warrantyMonths,
         inventoryTracked,
         openingQuantity,
         ...(isSerialMode ? { serialTracked: true, serialCodes } : {}),
@@ -7011,7 +7385,9 @@
         else closeModal();
       }
       await loadProductsPage('', 0);
+      emitSyncDomains(['products'], { source: 'product-bulk-update' });
       if (!sameContext()) return;
+      emitSyncDomains(['products', 'stock', 'dashboard'], { source: 'quick-product' });
       const createdList = Array.isArray(result.products) ? result.products : [];
       for (const cRow of createdList) {
         if (cRow && !productById(cRow.id)) store.products.push(mapProduct(cRow));
@@ -7083,7 +7459,7 @@
       ${!product.serialTracked ? `<div data-add-units-panel='quantity' ${defaultTab === 'quantity' ? '' : 'hidden'}>
         <div class='form-grid'>
           <div class='form-field'><label class='input-label' for='add-units-qty'>Số lượng thêm (${esc(product.unit)}) *</label><input class='input' id='add-units-qty' name='addQty' type='number' min='0.001' step='0.001' inputmode='decimal' placeholder='Ví dụ: 10'/></div>
-          <div class='form-field'><label class='input-label' for='add-units-cost'>Giá nhập 1 ${esc(product.unit)} (đ)</label><input class='input' id='add-units-cost' name='unitCostVnd' type='number' min='0' step='1' value='${esc(product.cost || 0)}'/></div>
+          ${hasPerm('viewCostPrice') ? `<div class='form-field'><label class='input-label' for='add-units-cost'>Giá nhập 1 ${esc(product.unit)} (đ)</label><input class='input' id='add-units-cost' name='unitCostVnd' type='number' min='0' step='1' value='${esc(product.cost || 0)}'/></div>` : `<input type='hidden' name='unitCostVnd' value='0'/>`}
         </div>
         <div class='form-field'><label class='input-label' for='add-units-note'>Ghi chú</label><input class='input' id='add-units-note' name='note' maxlength='240' placeholder='Nhập thêm hàng cùng loại'/></div>
       </div>` : ''}
@@ -7138,6 +7514,7 @@
         if (canClose) closeModal();
         await Promise.all([loadProductsPage(searchTerms.products, 0), page === 'inventory' ? loadInventoryPage() : Promise.resolve()]);
         if (!sameContext()) return;
+        emitSyncDomains(['products', 'stock', 'dashboard'], { source: 'add-product-units' });
         const addedCodes = (res.serials || []).map(r => r.code);
         toast('Đã thêm mã vào kho', `${product.name}: +${number(res.addedCount)} ${product.unit} (tồn mới: ${number(res.newOnHand)}).`);
         if (printAfter && canClose && modal.hidden && addedCodes.length) {
@@ -7166,6 +7543,7 @@
         if (canClose) closeModal();
         await Promise.all([loadProductsPage(searchTerms.products, 0), page === 'inventory' ? loadInventoryPage() : Promise.resolve()]);
         if (!sameContext()) return;
+        emitSyncDomains(['products', 'stock', 'cashbook', 'suppliers', 'dashboard'], { source: 'add-product-units-purchase' });
         toast('Đã nhập thêm tồn kho', `${product.name}: +${number(qty)} ${product.unit}.`);
         if (printAfter && canClose && modal.hidden) {
           openBarcodePrintModal([{ ...product, copies: Math.min(200, Math.max(1, Math.round(qty))) }]);
@@ -7184,10 +7562,33 @@
     }
   }
 
+  function formatSerialWarrantyBadge(row, fallbackWarrantyMonths = 0) {
+    const expiresAt = row?.warranty_expires_at || row?.warrantyExpiresAt || '';
+    const status = row?.warrantyStatus || row?.warranty_status || '';
+    if (row?.status === 'in_stock') {
+      const months = Number(row?.warrantyMonths ?? row?.warranty_months ?? fallbackWarrantyMonths ?? 0);
+      return months > 0
+        ? `<span class='badge badge-neutral'>${number(months)} tháng khi bán</span>`
+        : `<span class='badge badge-warranty-none'>Không bảo hành</span>`;
+    }
+    if (!expiresAt && status === 'none') {
+      return `<span class='badge badge-warranty-none'>Không bảo hành</span>`;
+    }
+    if (expiresAt) {
+      const expTime = new Date(expiresAt).getTime();
+      const active = status ? status === 'active' : (Number.isFinite(expTime) && expTime >= Date.now());
+      return `<span class='badge ${active ? 'badge-warranty-ok' : 'badge-warranty-expired'}'>${active ? 'Còn BH' : 'Hết BH'} · ${esc(humanDate(expiresAt))}</span>`;
+    }
+    const months = Number(row?.warrantyMonths ?? row?.warranty_months ?? fallbackWarrantyMonths ?? 0);
+    return months > 0
+      ? `<span class='badge badge-neutral'>BH ${number(months)} tháng</span>`
+      : `<span class='badge badge-warranty-none'>Không bảo hành</span>`;
+  }
+
   async function openProductSerials(productId, statusFilter = 'all') {
     const product = productById(productId) || inventoryProducts.find(item => item.id === productId);
     if (!product) return;
-    const canEdit = ['owner', 'manager', 'stockkeeper'].includes(store.role);
+    const canEdit = hasPerm('editProducts');
     showModal(`Mã riêng · ${product.name}`, '', `<div class='empty-state'><span>Đang tải danh sách mã…</span></div>`, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button>`, true);
     const gen = modalGeneration;
     try {
@@ -7202,9 +7603,9 @@
         <button type='button' class='segmented-btn ${statusFilter === 'sold' ? 'active' : ''}' data-action='filter-product-serials' data-id='${esc(productId)}' data-status='sold'>Đã bán (${number(data.counts.sold)})</button>
       </div>`;
       const rowsHtml = (data.serials || []).length
-        ? `<div class='table-wrap'><table class='data-table'><thead><tr><th>Mã riêng / QR</th><th>Kho</th><th>Trạng thái</th><th>Đơn hàng</th></tr></thead><tbody>${data.serials.map(s => `<tr><td><code>${esc(s.code)}</code></td><td>${esc(s.warehouse_name || '')}</td><td>${s.status === 'in_stock' ? `<span class='badge badge-success'>Còn trong kho</span>` : `<span class='badge badge-neutral'>Đã bán</span>`}</td><td>${s.order_number ? `<button type='button' class='link-button' data-action='order-detail' data-id='${esc(s.order_id)}'>${esc(s.order_number)}</button>` : '—'}</td></tr>`).join('')}</tbody></table></div>`
+        ? `<div class='table-wrap'><table class='data-table'><thead><tr><th>Mã riêng / QR</th><th>Kho</th><th>Trạng thái</th><th>Bảo hành</th><th>Đơn hàng</th></tr></thead><tbody>${data.serials.map(s => `<tr><td><button type='button' class='serial-chip' data-action='lookup-serial-warranty' data-code='${esc(s.code)}'>${esc(s.code)}</button></td><td>${esc(s.warehouse_name || '')}</td><td>${s.status === 'in_stock' ? `<span class='badge badge-success'>Còn trong kho</span>` : `<span class='badge badge-neutral'>Đã bán</span>`}</td><td>${formatSerialWarrantyBadge(s, product.warrantyMonths)}</td><td>${s.order_number ? `<button type='button' class='link-button' data-action='order-detail' data-id='${esc(s.order_id)}'>${esc(s.order_number)}</button>` : '—'}</td></tr>`).join('')}</tbody></table></div>`
         : `<div class='empty-state'><strong>Chưa có mã nào</strong></div>`;
-      const footer = `${canEdit ? `<button class='btn btn-secondary' type='button' data-action='add-product-units' data-id='${esc(productId)}'>＋ Thêm / quét mã</button>` : ''}${canEdit && warehouses.length > 1 && inStockCodes.length ? `<button class='btn btn-secondary' type='button' data-action='open-transfer-serials' data-id='${esc(productId)}'>Chuyển kho</button>` : ''}${inStockCodes.length ? `<button class='btn btn-secondary' type='button' data-action='print-product-serials' data-id='${esc(productId)}'>In ${number(inStockCodes.length)} tem còn kho</button>` : ''}<button class='btn btn-primary' type='button' data-action='close-modal'>Đóng</button>`;
+      const footer = `${canEdit ? `<button class='btn btn-secondary' type='button' data-action='add-product-units' data-id='${esc(productId)}'>＋ Thêm / quét mã</button>` : ''}${hasPerm('manageInventory') && warehouses.length > 1 && inStockCodes.length ? `<button class='btn btn-secondary' type='button' data-action='open-transfer-serials' data-id='${esc(productId)}'>Chuyển kho</button>` : ''}${inStockCodes.length ? `<button class='btn btn-secondary' type='button' data-action='print-product-serials' data-id='${esc(productId)}'>In ${number(inStockCodes.length)} tem còn kho</button>` : ''}<button class='btn btn-primary' type='button' data-action='close-modal'>Đóng</button>`;
       modal.dataset.productSerialsCache = JSON.stringify(inStockCodes.map(s => s.code));
       modal.dataset.productSerialsFullCache = JSON.stringify(inStockCodes.map(s => ({ code: s.code, warehouseId: s.warehouse_id, warehouseName: s.warehouse_name })));
       showModal(`Mã riêng · ${product.name}`, '', tabs + rowsHtml, footer, true);
@@ -7261,6 +7662,7 @@
         body: { productId, sourceWarehouseId, destinationWarehouseId, codes, note },
       });
       toast('Đã chuyển kho mã riêng', `${result.transferredCount} mã · ${result.sourceWarehouseName} → ${result.destinationWarehouseName}`);
+      emitSyncDomains(['products', 'stock', 'dashboard'], { source: 'transfer-serials' });
       await loadProductsPage(searchTerms.products, productOffset);
       openProductSerials(productId);
     } catch (error) {
@@ -7302,13 +7704,13 @@
     </form>`;
     const footer = `<button class='btn btn-secondary' type='button' data-action='close-modal'>Hủy</button><button class='btn btn-primary' type='submit' form='entity-form'>${p ? 'Lưu thay đổi' : 'Thêm sản phẩm'}</button>`;
     const actions = p ? [
-      ['add-product-units', '＋ Thêm tồn / Quét mã'],
+      hasPerm('editProducts') ? ['add-product-units', '＋ Thêm tồn / Quét mã'] : null,
       p.serialTracked ? ['view-product-serials', 'Danh sách mã riêng'] : null,
       ['print-barcode-single', 'In tem mã vạch'],
-      p.inventoryTracked && !p.serialTracked && ['owner', 'manager', 'stockkeeper'].includes(store.role) ? ['adjust-stock', 'Kiểm kê tồn kho'] : null,
-      ['owner', 'manager', 'stockkeeper', 'accountant'].includes(store.role) ? ['product-price-history', 'Lịch sử giá'] : null,
-      grouped ? ['add-product-to-existing-variant-group', 'Thêm SKU vào nhóm'] : null,
-      ['owner', 'manager', 'stockkeeper'].includes(store.role) ? ['archive-product', 'Lưu trữ sản phẩm'] : null,
+      p.inventoryTracked && !p.serialTracked && hasPerm('manageInventory') ? ['adjust-stock', 'Kiểm kê tồn kho'] : null,
+      (hasPerm('viewCostPrice') || hasPerm('editProducts') || hasPerm('viewReports')) ? ['product-price-history', 'Lịch sử giá'] : null,
+      grouped && hasPerm('editProducts') ? ['add-product-to-existing-variant-group', 'Thêm SKU vào nhóm'] : null,
+      hasPerm('editProducts') ? ['archive-product', 'Lưu trữ sản phẩm'] : null,
     ].filter(Boolean) : [];
     const headerActions = actions.length ? `<details class='product-editor-more' data-product-editor-more><summary class='btn btn-secondary' aria-label='Thao tác sản phẩm' title='Thao tác sản phẩm'>${icon('more', 21)}</summary><div class='product-editor-more-panel'>${actions.map(([action, label]) => `<button type='button' data-action='${action}' data-id='${esc(p.id)}' ${action === 'archive-product' ? "class='editor-danger'" : ''}>${label}</button>`).join('')}</div></details>` : '';
     showModal(p ? 'Cập nhật sản phẩm' : 'Thêm sản phẩm mới', '', form, footer, true, { productEditor: true, headerActions });
@@ -7401,7 +7803,7 @@
   }
 
   async function openProductPriceHistory(productId) {
-    if (!['owner', 'manager', 'stockkeeper', 'accountant'].includes(store.role)) return toast('Không có quyền', 'Vai trò của bạn không được xem lịch sử giá sản phẩm.', 'error');
+    if (!hasPerm('viewCostPrice') && !hasPerm('editProducts') && !hasPerm('viewReports')) return toast('Không có quyền', 'Vai trò của bạn không được xem lịch sử giá sản phẩm.', 'error');
     const product = productById(productId);
     if (!productId || !store.id) return;
     const requestNumber = ++productPriceHistoryRequestNumber;
@@ -7452,7 +7854,7 @@
     const pending = !c ? loadPendingCustomer() : null;
     const saved = pending ? pending.payload : c;
     const disabled = pending ? 'disabled' : '';
-    const canSetOpeningBalance = ['owner', 'manager', 'accountant'].includes(store.role);
+    const canSetOpeningBalance = hasPerm('recordCashbook') || hasPerm('viewReports');
     const discPercent = saved && saved.discountRateBps ? Number(saved.discountRateBps) / 100 : (saved?.discountPercent ?? 0);
     const hasExtra = Boolean(saved && (saved.customerCode || discPercent > 0 || saved.creditLimitVnd || saved.birthday || saved.gender || saved.companyName || saved.taxCode || saved.email || Number(saved.bonusPoints || 0) !== 0));
     const openingField = !c && canSetOpeningBalance ? `<div class='form-field'><label class='input-label' for='customer-opening-balance'>Nợ ban đầu (đ)</label><input class='input' id='customer-opening-balance' name='openingBalanceVnd' type='number' inputmode='numeric' min='0' step='1' value='${esc(saved ? saved.openingBalanceVnd : '')}' placeholder='0' ${disabled}/></div>` : '';
@@ -7486,7 +7888,7 @@
   }
 
   function openSaveCustomerSegment() {
-    if (!['owner', 'manager', 'accountant'].includes(store.role)) return toast('Không đủ quyền', 'Chỉ chủ cửa hàng, quản lý hoặc kế toán được lưu bộ lọc.', 'error');
+    if (!hasPerm('manageCustomers') || (!hasPerm('viewReports') && !hasPerm('recordCashbook'))) return toast('Không đủ quyền', 'Chỉ tài khoản có quyền báo cáo hoặc sổ quỹ được lưu bộ lọc.', 'error');
     const criteria = customerFilterCriteria();
     if (!criteria.segment && !criteria.tag && criteria.minSpentVnd === '') return toast('Chưa có điều kiện lọc', 'Chọn ít nhất một phân khúc, nhãn hoặc mức chi tiêu trước khi lưu.', 'error');
     const selected = selectedCustomerSavedSegment();
@@ -7520,6 +7922,7 @@
       selectedCustomerSavedSegmentId = saved.id;
       closeModal();
       await loadCustomersPage(searchTerms.customers, 0);
+      emitSyncDomains(['customers', 'debts', 'dashboard'], { source: 'customer-import' });
       if (page === 'customers') render();
       toast(id ? 'Đã cập nhật bộ lọc' : 'Đã lưu bộ lọc', saved.name);
     } catch (error) {
@@ -7541,6 +7944,7 @@
       if (selectedCustomerSavedSegmentId === id) selectedCustomerSavedSegmentId = '';
       closeModal();
       await loadCustomersPage(searchTerms.customers, 0);
+      emitSyncDomains(['customers', 'debts', 'dashboard'], { source: 'customer-import' });
       if (page === 'customers') render();
       toast('Đã xóa bộ lọc', 'Hồ sơ và dữ liệu bán hàng vẫn được giữ nguyên.');
     } catch (error) {
@@ -7553,7 +7957,7 @@
     const pending = loadPendingSupplier();
     const saved = pending ? pending.payload : null;
     const disabled = pending ? 'disabled' : '';
-    const canSetOpeningBalance = ['owner', 'manager', 'accountant'].includes(store.role);
+    const canSetOpeningBalance = hasPerm('recordCashbook') || hasPerm('viewReports');
     const openingBalanceField = canSetOpeningBalance
       ? `<div class='form-field full'><label class='input-label' for='supplier-opening-payable'>Khoản phải trả ban đầu (VND)</label><input class='input' id='supplier-opening-payable' name='openingPayableVnd' type='number' inputmode='numeric' min='0' step='1' value='${esc(saved ? saved.openingPayableVnd : '0')}' ${disabled}/><small>Số còn nợ trước khi bắt đầu dùng Slink. Không ghi khoản này thành tiền chi. Nếu tên đã có, khoản nợ sẽ được cộng vào hồ sơ nhà cung cấp đó.</small></div>`
       : `<input type='hidden' name='openingPayableVnd' value='0'/><div class='form-field full'><small>Khoản phải trả ban đầu do chủ cửa hàng, quản lý hoặc kế toán ghi nhận.</small></div>`;
@@ -7855,7 +8259,7 @@
     const paid = pending?.payload.amountPaidVnd || 0;
     const form = `<form id='entity-form' data-form='receive' class='receive-receipt'>${warehouses.length > 1 ? `<div class='form-grid'>${warehouseField}</div>` : warehouseField}
       <section class='receive-section' aria-labelledby='receive-items-heading'><h3 id='receive-items-heading'>Hàng vừa nhận</h3>
-        ${pending ? '' : `<div class='receive-scan-bar'><label class='input-label' for='receive-barcode-scan'>Quét nhanh bằng mã vạch / SKU</label><input class='input' id='receive-barcode-scan' type='search' placeholder='Quét máy tít hoặc nhập mã rồi bấm Enter để thêm hoặc +1 SL' autocomplete='off'/></div>`}
+        ${pending ? '' : `<div class='receive-scan-bar'><div class='receive-scan-row'><label class='input-label' for='receive-barcode-scan'>Quét nhanh bằng mã vạch / SKU</label><button class='btn btn-secondary' type='button' data-action='toggle-receive-camera'>${icon('scan', 16)} Quét camera</button></div><input class='input' id='receive-barcode-scan' type='search' placeholder='Quét máy tít hoặc nhập mã rồi bấm Enter để thêm hoặc +1 SL' autocomplete='off'/><section class='editor-barcode-camera' data-scan-surface data-scan-mode='receive-cart' data-scan-target='receive-barcode-scan' hidden><div class='scan-camera-stage'><video id='scan-camera-video' playsinline muted hidden aria-label='Camera quét nhanh nhập kho'></video><div class='scan-feedback-pill' data-scan-pill hidden></div></div><p id='scan-camera-status' role='status' aria-live='polite'></p><div class='scan-camera-actions'><label class='scan-continuous-toggle'><input type='checkbox' data-scan-continuous checked/><span>Quét liên tiếp</span></label><button class='btn btn-secondary' type='button' data-action='stop-receive-camera'>Đóng camera</button></div></section></div>`}
         <div id='purchase-lines'>${renderReceivePurchaseLines(initialItems, disabled)}</div>
         ${pending ? '' : `<button class='btn btn-secondary' type='button' data-action='add-purchase-line'>＋ Thêm mặt hàng</button>`}</section>
       <section class='receive-section' aria-labelledby='receive-payment-heading'><h3 id='receive-payment-heading'>Thanh toán và nhà cung cấp</h3>
@@ -8351,6 +8755,7 @@
       clearPendingCashSessionOpen();
       closeModal();
       await loadFinancePage();
+      emitSyncDomains(['cashbook', 'dashboard'], { source: 'cash-session-open' });
       render();
       toast(result.offlineQueued ? 'Đã lưu ca trên máy' : 'Đã mở ca tiền mặt', result.offlineQueued ? '' : 'Các giao dịch được đối soát trong ca này.');
       if (form.dataset.returnFlow === 'checkout' && checkoutPendingPayload) openCheckout();
@@ -8390,6 +8795,7 @@
       clearPendingCashSessionClose(sessionId);
       closeModal();
       await loadFinancePage();
+      emitSyncDomains(['cashbook', 'dashboard'], { source: 'cash-session-close' });
       render();
       const variance = result.session.varianceVnd;
       toast(result.offlineQueued ? 'Đã lưu chốt ca trên máy' : 'Đã chốt ca tiền mặt', variance === '0' ? 'Tiền thực đếm khớp số dự kiến.' : `Chênh lệch đã ghi nhận: ${moneyVndText(variance)}.`);
@@ -8471,6 +8877,7 @@
         voidRestockWarehouseId: row.voidRestockWarehouseId || '',
         voidRestockWarehouseName: row.voidRestockWarehouseName || '',
         method: Array.from(new Set(payments.map(function (p) { return methodLabels[p.method] || p.method; }))).join(' · ') || 'Chưa thu tiền',
+        cashierName: row.cashierName || row.actorName || '',
         note: row.note || '',
         internalNotes: mergeOrderNotes(orderNoteHistoryCache.get(id) || [], Array.isArray(row.internalNotes) ? row.internalNotes : []),
         internalNotesTotal: Number(row.internalNotesTotal) || 0,
@@ -8491,6 +8898,7 @@
             discountVnd: line.discount_vnd,
             total: Number(line.line_total_vnd),
             totalVnd: line.line_total_vnd,
+            soldSerialCodes: Array.isArray(line.sold_serial_codes) ? line.sold_serial_codes.filter(Boolean) : [],
           };
         }),
         returns: row.returns,
@@ -8512,14 +8920,19 @@
       return;
     }
     const c = customerById(o.customerId);
-    const items = o.items.map(function (i) { return `<div class='detail-line'><span>${esc(i.name)} <small>× ${number(i.qty)} ${esc(i.unit)}</small></span><strong>${money(i.total)}</strong></div>`; }).join('');
+    const items = o.items.map(function (i) {
+      const serialChips = (i.soldSerialCodes || []).length
+        ? `<div style='display:flex;flex-wrap:wrap;gap:6px;margin-top:4px'>${i.soldSerialCodes.map(function (code) { return `<button type='button' class='serial-chip' data-action='lookup-serial-warranty' data-code='${esc(code)}' title='Xem bảo hành Serial/IMEI'>BH: ${esc(code)}</button>`; }).join('')}</div>`
+        : '';
+      return `<div class='detail-line' style='flex-wrap:wrap'><span>${esc(i.name)} <small>× ${number(i.qty)} ${esc(i.unit)}</small>${serialChips}</span><strong>${money(i.total)}</strong></div>`;
+    }).join('');
     const returnHistory = o.returns.map(function (r) { return `<div class='timeline-item'><span class='timeline-dot'></span><span><strong>Trả hàng ${esc(r.return_number)}</strong><small>${humanDate(r.occurred_at, true)} · ${money(Number(r.refund_total_vnd))}${r.restock_warehouse_name ? ` · Nhập lại ${esc(r.restock_warehouse_name)}` : ''}</small></span></div>`; }).join('');
     const deliveryNoteBlock = o.note && o.note.startsWith('[GIAO HÀNG]')
       ? `<div class='timeline-item'><span class='timeline-dot'></span><span><strong>Đơn giao hàng</strong><small>${esc(o.note.replace(/^\[GIAO HÀNG\]\s*/, ''))}</small></span></div>`
       : '';
     const body = `<div class='order-details'><section class='panel detail-card'><div class='detail-heading'><div><h2>${esc(o.number)}</h2><p>${humanDate(o.createdAt, true)}${c ? ' · ' + esc(c.name) : ' · Khách lẻ'}</p></div>${statusBadge(o.status)}</div><div class='detail-lines'>${items}<div class='detail-line'><span>Tạm tính</span><strong>${money(o.subtotal)}</strong></div>${o.discount ? `<div class='detail-line'><span>Giảm giá</span><strong>−${money(o.discount)}</strong></div>` : ''}${o.promotion ? `<div class='detail-line'><span>Mã ${esc(o.promotion.code)}</span><strong>−${moneyVndText(o.promotion.discountVnd)}</strong></div>` : ''}<div class='detail-line'><span>Tổng đã thu</span><strong>${money(o.paid)}</strong></div>${o.paymentLines.map(function (payment) { return `<div class='detail-line'><span>· ${esc(payment.method)}</span><strong>${money(payment.amount)}</strong></div>`; }).join('')}${o.cashReceived ? `<div class='detail-line'><span>Tiền mặt khách đưa</span><strong>${money(o.cashReceived)}</strong></div>` : ''}${o.cashChange ? `<div class='detail-line'><span>Tiền thối</span><strong>−${money(o.cashChange)}</strong></div>` : ''}${o.refunded ? `<div class='detail-line'><span>Đã hoàn tiền</span><strong>−${money(o.refunded)}</strong></div>` : ''}${o.due ? `<div class='detail-line'><span>Còn phải thu</span><strong style='color:#aa762a'>${money(o.due)}</strong></div>` : ''}<div class='detail-total'><span>Tổng cộng</span><strong>${money(o.total)}</strong></div></div></section><section class='panel detail-card'><div class='section-title'><h2>Thông tin giao dịch</h2><p>Biên nhận và thay đổi được lưu trên máy chủ</p></div><div class='order-timeline'><div class='timeline-item'><span class='timeline-dot'></span><span><strong>Đơn hàng đã tạo</strong><small>${humanDate(o.createdAt, true)}</small></span></div>${deliveryNoteBlock}<div class='timeline-item'><span class='timeline-dot'></span><span><strong>${o.due > 0 ? 'Còn khoản phải thu' : 'Đã thu đủ'}</strong><small>${o.due > 0 ? `Còn phải thu ${money(o.due)} · Đã thu ${money(o.paid)}` : `${money(o.paid)} · ${esc(o.method)}`}</small></span></div>${o.rawStatus === 'voided' ? `<div class='timeline-item'><span class='timeline-dot'></span><span><strong>Đơn đã hủy</strong><small>Hoàn tồn vào kho ${esc(o.voidRestockWarehouseName || 'đã ghi nhận')}</small></span></div>` : ''}${returnHistory}${c ? `<div class='timeline-item'><span class='timeline-dot'></span><span><strong>Khách hàng: ${esc(c.name)}</strong><small>${esc(c.phone)}</small></span></div>` : ''}</div>${o.note && !deliveryNoteBlock ? `<div class='modal-note'>${esc(o.note)}</div>` : ''}</section></div>`;
     const pendingMutation = loadPendingOrderMutation(o.id);
-    const canCollaborate = ['owner', 'manager', 'cashier', 'accountant'].includes(store.role);
+    const canCollaborate = hasPerm('posSell') || hasPerm('viewOrders') || hasPerm('recordCashbook');
     const tagChips = o.tags.map(function (tag) {
       return `<span class='order-tag-chip'>#${esc(tag.label)}${canCollaborate ? `<button type='button' data-action='order-tag-remove' data-id='${esc(o.id)}' data-tag='${esc(tag.label)}' aria-label='Gỡ nhãn ${esc(tag.label)}' ${pendingMutation ? 'disabled' : ''}>×</button>` : ''}</span>`;
     }).join('');
@@ -8527,12 +8940,18 @@
       ? `<div class='install-hint order-mutation-pending' role='status'>Thao tác ${pendingMutation.kind === 'note' ? 'ghi chú' : 'nhãn'} đang chờ máy chủ xác nhận. Hãy gửi lại đúng nội dung đã lưu trên thiết bị.<button type='button' class='btn btn-secondary' data-action='retry-order-mutation' data-id='${esc(o.id)}'>Thử lại thao tác</button></div>`
       : '';
     const collaborationPanel = `<section class='panel detail-card order-collaboration-card'><div class='section-title'><h2>Ghi chú nội bộ &amp; nhãn</h2><p>Chỉ nhân viên cửa hàng xem được; lịch sử được giữ lại để truy vết.</p></div>${pendingHint}<div class='order-tags-list'>${tagChips || `<span class='muted'>Chưa có nhãn</span>`}</div>${canCollaborate ? `<form id='order-tag-form' data-form='order-tag' data-id='${esc(o.id)}' class='order-tag-form'><label class='input-label' for='order-tag-input'>Gắn nhãn đơn hàng</label><div><input class='input' id='order-tag-input' name='tag' maxlength='32' autocomplete='off' placeholder='Ví dụ: Giao gấp, Khách VIP' required ${pendingMutation ? 'disabled' : ''}/><button class='btn btn-secondary' type='submit' ${pendingMutation ? 'disabled' : ''}>Gắn nhãn</button></div></form>` : ''}${renderOrderNoteHistory(o.id, o.internalNotesTotal, o.internalNotes)}${canCollaborate ? `<form id='order-note-form' data-form='order-note' data-id='${esc(o.id)}' class='order-note-form'><label class='input-label' for='order-note-input'>Thêm ghi chú nội bộ</label><textarea class='input' id='order-note-input' name='note' rows='3' maxlength='1000' placeholder='Thông tin chỉ dành cho nhân viên cửa hàng…' required ${pendingMutation ? 'disabled' : ''}>${pendingMutation?.kind === 'note' ? esc(pendingMutation.payload.note) : ''}</textarea><button class='btn btn-primary' type='submit' ${pendingMutation ? 'disabled' : ''}>Thêm ghi chú</button></form>` : ''}</section>`;
-    const canCollect = o.due > 0 && o.customerId && ['owner', 'manager', 'cashier', 'accountant'].includes(store.role);
-    const canVoid = ['owner', 'manager'].includes(store.role) && o.rawStatus === 'completed' && o.paid === 0 && o.returned === 0;
-    const canReturn = ['owner', 'manager'].includes(store.role) && o.status !== 'Đã hủy' && o.items.some(item => item.returnedQty < item.qty);
+    const canCollect = o.due > 0 && o.customerId && (hasPerm('posSell') || hasPerm('recordCashbook') || hasPerm('viewReports'));
+    const canVoid = hasPerm('voidOrReturnOrder') && o.rawStatus === 'completed' && o.paid === 0 && o.returned === 0;
+    const canReturn = hasPerm('voidOrReturnOrder') && o.status !== 'Đã hủy' && o.items.some(item => item.returnedQty < item.qty);
     const primary = canCollect ? `<button class='btn btn-primary' data-action='collect-payment' data-id='${o.id}'>Thu tiền còn thiếu</button>`
       : canReturn ? `<button class='btn btn-secondary' data-action='exchange-order' data-id='${o.id}'>Đổi hàng</button><button class='btn btn-primary' data-action='return-order' data-id='${o.id}'>Trả hàng</button>` : '';
-    const integrationActions = window.SlinkIntegrationsUI ? window.SlinkIntegrationsUI.renderOrderIntegrationSection({ order: o, settings: integrationState.data?.settings, role: store.role }) : '';
+    const integrationActions = window.SlinkIntegrationsUI ? window.SlinkIntegrationsUI.renderOrderIntegrationSection({
+      order: o,
+      settings: integrationState.data?.settings,
+      role: store.role,
+      canOperate: hasPerm('posSell') || hasPerm('recordCashbook') || hasPerm('viewReports'),
+      canShipping: hasPerm('posSell') || hasPerm('recordCashbook') || hasPerm('manageInventory'),
+    }) : '';
     const more = `<details class='order-more-actions'><summary>Thao tác khác</summary><p>Đơn đã ghi được giữ nguyên để đối soát. Chọn thu tiền, đổi hàng, trả hàng hoặc hủy đơn khi cần điều chỉnh.</p><div class='order-more-actions-buttons'><button class='btn btn-secondary' data-action='print-order' data-id='${o.id}'>In biên nhận</button><button class='btn btn-secondary' data-action='share-order' data-id='${o.id}'>Chia sẻ biên nhận</button>${canCollect && canReturn ? `<button class='btn btn-secondary' data-action='exchange-order' data-id='${o.id}'>Đổi hàng</button><button class='btn btn-secondary' data-action='return-order' data-id='${o.id}'>Trả hàng</button>` : ''}${canVoid ? `<button class='btn btn-danger' data-action='void-order' data-id='${o.id}'>Hủy đơn</button>` : ''}</div>${integrationActions}${collaborationPanel}</details>`;
     const completeBody = body.replace(/<\/div>$/, `${more}</div>`);
     const footer = `<button class='btn btn-secondary' data-action='close-modal'>Đóng</button>${primary}`;
@@ -8609,6 +9028,7 @@
         method: 'POST', headers: { 'idempotency-key': pending.key }, body: pending.payload,
       });
       clearPendingOrderMutation(orderId);
+      emitSyncDomains(['orders'], { source: 'order-mutation' });
       toast(pending.kind === 'note' ? 'Đã thêm ghi chú' : 'Đã cập nhật nhãn', 'Thao tác đã được lưu vào lịch sử đơn hàng.');
       await openOrder(orderId);
     } catch (error) {
@@ -8665,6 +9085,7 @@
         method: 'POST', body: { reason: reason, warehouseId: warehouseId, stockConfirmed: data.get('stockConfirmed') === 'on' },
       });
       closeModal();
+      emitSyncDomains(['orders', 'stock', 'products', 'cashbook', 'debts', 'customers', 'dashboard', 'reports'], { source: 'void-order' });
       await Promise.all([
         loadProductsPage('', 0), loadInventoryPage('', 0),
         loadOrdersPage('', 0), loadFinancePage(),
@@ -8715,6 +9136,7 @@
       });
       clearPendingPayment(orderId);
       closeModal();
+      emitSyncDomains(['orders', 'cashbook', 'debts', 'customers', 'dashboard', 'reports'], { source: 'order-payment' });
       await Promise.all([loadCustomersPage(searchTerms.customers, customerOffset), loadOrdersPage(searchTerms.orders, orderOffset)]);
       toast('Đã ghi nhận khoản thu', money(Number(result.payment.amountVnd)));
       await openOrder(orderId);
@@ -8811,6 +9233,7 @@
       const refreshList = page === 'customers'
         ? loadCustomersPage(searchTerms.customers, customerOffset)
         : Promise.resolve();
+      emitSyncDomains(['customers', 'debts', 'cashbook', 'orders', 'dashboard'], { source: 'customer-payment' });
       await Promise.all([refreshList, loadFinancePage()]);
       if (page === 'finance' && financeTab === 'receivables') {
         receivableDetail = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/customers/${encodeURIComponent(customerId)}/debts`);
@@ -8905,6 +9328,7 @@
       });
       clearPendingReturn(orderId);
       closeModal();
+      emitSyncDomains(['orders', 'stock', 'products', 'cashbook', 'debts', 'customers', 'dashboard', 'reports'], { source: 'order-return' });
       await Promise.all([loadProductsPage('', 0), loadOrdersPage(searchTerms.orders, orderOffset)]);
       toast('Đã ghi nhận trả hàng', `${result.return.number} · ${money(Number(result.return.refundTotalVnd))}`);
       await openOrder(orderId);
@@ -8946,7 +9370,8 @@
         }
         return `<tr><td>${humanDate(payment.occurred_at, true)}</td><td><strong>${moneyVndText(payment.amount_vnd)}</strong></td><td>${esc(paymentMethodLabels[payment.method] || payment.method || '')}</td><td>${allocationLabels.join('<br>') || 'Không có chi tiết phân bổ'}</td><td>${esc(payment.note || '')}</td></tr>`;
       }).join('');
-      const canManageTags = ['owner', 'manager', 'cashier'].includes(store.role);
+      const canManageTags = hasPerm('manageCustomers');
+      const canCollectDebt = hasPerm('manageCustomers') && (hasPerm('posSell') || hasPerm('recordCashbook') || hasPerm('viewReports'));
       const pendingTag = loadPendingCustomerTag(c.id);
       const tagChips = (Array.isArray(result.customer.tags) ? result.customer.tags : []).map(function (tag) {
         return `<span class='customer-tag-chip'>${esc(tag.label)}${canManageTags ? `<button type='button' data-action='customer-tag-remove' data-id='${esc(c.id)}' data-tag='${esc(tag.label)}' aria-label='Gỡ nhãn ${esc(tag.label)}' ${pendingTag ? 'disabled' : ''}>×</button>` : ''}</span>`;
@@ -8967,7 +9392,7 @@
       ].filter(Boolean).join('');
       const crmMetaHtml = metaCells ? `<div class='form-grid' style='margin-top:12px;padding-top:12px;border-top:1px solid var(--line);font-size:13px'>${metaCells}</div>` : '';
       const body = `<section class='panel'><div class='customer-header'><span class='avatar'>${esc(initials(c.name))}</span><div><h2>${esc(c.name)}</h2><p>${esc([c.phone || 'Chưa có SĐT', c.customerCode, c.email].filter(Boolean).join(' · '))}</p></div>${c.loyaltyPoints > 0 ? `<span class='badge badge-success' style='margin-left:auto'>${number(c.loyaltyPoints)} điểm</span>` : ''}</div><div class='customer-stats'><div class='customer-stat'><small>Tổng chi tiêu</small><strong>${money(c.totalSpent)}</strong></div><div class='customer-stat'><small>Đơn hàng</small><strong>${number(c.orders)}</strong></div><div class='customer-stat'><small>${balance < 0n ? 'Khách dư' : 'Còn nợ'}</small><strong>${moneyVndText(balance < 0n ? -balance : balance)}</strong></div></div>${crmMetaHtml}</section>${customerTags}<section style='margin-top:17px'><div class='panel-header' style='padding:0 0 10px'><div><h2>Đơn hàng gần đây</h2></div></div><div class='table-wrap'><table class='data-table'><thead><tr><th>Mã đơn</th><th>Ngày</th><th class='text-right'>Tổng tiền</th><th>Trạng thái</th></tr></thead><tbody>${orderRows || `<tr><td colspan='4'><div class='empty-state'><strong>Chưa có đơn hàng</strong></div></td></tr>`}</tbody></table></div></section><section class='panel customer-payment-history' style='margin-top:17px'><div class='panel-header'><div><h2>Lịch sử thu nợ</h2></div></div><div class='table-wrap'><table class='data-table'><thead><tr><th>Thời gian</th><th>Số tiền</th><th>Phương thức</th><th>Phân bổ</th><th>Ghi chú</th></tr></thead><tbody>${paymentRows || `<tr><td colspan='5'><div class='empty-state'><strong>Chưa có khoản thu nào</strong></div></td></tr>`}</tbody></table></div></section>`;
-      showModal('Hồ sơ khách hàng', '', body, `<button class='btn btn-secondary' data-action='close-modal'>Đóng</button>${['owner', 'manager', 'cashier'].includes(store.role) ? `<button class='btn btn-secondary' data-action='edit-customer' data-id='${esc(c.id)}'>${icon('edit', 14)} Sửa</button>` : ''}${['owner', 'manager', 'cashier', 'accountant'].includes(store.role) ? `<button class='btn btn-primary' data-action='collect-customer-payment' data-id='${esc(c.id)}'>${Number(c.debt) > 0 ? 'Thu tiền nợ' : 'Nhận trả trước'}</button>` : ''}`, true);
+      showModal('Hồ sơ khách hàng', '', body, `<button class='btn btn-secondary' data-action='close-modal'>Đóng</button>${canManageTags ? `<button class='btn btn-secondary' data-action='edit-customer' data-id='${esc(c.id)}'>${icon('edit', 14)} Sửa</button>` : ''}${Number(c.debt) > 0 && canCollectDebt ? `<button class='btn btn-secondary' data-action='finance-reminder' data-id='${esc(c.id)}'>Nhắc nợ QR</button>` : ''}${canCollectDebt ? `<button class='btn btn-primary' data-action='collect-customer-payment' data-id='${esc(c.id)}'>${Number(c.debt) > 0 ? 'Thu tiền nợ' : 'Nhận trả trước'}</button>` : ''}`, true);
     } catch (error) {
       if (requestNumber !== customerDetailRequestNumber || currentModalGeneration !== modalGeneration || modal.hidden) return;
       if (error.status === 401) return showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
@@ -8987,6 +9412,7 @@
         method: 'POST', headers: { 'idempotency-key': pending.key }, body: pending.payload,
       });
       clearPendingCustomerTag(customerId);
+      emitSyncDomains(['customers'], { source: 'customer-tag' });
       toast(pending.payload.operation === 'add' ? 'Đã gắn nhãn khách hàng' : 'Đã gỡ nhãn khách hàng');
       const refreshList = page === 'customers'
         ? loadCustomersPage(searchTerms.customers, customerOffset)
@@ -9030,7 +9456,7 @@
   function showMoreMenu() { routeTo('workspace'); }
 
   function renderWorkspace() {
-    if (['affiliate', 'cashier'].includes(store.role)) {
+    if (store.role === 'affiliate' || (!hasPerm('viewReports') && !hasPerm('manageInventory') && !hasPerm('recordCashbook') && !hasPerm('manageSettings') && !hasPerm('viewAudit'))) {
       return pageHeading('Tài khoản', '', '') + renderWorkspaceLinks([{ title: '', routes: ['settings'] }]);
     }
     const groups = [
@@ -9109,7 +9535,11 @@
     const button = surface.querySelector('[data-action="start-camera-scan"]');
     if (button) button.focus();
   }
-  function playScanBeep() {
+  function playScanBeep(kind) {
+    if (window.SlinkPosHardware && typeof window.SlinkPosHardware.playScanBeep === 'function') {
+      window.SlinkPosHardware.playScanBeep(kind);
+      return;
+    }
     try {
       const Ctx = window.AudioContext || window.webkitAudioContext;
       if (!Ctx) return;
@@ -9117,7 +9547,7 @@
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = 'sine';
-      osc.frequency.value = 920;
+      osc.frequency.value = kind === 'error' ? 340 : 920;
       gain.gain.value = 0.08;
       osc.connect(gain);
       gain.connect(ctx.destination);
@@ -9165,12 +9595,24 @@
 
   function openProductFromScan(barcode, photo, sku) {
     closeModal();
-    if (!['owner', 'manager', 'stockkeeper'].includes(store.role)) {
+    if (!hasPerm('editProducts')) {
       toast('Chưa có mặt hàng này', 'Nhờ chủ cửa hàng hoặc người quản lý danh mục thêm sản phẩm trước khi bán.', 'error');
       return;
     }
     page = 'pos';
     openProduct('', { fromScan: true, barcode: barcode || '', sku: sku || '', photo: photo || '' });
+  }
+  let scanPillTimer = 0;
+  function showScanPill(surface, message, isError = false) {
+    const pill = surface?.querySelector('[data-scan-pill]') || modal.querySelector('[data-scan-surface]:not([hidden]) [data-scan-pill]');
+    if (!pill) return;
+    window.clearTimeout(scanPillTimer);
+    pill.textContent = message;
+    pill.classList.toggle('is-error', Boolean(isError));
+    pill.hidden = false;
+    scanPillTimer = window.setTimeout(function () {
+      if (pill.isConnected) pill.hidden = true;
+    }, 1800);
   }
   function setScanCameraStatus(message, isError) {
     const status = modal.querySelector('[data-scan-surface]:not([hidden]) #scan-camera-status') || modal.querySelector('#scan-camera-status');
@@ -9283,7 +9725,10 @@
     const productSearch = surface?.dataset.scanMode === 'product-search';
     const posCartScan = surface?.dataset.scanMode === 'pos-cart';
     const serialListScan = surface?.dataset.scanMode === 'serial-list';
-    const inlineBarcode = surface?.dataset.scanMode === 'barcode-field' || warehouseSearch || productSearch || posCartScan || serialListScan;
+    const receiveCartScan = surface?.dataset.scanMode === 'receive-cart';
+    const stockCountScan = surface?.dataset.scanMode === 'stock-count';
+    const warrantyLookupScan = surface?.dataset.scanMode === 'warranty-lookup';
+    const inlineBarcode = surface?.dataset.scanMode === 'barcode-field' || warehouseSearch || productSearch || posCartScan || serialListScan || receiveCartScan || stockCountScan || warrantyLookupScan;
     if (!surface || !video || !codeInput || (!inlineBarcode && surface.dataset.scanMode !== 'order' && !form)) return;
     if (!window.isSecureContext || !navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
       setScanCameraStatus('Camera cần kết nối HTTPS và trình duyệt cho phép sử dụng camera. Bạn vẫn có thể nhập mã thủ công.', true);
@@ -9382,9 +9827,77 @@
                   searchTerms.products = rawValue;
                   loadProductsPage(rawValue, 0, { keepSearch: true });
                   return;
+                } else if (warrantyLookupScan) {
+                  stopScanCamera();
+                  codeInput.value = rawValue;
+                  lookupWarrantyBySerial(rawValue);
+                  return;
+                } else if (receiveCartScan) {
+                  const now = Date.now();
+                  const contChecked = surface.querySelector('[data-scan-continuous]')?.checked !== false;
+                  if (posBarcodeScanState.busy || (posBarcodeScanState.lastCode === rawValue && now - posBarcodeScanState.lastAt < 1100)) {
+                    if (scanCameraRunning && requestGeneration === scanCameraGeneration) scanCameraTimer = window.setTimeout(detectFrame, 180);
+                    return;
+                  }
+                  posBarcodeScanState.busy = true;
+                  posBarcodeScanState.lastCode = rawValue;
+                  posBarcodeScanState.lastAt = now;
+                  codeInput.value = rawValue;
+                  try {
+                    const matchedReceive = await handleReceiveBarcodeScan(codeInput);
+                    if (!scanCameraRunning || requestGeneration !== scanCameraGeneration || modal.hidden) return;
+                    if (matchedReceive) {
+                      window.SlinkPosHardware?.vibrate(45);
+                      playScanBeep();
+                      showScanPill(surface, `+1 ${matchedReceive.name}`);
+                      setScanCameraStatus(`✓ Đã thêm ${matchedReceive.name}`);
+                      if (!contChecked) {
+                        stopScanCamera();
+                        surface.hidden = true;
+                        return;
+                      }
+                    } else {
+                      playScanBeep('error');
+                      showScanPill(surface, `Không khớp: ${rawValue}`, true);
+                    }
+                  } finally {
+                    posBarcodeScanState.lastAt = Date.now();
+                    posBarcodeScanState.busy = false;
+                  }
+                } else if (stockCountScan) {
+                  const now = Date.now();
+                  const contChecked = surface.querySelector('[data-scan-continuous]')?.checked !== false;
+                  if (posBarcodeScanState.busy || (posBarcodeScanState.lastCode === rawValue && now - posBarcodeScanState.lastAt < 1100)) {
+                    if (scanCameraRunning && requestGeneration === scanCameraGeneration) scanCameraTimer = window.setTimeout(detectFrame, 180);
+                    return;
+                  }
+                  posBarcodeScanState.busy = true;
+                  posBarcodeScanState.lastCode = rawValue;
+                  posBarcodeScanState.lastAt = now;
+                  try {
+                    const countedRes = await handleRapidStockCountScan(rawValue);
+                    if (!scanCameraRunning || requestGeneration !== scanCameraGeneration || modal.hidden) return;
+                    if (countedRes?.ok) {
+                      window.SlinkPosHardware?.vibrate(45);
+                      playScanBeep();
+                      showScanPill(surface, `+1 ${countedRes.name} (đếm: ${number(countedRes.counted)})`);
+                      setScanCameraStatus(`✓ ${countedRes.name}: ${number(countedRes.counted)}`);
+                      if (!contChecked) {
+                        stopScanCamera();
+                        return;
+                      }
+                    } else if (countedRes?.reason) {
+                      playScanBeep('error');
+                      showScanPill(surface, countedRes.reason, true);
+                      setScanCameraStatus(countedRes.reason, true);
+                    }
+                  } finally {
+                    posBarcodeScanState.lastAt = Date.now();
+                    posBarcodeScanState.busy = false;
+                  }
                 } else if (posCartScan) {
                   const now = Date.now();
-                  if (posBarcodeScanState.busy || (posBarcodeScanState.lastCode === rawValue && now - posBarcodeScanState.lastAt < 1600)) {
+                  if (posBarcodeScanState.busy || (posBarcodeScanState.lastCode === rawValue && now - posBarcodeScanState.lastAt < 1100)) {
                     if (scanCameraRunning && requestGeneration === scanCameraGeneration) scanCameraTimer = window.setTimeout(detectFrame, 180);
                     return;
                   }
@@ -9393,9 +9906,10 @@
                   posBarcodeScanState.lastAt = now;
                   if (codeInput) codeInput.value = '';
                   try {
-                    const added = await handlePosBarcodeSubmit(rawValue, { keepModalStatus: true, fromCamera: true });
+                    const added = await handlePosBarcodeSubmit(rawValue, { keepModalStatus: true, fromCamera: true, surface });
                     if (!scanCameraRunning || requestGeneration !== scanCameraGeneration || modal.hidden) return;
                     if (added) {
+                      window.SlinkPosHardware?.vibrate(45);
                       modal.querySelector('[data-form="pos-scan"] [data-form-message]')?.remove();
                       if (!posBarcodeScanState.continuous) {
                         closeModal();
@@ -9454,16 +9968,33 @@
       scanCameraStarting = false;
     }
   }
+  function maxAllowedDiscountVnd(subtotal) {
+    const maxPct = getMaxDiscountPct();
+    if (maxPct <= 0) return 0;
+    const sub = BigInt(Math.max(0, Math.trunc(Number(subtotal || 0))));
+    const cap = (sub * BigInt(maxPct)) / 100n;
+    return Number(cap);
+  }
+
   function showDiscount() {
+    const maxPct = getMaxDiscountPct();
+    if (maxPct <= 0) {
+      return toast('Không có quyền giảm giá', 'Tài khoản này chưa được cấp hạn mức giảm giá tại quầy.', 'error');
+    }
     const subtotal = cartTotals().subtotal;
-    const current = cart.discount || 0;
+    const maxVnd = maxAllowedDiscountVnd(subtotal);
+    const current = Math.min(cart.discount || 0, maxVnd);
+    const chips = [['percent', 5, '5%'], ['percent', 10, '10%'], ['percent', 15, '15%'], ['percent', 20, '20%'], ['vnd', 0, 'Xóa giảm']]
+      .filter(([m, v]) => m !== 'percent' || v <= maxPct)
+      .map(([m, v, l]) => `<button type='button' class='pos-fast-chip' data-action='quick-discount' data-mode='${m}' data-value='${v}'>${l}</button>`)
+      .join('');
     const form = `<form id='entity-form' data-form='discount'>
       <div class='form-grid'>
         <div class='form-field'><label class='input-label' for='disc-mode'>Kiểu giảm</label><div class='select-wrap'><select class='input' id='disc-mode' name='discountMode'><option value='vnd'>Số tiền (₫)</option><option value='percent'>Phần trăm (%)</option></select></div></div>
-        <div class='form-field'><label class='input-label' for='disc-val'>Giá trị giảm</label><input class='input' id='disc-val' name='discount' type='number' min='0' max='${subtotal}' step='1' value='${current}' required/></div>
+        <div class='form-field'><label class='input-label' for='disc-val'>Giá trị giảm</label><input class='input' id='disc-val' name='discount' type='number' min='0' max='${maxVnd}' step='1' value='${current}' required/></div>
       </div>
-      <div style='display:flex;flex-wrap:wrap;gap:6px;margin-top:10px'>${[['percent', 5, '5%'], ['percent', 10, '10%'], ['percent', 15, '15%'], ['percent', 20, '20%'], ['vnd', 0, 'Xóa giảm']].map(([m, v, l]) => `<button type='button' class='pos-fast-chip' data-action='quick-discount' data-mode='${m}' data-value='${v}'>${l}</button>`).join('')}</div>
-      <small class='muted' style='display:block;margin-top:8px'>Tạm tính hiện tại: ${money(subtotal)}</small>
+      <div style='display:flex;flex-wrap:wrap;gap:6px;margin-top:10px'>${chips}</div>
+      <small class='muted' style='display:block;margin-top:8px'>Tạm tính hiện tại: ${money(subtotal)} · Hạn mức của bạn: tối đa ${number(maxPct)}% (${money(maxVnd)})</small>
     </form>`;
     modalForm('Giảm giá đơn hàng', '', form, 'Áp dụng');
   }
@@ -9572,7 +10103,7 @@
         : (row.issue?.message || '');
       const conflictCard = row.state === 'conflict' && conflictUi
         ? (inspection
-          ? conflictUi.buildConflictComparisonHtml(row, inspection, { role: store.role })
+          ? conflictUi.buildConflictComparisonHtml(row, inspection, { role: store.role, canResolvePrice: hasPerm('manageSettings') || hasPerm('viewAudit') })
           : `<div class='conflict-toolbar'><button class='btn btn-primary' type='button' data-action='offline-inspect-conflict' data-id='${esc(row.id)}'>Kiểm tra &amp; xử lý xung đột</button><button class='btn btn-secondary' type='button' data-action='offline-retry' data-id='${esc(row.id)}'>Thử gửi lại</button></div>`)
         : '';
       return `<article class='offline-record' data-offline-state='${esc(row.state)}'><div class='offline-line'><strong>${esc(names[row.kind])} · ${row.result?.order?.number ? esc(row.result.order.number) : 'TẠM-' + String(row.sequence).padStart(4, '0')}</strong><span>${esc(states[row.state])}</span></div><small>${esc(humanDate(row.queuedAt, true))}</small>${issueText ? `<p role='alert'>${esc(issueText)}</p>` : ''}${conflictCard}<details><summary>Xem thông tin</summary><dl><dt>Mã chống ghi trùng</dt><dd>${esc(row.key)}</dd><dt>Nội dung</dt><dd><pre>${esc(JSON.stringify(row.source || row.payload, null, 2))}</pre></dd></dl></details>${row.kind === 'sale' ? `<button class='link-button' data-action='order-detail' data-id='local:${esc(row.key)}'>Xem đơn</button>` : ''}</article>`;
@@ -9639,7 +10170,7 @@
     }
     const allowedActions = ['acknowledge-synced', 'resolve-historical', 'resolve-discounted', 'requeue-stock-count'];
     if (!allowedActions.includes(action)) return;
-    if ((action === 'resolve-historical' || action === 'resolve-discounted') && !['owner', 'manager'].includes(store.role)) {
+    if ((action === 'resolve-historical' || action === 'resolve-discounted') && !hasPerm('manageSettings') && !hasPerm('viewAudit')) {
       return toast('Không có quyền xử lý', 'Chỉ Chủ cửa hàng hoặc Quản lý được xác nhận chênh lệch giá.', 'error');
     }
     const card = button.closest('.conflict-card');
@@ -9868,6 +10399,11 @@
       }
       else toast(result.offlineQueued ? 'Đã lưu đơn trên máy' : 'Đã lưu đơn hàng', order.number);
       if (!result.offlineQueued) {
+        const confirmedAmount = result.order?.totalVnd ?? payload.totalVnd;
+        if (Number(confirmedAmount) > 0 && window.SlinkPosHardware && typeof window.SlinkPosHardware.playTingTing === 'function') {
+          window.SlinkPosHardware.playTingTing(confirmedAmount).catch(function () {});
+        }
+        emitSyncDomains(['orders', 'stock', 'products', 'cashbook', 'debts', 'customers', 'dashboard', 'reports'], { source: 'sale', orderId: order?.id || '' });
         syncAfterMutation(['inventory', 'orders', 'finance', 'cashSession', 'customers', 'dashboard']);
         if (posPrefs.autoPrint && order?.id) {
           apiRequest(`/api/stores/${encodeURIComponent(store.id)}/orders/${encodeURIComponent(order.id)}`).then(res => {
@@ -9910,6 +10446,10 @@
       if (cartPriceChanges().length) return toast('Giá bán đã đổi', 'Đóng và mở lại thanh toán để kiểm tra giá mới.', 'error');
       const short = cart.find(item => { const p = productById(item.id); return p && item.qty > availableForSale(p); });
       if (short) return toast('Số hàng có thể bán đã đổi', 'Kiểm tra lại số lượng trong giỏ.', 'error');
+      const maxAllowedDisc = maxAllowedDiscountVnd(totals.subtotal);
+      if (totals.discount > maxAllowedDisc) {
+        return toast('Vượt hạn mức giảm giá', `Tài khoản này chỉ được giảm tối đa ${number(getMaxDiscountPct())}% (${money(maxAllowedDisc)}).`, 'error');
+      }
       const enteredPromotionCode = String(data.get('promotionCode') || '').trim().toUpperCase();
       if (enteredPromotionCode && (!checkoutPromotion || checkoutPromotion.code !== enteredPromotionCode || checkoutPromotion.customerId !== customerId)) {
         return toast('Hãy kiểm tra lại mã', 'Mã khuyến mãi hoặc khách hàng đã thay đổi sau lần kiểm tra.', 'error');
@@ -9965,6 +10505,10 @@
     const short = cart.find(item => { const p = productById(item.id); return !p || item.qty > availableForSale(p); });
     if (short) return toast('Số hàng có thể bán đã đổi', 'Kiểm tra lại số lượng trong giỏ.', 'error');
     const totals = cartTotals();
+    const maxAllowedDisc = maxAllowedDiscountVnd(totals.subtotal);
+    if (totals.discount > maxAllowedDisc) {
+      return toast('Vượt hạn mức giảm giá', `Tài khoản này chỉ được giảm tối đa ${number(getMaxDiscountPct())}% (${money(maxAllowedDisc)}).`, 'error');
+    }
     const safeMethod = method === 'bank_transfer' ? 'bank_transfer' : 'cash';
     let received = totals.total;
     if (safeMethod === 'cash' && posFastCashInput !== '') {
@@ -9998,7 +10542,7 @@
     const settings = integrationState.data?.settings || {};
     const totals = cartTotals();
     if (!settings.bankBin || !settings.bankAccountNumber || !window.SlinkIntegrationsUI) {
-      const canConfig = ['owner', 'manager'].includes(store.role);
+      const canConfig = hasPerm('manageSettings');
       showModal('Chưa cài tài khoản VietQR', '', `<div class='empty-state'><strong>Chưa có số tài khoản ngân hàng</strong><span>Nhập Ngân hàng và Số tài khoản trong Cài đặt để tự tạo mã VietQR cho từng đơn (không cần kết nối API).</span></div>`, `${canConfig ? `<button class='btn btn-primary' type='button' data-route='settings'>Mở Cài đặt →</button>` : ''}<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button>`);
       return;
     }
@@ -10010,7 +10554,12 @@
       amountVnd: String(totals.total),
       note: `${store.settings.storeName || 'SLINK'} ${totals.total}`.slice(0, 45),
     });
-    showModal('Quét VietQR thanh toán', '', qrHtml, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button><button class='btn btn-primary' type='button' data-action='pos-confirm-vietqr'>Đã nhận tiền · Hoàn tất (${money(totals.total)})</button>`);
+    const fullscreenBody = `<div class='vietqr-fullscreen-body'><div class='vietqr-fullscreen-amount'>${money(totals.total)}</div>${qrHtml}</div>`;
+    const fullscreenFooter = `<div class='vietqr-fullscreen-actions'><button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button><button class='btn btn-primary' type='button' data-action='pos-confirm-vietqr'>Đã nhận tiền · Hoàn tất (${money(totals.total)})</button></div>`;
+    showModal('Quét VietQR thanh toán', '', fullscreenBody, fullscreenFooter, true);
+    modal.classList.add('modal-vietqr-fullscreen');
+    vietqrBrightnessActive = true;
+    window.SlinkPosHardware?.setScreenBrightness(1.0);
   }
 
   async function standardPaySale(button) {
@@ -10021,6 +10570,10 @@
     if (short) return toast('Không đủ hàng để bán', 'Kiểm tra lại số lượng trong giỏ.', 'error');
     if (posStandardMethod === 'debt') return openCheckout();
     const totals = cartTotals();
+    const maxAllowedDisc = maxAllowedDiscountVnd(totals.subtotal);
+    if (totals.discount > maxAllowedDisc) {
+      return toast('Vượt hạn mức giảm giá', `Tài khoản này chỉ được giảm tối đa ${number(getMaxDiscountPct())}% (${money(maxAllowedDisc)}).`, 'error');
+    }
     const safeMethod = posStandardMethod === 'bank_transfer' ? 'bank_transfer' : 'cash';
     let received = totals.total;
     if (safeMethod === 'cash' && posFastCashInput !== '') {
@@ -10103,6 +10656,10 @@
       }
     }
     const totals = cartTotals();
+    const maxAllowedDisc = maxAllowedDiscountVnd(totals.subtotal);
+    if (totals.discount > maxAllowedDisc) {
+      return toast('Vượt hạn mức giảm giá', `Tài khoản này chỉ được giảm tối đa ${number(getMaxDiscountPct())}% (${money(maxAllowedDisc)}).`, 'error');
+    }
     const prepaid = collection === 'prepaid';
     const noteParts = [
       `[GIAO HÀNG] ${recName}`,
@@ -10214,7 +10771,8 @@
         }
         missingBox.innerHTML = `<span>${icon('scan', 16)}</span><span><strong>Mã “${esc(code)}” chưa có trong danh mục</strong><small>Bạn có thể tạo nhanh mặt hàng mới với sẵn mã vạch này.</small></span><button class='btn btn-secondary' type='button' data-action='quick-create-from-receive' data-barcode='${esc(code)}'>＋ Tạo mặt hàng mới</button>`;
         missingBox.hidden = false;
-        return toast('Không khớp mã vạch', `Chưa tìm thấy sản phẩm có mã “${code}”. Bấm “＋ Tạo mặt hàng mới” ngay bên dưới thanh quét để thêm nhanh.`, 'error');
+        toast('Không khớp mã vạch', `Chưa tìm thấy sản phẩm có mã “${code}”. Bấm “＋ Tạo mặt hàng mới” ngay bên dưới thanh quét để thêm nhanh.`, 'error');
+        return null;
       }
       if (missingBox) missingBox.hidden = true;
       const items = receivePurchaseItemsFromForm(form);
@@ -10226,13 +10784,14 @@
       } else if (items.length === 1 && !items[0].productId) {
         items[0] = { productId: matched.id, quantity: String(quantityStep), unitCostVnd: costText };
       } else {
-        if (items.length >= 50) return toast('Đã đạt giới hạn dòng hàng', 'Mỗi phiếu nhập hỗ trợ tối đa 50 mặt hàng.', 'error');
+        if (items.length >= 50) { toast('Đã đạt giới hạn dòng hàng', 'Mỗi phiếu nhập hỗ trợ tối đa 50 mặt hàng.', 'error'); return null; }
         items.push({ productId: matched.id, quantity: String(quantityStep), unitCostVnd: costText });
       }
       redrawReceivePurchaseLines(form, items);
       input.value = '';
       input.focus();
       toast('Đã thêm vào phiếu nhập', `${matched.name} (+${number(quantityStep)}) · mã ${matched.barcode || matched.sku}`);
+      return matched;
     } finally {
       delete form.dataset.barcodeScanning;
     }
@@ -10305,6 +10864,10 @@
       }
     };
     const reportFail = (title, msg) => {
+      if (options.fromCamera) {
+        playScanBeep('error');
+        showScanPill(options.surface, msg, true);
+      }
       if (options.keepModalStatus) { if (modalStillActive()) setScanCameraStatus(msg, true); }
       else toast(title, msg, 'error');
     };
@@ -10349,6 +10912,7 @@
           clearPosInputIfUnchanged();
           const itemInCart = cart.find(i => i.id === matched.id);
           const qtyNow = itemInCart ? itemInCart.qty : 1;
+          if (options.fromCamera) showScanPill(options.surface, `+1 ${matched.name} (#${s.code})`);
           if (options.keepModalStatus) setScanCameraStatus(`✓ ${matched.name} · #${s.code} (×${number(qtyNow)})`);
           toast('Đã thêm vào đơn', `${matched.name} · mã ${s.code}`);
           return true;
@@ -10366,6 +10930,7 @@
           clearPosInputIfUnchanged();
           const itemInCart = cart.find(i => i.id === matched.id);
           const qtyNow = itemInCart ? itemInCart.qty : 1;
+          if (options.fromCamera) showScanPill(options.surface, `+1 ${matched.name} (×${number(qtyNow)})`);
           if (options.keepModalStatus) setScanCameraStatus(`✓ ${matched.name} (×${number(qtyNow)})`);
           toast('Đã thêm vào đơn', `${matched.name} · ×${number(qtyNow)}`);
           return true;
@@ -10407,6 +10972,7 @@
       if (input && !options.keepModalStatus) { input.value = ''; searchPosProducts(''); }
       const itemInCart = cart.find(i => i.id === matched.id);
       const qtyNow = itemInCart ? itemInCart.qty : 1;
+      if (options.fromCamera) showScanPill(options.surface, `+1 ${matched.name} (×${number(qtyNow)})`);
       if (options.keepModalStatus) setScanCameraStatus(`✓ ${matched.name} (×${number(qtyNow)})`);
       toast('Đã thêm vào đơn', `${matched.name} · ×${number(qtyNow)}`);
       return true;
@@ -10425,7 +10991,8 @@
       <div class='scan-camera-panel' data-scan-surface data-scan-mode='pos-cart' data-scan-target='pos-scan-code'>
         <div class='scan-camera-stage'><div class='scan-camera-prompt' aria-hidden='true'>${icon('scan', 28)}<strong>Đưa mã vào khung</strong></div>
           <video id='scan-camera-video' class='scan-camera-video' playsinline muted hidden aria-label='Camera quét mã vạch'></video>
-          <div class='scan-viewfinder' aria-hidden='true'><i></i><i></i><i></i><i></i></div></div>
+          <div class='scan-viewfinder' aria-hidden='true'><i></i><i></i><i></i><i></i></div>
+          <div class='scan-feedback-pill' data-scan-pill hidden></div></div>
         <p id='scan-camera-status' class='scan-camera-status' role='status' aria-live='polite'></p>
         <div class='scan-camera-actions'>
           <button class='btn btn-secondary' type='button' data-action='start-camera-scan'>Mở camera</button>
@@ -10456,6 +11023,235 @@
       });
     });
     startScanCamera(form.querySelector('[data-action="start-camera-scan"]'));
+  }
+
+  function renderRapidStockCountRows() {
+    const list = modal.querySelector('[data-stock-count-list]');
+    const summaryEl = modal.querySelector('[data-stock-count-summary]');
+    const items = rapidStockCountState.items || [];
+    const totalCounted = items.reduce((s, r) => s + Number(r.counted || 0), 0);
+    if (summaryEl) {
+      summaryEl.innerHTML = `<span>Đã quét <strong>${number(items.length)}</strong> mặt hàng · Tổng đếm <strong>${number(totalCounted)}</strong></span><button class='link-button' type='button' data-action='clear-rapid-stock-count' ${items.length ? '' : 'hidden'}>Làm trống</button>`;
+    }
+    if (!list) return;
+    if (!items.length) {
+      list.innerHTML = `<div class='empty-state'><strong>Chưa quét sản phẩm nào</strong><span>Đưa mã vạch vào khung camera hoặc nhập mã ở trên để tự cộng +1 mỗi lần quét.</span></div>`;
+      return;
+    }
+    list.innerHTML = items.map(function (row, idx) {
+      const diff = Math.round((Number(row.counted) - Number(row.systemStock)) * 1000) / 1000;
+      const diffLabel = diff === 0 ? 'Khớp hệ thống' : (diff > 0 ? `Thừa +${number(diff)}` : `Thiếu ${number(diff)}`);
+      return `<article class='stock-count-row' data-stock-count-row='${esc(row.productId)}'>
+        <div>
+          <strong>${esc(row.name)}</strong>
+          <small style='display:block;color:var(--muted)'>${esc(row.sku)} · Hệ thống: ${number(row.systemStock)} ${esc(row.unit)} · <b>${esc(diffLabel)}</b></small>
+        </div>
+        <div class='stock-count-qty'>
+          <button class='btn btn-secondary' type='button' data-action='rapid-count-delta' data-index='${idx}' data-delta='-1' aria-label='Giảm 1'>−</button>
+          <input class='input' type='number' min='0' step='0.001' data-rapid-count-input='${idx}' value='${esc(String(row.counted))}' aria-label='Số thực đếm ${esc(row.name)}'/>
+          <button class='btn btn-secondary' type='button' data-action='rapid-count-delta' data-index='${idx}' data-delta='1' aria-label='Tăng 1'>+</button>
+        </div>
+      </article>`;
+    }).join('');
+  }
+
+  async function resolveRapidStockCountProduct(rawCode) {
+    const code = String(rawCode || '').trim();
+    if (!code) return { ok: false, reason: 'Mã trống.' };
+    const whId = rapidStockCountState.warehouseId || selectedWarehouseId;
+    let matched = (inventoryWarehouseId === whId ? findExactBarcodeMatch(inventoryProducts, code) : null)
+      || findExactBarcodeMatch(rapidStockCountState.products, code);
+    if (!matched && store.id && navigator.onLine) {
+      const warehouseQuery = whId ? `&warehouseId=${encodeURIComponent(whId)}` : '';
+      const res = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/products?limit=20&q=${encodeURIComponent(code)}${warehouseQuery}`, { preferFresh: true });
+      const mapped = (res.products || []).map(mapProduct);
+      mapped.forEach(p => {
+        if (!rapidStockCountState.products.some(x => x.id === p.id)) rapidStockCountState.products.push(p);
+      });
+      matched = findExactBarcodeMatch(mapped, code);
+    }
+    if (!matched) return { ok: false, reason: `Không tìm thấy sản phẩm mã “${code}”.` };
+    if (matched.serialTracked) return { ok: false, reason: `${matched.name} quản lý theo Serial — không dùng kiểm kê nhanh.` };
+    if (!matched.inventoryTracked) return { ok: false, reason: `${matched.name} không theo dõi tồn kho.` };
+    return { ok: true, product: matched };
+  }
+
+  async function handleRapidStockCountScan(rawCode) {
+    const res = await resolveRapidStockCountProduct(rawCode);
+    if (!res.ok) return res;
+    const p = res.product;
+    const existing = rapidStockCountState.items.find(r => r.productId === p.id);
+    if (existing) {
+      existing.counted = Math.round((Number(existing.counted || 0) + 1) * 1000) / 1000;
+    } else {
+      if (rapidStockCountState.items.length >= 200) {
+        return { ok: false, reason: 'Đã đạt giới hạn 200 mặt hàng mỗi phiếu kiểm kho.' };
+      }
+      rapidStockCountState.items.unshift({
+        productId: p.id,
+        name: p.name,
+        sku: p.sku,
+        unit: p.unit || 'cái',
+        systemStock: Number(p.stock || 0),
+        inventoryVersion: Number(p.inventoryVersion || 1),
+        counted: 1,
+      });
+    }
+    renderRapidStockCountRows();
+    const row = rapidStockCountState.items.find(r => r.productId === p.id);
+    return { ok: true, name: p.name, counted: row.counted };
+  }
+
+  async function openRapidStockCount() {
+    if (!hasPerm('manageInventory')) return toast('Không có quyền', 'Tài khoản không có quyền kiểm kê kho.', 'error');
+    const whId = selectedWarehouseId || (warehouses.find(w => w.is_default) || warehouses[0] || {}).id || '';
+    const whName = warehouses.find(w => w.id === whId)?.name || 'Kho chính';
+    rapidStockCountState = {
+      warehouseId: whId,
+      items: [],
+      products: inventoryWarehouseId === whId ? inventoryProducts.slice() : [],
+      loading: false,
+      submitting: false,
+    };
+    const body = `<form id='entity-form' data-form='rapid-stock-count'>
+      <div class='stock-count-stage'>
+        <div class='scan-camera-panel' data-scan-surface data-scan-mode='stock-count' data-scan-target='rapid-stock-count-input'>
+          <div class='scan-camera-stage'>
+            <div class='scan-camera-prompt' aria-hidden='true'>${icon('scan', 28)}<strong>Quét kiểm kê tại ${esc(whName)}</strong></div>
+            <video id='scan-camera-video' class='scan-camera-video' playsinline muted hidden aria-label='Camera kiểm kho liên tiếp'></video>
+            <div class='scan-viewfinder' aria-hidden='true'><i></i><i></i><i></i><i></i></div>
+            <div class='scan-feedback-pill' data-scan-pill hidden></div>
+          </div>
+          <p id='scan-camera-status' class='scan-camera-status' role='status' aria-live='polite'></p>
+          <div class='scan-camera-actions'>
+            <button class='btn btn-secondary' type='button' data-action='start-camera-scan'>Mở camera</button>
+            <label class='scan-continuous-toggle'><input type='checkbox' data-scan-continuous checked/><span>Quét liên tiếp</span></label>
+          </div>
+        </div>
+        <div class='editor-input-action'>
+          <input class='input' id='rapid-stock-count-input' type='search' maxlength='120' autocomplete='off' placeholder='Hoặc nhập / bắn súng mã vạch rồi Enter…'/>
+          <button class='btn btn-secondary' type='button' data-action='add-rapid-stock-count-code'>＋ Đếm +1</button>
+        </div>
+        <div class='stock-count-summary' data-stock-count-summary></div>
+        <div class='stock-count-list' data-stock-count-list></div>
+        <label class='form-field'><span class='input-label'>Lý do kiểm kê</span><input class='input' name='reason' maxlength='500' value='Kiểm kê nhanh bằng camera' required/></label>
+      </div>
+    </form>`;
+    showModal('Quét camera kiểm kho', `Kho: ${whName} · Quét liên tiếp để đếm số lượng thực tế.`, body, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button><button class='btn btn-primary' type='submit' form='entity-form'>Cân bằng tồn kho</button>`, true);
+    renderRapidStockCountRows();
+    if (inventoryWarehouseId !== whId && whId && navigator.onLine) {
+      apiRequest(`/api/stores/${encodeURIComponent(store.id)}/products?limit=100&warehouseId=${encodeURIComponent(whId)}`).then(res => {
+        rapidStockCountState.products = (res.products || []).map(mapProduct);
+      }).catch(() => {});
+    }
+    startScanCamera(modal.querySelector('[data-action="start-camera-scan"]'));
+  }
+
+  async function submitRapidStockCount(form) {
+    if (rapidStockCountState.submitting) return;
+    const items = rapidStockCountState.items || [];
+    if (!items.length) return toast('Chưa có mặt hàng nào được đếm', 'Quét ít nhất 1 sản phẩm trước khi cân bằng kho.', 'error');
+    const reason = String(new FormData(form).get('reason') || '').trim() || 'Kiểm kê nhanh bằng camera';
+    const submitBtn = modal.querySelector('button[type="submit"][form="entity-form"]');
+    rapidStockCountState.submitting = true;
+    if (submitBtn) submitBtn.disabled = true;
+    try {
+      const payload = {
+        warehouseId: rapidStockCountState.warehouseId || selectedWarehouseId,
+        reason,
+        items: items.map((row, idx) => ({
+          productId: row.productId,
+          count: row.counted,
+          expectedInventoryVersion: row.inventoryVersion,
+          sourceLine: idx + 2,
+        })),
+      };
+      const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/stock-adjustments/bulk`, {
+        method: 'POST',
+        headers: { 'idempotency-key': newIdempotencyKey() },
+        body: payload,
+      });
+      closeModal();
+      emitSyncDomains(['stock', 'products', 'dashboard'], { source: 'rapid-stock-count' });
+      await loadInventoryPage(searchTerms.inventory, inventoryOffset);
+      emitSyncDomains(['stock', 'products', 'dashboard'], { source: 'stock-bulk-count' });
+      render();
+      toast('Đã cân bằng tồn kho', `${number(Number(result.changedCount) || 0)} mặt hàng cập nhật · ${number(Number(result.unchangedCount) || 0)} mặt hàng khớp.`);
+    } catch (error) {
+      toast('Chưa cập nhật được kiểm kho', error.message, 'error');
+      if (submitBtn?.isConnected) submitBtn.disabled = false;
+    } finally {
+      rapidStockCountState.submitting = false;
+    }
+  }
+
+  function renderWarrantyLookupResult(data, code) {
+    if (!data || data.matchType !== 'serial' || !data.serial) {
+      return `<div class='empty-state'><strong>Không tìm thấy Serial / IMEI “${esc(code)}”</strong><span>Kiểm tra lại mã hoặc tìm theo sản phẩm khác.</span></div>`;
+    }
+    const s = data.serial;
+    const prod = data.product ? mapProduct(data.product) : null;
+    const warrantyMonths = Number(s.warrantyMonths ?? s.warranty_months ?? prod?.warrantyMonths ?? 0);
+    const expiresAt = s.warrantyExpiresAt || s.warranty_expires_at || '';
+    const statusBadgeHtml = formatSerialWarrantyBadge(s, warrantyMonths);
+    const soldDate = s.soldAt || s.sold_at || s.orderOccurredAt || '';
+    const orderBtn = s.orderId
+      ? `<button class='link-button' type='button' data-action='order-detail' data-id='${esc(s.orderId)}'>${esc(s.orderNumber || s.orderId)}</button>`
+      : 'Chưa gắn đơn bán';
+    return `<article class='warranty-lookup-card'>
+      <div class='warranty-card-head'>
+        <div>
+          <strong>${esc(prod?.name || s.productName || 'Sản phẩm')}</strong>
+          <small style='display:block;color:var(--muted)'>Serial/IMEI: <code>${esc(s.code)}</code>${prod?.sku ? ` · SKU: ${esc(prod.sku)}` : ''}</small>
+        </div>
+        ${statusBadgeHtml}
+      </div>
+      <div class='warranty-card-grid'>
+        <div><small class='muted'>Trạng thái</small><div><strong>${s.status === 'in_stock' ? 'Còn trong kho' : 'Đã bán'}</strong></div></div>
+        <div><small class='muted'>Thời hạn mặc định</small><div><strong>${warrantyMonths > 0 ? `${number(warrantyMonths)} tháng` : 'Không bảo hành'}</strong></div></div>
+        <div><small class='muted'>Ngày bán</small><div><strong>${soldDate ? esc(humanDate(soldDate, true)) : '—'}</strong></div></div>
+        <div><small class='muted'>Hạn bảo hành</small><div><strong>${expiresAt ? esc(humanDate(expiresAt)) : (warrantyMonths > 0 && s.status === 'in_stock' ? 'Tính từ ngày bán' : '—')}</strong></div></div>
+        <div><small class='muted'>Khách hàng</small><div><strong>${esc(s.customerName || 'Khách lẻ')}${s.customerPhone ? ` · ${esc(s.customerPhone)}` : ''}</strong></div></div>
+        <div><small class='muted'>Đơn hàng</small><div>${orderBtn}</div></div>
+      </div>
+    </article>`;
+  }
+
+  async function lookupWarrantyBySerial(rawCode) {
+    const code = String(rawCode || '').trim();
+    const out = modal.querySelector('[data-warranty-lookup-result]');
+    if (!code || !out) return;
+    out.innerHTML = `<div class='empty-state'><span>Đang tra cứu bảo hành…</span></div>`;
+    try {
+      const data = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/serials/lookup?code=${encodeURIComponent(code)}`, { preferFresh: true });
+      if (!out.isConnected) return;
+      out.innerHTML = renderWarrantyLookupResult(data, code);
+    } catch (error) {
+      if (out.isConnected) {
+        out.innerHTML = `<div class='auth-message error'>${esc(error.message || 'Chưa tra cứu được Serial/IMEI.')}</div>`;
+      }
+    }
+  }
+
+  function openWarrantyLookupModal(initialCode = '') {
+    const body = `<form id='entity-form' data-form='warranty-lookup'>
+      <div class='editor-input-action'>
+        <input class='input' id='warranty-lookup-code' name='code' maxlength='120' value='${esc(initialCode)}' placeholder='Nhập hoặc quét Serial / IMEI…' autocomplete='off' required/>
+        <button class='btn btn-primary' type='submit'>Tra cứu</button>
+        <button class='btn btn-secondary' type='button' data-action='toggle-warranty-camera' aria-label='Quét camera Serial/IMEI'>${icon('scan', 18)}</button>
+      </div>
+      <section class='editor-barcode-camera' data-scan-surface data-scan-mode='warranty-lookup' data-scan-target='warranty-lookup-code' hidden style='margin-top:10px'>
+        <div class='scan-camera-stage'>
+          <video id='scan-camera-video' class='scan-camera-video' playsinline muted hidden aria-label='Camera quét bảo hành'></video>
+          <div class='scan-feedback-pill' data-scan-pill hidden></div>
+        </div>
+        <p id='scan-camera-status' role='status' aria-live='polite'></p>
+        <button class='btn btn-secondary' type='button' data-action='stop-warranty-camera'>Đóng camera</button>
+      </section>
+      <div data-warranty-lookup-result style='margin-top:14px'>${initialCode ? `<div class='empty-state'><span>Đang tra cứu…</span></div>` : `<div class='empty-state'><strong>Nhập hoặc quét Serial / IMEI</strong><span>Kiểm tra ngày bán, khách hàng và hạn bảo hành còn lại.</span></div>`}</div>
+    </form>`;
+    showModal('Tra cứu bảo hành Serial / IMEI', 'Kiểm tra hạn bảo hành theo mã riêng của sản phẩm đã bán.', body, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button>`, true);
+    if (initialCode) lookupWarrantyBySerial(initialCode);
   }
 
   function openProductBarcodeSearchModal() {
@@ -10630,16 +11426,17 @@
   }
 
   async function openSupplierReturnModal() {
-    if (!['owner', 'manager', 'stockkeeper', 'accountant'].includes(store.role)) return toast('Không có quyền', 'Vai trò của bạn không được lập phiếu trả hàng NCC.', 'error');
+    if (!hasPerm('manageInventory') && !hasPerm('recordCashbook')) return toast('Không có quyền', 'Vai trò của bạn không được lập phiếu trả hàng NCC.', 'error');
     if (!store.suppliers.length) await loadFinancePage();
     if (!store.suppliers.length) return toast('Chưa có nhà cung cấp', 'Hãy thêm hoặc nhập hàng từ nhà cung cấp trước.', 'error');
     const catalog = await ensureCatalogProducts();
     if (!catalog.length) return toast('Chưa có sản phẩm', 'Thêm hoặc tải danh sách sản phẩm trước khi lập phiếu trả.', 'error');
-    const canFinance = ['owner', 'manager', 'accountant'].includes(store.role);
+    const canFinance = hasPerm('recordCashbook') || hasPerm('viewReports');
+    const showCost = hasPerm('viewCostPrice');
     const supplierOpts = store.suppliers.map(s => `<option value='${esc(s.id)}'>${esc(s.name)}</option>`).join('');
     const whOpts = warehouses.map(w => `<option value='${esc(w.id)}' ${w.id === selectedWarehouseId ? 'selected' : ''}>${esc(warehouseOptionName(w))}</option>`).join('');
-    const prodOpts = catalog.map(p => `<option value='${esc(p.id)}' data-cost='${p.cost}'>${esc(p.name)} · ${esc(p.sku)} (tồn ${number(p.stock)})</option>`).join('');
-    const defaultCost = catalog[0]?.cost || 0;
+    const prodOpts = catalog.map(p => `<option value='${esc(p.id)}' data-cost='${showCost ? (p.cost ?? 0) : 0}'>${esc(p.name)} · ${esc(p.sku)} (tồn ${number(p.stock)})</option>`).join('');
+    const defaultCost = showCost ? (catalog[0]?.cost || 0) : 0;
     const srKeyStorage = `slink-sr-key:${store.id}`;
     const financeFields = canFinance
       ? `<div class='form-field'><label class='input-label' for='sr-cost'>Đơn giá trả (đ)</label><input class='input' id='sr-cost' name='unitCostVnd' value='${defaultCost}'/></div>
@@ -10676,7 +11473,7 @@
   async function submitSupplierReturnForm(form) {
     if (!window.SlinkReturnsExchangeUI) return;
     const data = new FormData(form);
-    const canFinance = ['owner', 'manager', 'accountant'].includes(store.role);
+    const canFinance = hasPerm('recordCashbook') || hasPerm('viewReports');
     const qty = Number(data.get('quantity') || 0);
     if (!Number.isFinite(qty) || qty <= 0) return toast('Số lượng trả chưa hợp lệ', 'Nhập số lượng lớn hơn 0.', 'error');
     const item = { productId: String(data.get('productId') || ''), quantity: qty };
@@ -10712,6 +11509,7 @@
       });
       clearPendingKey(keyStorage);
       closeModal();
+      emitSyncDomains(['stock', 'products', 'suppliers', 'cashbook', 'dashboard'], { source: 'supplier-return' });
       toast('Đã lập phiếu trả hàng NCC', 'Tồn kho và sổ công nợ đã cập nhật.');
       await Promise.all([loadSupplierReturns(), loadInventoryPage(searchTerms.inventory, inventoryOffset, { keepSearch: true }), loadFinancePage()]);
     } catch (error) {
@@ -10758,7 +11556,7 @@
   }
 
   async function openOrderExchange(orderId) {
-    if (!['owner', 'manager'].includes(store.role)) return toast('Không có quyền', 'Chỉ chủ cửa hàng hoặc quản lý mới được đổi hàng.', 'error');
+    if (!hasPerm('voidOrReturnOrder')) return toast('Không có quyền', 'Tài khoản này chưa được cấp quyền đổi / trả hàng.', 'error');
     const order = store.orders.find(o => o.id === orderId);
     if (!order) return;
     if (!warehouses.length) await loadWarehouses({ includeTransfers: false });
@@ -10840,6 +11638,7 @@
       });
       clearPendingKey(keyStorage);
       closeModal();
+      emitSyncDomains(['orders', 'stock', 'products', 'cashbook', 'customers', 'dashboard', 'reports'], { source: 'order-exchange' });
       toast('Đã đổi hàng thành công', res.exchange?.replacementOrderNumber ? `Đơn mới: ${res.exchange.replacementOrderNumber}` : '');
       await loadOrdersPage(searchTerms.orders, orderOffset);
       openOrder(form.dataset.id);
@@ -10879,6 +11678,7 @@
         customerImportPreviewValid = false;
       }
       await loadCustomersPage(searchTerms.customers, 0);
+      emitSyncDomains(['customers', 'debts', 'dashboard'], { source: 'customer-import' });
       if (page === 'customers') render();
       toast('Đã nhập khách hàng', `${number(Number(result.count))} hồ sơ · công nợ mở đầu ${moneyVndText(result.openingBalanceTotalVnd || '0')}.`);
     } catch (error) {
@@ -10936,7 +11736,9 @@
         productImportPending = false;
       }
       await loadProductsPage('', 0);
+      emitSyncDomains(['products'], { source: 'product-bulk-update' });
       if (store.id !== requestStoreId || authSession !== requestSession) return;
+      emitSyncDomains(['products', 'stock', 'dashboard'], { source: 'product-import' });
       toast('Đã nhập sản phẩm', `${number(Number(result.count))} sản phẩm · tồn đầu kỳ đã ghi vào sổ kho.`);
       if (canContinue && requestGeneration === modalGeneration && modal.hidden && page !== 'pos') {
         openCatalogNextStep(result.products.some(function (product) { return !product.inventory_tracked || Number(product.on_hand) > 0; }));
@@ -10987,6 +11789,7 @@
         productBulkUpdateErrors = [];
       }
       await loadProductsPage('', 0);
+      emitSyncDomains(['products'], { source: 'product-bulk-update' });
       const changedCount = Number.isSafeInteger(result.changedCount) ? result.changedCount : (Number(result.count) || 0);
       const unchangedCount = Number.isSafeInteger(result.unchangedCount) ? result.unchangedCount : 0;
       if (changedCount > 0) {
@@ -11049,6 +11852,7 @@
         stockBulkCountErrors = [];
       }
       await loadInventoryPage(searchTerms.inventory, inventoryOffset);
+      emitSyncDomains(['stock', 'products', 'dashboard'], { source: 'stock-bulk-count' });
       const changedCount = Number(result.changedCount) || 0;
       const unchangedCount = Number(result.unchangedCount) || 0;
       toast(changedCount ? 'Đã ghi nhận kiểm kê' : 'Tồn kho không đổi', `${number(changedCount)} sản phẩm có chênh lệch đã ghi sổ · ${number(unchangedCount)} sản phẩm giữ nguyên.`);
@@ -11082,6 +11886,11 @@
     const extraBarcodes = extraBarcodesRaw
       ? extraBarcodesRaw.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean)
       : [];
+    const rawWarranty = String(data.get('warrantyMonths') ?? old?.warrantyMonths ?? 0).trim() || '0';
+    const warrantyMonths = Number(rawWarranty);
+    if (!/^\d+$/.test(rawWarranty) || !Number.isSafeInteger(warrantyMonths) || warrantyMonths < 0 || warrantyMonths > 120) {
+      return report('Thời gian bảo hành phải là số nguyên từ 0 đến 120 tháng.');
+    }
     const payload = {
       image,
       name: String(data.get('name')).trim(),
@@ -11091,8 +11900,9 @@
       category: readProductCategory(data),
       unit: String(data.get('unit') || 'cái').trim(),
       salePriceVnd: Number(data.get('price')),
-      costVnd: Number(data.get('cost') || 0),
+      costVnd: hasPerm('viewCostPrice') ? Number(data.get('cost') || 0) : Number(old?.cost || 0),
       lowStockThreshold: Number(data.get('minStock') ?? old?.minStock ?? 0),
+      warrantyMonths,
       inventoryTracked: data.get('inventoryTracked') === 'on',
     };
     if (old?.variantGroupId) {
@@ -11111,6 +11921,7 @@
         method: old ? 'PUT' : 'POST', body: payload,
       });
       if (modal.contains(form)) closeModal();
+      emitSyncDomains(['products'], { source: 'product-save' });
       toast(old ? 'Đã cập nhật sản phẩm' : 'Đã thêm sản phẩm', result.product.name);
       if (page === 'inventory') await loadInventoryPage(searchTerms.inventory, inventoryOffset);
       else await loadProductsPage(searchTerms.products, productOffset);
@@ -11172,6 +11983,7 @@
       });
       clearPendingProductVariantGroup();
       closeModal();
+      emitSyncDomains(['products'], { source: 'variant-group' });
       toast('Đã tạo nhóm biến thể', `${result.count} SKU · ${result.name}`);
       await loadProductsPage(searchTerms.products, productOffset);
     } catch (error) {
@@ -11213,6 +12025,7 @@
       });
       clearPendingProductVariantAdd();
       closeModal();
+      emitSyncDomains(['products'], { source: 'variant-add' });
       await loadProductsPage(searchTerms.products, productOffset);
       toast('Đã thêm SKU vào nhóm', `${result.count} biến thể · ${result.name}`);
     } catch (error) {
@@ -11228,6 +12041,7 @@
     try {
       await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/products/${encodeURIComponent(id)}/archive`, { method: 'POST', body: {} });
       closeModal();
+      emitSyncDomains(['products', 'stock'], { source: 'archive-product' });
       toast('Đã lưu trữ sản phẩm', product.name);
       await loadProductsPage(searchTerms.products, Math.max(0, productOffset));
     } catch (error) {
@@ -11288,6 +12102,7 @@
       const customer = mapCustomer(rawCustomer);
       if (old) Object.assign(old, customer); else store.customers.unshift(customer);
       closeModal();
+      emitSyncDomains(['customers', 'debts'], { source: 'customer-save' });
       toast(old ? 'Đã cập nhật khách hàng' : 'Đã thêm khách hàng', `${customer.name}${!old && Number(payload.openingBalanceVnd) > 0 ? ` · công nợ ban đầu ${money(Number(payload.openingBalanceVnd))}` : ''}`);
       if (page === 'pos') cartCustomerId = customer.id;
       if (page === 'finance') return await loadFinancePage();
@@ -11327,6 +12142,7 @@
       });
       clearPendingSupplier();
       closeModal();
+      emitSyncDomains(['suppliers', 'cashbook'], { source: 'supplier-save' });
       await loadFinancePage();
       render();
       toast(result.supplier.created ? 'Đã thêm nhà cung cấp' : 'Đã cập nhật công nợ nhà cung cấp', `${result.supplier.name}${Number(pending.payload.openingPayableVnd) > 0 ? ` · phải trả ${money(Number(result.supplier.balance_vnd))}` : ''}`);
@@ -11359,6 +12175,7 @@
       const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/stock-adjustments`, { method: 'POST', headers: { 'idempotency-key': pending.key }, body: pending.payload });
       clearPendingStock(p.id);
       closeModal();
+      if (!result.offlineQueued) emitSyncDomains(['stock', 'products', 'dashboard'], { source: 'stock-adjust' });
       if (page === 'inventory') await loadInventoryPage(searchTerms.inventory, inventoryOffset);
       else await loadProductsPage(searchTerms.products, productOffset);
       render();
@@ -11435,6 +12252,7 @@
         method: 'POST', headers: { 'idempotency-key': pending.key }, body: pending.payload,
       });
       clearPendingPurchase();
+      if (!result.offlineQueued) emitSyncDomains(['stock', 'products', 'suppliers', 'cashbook', 'dashboard'], { source: 'receive-stock' });
       if (page === 'inventory') await loadInventoryPage(searchTerms.inventory, inventoryOffset);
       else await loadProductsPage('', 0);
       if (page === 'finance') await loadFinancePage();
@@ -11476,6 +12294,7 @@
       });
       clearPendingSupplierPayment(supplierId);
       closeModal();
+      emitSyncDomains(['suppliers', 'cashbook', 'dashboard'], { source: 'supplier-payment' });
       await loadFinancePage();
       render();
       toast('Đã ghi nhận thanh toán nhà cung cấp', money(Number(result.payment.amountVnd)));
@@ -11540,6 +12359,7 @@
       });
       clearPendingCash();
       closeModal();
+      if (!result.offlineQueued) emitSyncDomains(['cashbook', 'dashboard', 'reports'], { source: 'cash-movement' });
       await loadFinancePage();
       toast(result.offlineQueued ? 'Đã lưu thu chi trên máy' : (pending.payload.direction === 'in' ? 'Đã ghi phiếu thu' : 'Đã ghi phiếu chi'), money(Number(result.movement.amountVnd)));
     } catch (error) {
@@ -11629,6 +12449,7 @@
         body: { name, direction, defaultIncludeInPnl },
       });
       await loadFinanceCategories();
+      emitSyncDomains(['cashbook'], { source: 'cash-category-create' });
       await openCashCategoriesModal();
       toast('Đã thêm khoản mục', name);
     } catch (error) {
@@ -11645,6 +12466,7 @@
         body: { status: nextStatus },
       });
       await loadFinanceCategories();
+      emitSyncDomains(['cashbook'], { source: 'cash-category-create' });
       await openCashCategoriesModal();
       toast(nextStatus === 'active' ? 'Đã hiện lại khoản mục' : 'Đã ẩn khoản mục');
     } catch (error) {
@@ -11671,6 +12493,7 @@
       const settings = result.settings;
       delete form.dataset.dirty;
       applyStoreProfile(settings);
+      emitSyncDomains(['settings', 'dashboard'], { source: 'store-settings' });
       render();
       toast('Đã lưu cài đặt cửa hàng');
     } catch (error) {
@@ -11707,6 +12530,7 @@
       if (authSession !== session || store.id !== storeId) return;
       store.businessProfile = result.businessProfile;
       store.onboardingCompletedAt = result.onboardingCompletedAt;
+      emitSyncDomains(['settings'], { source: 'business-profile' });
       authSession.stores = authSession.stores.map(function (item) {
         return item.id === store.id ? Object.assign({}, item, { business_profile: result.businessProfile, onboarding_completed_at: result.onboardingCompletedAt }) : item;
       });
@@ -11809,6 +12633,7 @@
         method: 'POST', body: { email: String(data.get('email') || '').trim(), role: String(data.get('role') || '') },
       });
       showInvitationResult(result);
+      emitSyncDomains(['staff'], { source: 'staff-invite' });
       await loadStaffPage();
     } catch (error) {
       if (error.status === 401) showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
@@ -11820,6 +12645,16 @@
   function openStaffDirectCreateModal() {
     if (store.role !== 'owner') return toast('Không đủ quyền', 'Chỉ chủ cửa hàng mới có thể tạo tài khoản nhân viên.', 'error');
     const nextCode = `NV-${String((staffState.members?.length || 0) + 1).padStart(3, '0')}`;
+    const defaultEff = resolveEffectivePermissions('cashier', null, null);
+    const permToggles = [
+      ['view_cost_price', 'Xem giá vốn & lãi gộp'],
+      ['edit_products', 'Thêm / sửa sản phẩm'],
+      ['void_or_return_order', 'Hủy đơn & đổi / trả hàng'],
+      ['record_cashbook', 'Ghi phiếu thu chi & sổ quỹ'],
+      ['view_reports', 'Xem báo cáo & doanh thu'],
+    ].map(function ([key, label]) {
+      return `<label class='staff-perm-toggle'><input type='checkbox' data-direct-perm='${key}' ${defaultEff[key] ? 'checked' : ''}/><span>${label}</span></label>`;
+    }).join('');
     const form = `<form id='entity-form' data-form='staff-direct-create'><div class='form-grid'>
       <div class='form-field'><label class='input-label'>Họ và tên nhân viên *</label><input class='input' name='displayName' required minlength='2' maxlength='120' placeholder='Ví dụ: Nguyễn Văn A'/></div>
       <div class='form-field'><label class='input-label'>Mã nhân viên</label><input class='input' name='staffCode' value='${esc(nextCode)}' maxlength='40' placeholder='NV-001'/></div>
@@ -11831,7 +12666,7 @@
       <div class='form-field'><label class='input-label'>Lương cơ bản (đ/tháng)</label><input class='input' name='baseSalaryVnd' type='number' min='0' step='1' value='0'/></div>
       <div class='form-field'><label class='input-label'>Hoa hồng doanh số (%)</label><input class='input' name='commissionPercent' type='number' min='0' max='100' step='0.1' value='0'/></div>
       <div class='form-field full'><label class='input-label'>Ghi chú nhân sự</label><input class='input' name='note' maxlength='500' placeholder='Ghi chú ca trực, chi nhánh, hợp đồng...'/></div>
-    </div><div class='modal-note'>Tài khoản được kích hoạt ngay lập tức. Nhân viên có thể dùng Email và Mật khẩu này đăng nhập ngay trên điện thoại hoặc máy tính tại quầy.</div></form>`;
+    </div><details class='staff-perms' data-direct-perms><summary style='cursor:pointer;font-weight:700;font-size:13px'>Quyền chi tiết theo nhân viên (tùy chọn)</summary><div class='staff-perm-grid' style='margin-top:10px'>${permToggles}</div><label class='staff-perm-discount'><span>Mức giảm giá tối đa tại POS (%)</span><input class='input' type='number' min='0' max='100' step='1' data-direct-perm='pos_max_discount_pct' value='${esc(String(defaultEff.pos_max_discount_pct ?? 10))}'/></label></details><div class='modal-note'>Tài khoản được kích hoạt ngay lập tức. Nhân viên có thể dùng Email và Mật khẩu này đăng nhập ngay trên điện thoại hoặc máy tính tại quầy.</div></form>`;
     showModal('Tạo nhanh nhân viên (Chuẩn KiotViet / Sapo)', 'Cấp tài khoản, phân vai trò và thiết lập lương & hoa hồng dùng ngay.', form, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Hủy</button><button class='btn btn-primary' type='submit' form='entity-form'>Tạo tài khoản nhân viên</button>`);
   }
 
@@ -11841,6 +12676,17 @@
     if (button) button.disabled = true;
     const commPct = Number(data.get('commissionPercent') || 0);
     const commissionRateBps = Number.isFinite(commPct) && commPct >= 0 && commPct <= 100 ? Math.round(commPct * 100) : 0;
+    const permissions = {};
+    form.querySelectorAll('[data-direct-perm]').forEach(function (el) {
+      const key = el.dataset.directPerm;
+      if (!key) return;
+      if (key === 'pos_max_discount_pct') {
+        const pct = Math.max(0, Math.min(100, Math.trunc(Number(el.value || 0))));
+        permissions[key] = Number.isFinite(pct) ? pct : 0;
+      } else {
+        permissions[key] = Boolean(el.checked);
+      }
+    });
     try {
       const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/staff/direct-create`, {
         method: 'POST',
@@ -11855,9 +12701,11 @@
           baseSalaryVnd: String(data.get('baseSalaryVnd') || '0').trim() || '0',
           commissionRateBps,
           note: String(data.get('note') || '').trim(),
+          permissions,
         },
       });
       closeModal();
+      emitSyncDomains(['staff'], { source: 'staff-direct-create' });
       toast('Đã tạo tài khoản nhân viên', `${result.member?.display_name || ''} (${result.member?.staff_code || ''}) đã có thể đăng nhập ngay.`);
       await loadStaffPage();
     } catch (error) {
@@ -11865,6 +12713,21 @@
       else toast('Chưa tạo được nhân viên', error.message, 'error');
       if (button && !modal.hidden) button.disabled = false;
     }
+  }
+
+  function readMemberGranularPerms(userId) {
+    const permissions = {};
+    document.querySelectorAll(`[data-member-perm='${CSS.escape(userId)}']`).forEach(function (el) {
+      const key = el.dataset.permKey;
+      if (!key) return;
+      if (key === 'pos_max_discount_pct') {
+        const raw = Math.trunc(Number(el.value || 0));
+        permissions[key] = Number.isFinite(raw) ? Math.max(0, Math.min(100, raw)) : 0;
+      } else {
+        permissions[key] = Boolean(el.checked);
+      }
+    });
+    return permissions;
   }
 
   async function saveStaffMember(userId) {
@@ -11880,6 +12743,7 @@
     const note = document.querySelector(`[data-member-note='${userId}']`)?.value?.trim();
     const warehouseScopeMode = document.querySelector(`[data-member-scope-mode='${userId}']`)?.value || 'all';
     const warehouseIds = Array.from(document.querySelectorAll(`[data-member-warehouse='${userId}']:checked`)).map(function (input) { return input.value; });
+    const permissions = readMemberGranularPerms(userId);
     try {
       await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/staff/members/${encodeURIComponent(userId)}`, {
         method: 'PATCH',
@@ -11895,8 +12759,10 @@
           ...(note !== undefined ? { note } : {}),
           warehouseScopeMode,
           warehouseIds,
+          permissions,
         },
       });
+      emitSyncDomains(['staff', 'me'], { source: 'staff-member-save', userId });
       toast('Đã cập nhật hồ sơ & quyền nhân viên', 'Thông tin lương, hoa hồng và phân quyền đã được lưu.');
       await loadStaffPage();
     } catch (error) {
@@ -11909,6 +12775,7 @@
     try {
       const result = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/staff/invitations/${encodeURIComponent(invitationId)}/resend`, { method: 'POST', body: {} });
       showInvitationResult(result, 'Đã gửi lại lời mời');
+      emitSyncDomains(['staff'], { source: 'staff-invite-resend' });
       await loadStaffPage();
     } catch (error) {
       if (error.status === 401) showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
@@ -11920,6 +12787,7 @@
     if (!window.confirm('Thu hồi lời mời này? Liên kết hiện tại sẽ không còn sử dụng được.')) return;
     try {
       await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/staff/invitations/${encodeURIComponent(invitationId)}/revoke`, { method: 'POST', body: {} });
+      emitSyncDomains(['staff'], { source: 'staff-invite-revoke' });
       toast('Đã thu hồi lời mời');
       await loadStaffPage();
     } catch (error) {
@@ -11947,7 +12815,7 @@
           || item.name.toLocaleLowerCase('vi') === normalized;
       });
       if (!product) {
-        const canCreate = ['owner', 'manager', 'stockkeeper'].includes(store.role);
+        const canCreate = hasPerm('editProducts');
         if (!canCreate) {
           closeModal();
           return toast('Chưa có mặt hàng này', 'Nhờ chủ cửa hàng hoặc người quản lý danh mục thêm sản phẩm trước khi bán.', 'error');
@@ -12029,36 +12897,36 @@
   };
   const exportGroups = [
     { label: 'Danh mục và kho', options: [
-      ['products', 'Danh mục sản phẩm', ['owner', 'manager', 'accountant', 'stockkeeper']],
-      ['inventory', 'Tồn kho hiện tại theo kho', ['owner', 'manager', 'accountant', 'stockkeeper']],
-      ['inventory-movements', 'Lịch sử biến động kho', ['owner', 'manager', 'accountant', 'stockkeeper']],
+      ['products', 'Danh mục sản phẩm', () => hasPerm('viewProducts') && (hasPerm('editProducts') || hasPerm('manageInventory') || hasPerm('viewReports'))],
+      ['inventory', 'Tồn kho hiện tại theo kho', () => hasPerm('manageInventory') || hasPerm('viewCostPrice')],
+      ['inventory-movements', 'Lịch sử biến động kho', () => hasPerm('manageInventory') || hasPerm('viewCostPrice')],
     ] },
     { label: 'Khách hàng và bán hàng', options: [
-      ['customers', 'Hồ sơ khách hàng', ['owner', 'manager', 'accountant']],
-      ['customer-ledger', 'Sổ công nợ khách hàng', ['owner', 'manager', 'accountant']],
-      ['orders', 'Đơn hàng', ['owner', 'manager', 'accountant']],
-      ['channel-orders', 'Đơn kênh bán ghi nhận thủ công', ['owner', 'manager', 'stockkeeper']],
-      ['order-lines', 'Chi tiết sản phẩm trong đơn', ['owner', 'manager', 'accountant']],
-      ['payments', 'Giao dịch thanh toán', ['owner', 'manager', 'accountant']],
-      ['returns', 'Chi tiết hàng trả', ['owner', 'manager', 'accountant']],
-      ['refunds', 'Giao dịch hoàn tiền', ['owner', 'manager', 'accountant']],
+      ['customers', 'Hồ sơ khách hàng', () => hasPerm('manageCustomers') && (hasPerm('viewReports') || hasPerm('recordCashbook'))],
+      ['customer-ledger', 'Sổ công nợ khách hàng', () => hasPerm('manageCustomers') && (hasPerm('viewReports') || hasPerm('recordCashbook'))],
+      ['orders', 'Đơn hàng', () => hasPerm('viewOrders') && (hasPerm('viewReports') || hasPerm('recordCashbook'))],
+      ['channel-orders', 'Đơn kênh bán ghi nhận thủ công', () => hasPerm('manageInventory') || hasPerm('manageSettings')],
+      ['order-lines', 'Chi tiết sản phẩm trong đơn', () => hasPerm('viewOrders') && (hasPerm('viewReports') || hasPerm('recordCashbook'))],
+      ['payments', 'Giao dịch thanh toán', () => hasPerm('viewReports') || hasPerm('recordCashbook')],
+      ['returns', 'Chi tiết hàng trả', () => hasPerm('viewReports') || hasPerm('recordCashbook')],
+      ['refunds', 'Giao dịch hoàn tiền', () => hasPerm('viewReports') || hasPerm('recordCashbook')],
     ] },
     { label: 'Thu chi và nhập hàng', options: [
-      ['cashbook', 'Sổ thu chi', ['owner', 'manager', 'accountant']],
-      ['suppliers', 'Nhà cung cấp', ['owner', 'manager', 'accountant', 'stockkeeper']],
-      ['supplier-ledger', 'Sổ công nợ nhà cung cấp', ['owner', 'manager', 'accountant']],
-      ['purchase-orders', 'Đơn đặt hàng', ['owner', 'manager', 'accountant', 'stockkeeper']],
-      ['purchases', 'Phiếu nhập và mặt hàng', ['owner', 'manager', 'accountant', 'stockkeeper']],
+      ['cashbook', 'Sổ thu chi', () => hasPerm('recordCashbook') || hasPerm('viewReports')],
+      ['suppliers', 'Nhà cung cấp', () => hasPerm('manageInventory') || hasPerm('recordCashbook') || hasPerm('viewReports')],
+      ['supplier-ledger', 'Sổ công nợ nhà cung cấp', () => hasPerm('recordCashbook') || hasPerm('viewReports')],
+      ['purchase-orders', 'Đơn đặt hàng', () => hasPerm('manageInventory') || hasPerm('recordCashbook') || hasPerm('viewReports')],
+      ['purchases', 'Phiếu nhập và mặt hàng', () => hasPerm('manageInventory') || hasPerm('recordCashbook') || hasPerm('viewReports')],
     ] },
   ];
 
   function canExportData() {
-    return ['owner', 'manager', 'accountant', 'stockkeeper'].includes(store.role);
+    return hasPerm('exportData') || hasPerm('manageInventory') || hasPerm('viewReports') || hasPerm('recordCashbook');
   }
 
   function openExportDialog() {
     const groupsHtml = exportGroups.map(function (group) {
-      const options = group.options.filter(function (option) { return option[2].includes(store.role); });
+      const options = group.options.filter(function (option) { return typeof option[2] === 'function' ? option[2]() : false; });
       return options.length ? `<optgroup label='${esc(group.label)}'>${options.map(function (option) { return `<option value='${option[0]}'>${esc(option[1])}</option>`; }).join('')}</optgroup>` : '';
     }).join('');
     if (!groupsHtml) return toast('Không có quyền xuất dữ liệu', 'Vai trò tài khoản hiện tại không được tải dữ liệu cửa hàng.', 'error');
@@ -12215,7 +13083,51 @@
     return lines.join('\n');
   }
 
-  function showDigitalReceipt(id) {
+  let activeReceiptPngPreview = { dataUrl: '', blob: null, filename: '', title: '', text: '' };
+
+  function buildReceiptImageData(order) {
+    const c = customerById(order.customerId);
+    const bankSettings = integrationState.data?.settings || {};
+    let vietQrText = '';
+    if (order.due > 0 && bankSettings.bankBin && bankSettings.bankAccountNumber && window.SlinkVietQrTools) {
+      vietQrText = window.SlinkVietQrTools.buildVietQrPayload({
+        bankBin: bankSettings.bankBin,
+        accountNumber: bankSettings.bankAccountNumber,
+        amountVnd: Math.max(0, Math.trunc(Number(order.due || 0))),
+        description: `SLINK ${order.number}`.slice(0, 40),
+      });
+    }
+    return {
+      storeName: store.settings.storeName || 'Slink',
+      storeAddress: store.settings.address || '',
+      storePhone: store.settings.phone || '',
+      code: order.number,
+      createdAtLabel: humanDate(order.createdAt, true),
+      customerName: order.customerName || c?.name || 'Khách lẻ',
+      cashierName: order.cashierName || '',
+      items: (order.items || []).map(function (item) {
+        const prod = productById(item.productId);
+        return {
+          name: item.name,
+          qty: item.qty,
+          unitPriceVnd: item.priceVnd ?? item.price ?? 0,
+          lineTotalVnd: item.totalVnd ?? item.total ?? 0,
+          serials: item.soldSerialCodes || [],
+          warrantyMonths: Number(prod?.warrantyMonths || 0),
+        };
+      }),
+      subtotalVnd: order.subtotalVndText ?? order.subtotal ?? 0,
+      discountVnd: order.discountVndText ?? order.discount ?? 0,
+      totalVnd: order.totalVndText ?? order.total ?? 0,
+      paidVnd: order.paidVndText ?? order.paid ?? 0,
+      debtVnd: order.dueVndText ?? order.due ?? 0,
+      paymentLabel: order.method || 'Tiền mặt',
+      vietQrText,
+      footerText: store.settings.receiptFooter || 'Cảm ơn quý khách đã mua hàng!',
+    };
+  }
+
+  async function showDigitalReceipt(id, autoSharePng = false) {
     const order = store.orders.find(item => item.id === id);
     if (!order || !Array.isArray(order.items)) return toast('Chưa có biên nhận', 'Mở lại chi tiết đơn để tải dữ liệu.', 'error');
     const body = modal.querySelector('.modal-body');
@@ -12225,19 +13137,73 @@
       panel = document.createElement('section');
       panel.className = 'digital-receipt';
       panel.dataset.number = order.number;
-      panel.innerHTML = `<h3 tabindex='-1'>Biên nhận ${esc(order.number)}</h3><div class='receipt-actions'>${typeof navigator.share === 'function' || window.SlinkAndroid ? `<button class='btn btn-primary' type='button' data-action='receipt-share'>Gửi qua ứng dụng</button>` : ''}<button class='btn btn-secondary' type='button' data-action='receipt-copy'>Sao chép</button><button class='btn btn-secondary' type='button' data-action='receipt-download'>Lưu tệp văn bản</button></div><label class='input-label' for='share-order-copy'>Nội dung để gửi khách</label><textarea id='share-order-copy' class='input' rows='7' readonly>${esc(digitalReceiptText(order))}</textarea><p class='muted' role='status' data-receipt-feedback></p>`;
+      panel.innerHTML = `<h3 tabindex='-1'>Biên nhận ${esc(order.number)}</h3>
+        <div class='receipt-png-preview' data-receipt-png-box><span class='muted'>Đang tạo ảnh biên nhận…</span></div>
+        <div class='receipt-png-actions'>
+          <button class='btn btn-primary' type='button' data-action='receipt-share-png' disabled>Gửi ảnh biên nhận</button>
+          <button class='btn btn-secondary' type='button' data-action='receipt-download-png' disabled>Tải ảnh PNG</button>
+        </div>
+        <details class='receipt-text-fallback'><summary>Gửi dạng tin nhắn văn bản</summary>
+          <div class='receipt-actions' style='margin-top:8px'>${typeof navigator.share === 'function' || window.SlinkAndroid ? `<button class='btn btn-secondary' type='button' data-action='receipt-share'>Chia sẻ chữ</button>` : ''}<button class='btn btn-secondary' type='button' data-action='receipt-copy'>Sao chép</button><button class='btn btn-secondary' type='button' data-action='receipt-download'>Lưu .txt</button></div>
+          <label class='input-label' for='share-order-copy'>Nội dung văn bản</label>
+          <textarea id='share-order-copy' class='input' rows='7' readonly>${esc(digitalReceiptText(order))}</textarea>
+        </details>
+        <p class='muted' role='status' data-receipt-feedback></p>`;
       body.prepend(panel);
     }
     body.scrollTop = 0;
     panel.querySelector('h3').focus({ preventScroll: true });
+    if (window.SlinkReceiptImage && typeof window.SlinkReceiptImage.renderReceiptPng === 'function') {
+      try {
+        const rendered = await window.SlinkReceiptImage.renderReceiptPng(buildReceiptImageData(order));
+        const filename = `bien-nhan-${String(order.number || 'slink').replace(/[^a-zA-Z0-9_-]+/g, '-')}.png`;
+        activeReceiptPngPreview = {
+          dataUrl: rendered.dataUrl,
+          blob: rendered.blob,
+          filename,
+          title: `Biên nhận ${order.number}`,
+          text: `${store.settings.storeName || 'Slink'} · ${order.number} · ${moneyVndText(order.totalVndText ?? order.total)}`,
+        };
+        if (panel.isConnected) {
+          const box = panel.querySelector('[data-receipt-png-box]');
+          if (box) box.innerHTML = `<img src='${rendered.dataUrl}' alt='Ảnh biên nhận ${esc(order.number)}'/>`;
+          panel.querySelectorAll('[data-action="receipt-share-png"], [data-action="receipt-download-png"]').forEach(b => { b.disabled = false; });
+        }
+        if (autoSharePng && panel.isConnected) {
+          await useDigitalReceipt('receipt-share-png', panel.querySelector('[data-action="receipt-share-png"]'));
+        }
+      } catch (_) {
+        const box = panel.querySelector('[data-receipt-png-box]');
+        if (box) box.innerHTML = `<span class='muted'>Chưa tạo được ảnh PNG; dùng biên nhận văn bản bên dưới.</span>`;
+      }
+    }
   }
 
   async function useDigitalReceipt(action, button) {
-    const panel = button.closest('.digital-receipt');
+    const panel = button?.closest('.digital-receipt');
     const field = panel?.querySelector('textarea');
-    if (!field || button.disabled) return;
+    if (!panel || !button || button.disabled) return;
     const feedback = panel.querySelector('[data-receipt-feedback]');
     const number = panel.dataset.number;
+    if (action === 'receipt-download-png') {
+      if (activeReceiptPngPreview.dataUrl && window.SlinkReceiptImage) {
+        window.SlinkReceiptImage.triggerDownload(activeReceiptPngPreview.dataUrl, activeReceiptPngPreview.filename);
+        if (feedback) feedback.textContent = 'Đã tải ảnh biên nhận PNG.';
+      }
+      return;
+    }
+    if (action === 'receipt-share-png') {
+      if (!activeReceiptPngPreview.dataUrl || !window.SlinkReceiptImage) return;
+      button.disabled = true;
+      try {
+        const res = await window.SlinkReceiptImage.sharePng(activeReceiptPngPreview);
+        if (feedback) feedback.textContent = res?.method === 'download' ? 'Đã tải ảnh biên nhận PNG.' : '';
+      } finally {
+        if (button.isConnected) button.disabled = false;
+      }
+      return;
+    }
+    if (!field) return;
     if (action === 'receipt-download') {
       download('bien-nhan-' + number.replace(/[^a-z0-9-]/gi, '-') + '.txt', field.value, 'text/plain;charset=utf-8');
       return;
@@ -12260,39 +13226,142 @@
   }
   function dashboardMobilePrimaryActionHtml() {
     if (isProfileRouteEnabled('pos') && canAccessRoute('pos')) return `<button class='btn btn-primary dashboard-mobile-primary' data-route='pos' data-tour-target='dashboard-mobile-primary'>＋ Tạo đơn mới</button>`;
-    if (store.role === 'stockkeeper') return `<button class='btn btn-primary dashboard-mobile-primary' data-action='receive-stock' data-tour-target='dashboard-mobile-primary'>＋ Nhập hàng</button>`;
-    if (['owner', 'manager', 'stockkeeper'].includes(store.role)) return `<button class='btn btn-primary dashboard-mobile-primary' data-action='new-product' data-tour-target='dashboard-mobile-primary'>＋ Thêm sản phẩm</button>`;
-    if (['owner', 'manager', 'accountant'].includes(store.role)) return `<button class='btn btn-primary dashboard-mobile-primary' data-action='new-expense' data-tour-target='dashboard-mobile-primary'>＋ Ghi khoản thu / chi</button>`;
+    if (hasPerm('manageInventory')) return `<button class='btn btn-primary dashboard-mobile-primary' data-action='receive-stock' data-tour-target='dashboard-mobile-primary'>＋ Nhập hàng</button>`;
+    if (hasPerm('editProducts')) return `<button class='btn btn-primary dashboard-mobile-primary' data-action='new-product' data-tour-target='dashboard-mobile-primary'>＋ Thêm sản phẩm</button>`;
+    if (hasPerm('recordCashbook')) return `<button class='btn btn-primary dashboard-mobile-primary' data-action='new-expense' data-tour-target='dashboard-mobile-primary'>＋ Ghi khoản thu / chi</button>`;
     return '';
   }
 
   function dashboardQuickActionsHtml() {
     const actions = [];
     if (isProfileRouteEnabled('pos') && canAccessRoute('pos')) actions.push(`<button class='quick-action' data-route='pos'><span class='quick-icon'>＋</span><span class='quick-copy'><strong>Tạo đơn hàng</strong><small>Thanh toán tại quầy</small></span></button>`);
-    if (['owner', 'manager', 'stockkeeper'].includes(store.role)) actions.push(`<button class='quick-action' data-action='new-product'><span class='quick-icon'>⌕</span><span class='quick-copy'><strong>Thêm sản phẩm</strong><small>Tạo mã hàng mới</small></span></button>`);
-    if (['owner', 'manager', 'stockkeeper', 'accountant'].includes(store.role)) actions.push(`<button class='quick-action' data-action='receive-stock'><span class='quick-icon'>↙</span><span class='quick-copy'><strong>Nhập hàng</strong><small>Cập nhật tồn và giá vốn</small></span></button>`);
-    if (['owner', 'manager', 'accountant'].includes(store.role)) actions.push(`<button class='quick-action' data-action='new-expense'><span class='quick-icon'>↗</span><span class='quick-copy'><strong>Ghi khoản thu / chi</strong><small>Đối soát sổ quỹ</small></span></button>`);
+    if (hasPerm('editProducts')) actions.push(`<button class='quick-action' data-action='new-product'><span class='quick-icon'>⌕</span><span class='quick-copy'><strong>Thêm sản phẩm</strong><small>Tạo mã hàng mới</small></span></button>`);
+    if (hasPerm('manageInventory') || hasPerm('recordCashbook')) actions.push(`<button class='quick-action' data-action='receive-stock'><span class='quick-icon'>↙</span><span class='quick-copy'><strong>Nhập hàng</strong><small>Cập nhật tồn và giá vốn</small></span></button>`);
+    if (hasPerm('recordCashbook')) actions.push(`<button class='quick-action' data-action='new-expense'><span class='quick-icon'>↗</span><span class='quick-copy'><strong>Ghi khoản thu / chi</strong><small>Đối soát sổ quỹ</small></span></button>`);
     return actions.join('');
   }
 
-  function renderDashboard() {
-    const canViewMoney = ['owner', 'manager', 'accountant'].includes(store.role);
-    const canReceive = ['owner', 'manager', 'accountant', 'stockkeeper'].includes(store.role);
+  function buildDashboardFallback() {
     const todayData = analyticsData?.range?.days === 1 ? analyticsData : null;
     const day = todayData?.days?.find(function (item) { return item.date === todayData.range.to; });
-    const revenue = todayData ? moneyVndText(day?.salesVnd || '0') : analyticsError ? 'Chưa tải được' : 'Đang tải…';
-    const actions = [
+    const summary = todayData?.summary || {};
+    const canFunds = hasPerm('record_cashbook') || hasPerm('view_reports');
+    const canProfit = hasPerm('view_reports') && hasPerm('view_cost_price');
+    let totalFundVnd = null;
+    if (canFunds && financeCashbook.balances) {
+      const cashBal = BigInt(String(financeCashbook.balances.cashVnd || '0'));
+      const bankBal = BigInt(String(financeCashbook.balances.bankVnd || '0'));
+      totalFundVnd = (cashBal + bankBal).toString();
+    }
+    return {
+      todayNetRevenueVnd: (hasPerm('view_reports') || hasPerm('view_orders')) ? String(day?.salesVnd ?? summary.netSalesVnd ?? '0') : null,
+      todayOrderCount: Number(day?.orderCount ?? summary.orderCount ?? store.orders.length ?? 0),
+      totalFundVnd,
+      cashFundVnd: financeCashbook.balances?.cashVnd ?? null,
+      bankFundVnd: financeCashbook.balances?.bankVnd ?? null,
+      canViewFunds: canFunds && totalFundVnd !== null,
+      todayNetProfitVnd: canProfit && summary.netProfitVnd != null ? String(summary.netProfitVnd) : null,
+      canViewNetProfit: canProfit && summary.netProfitVnd != null,
+      actions: {
+        lowStockCount: Number(inventorySummary.low || 0) + Number(inventorySummary.out || 0),
+        overdueDebtCount: Number(financeSummary.customerDebtCount || 0),
+        overdueDebtVnd: String(financeSummary.customerDebtVnd || '0'),
+        pendingOrdersCount: store.orders.filter(o => Number(o.due || 0) > 0).length,
+        openCashShiftCount: cashRegisterState.session ? 1 : 0,
+      },
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
+  async function loadDashboardPage(options = {}) {
+    if (!authSession || !store.id) return;
+    const reqNo = ++dashboardRequestNumber;
+    const session = authSession;
+    const storeId = store.id;
+    const current = () => reqNo === dashboardRequestNumber && authSession === session && store.id === storeId;
+    if (!options.silent) {
+      dashboardState.loading = true;
+      dashboardState.error = '';
+      if (page === 'dashboard') render();
+    }
+    const auxLoads = [loadWarehouses({ includeTransfers: false }), loadInventoryPage('', 0, { silentLoading: true })];
+    if (hasPerm('viewOrders')) auxLoads.push(loadOrdersPage('', 0));
+    if (hasPerm('viewFinance') || hasPerm('recordCashbook') || hasPerm('manageInventory')) auxLoads.push(loadFinancePage());
+    if (hasPerm('viewReports')) auxLoads.push(loadAnalytics(1));
+    await Promise.allSettled(auxLoads);
+    if (!current()) return;
+    try {
+      const result = await apiRequest(`/api/stores/${encodeURIComponent(storeId)}/dashboard`, { preferFresh: true });
+      if (!current()) return;
+      dashboardState = {
+        data: result?.dashboard || result,
+        loading: false,
+        error: '',
+        fallback: false,
+        loadedAt: Date.now(),
+      };
+    } catch (error) {
+      if (!current()) return;
+      if (error.status === 401) return showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
+      dashboardState = {
+        data: buildDashboardFallback(),
+        loading: false,
+        error: '',
+        fallback: true,
+        loadedAt: Date.now(),
+      };
+    }
+    if (page === 'dashboard' && current()) render();
+  }
+
+  function renderDashboard() {
+    const d = dashboardState.data || buildDashboardFallback();
+    const canViewRevenue = (hasPerm('view_reports') || hasPerm('view_orders')) && d.todayNetRevenueVnd != null;
+    const canViewFunds = d.canViewFunds === true && (hasPerm('record_cashbook') || hasPerm('view_reports')) && d.totalFundVnd != null;
+    const canViewProfit = d.canViewNetProfit === true && hasPerm('view_reports') && hasPerm('view_cost_price') && d.todayNetProfitVnd != null;
+
+    const cardRevenue = `<article class='real-num-card real-num-hero' data-tour-target='dashboard-revenue'>
+      <span class='real-num-label'>Doanh thu thuần hôm nay</span>
+      <strong class='real-num-value'>${canViewRevenue ? esc(moneyVndText(d.todayNetRevenueVnd)) : '—'}</strong>
+      <small class='real-num-sub'>${canViewRevenue ? `${number(d.todayOrderCount || 0)} đơn hợp lệ trong ngày` : 'Cần quyền xem báo cáo / đơn hàng'}</small>
+    </article>`;
+
+    const cardFunds = `<article class='real-num-card'>
+      <span class='real-num-label'>Tiền thực trong quỹ</span>
+      <strong class='real-num-value'>${canViewFunds ? esc(moneyVndText(d.totalFundVnd)) : 'Bị hạn chế'}</strong>
+      <small class='real-num-sub'>${canViewFunds ? `Tiền mặt ${esc(moneyVndText(d.cashFundVnd || '0'))} · Ngân hàng ${esc(moneyVndText(d.bankFundVnd || '0'))}` : 'Cần quyền Sổ quỹ hoặc Báo cáo'}</small>
+    </article>`;
+
+    const cardProfit = `<article class='real-num-card'>
+      <span class='real-num-label'>Lãi ròng thật hôm nay</span>
+      <strong class='real-num-value'>${canViewProfit ? esc(moneyVndText(d.todayNetProfitVnd)) : 'Bị hạn chế'}</strong>
+      <small class='real-num-sub'>${canViewProfit ? 'Đã trừ giá vốn &amp; chi phí KQKD' : 'Cần quyền Báo cáo + Xem giá vốn'}</small>
+    </article>`;
+
+    const act = d.actions || {};
+    const actionItems = [
+      { action: 'dashboard-open-low-stock', label: 'Hàng sắp hết / hết hàng', count: Number(act.lowStockCount || 0), tone: Number(act.lowStockCount || 0) > 0 ? 'is-warn' : '' },
+      { action: 'dashboard-open-debts', label: 'Khách còn công nợ', count: Number(act.overdueDebtCount || 0), sub: BigInt(String(act.overdueDebtVnd || '0')) > 0n ? moneyVndText(act.overdueDebtVnd) : '', tone: Number(act.overdueDebtCount || 0) > 0 ? 'is-danger' : '' },
+      { action: 'dashboard-open-orders', label: 'Đơn chờ thu / giữ hàng', count: Number(act.pendingOrdersCount || 0), tone: Number(act.pendingOrdersCount || 0) > 0 ? 'is-warn' : '' },
+      { action: 'dashboard-open-shifts', label: 'Ca tiền mặt đang mở', count: Number(act.openCashShiftCount || 0), tone: '' },
+    ];
+    const actionPanel = `<section class='dashboard-action-panel' data-tour-target='dashboard-actions' aria-label='Việc cần xử lý ngay'>
+      <div class='panel-header' style='padding:0'><div><h2>Việc cần xử lý ngay</h2><p>Chạm vào từng mục để xử lý trực tiếp.</p></div></div>
+      <div class='dashboard-action-list'>${actionItems.map(item => `<button type='button' class='dashboard-action-item ${item.tone}' data-action='${item.action}'><span><strong>${esc(item.label)}</strong>${item.sub ? `<small style='display:block;color:var(--muted)'>${esc(item.sub)}</small>` : ''}</span><span class='dashboard-action-count'>${number(item.count)}</span></button>`).join('')}</div>
+    </section>`;
+
+    const quickNav = [
       canAccessRoute('pos') ? { label: 'Bán hàng', detail: 'Chọn hàng, nhận tiền', route: 'pos', image: 'cart' } : null,
-      canViewMoney ? { label: 'Thu chi', detail: 'Tiền và công nợ', route: 'finance', image: 'wallet' } : null,
-      canReceive ? { label: 'Nhập hàng', detail: 'Ghi hàng vừa nhận', action: 'receive-stock', image: 'box' } : null,
-      { label: 'Xem kho', detail: 'Còn bao nhiêu hàng?', route: 'inventory', image: 'layers' }
+      (hasPerm('viewFinance') || hasPerm('recordCashbook')) ? { label: 'Thu chi', detail: 'Tiền và công nợ', route: 'finance', image: 'wallet' } : null,
+      (hasPerm('manageInventory') || hasPerm('recordCashbook')) ? { label: 'Nhập hàng', detail: 'Ghi hàng vừa nhận', action: 'receive-stock', image: 'box' } : null,
+      canAccessRoute('inventory') ? { label: 'Xem kho', detail: 'Còn bao nhiêu hàng?', route: 'inventory', image: 'layers' } : null,
     ].filter(Boolean);
-    return pageHeading('Hôm nay', '', '') +
-      (canViewMoney ? "<section class='today-revenue' data-tour-target='dashboard-revenue'><div><span>Doanh thu hôm nay</span><strong>" + esc(revenue) + "</strong><small>" + (todayData ? number(day?.orderCount || 0) + ' đơn bán' : 'Đang lấy số liệu cửa hàng') + "</small></div><button class='btn' data-route='reports'>Xem chi tiết →</button></section>" : "<section class='today-revenue'><div><span>" + esc(store.settings.storeName) + "</span><strong>Sẵn sàng làm việc</strong></div></section>") +
-      (analyticsError && canViewMoney ? "<p class='auth-message error' role='alert'>" + esc(analyticsError) + "</p>" : '') +
-      "<section class='daily-actions' data-tour-target='dashboard-actions' aria-label='Việc thường làm'>" + actions.map(function (item) { return "<button " + (item.route ? "data-route='" + item.route : "data-action='" + item.action) + "'><span>" + icon(item.image, 24) + "</span><strong>" + esc(item.label) + "</strong><small>" + esc(item.detail) + "</small></button>"; }).join('') + "</section>" +
-      "<section class='panel daily-attention'><div class='panel-header'><h2>Cần chú ý</h2><button class='link-button' data-route='inventory'>Xem kho →</button></div><p>" + (inventoryError ? esc(inventoryError) : inventoryLoading ? 'Đang kiểm tra kho…' : Number(inventorySummary.low) ? number(inventorySummary.low) + ' mặt hàng sắp hết. Kiểm tra để nhập thêm khi cần.' : 'Chưa có cảnh báo tồn kho trong dữ liệu đã tải.') + "</p></section>" +
-      (canAccessRoute('orders') ? "<section class='panel'><div class='panel-header'><h2>Đơn mới nhất</h2><button class='link-button' data-route='orders'>Xem tất cả →</button></div><div class='activity-list'>" + (store.orders.slice(0, 3).map(function (order) { return "<button class='activity-item recent-order' data-action='order-detail' data-id='" + esc(order.id) + "'><span class='activity-mark'>" + icon('receipt', 20) + "</span><span class='activity-text'><strong>" + esc(order.number) + "</strong><small>" + esc(order.customerName || 'Khách lẻ') + ' · ' + humanDate(order.createdAt, true) + "</small></span><strong>" + money(order.total) + "</strong></button>"; }).join('') || "<div class='empty-state'>Đơn bán mới sẽ hiện ở đây.</div>") + "</div></section>" : '');
+
+    return pageHeading('Hôm nay', '', `${hasPerm('viewReports') ? `<button class='btn btn-secondary' data-route='reports'>Xem báo cáo →</button>` : ''}`) +
+      `<section class='dashboard-real-numbers' aria-label='3 Con Số Thật hôm nay'>${cardRevenue}${cardFunds}${cardProfit}</section>` +
+      actionPanel +
+      `<section class='daily-actions' aria-label='Việc thường làm'>${quickNav.map(item => `<button ${item.route ? `data-route='${item.route}'` : `data-action='${item.action}'`}><span>${icon(item.image, 24)}</span><strong>${esc(item.label)}</strong><small>${esc(item.detail)}</small></button>`).join('')}</section>` +
+      (canAccessRoute('orders') ? `<section class='panel'><div class='panel-header'><h2>Đơn mới nhất</h2><button class='link-button' data-route='orders'>Xem tất cả →</button></div><div class='activity-list'>${(store.orders.slice(0, 3).map(order => `<button class='activity-item recent-order' data-action='order-detail' data-id='${esc(order.id)}'><span class='activity-mark'>${icon('receipt', 20)}</span><span class='activity-text'><strong>${esc(order.number)}</strong><small>${esc(order.customerName || 'Khách lẻ')} · ${humanDate(order.createdAt, true)}</small></span><strong>${money(order.total)}</strong></button>`).join('') || `<div class='empty-state'>Đơn bán mới sẽ hiện ở đây.</div>`)}</div></section>` : '');
   }
 
   function reportCsvText(value) {
@@ -12314,7 +13383,7 @@
   }
 
   function downloadReportsCsv() {
-    if (!['owner', 'manager', 'accountant'].includes(store.role)) {
+    if (!hasPerm('viewReports')) {
       return toast('Không có quyền xuất báo cáo', 'Vai trò của bạn không được phép xem dữ liệu tài chính.', 'error');
     }
     if (analyticsLoading || analyticsError || !analyticsData || !analyticsData.range || !analyticsData.summary) {
@@ -12357,7 +13426,7 @@
   }
 
   function printReportsPdf() {
-    if (!['owner', 'manager', 'accountant'].includes(store.role)) {
+    if (!hasPerm('viewReports')) {
       return toast('Không có quyền xuất báo cáo', 'Vai trò của bạn không được phép xem dữ liệu tài chính.', 'error');
     }
     if (analyticsLoading || analyticsError || !analyticsData || !analyticsData.range || !analyticsData.summary) {
@@ -12387,8 +13456,8 @@
   }
 
   function renderReports() {
-    if (!['owner', 'manager', 'accountant'].includes(store.role)) {
-      return `<section class='panel locked-page'><div class='empty-icon'>${icon('chart', 23)}</div><h2>Không có quyền xem báo cáo</h2><p>Báo cáo doanh thu, lãi gộp và công nợ chỉ dành cho chủ cửa hàng, quản lý hoặc kế toán.</p></section>`;
+    if (!hasPerm('viewReports')) {
+      return `<section class='panel locked-page'><div class='empty-icon'>${icon('chart', 23)}</div><h2>Không có quyền xem báo cáo</h2><p>Báo cáo doanh thu, lãi gộp và công nợ chỉ dành cho tài khoản được cấp quyền Xem báo cáo.</p></section>`;
     }
     const days = chartRange === '30 ngày' ? 30 : 7;
     const summary = analyticsData && analyticsData.summary || {};
@@ -12432,15 +13501,7 @@
     window.scrollTo({ top: 0, behavior: 'instant' });
     if (page === 'products') loadProductsPage(searchTerms.products, 0, { silentLoading: true });
     else if (page === 'dashboard') {
-      const dashboardLoads = [loadInventoryPage('', 0, { silentLoading: true })];
-      if (['owner', 'manager', 'accountant'].includes(store.role)) {
-        dashboardLoads.push(loadAnalytics(1), loadOrdersPage('', 0), loadFinancePage());
-      } else if (store.role === 'cashier') {
-        dashboardLoads.push(loadOrdersPage('', 0));
-      } else if (store.role === 'stockkeeper') {
-        dashboardLoads.push(loadFinancePage());
-      }
-      Promise.all(dashboardLoads).then(() => { if (page === 'dashboard') render(); });
+      loadDashboardPage();
     }
     else if (page === 'inventory') {
       if (warehouses.length && selectedWarehouseId) {
@@ -12569,6 +13630,12 @@
     if (window.SlinkEscPosPrinter?.setAndroidBridge) {
       window.SlinkEscPosPrinter.setAndroidBridge(nativeAction);
       if (window.SlinkAndroid) window.SlinkEscPosPrinter.refreshBluetoothState().catch(() => {});
+    }
+    window.SlinkPosHardware?.setAndroidBridge?.(nativeAction);
+    window.SlinkReceiptImage?.setAndroidBridge?.(nativeAction);
+    if (window.SlinkSyncBus) {
+      window.SlinkSyncBus.setContext({ origin: window.location.origin });
+      initSyncBus();
     }
     const resetToken = new URLSearchParams(window.location.hash.slice(1)).get('reset');
     if (resetToken) {
@@ -12953,14 +14020,14 @@
       const product = productById(id);
       if (!product) return;
       const kind = button.dataset.kind;
-      const canEdit = ['owner', 'manager', 'stockkeeper'].includes(store.role);
-      const canViewHistory = ['owner', 'manager', 'stockkeeper', 'accountant'].includes(store.role);
+      const canEdit = hasPerm('editProducts');
+      const canViewHistory = hasPerm('viewCostPrice') || hasPerm('editProducts') || hasPerm('viewReports');
       if (kind === 'add-units' && canEdit) requestCloseModal(() => openAddProductUnits(id));
       else if (kind === 'serials' && product.serialTracked) requestCloseModal(() => openProductSerials(id));
       else if (kind === 'edit' && canEdit) requestCloseModal(() => openProduct(id));
       else if (kind === 'print') requestCloseModal(() => openBarcodePrintModal([{ ...product, copies: 1 }]));
       else if (kind === 'history' && canViewHistory) requestCloseModal(() => openProductPriceHistory(id));
-      else if (kind === 'stock' && canEdit && product.inventoryTracked) requestCloseModal(() => openStockAdjust(id));
+      else if (kind === 'stock' && hasPerm('manageInventory') && product.inventoryTracked) requestCloseModal(() => openStockAdjust(id));
     }
     else if (action === 'edit-product') openProduct(id);
     else if (action === 'add-product-units') {
@@ -13075,8 +14142,99 @@
     else if (action === 'return-order') openReturn(id);
     else if (action === 'collect-payment') openCollectPayment(id);
     else if (action === 'print-order') printOrder(id);
-    else if (action === 'share-order') showDigitalReceipt(id);
+    else if (action === 'share-order') showDigitalReceipt(id, false);
     else if (action === 'latest-receipt') openOrder(id, true);
+    else if (action === 'latest-receipt-png') {
+      if (!id) return;
+      if (id.startsWith('local:')) return openLocalOrder(id.slice(6));
+      openOrder(id, true).then(function () {
+        if (!modal.hidden) {
+          const btn = modal.querySelector('[data-action="receipt-share-png"]');
+          if (btn && !btn.disabled) useDigitalReceipt('receipt-share-png', btn);
+        }
+      });
+    }
+    else if (action === 'share-debt-qr-png') shareOrDownloadDebtQr(false);
+    else if (action === 'download-debt-qr-png') shareOrDownloadDebtQr(true);
+    else if (action === 'rapid-stock-count') openRapidStockCount();
+    else if (action === 'clear-rapid-stock-count') { rapidStockCountState.items = []; renderRapidStockCountRows(); }
+    else if (action === 'rapid-count-delta') {
+      const idx = Number(button.dataset.index);
+      const delta = Number(button.dataset.delta || 0);
+      const item = rapidStockCountState.items[idx];
+      if (item) {
+        item.counted = Math.max(0, Math.round((Number(item.counted || 0) + delta) * 1000) / 1000);
+        renderRapidStockCountRows();
+      }
+    }
+    else if (action === 'add-rapid-stock-count-code') {
+      const inp = modal.querySelector('#rapid-stock-count-input');
+      const code = inp?.value.trim() || '';
+      if (code) {
+        inp.value = '';
+        handleRapidStockCountScan(code).then(res => {
+          if (res?.ok) { window.SlinkPosHardware?.vibrate(45); playScanBeep(); }
+          else if (res?.reason) toast('Không thêm được', res.reason, 'error');
+          inp.focus();
+        });
+      }
+    }
+    else if (action === 'toggle-receive-camera') {
+      const surface = modal.querySelector('[data-scan-mode="receive-cart"]');
+      if (!surface) return;
+      if (!surface.hidden) { stopScanCamera(); surface.hidden = true; }
+      else { surface.hidden = false; startScanCamera(surface); }
+    }
+    else if (action === 'stop-receive-camera') {
+      const surface = modal.querySelector('[data-scan-mode="receive-cart"]');
+      stopScanCamera();
+      if (surface) surface.hidden = true;
+    }
+    else if (action === 'open-warranty-lookup') openWarrantyLookupModal('');
+    else if (action === 'lookup-serial-warranty') openWarrantyLookupModal(button.dataset.code || '');
+    else if (action === 'toggle-warranty-camera') {
+      const surface = modal.querySelector('[data-scan-mode="warranty-lookup"]');
+      if (!surface) return;
+      if (!surface.hidden) { stopScanCamera(); surface.hidden = true; }
+      else { surface.hidden = false; startScanCamera(surface); }
+    }
+    else if (action === 'stop-warranty-camera') {
+      const surface = modal.querySelector('[data-scan-mode="warranty-lookup"]');
+      stopScanCamera();
+      if (surface) surface.hidden = true;
+    }
+    else if (action === 'reset-member-perms') {
+      const roleVal = document.querySelector(`[data-member-role='${CSS.escape(id)}']`)?.value || 'cashier';
+      const eff = resolveEffectivePermissions(roleVal, null, null);
+      document.querySelectorAll(`[data-member-perm='${CSS.escape(id)}']`).forEach(function (el) {
+        const k = el.dataset.permKey;
+        if (k === 'pos_max_discount_pct') el.value = String(eff.pos_max_discount_pct ?? 0);
+        else if (k) el.checked = Boolean(eff[k]);
+      });
+      toast('Đã đặt lại quyền theo vai trò', staffRoleName(roleVal));
+    }
+    else if (action === 'dashboard-open-low-stock') {
+      inventoryTab = 'stock';
+      inventoryStockFilter = 'low';
+      routeTo('inventory');
+    }
+    else if (action === 'dashboard-open-debts') {
+      if (canAccessRoute('finance') && (hasPerm('recordCashbook') || hasPerm('viewReports'))) {
+        financeTab = 'receivables';
+        routeTo('finance');
+      } else if (canAccessRoute('customers')) {
+        customerSegmentFilter = 'owing';
+        routeTo('customers');
+      }
+    }
+    else if (action === 'dashboard-open-orders') {
+      orderFilter = 'Còn nợ';
+      routeTo('orders');
+    }
+    else if (action === 'dashboard-open-shifts') {
+      financeTab = 'shifts';
+      routeTo('finance');
+    }
     else if (action === 'reload-integrations') loadIntegrationStatus(true);
     else if (action === 'verify-ghn-token') verifyGhnIntegrationToken(button);
     else if (action === 'copy-integration-url') {
@@ -13085,7 +14243,7 @@
     }
     else if (['escpos-connect', 'escpos-test-print', 'escpos-kick-drawer', 'escpos-print-order'].includes(action)) handleEscPosAction(action, id);
     else if (['issue-order-einvoice', 'create-order-shipping', 'preview-order-shipping', 'create-order-momo'].includes(action)) handleOrderIntegrationAction(action, id, button);
-    else if (['receipt-share', 'receipt-copy', 'receipt-download'].includes(action)) useDigitalReceipt(action, button);
+    else if (['receipt-share', 'receipt-copy', 'receipt-download', 'receipt-share-png', 'receipt-download-png'].includes(action)) useDigitalReceipt(action, button);
     else if (action === 'download-reports-csv') downloadReportsCsv();
     else if (action === 'print-reports-pdf') printReportsPdf();
     else if (action === 'add-cart') addToCart(id);
@@ -13130,7 +14288,9 @@
         const rateBps = cust?.discountRateBps || discBps;
         const sub = cartTotals().subtotal;
         if (rateBps > 0 && sub > 0 && !cart.discount) {
-          cart.discount = Math.round(sub * rateBps / 10000);
+          const cap = maxAllowedDiscountVnd(sub);
+          const autoDisc = Math.round(sub * rateBps / 10000);
+          cart.discount = Math.min(cap, autoDisc);
         }
         const shipAddr = cust?.shippingAddress || addr;
         if (shipAddr && !posDelivery.address) posDelivery.address = shipAddr;
@@ -13570,8 +14730,25 @@
       return;
     }
     if (event.target.matches('[data-member-role]')) {
-      const scope = document.querySelector(`[data-member-scope='${event.target.dataset.memberRole}']`);
+      const uid = event.target.dataset.memberRole;
+      const scope = document.querySelector(`[data-member-scope='${uid}']`);
       if (scope) scope.hidden = event.target.value !== 'stockkeeper';
+      const eff = resolveEffectivePermissions(event.target.value, null, null);
+      document.querySelectorAll(`[data-member-perm='${CSS.escape(uid)}']`).forEach(function (el) {
+        const k = el.dataset.permKey;
+        if (k === 'pos_max_discount_pct') el.value = String(eff.pos_max_discount_pct ?? 0);
+        else if (k) el.checked = Boolean(eff[k]);
+      });
+      return;
+    }
+    if (event.target.matches('[data-rapid-count-input]')) {
+      const idx = Number(event.target.dataset.rapidCountInput);
+      const item = rapidStockCountState.items[idx];
+      if (item) {
+        const val = Math.max(0, Number(event.target.value || 0));
+        item.counted = Number.isFinite(val) ? val : 0;
+        renderRapidStockCountRows();
+      }
       return;
     }
     if (event.target.matches('[data-member-scope-mode]')) {
@@ -13949,6 +15126,8 @@
     else if (type === 'staff-invite') saveStaffInvitation(form);
     else if (type === 'staff-direct-create') saveStaffDirectCreate(form);
     else if (type === 'scan') addByCode(form);
+    else if (type === 'rapid-stock-count') submitRapidStockCount(form);
+    else if (type === 'warranty-lookup') lookupWarrantyBySerial(new FormData(form).get('code'));
     else if (type === 'pos-prefs') {
       const fd = new FormData(form);
       savePosPrefs({ paperWidth: String(fd.get('paperWidth') || '80mm'), autoPrint: fd.get('autoPrint') === 'on', requireFullPayment: fd.get('requireFullPayment') === 'on' });
@@ -13956,12 +15135,18 @@
     }
     else if (type === 'discount') {
       if (checkoutPendingPayload) return toast('Đang chờ xác nhận đơn', 'Hãy kiểm tra đơn đang chờ trước khi thay đổi giảm giá.', 'error');
+      const maxPct = getMaxDiscountPct();
+      if (maxPct <= 0) return toast('Không có quyền giảm giá', 'Tài khoản này chưa được cấp hạn mức giảm giá.', 'error');
       const fd = new FormData(form);
       const mode = String(fd.get('discountMode') || 'vnd');
       const rawVal = Math.max(0, Number(fd.get('discount')) || 0);
       const sub = cartTotals().subtotal;
+      const cap = maxAllowedDiscountVnd(sub);
       const computed = mode === 'percent' ? Math.round(sub * Math.min(100, rawVal) / 100) : Math.round(rawVal);
-      cart.discount = Math.max(0, Math.min(sub, computed));
+      if (computed > cap) {
+        return toast('Vượt hạn mức giảm giá', `Mức giảm tối đa cho phép là ${number(maxPct)}% (${money(cap)}).`, 'error');
+      }
+      cart.discount = Math.max(0, Math.min(cap, computed));
       closeModal(); render(); toast('Đã áp dụng giảm giá', money(cart.discount));
     }
   });
@@ -13994,6 +15179,18 @@
     if (event.key === 'Enter' && event.target.id === 'receive-barcode-scan') {
       event.preventDefault();
       handleReceiveBarcodeScan(event.target);
+      return;
+    }
+    if (event.key === 'Enter' && event.target.id === 'rapid-stock-count-input') {
+      event.preventDefault();
+      const code = event.target.value.trim();
+      if (code) {
+        event.target.value = '';
+        handleRapidStockCountScan(code).then(res => {
+          if (res?.ok) { window.SlinkPosHardware?.vibrate(45); playScanBeep(); }
+          else if (res?.reason) toast('Không thêm được', res.reason, 'error');
+        });
+      }
       return;
     }
     if (event.key === 'Enter' && event.target.id === 'transfer-barcode-scan') {
@@ -14097,7 +15294,10 @@
     }
   });
   document.addEventListener('visibilitychange', function () {
-    if (document.hidden) stopScanCamera();
+    if (document.hidden) {
+      stopScanCamera();
+      restoreVietQrBrightness();
+    }
     else if (authSession) {
       offlineRowsChanged(false).catch(() => {});
       startOfflineSync();
@@ -14116,7 +15316,10 @@
     if (authSession && home && page !== home) { routeTo(home); return true; }
     return false;
   };
-  window.addEventListener('pagehide', stopScanCamera);
+  window.addEventListener('pagehide', function () {
+    stopScanCamera();
+    restoreVietQrBrightness();
+  });
   document.addEventListener('error', function (event) { if (event.target.matches?.('img[data-product-photo]')) event.target.remove(); }, true);
   boot();
 })();

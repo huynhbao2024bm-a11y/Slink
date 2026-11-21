@@ -21,10 +21,13 @@ async function assertRuntimeSchema(pool) {
       AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='customers' AND column_name='customer_code')
       AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='products' AND column_name='extra_barcodes')
       AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='products' AND column_name='serial_tracked')
-      AND to_regclass('public.product_serial_codes') IS NOT NULL AS compatible
+      AND to_regclass('public.product_serial_codes') IS NOT NULL
+      AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='products' AND column_name='warranty_months')
+      AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='product_serial_codes' AND column_name='warranty_expires_at')
+      AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='memberships' AND column_name='permissions') AS compatible
   `);
   if (result.rows[0]?.compatible !== true) {
-    throw new Error('Database schema is behind this application. Apply migrations through 20261119140000_product_serial_codes.sql before deploying.');
+    throw new Error('Database schema is behind this application. Apply migrations through 20261121100000_warranty_granular_rbac.sql before deploying.');
   }
 }
 

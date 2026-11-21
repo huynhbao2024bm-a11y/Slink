@@ -8,6 +8,7 @@ const { insertCashMovement } = require('./cashbook-ledger');
 const { normalizeOffline, expectedPrices } = require('./offline-operations');
 const { normalizeSale, quantityText, distributeDiscount } = require('./sales');
 const { findAccessibleWarehouse, requireWarehouseAccess } = require('./warehouse-access');
+const { hasPermission } = require('./rbac');
 
 const MAX_BIGINT = 9223372036854775807n;
 const RESOLVE_ROLES = new Set(['owner', 'manager']);
@@ -172,7 +173,7 @@ async function inspectSaleConflict(client, storeId, membership, payload, issue) 
   const { productMap, balanceMap } = await loadProductsAndBalances(client, storeId, warehouseId, sale.items);
   const lineSummary = evaluateSaleLines(sale.items, prices, productMap, balanceMap);
 
-  const canViewCash = CASH_VIEW_ROLES.has(membership.role);
+  const canViewCash = CASH_VIEW_ROLES.has(membership.role) || hasPermission(membership, 'record_cashbook') || hasPermission(membership, 'view_reports');
   const sessionRes = canViewCash
     ? await client.query(
       `SELECT s.id, s.opened_at, COALESCE(u.display_name, '') AS opened_by_name
@@ -275,7 +276,7 @@ async function inspectNonSaleConflict(client, storeId, membership, kind, payload
   }
 
   if (kind === 'shift-close') {
-    if (!CASH_VIEW_ROLES.has(membership.role)) {
+    if (!CASH_VIEW_ROLES.has(membership.role) && !hasPermission(membership, 'record_cashbook') && !hasPermission(membership, 'view_reports')) {
       throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền kiểm tra ca tiền mặt.');
     }
     const sessionRes = await client.query(

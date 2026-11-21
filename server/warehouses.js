@@ -4,8 +4,8 @@ const { createHash, randomUUID } = require('node:crypto');
 const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
 const { allowedWarehouseIds, canAccessWarehouse } = require('./warehouse-access');
+const { hasPermission, requirePermission } = require('./rbac');
 
-const STOCK_ROLES = new Set(['owner', 'manager', 'stockkeeper']);
 const MANAGER_ROLES = new Set(['owner', 'manager']);
 const MAX_LINES = 100;
 
@@ -211,7 +211,9 @@ function registerWarehouseRoutes(app, { pool, env }) {
     const limitValue = Number(request.query?.limit || 50);
     const limit = Number.isSafeInteger(limitValue) ? Math.max(1, Math.min(limitValue, 100)) : 50;
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!STOCK_ROLES.has(membership.role) && membership.role !== 'accountant') throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền xem phiếu điều chuyển.');
+      if (!hasPermission(membership, 'edit_products') && !hasPermission(membership, 'view_reports')) {
+        throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền xem phiếu điều chuyển.');
+      }
       const warehouseIds = allowedWarehouseIds(membership);
       const result = await client.query(
         `SELECT t.id, t.transfer_number, t.status, t.note, t.version, t.dispatched_at, t.completed_at, t.created_at,
@@ -249,7 +251,7 @@ function registerWarehouseRoutes(app, { pool, env }) {
     const key = requireKey(request);
     const digest = createHash('sha256').update(JSON.stringify(canonical)).digest();
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!STOCK_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền tạo phiếu điều chuyển.');
+      requirePermission(membership, 'edit_products', 'Tài khoản này không có quyền tạo phiếu điều chuyển.');
       const replay = await reserveIdempotency(client, storeId, auth.userId, key, digest);
       if (replay) return replay;
       const locations = await client.query(
@@ -310,7 +312,7 @@ function registerWarehouseRoutes(app, { pool, env }) {
     const key = requireKey(request);
     const digest = createHash('sha256').update(JSON.stringify({ action: 'dispatch', transferId })).digest();
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!STOCK_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền xuất điều chuyển.');
+      requirePermission(membership, 'edit_products', 'Tài khoản này không có quyền xuất điều chuyển.');
       const replay = await reserveIdempotency(client, storeId, auth.userId, key, digest);
       if (replay) return replay;
       const locked = await client.query(`SELECT * FROM warehouse_transfers WHERE store_id = $1 AND id = $2 FOR UPDATE`, [storeId, transferId]);
@@ -372,7 +374,7 @@ function registerWarehouseRoutes(app, { pool, env }) {
     const canonical = { action: 'receive', transferId, note, items: items.map((item) => ({ lineId: item.id, milli: item.milli.toString() })) };
     const digest = createHash('sha256').update(JSON.stringify(canonical)).digest();
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!STOCK_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền nhận điều chuyển.');
+      requirePermission(membership, 'edit_products', 'Tài khoản này không có quyền nhận điều chuyển.');
       const replay = await reserveIdempotency(client, storeId, auth.userId, key, digest);
       if (replay) return replay;
       const locked = await client.query(`SELECT * FROM warehouse_transfers WHERE store_id = $1 AND id = $2 FOR UPDATE`, [storeId, transferId]);
@@ -447,7 +449,7 @@ function registerWarehouseRoutes(app, { pool, env }) {
     const key = requireKey(request);
     const digest = createHash('sha256').update(JSON.stringify({ action: 'cancel', transferId, reason })).digest();
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!STOCK_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền hủy phiếu điều chuyển.');
+      requirePermission(membership, 'edit_products', 'Tài khoản này không có quyền hủy phiếu điều chuyển.');
       const replay = await reserveIdempotency(client, storeId, auth.userId, key, digest);
       if (replay) return replay;
       const transfer = await client.query(`SELECT transfer_number, status, source_warehouse_id, destination_warehouse_id FROM warehouse_transfers WHERE store_id = $1 AND id = $2 FOR UPDATE`, [storeId, transferId]);

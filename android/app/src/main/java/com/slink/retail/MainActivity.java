@@ -5,14 +5,19 @@ import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.media.AudioManager;
+import android.media.ToneGenerator;
 import android.net.Uri;
 import android.os.Bundle;
 import android.print.PrintAttributes;
 import android.print.PrintDocumentAdapter;
 import android.print.PrintManager;
 import android.provider.MediaStore;
+import android.speech.tts.TextToSpeech;
+import android.util.Base64;
 import android.view.View;
 import android.view.WindowInsets;
+import android.view.WindowManager;
 import android.webkit.CookieManager;
 import android.webkit.PermissionRequest;
 import android.webkit.ValueCallback;
@@ -32,6 +37,7 @@ import androidx.webkit.WebViewAssetLoader;
 import androidx.webkit.WebViewCompat;
 import androidx.webkit.WebViewFeature;
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
@@ -39,6 +45,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Locale;
 import java.util.Set;
 import org.json.JSONObject;
 
@@ -53,11 +60,15 @@ public class MainActivity extends Activity {
             "offline-ledger.js", "purchase-units.js", "money-inputs.js", "offline-sync.js",
             "offline-conflict-ui.js", "supplier-returns-ui.js", "barcode-tools.js",
             "banks-vn.js", "vietqr-tools.js", "escpos-printer.js", "integrations-ui.js",
-            "finance-vouchers-ui.js", "legal-content.js", "register-sw.js", "sw.js", "manifest.webmanifest",
+            "finance-vouchers-ui.js", "legal-content.js", "sync-bus.js", "pos-hardware.js",
+            "receipt-image.js", "register-sw.js", "sw.js", "manifest.webmanifest",
             "assets/slink-icon.svg", "assets/slink-icon-180.png", "assets/slink-icon-192.png",
             "assets/slink-icon-512.png", "assets/slink-icon-maskable-512.png"));
     private WebView web;
     private WebView printWebView;
+    private TextToSpeech tts;
+    private boolean ttsReady = false;
+    private String pendingSpeechText = null;
     private ValueCallback<Uri[]> fileCallback;
     private Uri capturedPhoto;
     private PermissionRequest cameraRequest;
@@ -269,7 +280,133 @@ public class MainActivity extends Activity {
             handleBtPrinterMessage(data, reply);
         } else if (data.optString("type").equals("printHtml")) {
             handlePrintHtmlMessage(data, reply);
+        } else if (data.optString("type").equals("speak")) {
+            handleSpeakMessage(data, reply);
+        } else if (data.optString("type").equals("screenBrightness")) {
+            handleScreenBrightnessMessage(data, reply);
+        } else if (data.optString("type").equals("shareImage")) {
+            handleShareImageMessage(data, reply);
         } else answer(reply, id, "error");
+    }
+
+    private void handleSpeakMessage(JSONObject data, JavaScriptReplyProxy reply) {
+        final String id = data.optString("id");
+        final String rawText = data.optString("text", "").trim();
+        final boolean chime = data.optBoolean("chime", true);
+        if (rawText.isEmpty() || rawText.length() > 400) {
+            try { reply.postMessage(new JSONObject().put("id", id).put("status", "error").put("message", "Nội dung đọc không hợp lệ.").toString()); }
+            catch (Exception ignored) {}
+            return;
+        }
+        runOnUiThread(() -> {
+            if (chime) {
+                try {
+                    ToneGenerator tg = new ToneGenerator(AudioManager.STREAM_NOTIFICATION, 85);
+                    tg.startTone(ToneGenerator.TONE_PROP_ACK, 180);
+                } catch (Exception ignored) {}
+            }
+            try {
+                if (tts == null) {
+                    pendingSpeechText = rawText;
+                    tts = new TextToSpeech(getApplicationContext(), status -> {
+                        if (status == TextToSpeech.SUCCESS && tts != null) {
+                            int langRes = tts.setLanguage(new Locale("vi", "VN"));
+                            if (langRes != TextToSpeech.LANG_MISSING_DATA && langRes != TextToSpeech.LANG_NOT_SUPPORTED) {
+                                ttsReady = true;
+                                String toSpeak = pendingSpeechText;
+                                pendingSpeechText = null;
+                                if (toSpeak != null && !toSpeak.isEmpty()) {
+                                    tts.speak(toSpeak, TextToSpeech.QUEUE_FLUSH, null, "slink_tts_" + System.currentTimeMillis());
+                                }
+                            }
+                        }
+                    });
+                    reply.postMessage(new JSONObject().put("id", id).put("status", "ok").toString());
+                    return;
+                }
+                if (ttsReady) {
+                    tts.speak(rawText, TextToSpeech.QUEUE_FLUSH, null, "slink_tts_" + System.currentTimeMillis());
+                    reply.postMessage(new JSONObject().put("id", id).put("status", "ok").toString());
+                } else {
+                    pendingSpeechText = rawText;
+                    reply.postMessage(new JSONObject().put("id", id).put("status", "ok").toString());
+                }
+            } catch (Exception error) {
+                try { reply.postMessage(new JSONObject().put("id", id).put("status", "error").put("message", "Không phát được giọng đọc.").toString()); }
+                catch (Exception ignored) {}
+            }
+        });
+    }
+
+    private void handleScreenBrightnessMessage(JSONObject data, JavaScriptReplyProxy reply) {
+        final String id = data.optString("id");
+        final double rawLevel = data.optDouble("level", -1.0);
+        final float level = (Double.isNaN(rawLevel) || rawLevel < 0.0)
+                ? WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                : (float) Math.max(0.0, Math.min(1.0, rawLevel));
+        runOnUiThread(() -> {
+            try {
+                WindowManager.LayoutParams lp = getWindow().getAttributes();
+                lp.screenBrightness = level;
+                getWindow().setAttributes(lp);
+                if (level >= 0.8f) {
+                    getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                } else {
+                    getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                }
+                reply.postMessage(new JSONObject().put("id", id).put("status", "ok").put("level", level).toString());
+            } catch (Exception error) {
+                try { reply.postMessage(new JSONObject().put("id", id).put("status", "error").put("message", "Không chỉnh được độ sáng.").toString()); }
+                catch (Exception ignored) {}
+            }
+        });
+    }
+
+    private void handleShareImageMessage(JSONObject data, JavaScriptReplyProxy reply) {
+        final String id = data.optString("id");
+        final String dataUrl = data.optString("dataUrl", "");
+        final String rawName = data.optString("filename", "slink-receipt.png").replaceAll("[^A-Za-z0-9._-]", "-");
+        final String cleanName = (rawName.endsWith(".png") ? rawName : (rawName + ".png"));
+        final String title = data.optString("title", "Biên nhận Slink");
+        final String text = data.optString("text", "");
+        int commaIdx = dataUrl.indexOf(',');
+        String b64 = commaIdx >= 0 ? dataUrl.substring(commaIdx + 1) : dataUrl;
+        if (b64.isEmpty() || b64.length() > 7000000) {
+            try { reply.postMessage(new JSONObject().put("id", id).put("status", "error").put("message", "Ảnh chia sẻ không hợp lệ.").toString()); }
+            catch (Exception ignored) {}
+            return;
+        }
+        try {
+            byte[] bytes = Base64.decode(b64, Base64.DEFAULT);
+            if (bytes == null || bytes.length < 8 || bytes.length > 5242880
+                    || (bytes[0] & 0xFF) != 0x89 || bytes[1] != 0x50 || bytes[2] != 0x4E || bytes[3] != 0x47) {
+                reply.postMessage(new JSONObject().put("id", id).put("status", "error").put("message", "Định dạng ảnh PNG không hợp lệ.").toString());
+                return;
+            }
+            File shareDir = new File(getCacheDir(), "shares");
+            if (!shareDir.exists()) shareDir.mkdirs();
+            File[] existing = shareDir.listFiles();
+            if (existing != null && existing.length > 10) {
+                for (File old : existing) { try { old.delete(); } catch (Exception ignored) {} }
+            }
+            File outFile = new File(shareDir, cleanName);
+            try (FileOutputStream fos = new FileOutputStream(outFile)) {
+                fos.write(bytes);
+                fos.flush();
+            }
+            Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".files", outFile);
+            Intent send = new Intent(Intent.ACTION_SEND);
+            send.setType("image/png");
+            send.putExtra(Intent.EXTRA_STREAM, uri);
+            if (!title.isEmpty()) send.putExtra(Intent.EXTRA_SUBJECT, title);
+            if (!text.isEmpty()) send.putExtra(Intent.EXTRA_TEXT, text);
+            send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(Intent.createChooser(send, title.isEmpty() ? "Chia sẻ biên nhận" : title));
+            reply.postMessage(new JSONObject().put("id", id).put("status", "ok").toString());
+        } catch (Exception error) {
+            try { reply.postMessage(new JSONObject().put("id", id).put("status", "error").put("message", "Không chia sẻ được ảnh.").toString()); }
+            catch (Exception ignored) {}
+        }
     }
 
     private void handlePrintHtmlMessage(JSONObject data, JavaScriptReplyProxy reply) {
@@ -454,6 +591,10 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         btExecutor.shutdownNow();
+        if (tts != null) {
+            try { tts.stop(); tts.shutdown(); } catch (Exception ignored) {}
+            tts = null;
+        }
         if (printWebView != null) { printWebView.destroy(); printWebView = null; }
         if (fileCallback != null) fileCallback.onReceiveValue(null);
         if (cameraRequest != null) cameraRequest.deny();

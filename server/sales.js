@@ -8,6 +8,7 @@ const { insertCashMovement } = require('./cashbook-ledger');
 const { normalizeOffline, beginOffline, recordOffline, expectedPrices } = require('./offline-operations');
 const { calculatePromotion, consumePromotion, promotionCode } = require('./promotions');
 const { normalizeSerialCodeList } = require('./serials');
+const { getPosMaxDiscountPct } = require('./rbac');
 
 const MAX_BIGINT = 9223372036854775807n;
 const SELL_ROLES = new Set(['owner', 'manager', 'cashier']);
@@ -224,7 +225,7 @@ function registerSalesRoutes(app, { pool, env }) {
       const productIds = sale.items.map((line) => line.productId).sort();
       const productResult = await client.query(
         `SELECT id, sku, name, unit, sale_price_vnd::text AS sale_price_vnd,
-                cost_vnd::text AS cost_vnd, inventory_tracked, serial_tracked, status
+                cost_vnd::text AS cost_vnd, inventory_tracked, serial_tracked, warranty_months, status
          FROM products WHERE store_id = $1 AND id = ANY($2::uuid[]) ORDER BY id FOR UPDATE`,
         [storeId, productIds]
       );
@@ -326,6 +327,19 @@ function registerSalesRoutes(app, { pool, env }) {
       if (subtotal > MAX_BIGINT || totalDiscountVnd > subtotal) {
         throw new ApiError(400, 'validation_error', 'Khoản giảm giá không được vượt quá tiền hàng.');
       }
+      // Cap manual POS discount (store-approved promotionCode is governed by promotions.js).
+      const maxDiscountPct = getPosMaxDiscountPct(membership);
+      if (sale.discountVnd > 0n) {
+        if (maxDiscountPct === 0 || sale.discountVnd * 100n > subtotal * BigInt(maxDiscountPct)) {
+          throw new ApiError(
+            403,
+            'discount_limit_exceeded',
+            maxDiscountPct === 0
+              ? 'Tài khoản này không được phép giảm giá thủ công trên POS.'
+              : `Mức giảm giá vượt giới hạn tối đa ${maxDiscountPct}% được cấp.`
+          );
+        }
+      }
       const total = subtotal - totalDiscountVnd;
       if (offline && total.toString() !== canonicalSale.offlineTotalVnd) throw new ApiError(409, 'offline_total_changed', 'Tổng tiền trên thiết bị không khớp. Chưa ghi đơn; cần kiểm tra chứng từ chờ.');
       const nonCashReceived = sale.tenders.filter((tender) => tender.method !== 'cash')
@@ -417,12 +431,26 @@ function registerSalesRoutes(app, { pool, env }) {
           );
           const serialLock = reservedSerialMap.get(line.product.id);
           if (serialLock && serialLock.ids.length) {
-            await client.query(
+            const warrantyMonths = Number(line.product.warranty_months || 0);
+            const stamped = await client.query(
               `UPDATE product_serial_codes
-               SET status = 'sold', order_id = $3, sold_at = now(), updated_at = now()
-               WHERE store_id = $1 AND id = ANY($2::uuid[])`,
-              [storeId, serialLock.ids, order.id]
+               SET status = 'sold',
+                   order_id = $3,
+                   sold_at = now(),
+                   warranty_expires_at = CASE
+                     WHEN $4::integer > 0 THEN now() + make_interval(months => $4::integer)
+                     ELSE NULL
+                   END,
+                   updated_at = now()
+               WHERE store_id = $1 AND id = ANY($2::uuid[])
+               RETURNING id, code, warranty_expires_at`,
+              [storeId, serialLock.ids, order.id, warrantyMonths]
             );
+            const expiresById = new Map(stamped.rows.map((r) => [r.id, r.warranty_expires_at || null]));
+            serialLock.warranties = serialLock.ids.map((id, idx) => ({
+              code: serialLock.codes[idx],
+              warrantyExpiresAt: expiresById.get(id) || null,
+            }));
           }
         }
       }
@@ -520,16 +548,21 @@ function registerSalesRoutes(app, { pool, env }) {
           changeVnd: change.toString(),
           payments: appliedTenders.map((tender) => ({ method: tender.method, amountVnd: tender.amountVnd.toString() })).concat(creditUsed > 0n ? [{ method: 'customer_credit', amountVnd: creditUsed.toString() }] : []),
           occurredAt: order.occurred_at,
-          items: lines.map((line, index) => ({
-            productId: line.product.id,
-            name: line.product.name,
-            sku: line.product.sku,
-            quantity: quantityText(line.quantityMilli),
-            unitPriceVnd: line.price.toString(),
-            discountVnd: allocatedDiscount[index].toString(),
-            lineTotalVnd: (line.grossVnd - allocatedDiscount[index]).toString(),
-            ...(reservedSerialMap.get(line.product.id)?.codes?.length ? { serialCodes: reservedSerialMap.get(line.product.id).codes } : {}),
-          })),
+          items: lines.map((line, index) => {
+            const serialLock = reservedSerialMap.get(line.product.id);
+            return {
+              productId: line.product.id,
+              name: line.product.name,
+              sku: line.product.sku,
+              quantity: quantityText(line.quantityMilli),
+              unitPriceVnd: line.price.toString(),
+              discountVnd: allocatedDiscount[index].toString(),
+              lineTotalVnd: (line.grossVnd - allocatedDiscount[index]).toString(),
+              warrantyMonths: Number(line.product.warranty_months || 0),
+              ...(serialLock?.codes?.length ? { serialCodes: serialLock.codes } : {}),
+              ...(serialLock?.warranties?.length ? { serialWarranties: serialLock.warranties } : {}),
+            };
+          }),
         },
       };
       await recordOffline(client, { storeId, userId: auth.userId, key: idempotencyKey, kind: 'sale', entityId: order.id, metadata: offline });

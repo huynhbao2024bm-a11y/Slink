@@ -6,9 +6,8 @@ const { UUID_PATTERN, withStore } = require('./db');
 const { findAccessibleWarehouse, requireWarehouseAccess } = require('./warehouse-access');
 const { lockActiveCashSession } = require('./cash-register');
 const { insertCashMovement } = require('./cashbook-ledger');
+const { hasPermission } = require('./rbac');
 
-const ORDER_ROLES = new Set(['owner', 'manager', 'stockkeeper', 'accountant']);
-const FINANCE_ROLES = new Set(['owner', 'manager', 'accountant']);
 const METHODS = new Set(['cash', 'bank_transfer', 'bank_qr', 'card', 'other']);
 const MAX_BIGINT = 9223372036854775807n;
 const MAX_LINES = 50;
@@ -131,7 +130,9 @@ function registerPurchaseOrderRoutes(app, { pool, env }) {
     if (warehouseIdInput) canonical.warehouseId = warehouseIdInput;
     const digest = createHash('sha256').update(JSON.stringify(canonical)).digest();
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!ORDER_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền tạo đơn đặt hàng.');
+      if (!hasPermission(membership, 'edit_products') && !hasPermission(membership, 'record_cashbook')) {
+        throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền tạo đơn đặt hàng.');
+      }
       const replay = await reserveIdempotency(client, storeId, auth.userId, key, digest);
       if (replay) return replay;
       const warehouse = await findAccessibleWarehouse(client, storeId, membership, warehouseIdInput, { lock: true });
@@ -196,7 +197,9 @@ function registerPurchaseOrderRoutes(app, { pool, env }) {
     if (warehouseIdInput) canonical.warehouseId = warehouseIdInput;
     const digest = createHash('sha256').update(JSON.stringify(canonical)).digest();
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!ORDER_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền sửa đơn đặt hàng.');
+      if (!hasPermission(membership, 'edit_products') && !hasPermission(membership, 'record_cashbook')) {
+        throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền sửa đơn đặt hàng.');
+      }
       const replay = await reserveIdempotency(client, storeId, auth.userId, key, digest);
       if (replay) return replay;
       const current = await client.query(`SELECT id, purchase_order_number, warehouse_id, status, version FROM purchase_orders WHERE store_id = $1 AND id = $2 FOR UPDATE`, [storeId, orderId]);
@@ -252,7 +255,9 @@ function registerPurchaseOrderRoutes(app, { pool, env }) {
       const canonical = action === 'place' ? { action, orderId } : { action, orderId, reason };
       const digest = createHash('sha256').update(JSON.stringify(canonical)).digest();
       const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
-        if (!ORDER_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền cập nhật đơn đặt hàng.');
+        if (!hasPermission(membership, 'edit_products') && !hasPermission(membership, 'record_cashbook')) {
+          throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền cập nhật đơn đặt hàng.');
+        }
         const replay = await reserveIdempotency(client, storeId, auth.userId, key, digest);
         if (replay) return replay;
         const current = await client.query(`SELECT id, purchase_order_number, warehouse_id, status, total_vnd::text AS total_vnd FROM purchase_orders WHERE store_id = $1 AND id = $2 FOR UPDATE`, [storeId, orderId]);
@@ -307,8 +312,12 @@ function registerPurchaseOrderRoutes(app, { pool, env }) {
     const canonical = { orderId, items: items.map((item) => ({ lineId: item.id, quantityMilli: item.quantity.toString() })), paidVnd: paidVnd.toString(), method, note };
     const digest = createHash('sha256').update(JSON.stringify(canonical)).digest();
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!ORDER_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền nhận hàng.');
-      if (!FINANCE_ROLES.has(membership.role) && paidVnd > 0n) throw new ApiError(403, 'forbidden', 'Chỉ chủ cửa hàng, quản lý hoặc kế toán được ghi nhận thanh toán khi nhận hàng.');
+      if (!hasPermission(membership, 'edit_products') && !hasPermission(membership, 'record_cashbook')) {
+        throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền nhận hàng.');
+      }
+      if (!hasPermission(membership, 'record_cashbook') && paidVnd > 0n) {
+        throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền ghi nhận thanh toán khi nhận hàng.');
+      }
       const replay = await reserveIdempotency(client, storeId, auth.userId, key, digest);
       if (replay) return replay;
       const orderResult = await client.query(

@@ -5,9 +5,8 @@ const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
 const { lockActiveCashSession } = require('./cash-register');
 const { allocateVoucherNumber, ensureDefaultCategories, insertCashMovement } = require('./cashbook-ledger');
+const { hasPermission, requirePermission } = require('./rbac');
 
-const FINANCE_ROLES = new Set(['owner', 'manager', 'accountant']);
-const CASHBOOK_VIEW_ROLES = new Set(['owner', 'manager', 'accountant', 'cashier']);
 const BANK_METHODS = new Set(['bank_transfer', 'bank_qr', 'card', 'other']);
 const FUNDS = new Set(['all', 'cash', 'bank']);
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -39,7 +38,7 @@ function registerFinanceVoucherRoutes(app, { pool, env }) {
     if (!UUID_PATTERN.test(storeId)) throw new ApiError(400, 'validation_error', 'Cửa hàng không hợp lệ.');
     const includeArchived = request.query?.includeArchived === 'true';
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!FINANCE_ROLES.has(membership.role)) {
+      if (!hasPermission(membership, 'record_cashbook') && !hasPermission(membership, 'view_reports')) {
         throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền xem khoản mục thu chi.');
       }
       const existing = await client.query(`SELECT COUNT(*)::int AS cnt FROM cash_categories WHERE store_id = $1 AND status = 'active'`, [storeId]);
@@ -70,7 +69,7 @@ function registerFinanceVoucherRoutes(app, { pool, env }) {
     if (!['in', 'out', 'both'].includes(direction)) throw new ApiError(400, 'validation_error', 'Loại khoản mục không hợp lệ.');
 
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!FINANCE_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Chỉ chủ cửa hàng, quản lý hoặc kế toán mới được sửa khoản mục thu chi.');
+      requirePermission(membership, 'record_cashbook', 'Tài khoản này không có quyền thêm khoản mục thu chi.');
       try {
         const res = await client.query(
           `INSERT INTO cash_categories (store_id, direction, name, default_include_in_pnl, is_system)
@@ -101,7 +100,7 @@ function registerFinanceVoucherRoutes(app, { pool, env }) {
     if (!hasName && !hasPnl && !hasStatus) throw new ApiError(400, 'validation_error', 'Chưa có thông tin cần cập nhật.');
 
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!FINANCE_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền cập nhật khoản mục thu chi.');
+      requirePermission(membership, 'record_cashbook', 'Tài khoản này không có quyền cập nhật khoản mục thu chi.');
       try {
         const currentRes = await client.query(
           `SELECT id, is_system FROM cash_categories WHERE store_id = $1 AND id = $2 FOR UPDATE`,
@@ -145,10 +144,10 @@ function registerFinanceVoucherRoutes(app, { pool, env }) {
     const offset = Math.max(Number.parseInt(String(q.offset || '0'), 10) || 0, 0);
 
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!CASHBOOK_VIEW_ROLES.has(membership.role)) {
+      const isFull = hasPermission(membership, 'record_cashbook') || hasPermission(membership, 'view_reports');
+      if (!isFull && membership.role !== 'cashier') {
         throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền xem sổ quỹ.');
       }
-      const isFull = FINANCE_ROLES.has(membership.role);
       if (!isFull && fund === 'bank') {
         throw new ApiError(403, 'forbidden', 'Thu ngân chỉ được xem sổ tiền mặt của ca làm việc.');
       }
@@ -291,7 +290,7 @@ function registerFinanceVoucherRoutes(app, { pool, env }) {
     const digest = createHash('sha256').update(JSON.stringify(value)).digest();
 
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!FINANCE_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền chuyển quỹ nội bộ.');
+      requirePermission(membership, 'record_cashbook', 'Tài khoản này không có quyền chuyển quỹ nội bộ.');
       const reserved = await client.query(
         `INSERT INTO idempotency_records (store_id, actor_user_id, idempotency_key, request_hash)
          VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING RETURNING idempotency_key`,
@@ -392,7 +391,7 @@ function registerFinanceVoucherRoutes(app, { pool, env }) {
     const digest = createHash('sha256').update(JSON.stringify({ movementId: movementId.toLowerCase(), reason })).digest();
 
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!FINANCE_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền hủy / đảo phiếu thu chi.');
+      requirePermission(membership, 'record_cashbook', 'Tài khoản này không có quyền hủy / đảo phiếu thu chi.');
       const reserved = await client.query(
         `INSERT INTO idempotency_records (store_id, actor_user_id, idempotency_key, request_hash)
          VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING RETURNING idempotency_key`,
@@ -520,8 +519,8 @@ function registerFinanceVoucherRoutes(app, { pool, env }) {
     const offset = Math.max(Number.parseInt(String(request.query?.offset || '0'), 10) || 0, 0);
 
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!FINANCE_ROLES.has(membership.role)) {
-        throw new ApiError(403, 'forbidden', 'Chỉ chủ cửa hàng, quản lý hoặc kế toán mới được xem công nợ nhà cung cấp.');
+      if (!hasPermission(membership, 'record_cashbook') && !hasPermission(membership, 'view_reports')) {
+        throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền xem công nợ nhà cung cấp.');
       }
       const res = await client.query(
         `WITH all_balances AS (

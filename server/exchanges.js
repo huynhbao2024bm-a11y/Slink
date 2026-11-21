@@ -6,9 +6,9 @@ const { UUID_PATTERN, withStore } = require('./db');
 const { lockActiveCashSession } = require('./cash-register');
 const { insertCashMovement } = require('./cashbook-ledger');
 const { quantityMilli, quantityText, distributeDiscount } = require('./sales');
+const { requirePermission } = require('./rbac');
 
 const MAX_BIGINT = 9223372036854775807n;
-const EXCHANGE_ROLES = new Set(['owner', 'manager']);
 const RESTOCK_POLICIES = new Set(['restock', 'damaged', 'discarded']);
 const METHODS = new Set(['cash', 'bank_transfer', 'bank_qr', 'card', 'other']);
 
@@ -646,9 +646,7 @@ function registerExchangeRoutes(app, { pool, env }) {
     const reqHash = digestExchange(orderId, req);
 
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!EXCHANGE_ROLES.has(membership.role)) {
-        throw new ApiError(403, 'forbidden', 'Chỉ Chủ cửa hàng hoặc Quản lý mới được phép thực hiện đổi hàng.');
-      }
+      requirePermission(membership, 'void_or_return_order', 'Tài khoản này không có quyền thực hiện đổi hàng.');
       const reserved = await client.query(
         `INSERT INTO idempotency_records (store_id, actor_user_id, idempotency_key, request_hash)
          VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING RETURNING idempotency_key`,

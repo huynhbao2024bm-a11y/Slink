@@ -28,6 +28,7 @@ const { registerSupplierReturnRoutes } = require('./supplier-returns');
 const { registerPurchaseOrderRoutes } = require('./purchase-orders');
 const { registerFinanceRoutes } = require('./finance');
 const { registerAnalyticsRoutes } = require('./analytics');
+const { registerDashboardRoutes } = require('./dashboard');
 const { registerStoreSettingsRoutes } = require('./settings');
 const { registerExportRoutes } = require('./exports');
 const { registerStaffRoutes } = require('./staff');
@@ -64,6 +65,9 @@ const ASSETS = new Map([
   ['/integrations-ui.js', 'integrations-ui.js'],
   ['/finance-vouchers-ui.js', 'finance-vouchers-ui.js'],
   ['/legal-content.js', 'legal-content.js'],
+  ['/sync-bus.js', 'sync-bus.js'],
+  ['/pos-hardware.js', 'pos-hardware.js'],
+  ['/receipt-image.js', 'receipt-image.js'],
   ['/register-sw.js', 'register-sw.js'],
   ['/manifest.webmanifest', 'manifest.webmanifest'],
   ['/sw.js', 'sw.js'],
@@ -222,6 +226,7 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
     registerPurchaseOrderRoutes(app, { pool, env });
     registerFinanceRoutes(app, { pool, env });
     registerAnalyticsRoutes(app, { pool, env });
+    registerDashboardRoutes(app, { pool, env });
     registerStoreSettingsRoutes(app, { pool, env });
     registerExportRoutes(app, { pool, env });
     registerStaffRoutes(app, { pool, env });

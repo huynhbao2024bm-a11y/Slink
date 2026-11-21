@@ -8,8 +8,8 @@ const { lockActiveCashSession } = require('./cash-register');
 const { insertCashMovement } = require('./cashbook-ledger');
 const { normalizeOffline, beginOffline, recordOffline } = require('./offline-operations');
 const { fromPack, unitCostFromTotal, isPackName } = require('../purchase-units');
+const { hasPermission } = require('./rbac');
 
-const PURCHASE_ROLES = new Set(['owner', 'manager', 'stockkeeper', 'accountant']);
 const METHODS = new Set(['cash', 'bank_transfer', 'bank_qr', 'card', 'other']);
 const MAX_BIGINT = 9223372036854775807n;
 const MAX_PURCHASE_LINES = 50;
@@ -118,7 +118,12 @@ function registerPurchaseRoutes(app, { pool, env }) {
     if (offline) { value.offline = offline; value.offlineVersions = offlineVersions; }
     const digest = createHash('sha256').update(JSON.stringify(value)).digest();
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!PURCHASE_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền nhập hàng.');
+      if (!hasPermission(membership, 'edit_products') && !hasPermission(membership, 'record_cashbook')) {
+        throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền nhập hàng.');
+      }
+      if (paidVnd > 0n && !hasPermission(membership, 'record_cashbook')) {
+        throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền chi tiền thanh toán nhập hàng.');
+      }
       const warehouse = await findAccessibleWarehouse(client, storeId, membership, requestedWarehouseId, { lock: true });
       if (!warehouse) throw new ApiError(404, 'warehouse_not_found', 'Không tìm thấy kho nhận hàng đang hoạt động.');
       const warehouseId = warehouse.id;
@@ -298,7 +303,9 @@ function registerPurchaseRoutes(app, { pool, env }) {
     const { storeId } = request.params;
     if (!UUID_PATTERN.test(storeId)) throw new ApiError(400, 'validation_error', 'Cửa hàng không hợp lệ.');
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!PURCHASE_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền nhập hàng.');
+      if (!hasPermission(membership, 'edit_products') && !hasPermission(membership, 'record_cashbook')) {
+        throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền nhập hàng.');
+      }
       const result = await client.query("SELECT id, name FROM suppliers WHERE store_id = $1 AND status = 'active' ORDER BY name, id", [storeId]);
       return { suppliers: result.rows };
     });

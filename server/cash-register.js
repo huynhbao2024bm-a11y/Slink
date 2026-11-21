@@ -5,6 +5,7 @@ const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
 const { normalizeOffline, beginOffline, recordOffline } = require('./offline-operations');
 const { insertCashMovement } = require('./cashbook-ledger');
+const { hasPermission } = require('./rbac');
 
 const MAX_BIGINT = 9223372036854775807n;
 const VIEW_ROLES = new Set(['owner', 'manager', 'cashier', 'accountant']);
@@ -96,7 +97,9 @@ function registerCashRegisterRoutes(app, { pool, env }) {
     const { storeId } = request.params;
     if (!UUID_PATTERN.test(storeId)) throw new ApiError(400, 'validation_error', 'Cửa hàng không hợp lệ.');
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!VIEW_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền xem ca tiền mặt.');
+      if (!VIEW_ROLES.has(membership.role) && !hasPermission(membership, 'record_cashbook') && !hasPermission(membership, 'view_reports')) {
+        throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền xem ca tiền mặt.');
+      }
       const active = await client.query(
         `SELECT s.id, s.opening_float_vnd::text AS opening_float_vnd, s.opened_at,
                 s.opened_by, opener.display_name AS opened_by_name,

@@ -734,3 +734,62 @@ body{min-height:100vh;min-height:100dvh;overflow-x:hidden}
 @media(max-width:560px){
   .serial-autogen-row{grid-template-columns:minmax(0,1fr)}
 }
+
+/* Slink M3: Hardware, Rapid Scanner, Stock Count, Warranty, PNG Receipts, Granular RBAC, Dashboard */
+.scan-camera-stage{position:relative;overflow:hidden}
+.scan-feedback-pill{position:absolute;left:12px;right:12px;bottom:12px;z-index:4;padding:10px 14px;border-radius:12px;background:rgba(15,118,110,.94);color:#fff;font-size:13px;font-weight:700;line-height:1.35;text-align:center;box-shadow:0 8px 20px rgba(15,23,42,.24);pointer-events:none;overflow-wrap:anywhere;animation:slink-pill-pop .22s ease-out}
+.scan-feedback-pill.is-error{background:rgba(185,28,28,.94)}
+@keyframes slink-pill-pop{from{opacity:0;transform:translateY(8px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+.scan-continuous-toggle{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:6px 12px;border-radius:10px;border:1px solid var(--border);background:var(--surface);font-size:13px;font-weight:600;cursor:pointer}
+.scan-continuous-toggle input{width:18px;height:18px;accent-color:var(--primary)}
+.receive-scan-bar{display:flex;flex-direction:column;gap:10px;padding:12px;border:1px solid var(--border);border-radius:12px;background:var(--surface-soft,var(--bg))}
+.receive-scan-row{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px}
+.stock-count-stage{display:grid;gap:12px}
+.stock-count-summary{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-radius:12px;background:var(--bg);border:1px solid var(--border)}
+.stock-count-list{display:grid;gap:8px;max-height:42vh;overflow-y:auto}
+.stock-count-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 12px;align-items:center;padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:var(--surface)}
+.stock-count-row strong,.stock-count-row small{overflow-wrap:anywhere}
+.stock-count-qty{display:inline-flex;align-items:center;gap:6px}
+.stock-count-qty input{width:76px;min-height:44px;text-align:center}
+.stock-count-qty .btn{min-width:44px;min-height:44px;padding:0 10px}
+.receipt-png-preview,.debt-qr-png-preview{display:grid;place-items:center;padding:12px;border:1px solid var(--border);border-radius:14px;background:#f8fafc}
+.receipt-png-preview img,.debt-qr-png-preview img{display:block;max-width:100%;width:auto;max-height:58vh;border-radius:10px;box-shadow:0 8px 24px rgba(15,23,42,.1)}
+.receipt-png-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.receipt-png-actions .btn{min-height:44px;flex:1 1 150px}
+.receipt-text-fallback{margin-top:12px;border-top:1px solid var(--border);padding-top:10px}
+.receipt-text-fallback summary{min-height:44px;display:flex;align-items:center;cursor:pointer;font-weight:600;font-size:13px;color:var(--muted)}
+.serial-chip{display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:4px 10px;border-radius:999px;border:1px solid var(--border);background:var(--bg);font-family:ui-monospace,Consolas,monospace;font-size:12px;font-weight:600;cursor:pointer;overflow-wrap:anywhere}
+.serial-chip:hover{border-color:var(--primary);color:var(--primary)}
+.warranty-card,.warranty-lookup-card{display:grid;gap:8px;padding:14px;border:1px solid var(--border);border-radius:14px;background:var(--surface);overflow-wrap:anywhere}
+.warranty-card-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px}
+.warranty-card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px 12px;font-size:13px}
+.badge-warranty-ok{background:#ecfdf5;color:#047857;border-color:#a7f3d0}
+.badge-warranty-expired{background:#fef2f2;color:#b91c1c;border-color:#fecaca}
+.badge-warranty-none{background:#f1f5f9;color:#475569;border-color:#cbd5e1}
+.staff-perms{margin:12px 0 0;padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:var(--bg);min-width:0}
+.staff-perm-header{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
+.staff-perm-header legend,.staff-perm-title{font-size:13px;font-weight:700;color:var(--ink);padding:0}
+.staff-perm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px 12px}
+.staff-perm-toggle{display:flex;align-items:center;gap:10px;min-height:44px;padding:6px 10px;border-radius:10px;border:1px solid var(--border);background:var(--surface);font-size:13px;font-weight:500;cursor:pointer;overflow-wrap:anywhere}
+.staff-perm-toggle input{width:18px;height:18px;flex:0 0 auto;accent-color:var(--primary)}
+.staff-perm-discount{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin-top:10px;padding-top:10px;border-top:1px dashed var(--border);font-size:13px}
+.staff-perm-discount input{width:96px;min-height:44px}
+.dashboard-real-numbers{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:16px}
+.real-num-card{display:grid;gap:6px;padding:16px 18px;border:1px solid var(--border);border-radius:16px;background:var(--surface);min-width:0;overflow-wrap:anywhere}
+.real-num-card.real-num-hero{border-color:rgba(15,118,110,.35);background:linear-gradient(135deg,#f0fdfa 0%,#ffffff 100%)}
+.real-num-label{font-size:13px;font-weight:600;color:var(--muted)}
+.real-num-value{font-size:clamp(22px,2.4vw,30px);font-weight:800;line-height:1.15;color:var(--ink);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.real-num-sub{font-size:12px;color:var(--muted);line-height:1.4}
+.dashboard-action-panel{display:grid;gap:12px;padding:16px 18px;border:1px solid var(--border);border-radius:16px;background:var(--surface);margin-bottom:16px}
+.dashboard-action-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+.dashboard-action-item{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:48px;padding:10px 14px;border:1px solid var(--border);border-radius:12px;background:var(--bg);text-align:left;cursor:pointer;min-width:0;overflow-wrap:anywhere}
+.dashboard-action-item:hover{border-color:var(--primary)}
+.dashboard-action-count{display:inline-flex;align-items:center;justify-content:center;min-width:32px;height:28px;padding:0 8px;border-radius:999px;font-size:13px;font-weight:700;background:#ecfdf5;color:#0f766e;flex:0 0 auto}
+.dashboard-action-item.is-warn .dashboard-action-count{background:#fef3c7;color:#b45309}
+.dashboard-action-item.is-danger .dashboard-action-count{background:#fef2f2;color:#b91c1c}
+@media(max-width:900px){
+  .dashboard-real-numbers{grid-template-columns:minmax(0,1fr)}
+}
+@media(prefers-reduced-motion:reduce){
+  .scan-feedback-pill{animation:none}
+}
