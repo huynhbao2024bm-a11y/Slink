@@ -4,15 +4,15 @@ const { createHash, randomUUID } = require('node:crypto');
 const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
 const { allowedWarehouseIds, canAccessWarehouse } = require('./warehouse-access');
+const { requirePermission } = require('./rbac');
 
-const ORDER_ROLES = new Set(['owner', 'manager', 'stockkeeper']);
 const PAYMENT_SNAPSHOTS = new Set(['unpaid', 'paid', 'cod', 'unknown']);
 const ORDER_STATUSES = new Set(['reserved', 'packed', 'shipped', 'delivered', 'cancelled']);
 const MAX_LINES = 100;
 const MAX_VND = 9223372036854775807n;
 
-function requireOrderRole(role) {
-  if (!ORDER_ROLES.has(role)) throw new ApiError(403, 'forbidden', 'Vai trò của bạn không được quản lý đơn hàng kênh bán.');
+function requireOrderRole(membership) {
+  requirePermission(membership, 'edit_products', 'Vai trò của bạn không được quản lý đơn hàng kênh bán.');
 }
 
 function requireKey(request) {
@@ -166,7 +166,7 @@ function registerChannelOrderRoutes(app, { pool, env }) {
     const limit = Number(rawLimit);
     const offset = Number(rawOffset);
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
-      requireOrderRole(membership.role);
+      requireOrderRole(membership);
       const result = await client.query(
         `SELECT m.id AS mapping_id, m.external_sku, m.external_product_ref,
                 p.id AS product_id, p.sku, p.name, p.unit, p.sale_price_vnd::text AS sale_price_vnd,
@@ -213,7 +213,7 @@ function registerChannelOrderRoutes(app, { pool, env }) {
     }
     const profileId = rawProfileId || '';
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
-      requireOrderRole(membership.role);
+      requireOrderRole(membership);
       const warehouseIds = allowedWarehouseIds(membership);
       const result = await client.query(
         `SELECT o.id, o.channel_profile_id, cp.channel_code, cp.shop_label, o.external_order_ref,
@@ -259,7 +259,7 @@ function registerChannelOrderRoutes(app, { pool, env }) {
     const { storeId, orderId } = request.params;
     if (!UUID_PATTERN.test(storeId) || !UUID_PATTERN.test(orderId)) throw new ApiError(400, 'validation_error', 'Đơn hàng kênh bán không hợp lệ.');
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
-      requireOrderRole(membership.role);
+      requireOrderRole(membership);
       const header = await client.query(
         `SELECT o.id, o.channel_profile_id, cp.channel_code, cp.shop_label, o.external_order_ref,
                 o.fulfillment_warehouse_id, w.name AS warehouse_name, o.fulfillment_status,
@@ -330,7 +330,7 @@ function registerChannelOrderRoutes(app, { pool, env }) {
     let outcome;
     try {
       outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
-        requireOrderRole(membership.role);
+        requireOrderRole(membership);
         const reservation = await reserveIdempotency(client, storeId, auth.userId, key, canonical);
         if (reservation.replay) return reservation.replay;
         const warehouseIds = allowedWarehouseIds(membership);
@@ -454,7 +454,7 @@ function registerChannelOrderRoutes(app, { pool, env }) {
     const key = requireKey(request);
     const canonical = { operation: 'channel_order_status', orderId: orderId.toLowerCase(), nextStatus, expectedVersion, reason };
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
-      requireOrderRole(membership.role);
+      requireOrderRole(membership);
       const replay = await reserveIdempotency(client, storeId, auth.userId, key, canonical);
       if (replay.replay) return replay.replay;
       const locked = await client.query(

@@ -1,5 +1,6 @@
 const { Pool } = require('pg');
 const { databaseTransportOptions } = require('./database-transport');
+const { normalizeStoredPermissions, resolveEffectivePermissions } = require('./rbac');
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -47,7 +48,7 @@ async function withStore(pool, userId, storeId, operation) {
   return withUser(pool, userId, async (client) => {
     await client.query("SELECT set_config('app.store_id', $1, true)", [storeId]);
     const membership = await client.query(
-      `SELECT m.role, m.warehouse_scope_mode,
+      `SELECT m.role, COALESCE(m.permissions, '{}'::jsonb) AS permissions, m.warehouse_scope_mode,
               COALESCE((SELECT array_agg(mws.warehouse_id ORDER BY mws.warehouse_id)
                         FROM membership_warehouse_scopes mws
                         JOIN warehouses scoped_w ON scoped_w.store_id = mws.store_id AND scoped_w.id = mws.warehouse_id AND scoped_w.status = 'active'
@@ -59,14 +60,18 @@ async function withStore(pool, userId, storeId, operation) {
       [storeId, userId]
     );
     if (!membership.rowCount) throw new DatabaseError('Bạn không có quyền truy cập cửa hàng này.', 403);
-    return operation(client, membership.rows[0]);
+    const row = membership.rows[0];
+    const permissions = normalizeStoredPermissions(row.permissions);
+    const effectivePermissions = resolveEffectivePermissions(row.role, permissions);
+    return operation(client, { ...row, permissions, effectivePermissions });
   });
 }
 
 async function listStores(pool, userId) {
   return withUser(pool, userId, async (client) => {
     const memberships = await client.query(
-      `SELECT store_id, role FROM memberships WHERE user_id = $1 AND status = 'active' ORDER BY joined_at, created_at`,
+      `SELECT store_id, role, COALESCE(permissions, '{}'::jsonb) AS permissions
+       FROM memberships WHERE user_id = $1 AND status = 'active' ORDER BY joined_at, created_at`,
       [userId]
     );
     const stores = [];
@@ -78,7 +83,11 @@ async function listStores(pool, userId) {
          FROM stores WHERE id = $1 AND status = 'active'`,
         [member.store_id]
       );
-      if (store.rowCount) stores.push({ ...store.rows[0], role: member.role });
+      if (store.rowCount) {
+        const permissions = normalizeStoredPermissions(member.permissions);
+        const effectivePermissions = resolveEffectivePermissions(member.role, permissions);
+        stores.push({ ...store.rows[0], role: member.role, permissions, effectivePermissions });
+      }
     }
     return stores;
   });

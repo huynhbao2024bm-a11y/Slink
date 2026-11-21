@@ -3,6 +3,7 @@
 const { createHash, randomUUID } = require('node:crypto');
 const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
+const { hasPermission, requirePermission } = require('./rbac');
 
 const EDIT_CUSTOMER_ROLES = new Set(['owner', 'manager', 'cashier']);
 const CREATE_CUSTOMER_ROLES = new Set(['owner', 'manager', 'cashier', 'accountant']);
@@ -11,8 +12,6 @@ const CUSTOMER_VIEW_ROLES = new Set(['owner', 'manager', 'cashier', 'accountant'
 const CUSTOMER_SEGMENT_MANAGE_ROLES = new Set(['owner', 'manager', 'accountant']);
 const ORDER_VIEW_ROLES = new Set(['owner', 'manager', 'cashier', 'accountant']);
 const ORDER_COLLABORATE_ROLES = new Set(['owner', 'manager', 'cashier', 'accountant']);
-const OPENING_BALANCE_ROLES = new Set(['owner', 'manager', 'accountant']);
-const VOID_ORDER_ROLES = new Set(['owner', 'manager']);
 const MAX_BIGINT = 9223372036854775807n;
 const MAX_CUSTOMER_IMPORT_ROWS = 200;
 const CUSTOMER_SEGMENTS = new Set(['no_purchase', 'repeat', 'owing', 'inactive90', 'vip_tier', 'wholesale', 'birthday_month', 'over_credit_limit']);
@@ -659,8 +658,8 @@ function registerRecordRoutes(app, { pool, env }) {
     const hasOpeningBalance = rows.some((row) => BigInt(row.openingBalanceVnd) > 0n);
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
       if (!CUSTOMER_IMPORT_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Chỉ chủ cửa hàng, quản lý hoặc kế toán được nhập khách hàng.');
-      if (hasOpeningBalance && !OPENING_BALANCE_ROLES.has(membership.role)) {
-        throw new ApiError(403, 'forbidden', 'Chỉ chủ cửa hàng, quản lý hoặc kế toán được nhập công nợ ban đầu.');
+      if (hasOpeningBalance && !hasPermission(membership, 'record_cashbook')) {
+        throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền nhập công nợ ban đầu.');
       }
       const existing = await findCustomerImportConflicts(client, storeId, rows);
       const conflictMessage = describeCustomerImportConflict(rows, existing.rows);
@@ -688,8 +687,8 @@ function registerRecordRoutes(app, { pool, env }) {
     const requestHash = createHash('sha256').update(JSON.stringify(rows)).digest();
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
       if (!CUSTOMER_IMPORT_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Chỉ chủ cửa hàng, quản lý hoặc kế toán được nhập khách hàng.');
-      if (hasOpeningBalance && !OPENING_BALANCE_ROLES.has(membership.role)) {
-        throw new ApiError(403, 'forbidden', 'Chỉ chủ cửa hàng, quản lý hoặc kế toán được nhập công nợ ban đầu.');
+      if (hasOpeningBalance && !hasPermission(membership, 'record_cashbook')) {
+        throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền nhập công nợ ban đầu.');
       }
       // Serialize customer creation/import for this store so the duplicate check
       // and inserts cannot race another Slink customer import or manual create.
@@ -774,8 +773,8 @@ function registerRecordRoutes(app, { pool, env }) {
     const requestHash = idempotencyKey ? createHash('sha256').update(JSON.stringify(value)).digest() : null;
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
       if (!CREATE_CUSTOMER_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền tạo khách hàng.');
-      if (openingBalance > 0n && !OPENING_BALANCE_ROLES.has(membership.role)) {
-        throw new ApiError(403, 'forbidden', 'Chỉ chủ cửa hàng, quản lý hoặc kế toán được ghi công nợ ban đầu.');
+      if (openingBalance > 0n && !hasPermission(membership, 'record_cashbook')) {
+        throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền ghi công nợ ban đầu.');
       }
       await client.query('SELECT id FROM stores WHERE id = $1 FOR UPDATE', [storeId]);
       if (idempotencyKey) {
@@ -964,7 +963,9 @@ function registerRecordRoutes(app, { pool, env }) {
       throw new ApiError(400, 'validation_error', 'Bộ lọc trạng thái đơn hàng không hợp lệ.');
     }
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!ORDER_VIEW_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền xem đơn hàng.');
+      if (!ORDER_VIEW_ROLES.has(membership.role) && !hasPermission(membership, 'void_or_return_order') && !hasPermission(membership, 'view_reports')) {
+        throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền xem đơn hàng.');
+      }
       const result = await client.query(
         `SELECT o.id, o.order_number, o.customer_id, c.name AS customer_name, c.phone AS customer_phone,
                 o.status, o.subtotal_vnd::text AS subtotal_vnd, o.discount_vnd::text AS discount_vnd,
@@ -1004,7 +1005,9 @@ function registerRecordRoutes(app, { pool, env }) {
     const { storeId, orderId } = request.params;
     if (!UUID_PATTERN.test(storeId) || !UUID_PATTERN.test(orderId)) throw new ApiError(400, 'validation_error', 'Cửa hàng hoặc đơn hàng không hợp lệ.');
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!ORDER_VIEW_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền xem đơn hàng.');
+      if (!ORDER_VIEW_ROLES.has(membership.role) && !hasPermission(membership, 'void_or_return_order') && !hasPermission(membership, 'view_reports')) {
+        throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền xem đơn hàng.');
+      }
       const order = await client.query(
         `SELECT o.*, o.subtotal_vnd::text AS subtotal_vnd_text, o.discount_vnd::text AS discount_vnd_text,
                 o.total_vnd::text AS total_vnd_text, o.cash_received_vnd::text AS cash_received_vnd_text,
@@ -1033,7 +1036,7 @@ function registerRecordRoutes(app, { pool, env }) {
                           FROM product_serial_codes sc
                           WHERE sc.store_id = ol.store_id AND sc.order_id = ol.order_id AND sc.product_id = ol.product_id AND sc.status = 'sold'), '{}'::text[]) AS sold_serial_codes
          FROM order_lines ol WHERE ol.store_id = $1 AND ol.order_id = $2 ORDER BY ol.id`,
-        [storeId, orderId, ['owner', 'manager', 'accountant'].includes(membership.role)]
+        [storeId, orderId, hasPermission(membership, 'view_cost_price')]
       );
       const payments = await client.query(
         `SELECT id, method, status, amount_vnd::text AS amount_vnd, provider, provider_reference, occurred_at
@@ -1131,7 +1134,9 @@ function registerRecordRoutes(app, { pool, env }) {
     }
     const limit = Math.min(Math.max(Number(rawLimit || 100), 1), 100);
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!ORDER_VIEW_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền xem ghi chú đơn hàng.');
+      if (!ORDER_VIEW_ROLES.has(membership.role) && !hasPermission(membership, 'void_or_return_order') && !hasPermission(membership, 'view_reports')) {
+        throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền xem ghi chú đơn hàng.');
+      }
       const order = await client.query('SELECT id FROM orders WHERE store_id = $1 AND id = $2', [storeId, orderId]);
       if (!order.rowCount) throw new ApiError(404, 'order_not_found', 'Không tìm thấy đơn hàng.');
       const result = await client.query(
@@ -1279,7 +1284,7 @@ function registerRecordRoutes(app, { pool, env }) {
     }
 
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!VOID_ORDER_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Chỉ chủ cửa hàng hoặc quản lý mới được hủy đơn.');
+      requirePermission(membership, 'void_or_return_order', 'Tài khoản này không có quyền hủy đơn hàng.');
       const linkedOrder = await client.query(
         'SELECT customer_id FROM orders WHERE store_id = $1 AND id = $2',
         [storeId, orderId]
@@ -1363,7 +1368,7 @@ function registerRecordRoutes(app, { pool, env }) {
       }
       await client.query(
         `UPDATE product_serial_codes
-         SET status = 'in_stock', order_id = NULL, sold_at = NULL, warehouse_id = $3, updated_at = now()
+         SET status = 'in_stock', order_id = NULL, sold_at = NULL, warranty_expires_at = NULL, warehouse_id = $3, updated_at = now()
          WHERE store_id = $1 AND order_id = $2 AND status = 'sold'`,
         [storeId, orderId, destination.rows[0].id]
       );

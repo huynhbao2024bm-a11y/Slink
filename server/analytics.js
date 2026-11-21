@@ -2,7 +2,7 @@
 
 const { ApiError, authenticate } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
-const ANALYTICS_ROLES = new Set(['owner', 'manager', 'accountant']);
+const { hasPermission, requirePermission } = require('./rbac');
 
 function registerAnalyticsRoutes(app, { pool }) {
   app.get('/api/stores/:storeId/analytics', async (request) => {
@@ -12,7 +12,8 @@ function registerAnalyticsRoutes(app, { pool }) {
     const requestedDays = Number(request.query?.days);
     const days = [1, 7, 30].includes(requestedDays) ? requestedDays : 7;
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!ANALYTICS_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền xem báo cáo tài chính.');
+      requirePermission(membership, 'view_reports', 'Tài khoản này không có quyền xem báo cáo tài chính.');
+      const canViewCost = hasPermission(membership, 'view_cost_price');
       const queries = [
         () => client.query(
           `WITH bounds AS (
@@ -160,10 +161,10 @@ function registerAnalyticsRoutes(app, { pool }) {
           collectedVnd: row.collected_vnd,
           receivableVnd: row.receivable_vnd,
           averageTicketVnd: row.average_ticket_vnd,
-          grossProfitVnd,
+          grossProfitVnd: canViewCost ? grossProfitVnd : null,
           otherIncomeVnd: pnlRow.other_income_vnd,
           operatingExpenseVnd: pnlRow.operating_expense_vnd,
-          netProfitVnd,
+          netProfitVnd: canViewCost ? netProfitVnd : null,
         },
         expenseBreakdown: expenseBreakdown.rows.map((item) => ({ category: item.category, amountVnd: item.amount_vnd })),
         days: daily.rows.map((item) => ({ date: item.day, salesVnd: item.sales_vnd, orderCount: Number(item.order_count) })),

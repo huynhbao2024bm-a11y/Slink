@@ -8,10 +8,9 @@ const { allowedWarehouseIds } = require('./warehouse-access');
 const { lockActiveCashSession } = require('./cash-register');
 const { insertCashMovement } = require('./cashbook-ledger');
 const { registerFinanceVoucherRoutes } = require('./finance-vouchers');
+const { hasPermission, requirePermission } = require('./rbac');
 
-const FINANCE_ROLES = new Set(['owner', 'manager', 'accountant']);
-const FINANCE_PAGE_ROLES = new Set([...FINANCE_ROLES, 'cashier', 'stockkeeper']);
-const SUPPLIER_CREATE_ROLES = new Set(['owner', 'manager', 'accountant', 'stockkeeper']);
+const FINANCE_PAGE_ROLES = new Set(['owner', 'manager', 'accountant', 'cashier', 'stockkeeper']);
 const METHODS = new Set(['cash', 'bank_transfer', 'bank_qr', 'card', 'other']);
 const MAX_BIGINT = 9223372036854775807n;
 const PARTY_LOOKUP = {
@@ -40,9 +39,10 @@ function nonNegativeAmount(value, label) {
   return parsed;
 }
 
-function recentPurchases(client, storeId, warehouseIds, supplierId = null, limit = 50) {
+function recentPurchases(client, storeId, warehouseIds, supplierId = null, limit = 50, canViewCost = true) {
   return client.query(
-    `SELECT p.id, p.purchase_number, p.status, p.note, p.total_vnd::text AS total_vnd,
+    `SELECT p.id, p.purchase_number, p.status, p.note,
+            CASE WHEN $6::boolean THEN p.total_vnd::text ELSE NULL END AS total_vnd,
             p.received_at, p.supplier_id, po.purchase_order_number, COALESCE(s.name, '') AS supplier_name,
             COALESCE((
               SELECT json_agg(json_build_object(
@@ -50,9 +50,9 @@ function recentPurchases(client, storeId, warehouseIds, supplierId = null, limit
                 'sku', l.sku_snapshot,
                 'unit', l.unit_snapshot,
                 'quantity', l.quantity_received::text,
-                'pack', l.purchase_pack,
-                'unitCostVnd', l.unit_cost_vnd::text,
-                'totalVnd', l.line_total_vnd::text
+                'pack', CASE WHEN $6::boolean THEN l.purchase_pack ELSE NULL END,
+                'unitCostVnd', CASE WHEN $6::boolean THEN l.unit_cost_vnd::text ELSE NULL END,
+                'totalVnd', CASE WHEN $6::boolean THEN l.line_total_vnd::text ELSE NULL END
               ) ORDER BY l.id)
               FROM purchase_lines l WHERE l.store_id = p.store_id AND l.purchase_id = p.id
             ), '[]'::json) AS lines
@@ -61,14 +61,15 @@ function recentPurchases(client, storeId, warehouseIds, supplierId = null, limit
      WHERE p.store_id = $1 AND ($2::boolean = false OR p.warehouse_id = ANY($3::uuid[]))
        AND ($4::uuid IS NULL OR p.supplier_id = $4)
      ORDER BY p.received_at DESC, p.id DESC LIMIT $5`,
-    [storeId, warehouseIds !== null, warehouseIds || [], supplierId, limit],
+    [storeId, warehouseIds !== null, warehouseIds || [], supplierId, limit, Boolean(canViewCost)],
   );
 }
 
-function recentPurchaseOrders(client, storeId, warehouseIds, supplierId = null, limit = 100) {
+function recentPurchaseOrders(client, storeId, warehouseIds, supplierId = null, limit = 100, canViewCost = true) {
   return client.query(
     `SELECT po.id, po.purchase_order_number, po.status, po.note, po.version, po.warehouse_id,
-            po.total_vnd::text AS total_vnd, po.created_at, po.ordered_at, po.completed_at, po.cancelled_at,
+            CASE WHEN $6::boolean THEN po.total_vnd::text ELSE NULL END AS total_vnd,
+            po.created_at, po.ordered_at, po.completed_at, po.cancelled_at,
             s.id AS supplier_id, s.name AS supplier_name, w.name AS warehouse_name,
             COALESCE((
               SELECT json_agg(json_build_object(
@@ -79,8 +80,8 @@ function recentPurchaseOrders(client, storeId, warehouseIds, supplierId = null, 
                 'unit', l.unit_snapshot,
                 'quantityOrdered', l.quantity_ordered::text,
                 'quantityReceived', l.quantity_received::text,
-                'unitCostVnd', l.unit_cost_vnd::text,
-                'totalVnd', l.line_total_vnd::text
+                'unitCostVnd', CASE WHEN $6::boolean THEN l.unit_cost_vnd::text ELSE NULL END,
+                'totalVnd', CASE WHEN $6::boolean THEN l.line_total_vnd::text ELSE NULL END
               ) ORDER BY l.id)
               FROM purchase_order_lines l WHERE l.store_id = po.store_id AND l.purchase_order_id = po.id
             ), '[]'::json) AS lines
@@ -89,7 +90,7 @@ function recentPurchaseOrders(client, storeId, warehouseIds, supplierId = null, 
      WHERE po.store_id = $1 AND ($2::boolean = false OR po.warehouse_id = ANY($3::uuid[]))
        AND ($4::uuid IS NULL OR po.supplier_id = $4)
      ORDER BY po.created_at DESC, po.id DESC LIMIT $5`,
-    [storeId, warehouseIds !== null, warehouseIds || [], supplierId, limit],
+    [storeId, warehouseIds !== null, warehouseIds || [], supplierId, limit, Boolean(canViewCost)],
   );
 }
 
@@ -101,7 +102,7 @@ function registerFinanceRoutes(app, { pool, env }) {
     const search = typeof request.query?.q === 'string' ? request.query.q.trim() : '';
     if (!UUID_PATTERN.test(storeId) || !validPartyKind(kind) || search.length > 120) throw new ApiError(400, 'validation_error', 'Thông tin tìm người nộp hoặc nhận tiền không hợp lệ.');
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!FINANCE_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền ghi phiếu thu chi.');
+      requirePermission(membership, 'record_cashbook', 'Tài khoản này không có quyền ghi phiếu thu chi.');
       const result = await client.query(
         `SELECT id, name, detail FROM (${PARTY_LOOKUP[kind]}) person
          WHERE name ILIKE '%' || $2 || '%' OR detail ILIKE '%' || $2 || '%'
@@ -117,9 +118,13 @@ function registerFinanceRoutes(app, { pool, env }) {
     if (!UUID_PATTERN.test(storeId)) throw new ApiError(400, 'validation_error', 'Cửa hàng không hợp lệ.');
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
       if (!FINANCE_PAGE_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền xem tài chính.');
-      const fullFinanceAccess = FINANCE_ROLES.has(membership.role);
+      const canRecordCashbook = hasPermission(membership, 'record_cashbook');
+      const canViewReports = hasPermission(membership, 'view_reports');
+      const canEditProducts = hasPermission(membership, 'edit_products');
+      const canViewCost = hasPermission(membership, 'view_cost_price');
+      const fullFinanceAccess = canRecordCashbook || canViewReports;
       const cashbookAccess = fullFinanceAccess || membership.role === 'cashier';
-      const purchaseAccess = fullFinanceAccess || membership.role === 'stockkeeper';
+      const purchaseAccess = fullFinanceAccess || canEditProducts;
       const warehouseIds = allowedWarehouseIds(membership);
       const queries = [
         () => cashbookAccess ? client.query(
@@ -164,7 +169,7 @@ function registerFinanceRoutes(app, { pool, env }) {
            WHERE s.store_id = $1 AND s.status = 'active'
            GROUP BY s.id, s.name ORDER BY s.name`,
           [storeId]
-        ) : membership.role === 'stockkeeper' ? client.query(
+        ) : purchaseAccess ? client.query(
           `SELECT id, name FROM suppliers WHERE store_id = $1 AND status = 'active' ORDER BY name`,
           [storeId]
         ) : Promise.resolve({ rows: [] }),
@@ -200,8 +205,8 @@ function registerFinanceRoutes(app, { pool, env }) {
            ORDER BY SUM(l.debit_vnd - l.credit_vnd) DESC, c.name LIMIT 10`,
           [storeId]
         ) : Promise.resolve({ rows: [] }),
-        () => purchaseAccess ? recentPurchases(client, storeId, warehouseIds) : Promise.resolve({ rows: [] }),
-        () => purchaseAccess ? recentPurchaseOrders(client, storeId, warehouseIds) : Promise.resolve({ rows: [] }),
+        () => purchaseAccess ? recentPurchases(client, storeId, warehouseIds, null, 50, canViewCost) : Promise.resolve({ rows: [] }),
+        () => purchaseAccess ? recentPurchaseOrders(client, storeId, warehouseIds, null, 100, canViewCost) : Promise.resolve({ rows: [] }),
       ];
       // These statements share the transaction-bound client; do not overlap client.query calls.
       const results = [];
@@ -231,7 +236,10 @@ function registerFinanceRoutes(app, { pool, env }) {
     const { storeId, supplierId } = request.params;
     if (!UUID_PATTERN.test(storeId) || !UUID_PATTERN.test(supplierId)) throw new ApiError(400, 'validation_error', 'Nhà cung cấp không hợp lệ.');
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!FINANCE_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền xem công nợ nhà cung cấp.');
+      if (!hasPermission(membership, 'record_cashbook') && !hasPermission(membership, 'view_reports')) {
+        throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền xem công nợ nhà cung cấp.');
+      }
+      const canViewCost = hasPermission(membership, 'view_cost_price');
       const result = await client.query(
         `SELECT s.id, s.name,
                 (SELECT COALESCE(SUM(l.increases_payable_vnd) - SUM(l.decreases_payable_vnd), 0)::text
@@ -249,8 +257,8 @@ function registerFinanceRoutes(app, { pool, env }) {
       if (!result.rowCount) throw new ApiError(404, 'supplier_not_found', 'Không tìm thấy nhà cung cấp.');
       const { entries, ...supplier } = result.rows[0];
       const warehouseIds = allowedWarehouseIds(membership);
-      const purchases = await recentPurchases(client, storeId, warehouseIds, supplierId, 8);
-      const purchaseOrders = await recentPurchaseOrders(client, storeId, warehouseIds, supplierId, 8);
+      const purchases = await recentPurchases(client, storeId, warehouseIds, supplierId, 8, canViewCost);
+      const purchaseOrders = await recentPurchaseOrders(client, storeId, warehouseIds, supplierId, 8, canViewCost);
       return { supplier, entries, purchases: purchases.rows, purchaseOrders: purchaseOrders.rows };
     });
   });
@@ -271,8 +279,12 @@ function registerFinanceRoutes(app, { pool, env }) {
     const value = { name, openingPayableVnd: openingBalance.toString() };
     const digest = createHash('sha256').update(JSON.stringify(value)).digest();
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!SUPPLIER_CREATE_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền quản lý nhà cung cấp.');
-      if (openingBalance > 0n && !FINANCE_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Chỉ chủ cửa hàng, quản lý hoặc kế toán được ghi khoản phải trả ban đầu.');
+      if (!hasPermission(membership, 'edit_products') && !hasPermission(membership, 'record_cashbook') && !hasPermission(membership, 'view_reports')) {
+        throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền quản lý nhà cung cấp.');
+      }
+      if (openingBalance > 0n && !hasPermission(membership, 'record_cashbook')) {
+        throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền ghi khoản phải trả ban đầu.');
+      }
       await client.query('SELECT id FROM stores WHERE id = $1 FOR UPDATE', [storeId]);
       const reserved = await client.query(
         `INSERT INTO idempotency_records (store_id, actor_user_id, idempotency_key, request_hash)
@@ -361,7 +373,7 @@ function registerFinanceRoutes(app, { pool, env }) {
     const value = { supplierId, amountVnd: amount.toString(), method, note };
     const digest = createHash('sha256').update(JSON.stringify(value)).digest();
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!FINANCE_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền thanh toán nhà cung cấp.');
+      requirePermission(membership, 'record_cashbook', 'Tài khoản này không có quyền thanh toán nhà cung cấp.');
       const reserved = await client.query(
         `INSERT INTO idempotency_records (store_id, actor_user_id, idempotency_key, request_hash)
          VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING RETURNING idempotency_key`,
@@ -477,7 +489,7 @@ function registerFinanceRoutes(app, { pool, env }) {
     }
     const digest = createHash('sha256').update(JSON.stringify(value)).digest();
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!FINANCE_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền ghi phiếu thu chi.');
+      requirePermission(membership, 'record_cashbook', 'Tài khoản này không có quyền ghi phiếu thu chi.');
       const reserved = await client.query(
         `INSERT INTO idempotency_records (store_id, actor_user_id, idempotency_key, request_hash)
          VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING RETURNING idempotency_key`,

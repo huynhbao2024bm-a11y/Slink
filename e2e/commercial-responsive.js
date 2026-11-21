@@ -646,9 +646,9 @@ async function runViewportAudit(browser, origin, viewport, label) {
     await assertNoHorizontalOverflow(page, `${label}:settings-integrations`);
 
     const assetsOk = await page.evaluate(async () => {
-      const urls = ['/offline-conflict-ui.js', '/supplier-returns-ui.js', '/barcode-tools.js', '/banks-vn.js', '/vietqr-tools.js', '/escpos-printer.js', '/integrations-ui.js', '/finance-vouchers-ui.js'];
+      const urls = ['/offline-conflict-ui.js', '/supplier-returns-ui.js', '/barcode-tools.js', '/banks-vn.js', '/vietqr-tools.js', '/escpos-printer.js', '/integrations-ui.js', '/finance-vouchers-ui.js', '/sync-bus.js', '/pos-hardware.js', '/receipt-image.js'];
       const responses = await Promise.all(urls.map((u) => fetch(u, { credentials: 'same-origin' })));
-      return responses.every((r) => r.ok) && Boolean(window.SlinkBarcodeTools) && Boolean(window.SlinkOfflineConflictUI) && Boolean(window.SlinkReturnsExchangeUI) && Boolean(window.SlinkIntegrationsUI) && Boolean(window.SlinkVietQrTools) && Boolean(window.SlinkFinanceUI);
+      return responses.every((r) => r.ok) && Boolean(window.SlinkBarcodeTools) && Boolean(window.SlinkOfflineConflictUI) && Boolean(window.SlinkReturnsExchangeUI) && Boolean(window.SlinkIntegrationsUI) && Boolean(window.SlinkVietQrTools) && Boolean(window.SlinkFinanceUI) && Boolean(window.SlinkSyncBus) && Boolean(window.SlinkPosHardware) && Boolean(window.SlinkReceiptImage);
     });
     assert.equal(assetsOk, true, 'All standalone commercial UI bundles must be loaded');
     assert.ok(seeded.storeId);

@@ -7,8 +7,8 @@ const { quantityMilli, quantityText } = require('./sales');
 const { normalizeSerialCodeList } = require('./serials');
 const { lockActiveCashSession } = require('./cash-register');
 const { insertCashMovement } = require('./cashbook-ledger');
+const { requirePermission } = require('./rbac');
 
-const RETURN_ROLES = new Set(['owner', 'manager']);
 const REFUND_METHODS = new Set(['cash', 'bank_transfer', 'bank_qr', 'card', 'other']);
 const RESTOCK_POLICIES = new Set(['restock', 'damaged', 'discarded']);
 
@@ -93,7 +93,7 @@ function registerReturnRoutes(app, { pool, env }) {
     const value = normalizeReturn(request.body);
     const requestDigest = digest(value);
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!RETURN_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền xử lý trả hàng.');
+      requirePermission(membership, 'void_or_return_order', 'Tài khoản này không có quyền xử lý trả hàng.');
       const reserved = await client.query(
         `INSERT INTO idempotency_records (store_id, actor_user_id, idempotency_key, request_hash)
          VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING RETURNING idempotency_key`,
@@ -257,14 +257,14 @@ function registerReturnRoutes(app, { pool, env }) {
           if (item.matchedSerialIds?.length > 0) {
             await client.query(
               `UPDATE product_serial_codes
-               SET status = 'in_stock', order_id = NULL, sold_at = NULL, warehouse_id = $2, updated_at = now()
+               SET status = 'in_stock', order_id = NULL, sold_at = NULL, warranty_expires_at = NULL, warehouse_id = $2, updated_at = now()
                WHERE store_id = $1 AND id = ANY($3::uuid[])`,
               [storeId, restockWarehouse.id, item.matchedSerialIds]
             );
           } else if (wholeRestock > 0) {
             await client.query(
               `UPDATE product_serial_codes
-               SET status = 'in_stock', order_id = NULL, sold_at = NULL, warehouse_id = $4, updated_at = now()
+               SET status = 'in_stock', order_id = NULL, sold_at = NULL, warranty_expires_at = NULL, warehouse_id = $4, updated_at = now()
                WHERE id IN (
                  SELECT id FROM product_serial_codes
                  WHERE store_id = $1 AND order_id = $2 AND product_id = $3 AND status = 'sold'
@@ -277,7 +277,7 @@ function registerReturnRoutes(app, { pool, env }) {
         } else if (item.matchedSerialIds?.length > 0) {
           await client.query(
             `UPDATE product_serial_codes
-             SET status = 'archived', updated_at = now()
+             SET status = 'archived', warranty_expires_at = NULL, updated_at = now()
              WHERE store_id = $1 AND id = ANY($2::uuid[])`,
             [storeId, item.matchedSerialIds]
           );
@@ -286,7 +286,7 @@ function registerReturnRoutes(app, { pool, env }) {
           if (wholeRetire > 0) {
             await client.query(
               `UPDATE product_serial_codes
-               SET status = 'archived', updated_at = now()
+               SET status = 'archived', warranty_expires_at = NULL, updated_at = now()
                WHERE id IN (
                  SELECT id FROM product_serial_codes
                  WHERE store_id = $1 AND order_id = $2 AND product_id = $3 AND status = 'sold'

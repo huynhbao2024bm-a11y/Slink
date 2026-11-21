@@ -5,8 +5,18 @@ const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
 const { allowedWarehouseIds, canAccessWarehouse, findAccessibleWarehouse } = require('./warehouse-access');
 const { generateUniqueEan13 } = require('../barcode-tools');
+const { hasPermission, requirePermission } = require('./rbac');
 
-const EDIT_ROLES = new Set(['owner', 'manager', 'stockkeeper']);
+function computeWarrantyStatus(row, nowMs = Date.now()) {
+  if (!row || row.status === 'in_stock') return 'in_stock';
+  if (row.status === 'archived') return 'archived';
+  if (!row.warranty_expires_at) return 'none';
+  const expiresMs = row.warranty_expires_at instanceof Date
+    ? row.warranty_expires_at.getTime()
+    : new Date(row.warranty_expires_at).getTime();
+  if (!Number.isFinite(expiresMs)) return 'none';
+  return expiresMs > nowMs ? 'active' : 'expired';
+}
 
 function normalizeSerialCode(raw) {
   const code = String(raw ?? '').trim();
@@ -74,7 +84,7 @@ function registerSerialRoutes(app, { pool, env }) {
     }
 
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
-      const canViewCost = ['owner', 'manager', 'stockkeeper', 'accountant'].includes(membership.role);
+      const canViewCost = hasPermission(membership, 'view_cost_price');
       const warehouseFilter = requestedWarehouseId || null;
       if (warehouseFilter && !await findAccessibleWarehouse(client, storeId, membership, warehouseFilter)) {
         throw new ApiError(404, 'warehouse_not_found', 'Không tìm thấy kho đang hoạt động.');
@@ -82,11 +92,15 @@ function registerSerialRoutes(app, { pool, env }) {
       const warehouseIds = allowedWarehouseIds(membership);
 
       const serialResult = await client.query(
-        `SELECT sc.id, sc.code, sc.status, sc.product_id, sc.warehouse_id, sc.order_id, sc.sold_at,
-                w.name AS warehouse_name, o.order_number
+        `SELECT sc.id, sc.code, sc.status, sc.product_id, sc.warehouse_id, sc.order_id,
+                sc.sold_at, sc.warranty_expires_at,
+                w.name AS warehouse_name, p.warranty_months,
+                o.order_number, c.name AS customer_name, c.phone AS customer_phone
          FROM product_serial_codes sc
          JOIN warehouses w ON w.id = sc.warehouse_id AND w.store_id = sc.store_id
+         JOIN products p ON p.id = sc.product_id AND p.store_id = sc.store_id
          LEFT JOIN orders o ON o.id = sc.order_id AND o.store_id = sc.store_id
+         LEFT JOIN customers c ON c.id = o.customer_id AND c.store_id = o.store_id
          WHERE sc.store_id = $1 AND (sc.code = $2 OR lower(sc.code) = lower($2))
          ORDER BY (sc.code = $2) DESC, sc.created_at DESC
          LIMIT 1`,
@@ -99,7 +113,7 @@ function registerSerialRoutes(app, { pool, env }) {
                   p.name, p.category, p.unit, p.sale_price_vnd::text AS sale_price_vnd,
                   CASE WHEN $4::boolean THEN p.cost_vnd::text ELSE NULL END AS cost_vnd,
                   p.low_stock_threshold::text AS low_stock_threshold, p.inventory_tracked,
-                  p.serial_tracked, p.variant_group_id, p.variant_group_name, p.variant_attributes,
+                  p.serial_tracked, p.warranty_months, p.variant_group_id, p.variant_group_name, p.variant_attributes,
                   p.image_version, p.image_content_type,
                   CASE WHEN $4::boolean THEN p.purchase_pack ELSE NULL END AS purchase_pack,
                   p.status, p.version,
@@ -139,7 +153,12 @@ function registerSerialRoutes(app, { pool, env }) {
             warehouseName: row.warehouse_name,
             orderId: row.order_id,
             orderNumber: row.order_number || null,
-            soldAt: row.sold_at,
+            soldAt: row.sold_at || null,
+            warrantyMonths: Number(row.warranty_months || 0),
+            warrantyExpiresAt: row.warranty_expires_at || null,
+            warrantyStatus: computeWarrantyStatus(row),
+            customerName: row.customer_name || null,
+            customerPhone: row.customer_phone || null,
           },
           product,
         };
@@ -172,7 +191,7 @@ function registerSerialRoutes(app, { pool, env }) {
       }
       const warehouseIds = allowedWarehouseIds(membership);
       const productRes = await client.query(
-        `SELECT id, name, sku, unit, serial_tracked, inventory_tracked, status
+        `SELECT id, name, sku, unit, serial_tracked, inventory_tracked, warranty_months, status
          FROM products WHERE store_id = $1 AND id = $2`,
         [storeId, productId]
       );
@@ -191,10 +210,12 @@ function registerSerialRoutes(app, { pool, env }) {
 
       const rowsRes = await client.query(
         `SELECT sc.id, sc.code, sc.status, sc.warehouse_id, w.name AS warehouse_name,
-                sc.order_id, o.order_number, sc.sold_at, sc.created_at
+                sc.order_id, o.order_number, sc.sold_at, sc.warranty_expires_at, sc.created_at,
+                c.name AS customer_name, c.phone AS customer_phone
          FROM product_serial_codes sc
          JOIN warehouses w ON w.id = sc.warehouse_id AND w.store_id = sc.store_id
          LEFT JOIN orders o ON o.id = sc.order_id AND o.store_id = sc.store_id
+         LEFT JOIN customers c ON c.id = o.customer_id AND c.store_id = o.store_id
          WHERE sc.store_id = $1 AND sc.product_id = $2
            AND ($3::text = 'all' OR sc.status = $3)
            AND ($4::uuid IS NULL OR sc.warehouse_id = $4)
@@ -205,13 +226,28 @@ function registerSerialRoutes(app, { pool, env }) {
         [storeId, productId, status, warehouseFilter, warehouseIds, search, limit]
       );
 
+      const warrantyMonths = Number(productRes.rows[0].warranty_months || 0);
       return {
         product: productRes.rows[0],
         counts: {
           inStock: Number(countsRes.rows[0]?.in_stock || 0),
           sold: Number(countsRes.rows[0]?.sold || 0),
         },
-        serials: rowsRes.rows,
+        serials: rowsRes.rows.map((row) => {
+          const warrantyStatus = computeWarrantyStatus(row);
+          return {
+            ...row,
+            warranty_months: warrantyMonths,
+            warranty_status: warrantyStatus,
+            warrantyMonths,
+            warrantyExpiresAt: row.warranty_expires_at || null,
+            warrantyStatus,
+            customerName: row.customer_name || null,
+            customerPhone: row.customer_phone || null,
+            orderNumber: row.order_number || null,
+            soldAt: row.sold_at || null,
+          };
+        }),
       };
     });
   });
@@ -249,9 +285,7 @@ function registerSerialRoutes(app, { pool, env }) {
       : null;
 
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!EDIT_ROLES.has(membership.role)) {
-        throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền thêm mã sản phẩm.');
-      }
+      requirePermission(membership, 'edit_products', 'Tài khoản này không có quyền thêm mã sản phẩm.');
       if (idempotencyKey) {
         const reserved = await client.query(
           `INSERT INTO idempotency_records (store_id, actor_user_id, idempotency_key, request_hash)
@@ -440,9 +474,7 @@ function registerSerialRoutes(app, { pool, env }) {
     })).digest();
 
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!EDIT_ROLES.has(membership.role)) {
-        throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền chuyển kho mã riêng.');
-      }
+      requirePermission(membership, 'edit_products', 'Tài khoản này không có quyền chuyển kho mã riêng.');
       const reserved = await client.query(
         `INSERT INTO idempotency_records (store_id, actor_user_id, idempotency_key, request_hash)
          VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING RETURNING idempotency_key`,
@@ -590,4 +622,4 @@ function registerSerialRoutes(app, { pool, env }) {
   });
 }
 
-module.exports = { registerSerialRoutes, normalizeSerialCode, normalizeSerialCodeList, generateSerialBatch };
+module.exports = { registerSerialRoutes, normalizeSerialCode, normalizeSerialCodeList, generateSerialBatch, computeWarrantyStatus };

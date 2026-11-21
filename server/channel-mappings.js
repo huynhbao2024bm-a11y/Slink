@@ -3,16 +3,16 @@
 const { createHash, randomUUID } = require('node:crypto');
 const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
+const { requirePermission } = require('./rbac');
 
-const EDIT_ROLES = new Set(['owner', 'manager', 'stockkeeper']);
 const CHANNEL_CODES = new Set(['shopee', 'lazada', 'tiktok_shop', 'tiki', 'sendo', 'grabmart', 'website', 'other']);
 const CHANNEL_NAMES = {
   shopee: 'Shopee', lazada: 'Lazada', tiktok_shop: 'TikTok Shop', tiki: 'Tiki',
   sendo: 'Sendo', grabmart: 'GrabMart', website: 'Website', other: 'Kênh khác',
 };
 
-function requireEditor(role) {
-  if (!EDIT_ROLES.has(role)) throw new ApiError(403, 'forbidden', 'Vai trò của bạn không được quản lý mã sản phẩm trên kênh bán.');
+function requireEditor(membership) {
+  requirePermission(membership, 'edit_products', 'Vai trò của bạn không được quản lý mã sản phẩm trên kênh bán.');
 }
 
 function normalizedText(value, { field, max, optional = false }) {
@@ -118,7 +118,7 @@ function registerChannelMappingRoutes(app, { pool, env }) {
     const query = typeof request.query?.q === 'string' ? request.query.q.normalize('NFKC').trim().slice(0, 120) : '';
     const state = request.query?.state === 'archived' ? 'archived' : 'active';
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
-      requireEditor(membership.role);
+      requireEditor(membership);
       const profiles = await client.query(
         `SELECT p.id, p.channel_code, p.shop_label, p.connection_status, p.status, p.version, p.created_at, p.updated_at,
                 COUNT(m.id) FILTER (WHERE m.status = 'active')::int AS active_mapping_count
@@ -174,7 +174,7 @@ function registerChannelMappingRoutes(app, { pool, env }) {
     let outcome;
     try {
       outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
-        requireEditor(membership.role);
+        requireEditor(membership);
         const reservation = await reserveRequest(client, storeId, auth.userId, key, payload);
         if (reservation.replayed) return { ...reservation, body: reservation.body };
         const inserted = await client.query(
@@ -210,7 +210,7 @@ function registerChannelMappingRoutes(app, { pool, env }) {
     let outcome;
     try {
       outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
-        requireEditor(membership.role);
+        requireEditor(membership);
         const reservation = await reserveRequest(client, storeId, auth.userId, key, payload);
         if (reservation.replayed) return { ...reservation, body: reservation.body };
         const locked = await client.query(
@@ -252,7 +252,7 @@ function registerChannelMappingRoutes(app, { pool, env }) {
     const payload = { operation: 'channel_profile_archive', profileId, expectedVersion: parseVersion(String(request.body?.version ?? '')) };
     let outcome;
     outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
-      requireEditor(membership.role);
+      requireEditor(membership);
       const reservation = await reserveRequest(client, storeId, auth.userId, key, payload);
       if (reservation.replayed) return { ...reservation, body: reservation.body };
       const locked = await client.query(
@@ -298,7 +298,7 @@ function registerChannelMappingRoutes(app, { pool, env }) {
     let outcome;
     try {
       outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
-        requireEditor(membership.role);
+        requireEditor(membership);
         const reservation = await reserveRequest(client, storeId, auth.userId, key, payload);
         if (reservation.replayed) return { ...reservation, body: reservation.body };
         const profile = await client.query(
@@ -342,7 +342,7 @@ function registerChannelMappingRoutes(app, { pool, env }) {
     let outcome;
     try {
       outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
-        requireEditor(membership.role);
+        requireEditor(membership);
         const reservation = await reserveRequest(client, storeId, auth.userId, key, payload);
         if (reservation.replayed) return { ...reservation, body: reservation.body };
         const locked = await client.query(
@@ -387,7 +387,7 @@ function registerChannelMappingRoutes(app, { pool, env }) {
     const key = getIdempotencyKey(request);
     const payload = { operation: 'channel_mapping_archive', mappingId, expectedVersion: parseVersion(String(request.body?.version ?? '')) };
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
-      requireEditor(membership.role);
+      requireEditor(membership);
       const reservation = await reserveRequest(client, storeId, auth.userId, key, payload);
       if (reservation.replayed) return { ...reservation, body: reservation.body };
       const locked = await client.query(

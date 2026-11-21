@@ -5,6 +5,7 @@ const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
 const { lockActiveCashSession } = require('./cash-register');
 const { insertCashMovement } = require('./cashbook-ledger');
+const { hasPermission, requirePermission } = require('./rbac');
 
 const PAYMENT_ROLES = new Set(['owner', 'manager', 'cashier', 'accountant']);
 const METHODS = new Set(['cash', 'bank_transfer', 'bank_qr', 'card', 'other']);
@@ -77,7 +78,7 @@ function registerPaymentRoutes(app, { pool, env }) {
     const value = { customerId, amountVnd: amount.toString(), date, note };
     const digest = createHash('sha256').update(JSON.stringify(value)).digest();
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!new Set(['owner', 'manager', 'accountant']).has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền mở khoản nợ cũ.');
+      requirePermission(membership, 'record_cashbook', 'Tài khoản này không có quyền mở khoản nợ cũ.');
       const reserved = await client.query(
         `INSERT INTO idempotency_records (store_id, actor_user_id, idempotency_key, request_hash)
          VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING RETURNING idempotency_key`, [storeId, auth.userId, key, digest]
@@ -122,7 +123,9 @@ function registerPaymentRoutes(app, { pool, env }) {
     const { storeId, customerId } = request.params;
     if (!UUID_PATTERN.test(storeId) || !UUID_PATTERN.test(customerId)) throw new ApiError(400, 'validation_error', 'Cửa hàng hoặc khách hàng không hợp lệ.');
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!PAYMENT_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền xem công nợ.');
+      if (!PAYMENT_ROLES.has(membership.role) && !hasPermission(membership, 'record_cashbook')) {
+        throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền xem công nợ.');
+      }
       const customer = await client.query('SELECT id, name, phone FROM customers WHERE store_id = $1 AND id = $2 AND status = $3', [storeId, customerId, 'active']);
       if (!customer.rowCount) throw new ApiError(404, 'customer_not_found', 'Không tìm thấy khách hàng.');
       const orders = await client.query(
@@ -190,7 +193,9 @@ function registerPaymentRoutes(app, { pool, env }) {
     const value = { customerId, amountVnd: amount.toString(), method, note, ...(selected ? { allocations: selected } : {}) };
     const digest = createHash('sha256').update(JSON.stringify(value)).digest();
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!PAYMENT_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền ghi nhận thu tiền.');
+      if (!PAYMENT_ROLES.has(membership.role) && !hasPermission(membership, 'record_cashbook')) {
+        throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền ghi nhận thu tiền.');
+      }
       const reserved = await client.query(
         `INSERT INTO idempotency_records (store_id, actor_user_id, idempotency_key, request_hash)
          VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING RETURNING idempotency_key`,
@@ -375,7 +380,9 @@ function registerPaymentRoutes(app, { pool, env }) {
     const value = { amountVnd: amount.toString(), method, note };
     const digest = createHash('sha256').update(JSON.stringify(value)).digest();
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
-      if (!PAYMENT_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền ghi nhận thu tiền.');
+      if (!PAYMENT_ROLES.has(membership.role) && !hasPermission(membership, 'record_cashbook')) {
+        throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền ghi nhận thu tiền.');
+      }
       const reserved = await client.query(
         `INSERT INTO idempotency_records (store_id, actor_user_id, idempotency_key, request_hash)
          VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING RETURNING idempotency_key`,

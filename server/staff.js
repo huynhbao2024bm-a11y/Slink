@@ -2,6 +2,12 @@
 
 const { ApiError, authenticate, assertSameOrigin, deliverEmail, digest, hashPassword, newToken, requireCsrf, sendVerification, emailVerificationDisabled, createUserSession } = require('./auth');
 const { UUID_PATTERN, withStore, withUser } = require('./db');
+const {
+  ROLE_DEFAULTS,
+  normalizeStoredPermissions,
+  resolveEffectivePermissions,
+  validatePermissionsInput,
+} = require('./rbac');
 
 const STAFF_ROLES = new Set(['manager', 'cashier', 'stockkeeper', 'accountant']);
 const STAFF_STATUSES = new Set(['active', 'suspended']);
@@ -268,6 +274,7 @@ function registerStaffRoutes(app, { pool, env }) {
       assertOwner(membership);
       const members = await client.query(
         `SELECT m.user_id, u.display_name, u.email, m.role, m.status, m.joined_at,
+                COALESCE(m.permissions, '{}'::jsonb) AS permissions,
                 m.staff_code, m.phone, COALESCE(m.job_title, '') AS job_title, COALESCE(m.note, '') AS note,
                 COALESCE(m.commission_rate_bps, 0)::int AS commission_rate_bps,
                 COALESCE(m.base_salary_vnd, 0)::text AS base_salary_vnd,
@@ -320,12 +327,21 @@ function registerStaffRoutes(app, { pool, env }) {
         totalTeamRevenue += BigInt(row.revenue_vnd || '0');
         totalEstimatedPayout += BigInt(row.base_salary_vnd || '0') + BigInt(row.commission_vnd || '0');
       }
+      const enrichedMembers = members.rows.map((row) => {
+        const permissions = normalizeStoredPermissions(row.permissions);
+        return {
+          ...row,
+          permissions,
+          effectivePermissions: resolveEffectivePermissions(row.role, permissions),
+        };
+      });
       return {
-        members: members.rows,
+        members: enrichedMembers,
         invitations: invitations.rows,
         warehouses: warehouses.rows,
+        roleDefaults: ROLE_DEFAULTS,
         summary: {
-          totalStaff: members.rows.length,
+          totalStaff: enrichedMembers.length,
           activeStaff: activeCount,
           totalTeamRevenueVnd: totalTeamRevenue.toString(),
           totalEstimatedPayoutVnd: totalEstimatedPayout.toString(),
@@ -355,6 +371,8 @@ function registerStaffRoutes(app, { pool, env }) {
       throw new ApiError(400, 'validation_error', 'Mật khẩu khởi tạo cần từ 12 đến 128 ký tự.');
     }
     const profile = validateStaffProfileFields(body, { partial: false });
+    const permissions = body.permissions !== undefined ? validatePermissionsInput(body.permissions) : {};
+    const effectivePermissions = resolveEffectivePermissions(role, permissions);
     const requestedScopeMode = body.warehouseScopeMode || 'all';
     const requestedWarehouseIds = body.warehouseIds;
     if (!['all', 'selected'].includes(requestedScopeMode)) {
@@ -415,12 +433,12 @@ function registerStaffRoutes(app, { pool, env }) {
         await client.query(
           `INSERT INTO memberships (
              store_id, user_id, role, status, invited_by, joined_at,
-             warehouse_scope_mode, staff_code, phone, job_title, note, commission_rate_bps, base_salary_vnd
-           ) VALUES ($1, $2, $3, 'active', $4, now(), $5, $6, $7, $8, $9, $10, $11)`,
+             warehouse_scope_mode, staff_code, phone, job_title, note, commission_rate_bps, base_salary_vnd, permissions
+           ) VALUES ($1, $2, $3, 'active', $4, now(), $5, $6, $7, $8, $9, $10, $11, $12::jsonb)`,
           [
             storeId, userId, role, auth.userId, scopeMode,
             staffCode, profile.phone, profile.jobTitle, profile.note,
-            profile.commissionRateBps, profile.baseSalaryVnd,
+            profile.commissionRateBps, profile.baseSalaryVnd, JSON.stringify(permissions),
           ]
         );
       } catch (err) {
@@ -443,7 +461,7 @@ function registerStaffRoutes(app, { pool, env }) {
       await client.query(
         `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, metadata)
          VALUES ($1, $2, 'staff.direct_created', 'membership', $3, $4::jsonb)`,
-        [storeId, auth.userId, userId, JSON.stringify({ email: normalized, role, staffCode, jobTitle: profile.jobTitle })]
+        [storeId, auth.userId, userId, JSON.stringify({ email: normalized, role, staffCode, jobTitle: profile.jobTitle, permissions, effectivePermissions })]
       );
       return {
         user_id: userId,
@@ -451,6 +469,8 @@ function registerStaffRoutes(app, { pool, env }) {
         email,
         role,
         status: 'active',
+        permissions,
+        effectivePermissions,
         staff_code: staffCode,
         phone: profile.phone,
         job_title: profile.jobTitle,
@@ -542,11 +562,13 @@ function registerStaffRoutes(app, { pool, env }) {
       throw new ApiError(400, 'validation_error', 'Danh sách kho được chọn không hợp lệ.');
     }
     if (userId === auth.userId) throw new ApiError(409, 'self_change_forbidden', 'Chủ cửa hàng không thể tự thay đổi quyền của mình tại đây.');
+    const requestedPermissions = request.body?.permissions !== undefined ? validatePermissionsInput(request.body.permissions) : undefined;
     const profileUpdates = validateStaffProfileFields(request.body || {}, { partial: true });
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
       assertOwner(membership);
       const found = await client.query(
         `SELECT m.user_id, m.role, m.status, m.warehouse_scope_mode,
+                COALESCE(m.permissions, '{}'::jsonb) AS permissions,
                 m.staff_code, m.phone, m.job_title, m.note, m.commission_rate_bps, m.base_salary_vnd::text AS base_salary_vnd,
                 u.email, u.display_name
          FROM memberships m JOIN users u ON u.id = m.user_id
@@ -583,14 +605,19 @@ function registerStaffRoutes(app, { pool, env }) {
       const nextNote = profileUpdates.note !== undefined ? profileUpdates.note : (current.note || '');
       const nextCommissionBps = profileUpdates.commissionRateBps !== undefined ? profileUpdates.commissionRateBps : (current.commission_rate_bps || 0);
       const nextBaseSalaryVnd = profileUpdates.baseSalaryVnd !== undefined ? profileUpdates.baseSalaryVnd : (current.base_salary_vnd || '0');
+      const previousPermissions = normalizeStoredPermissions(current.permissions);
+      const nextPermissions = requestedPermissions !== undefined
+        ? requestedPermissions
+        : (role !== current.role ? {} : previousPermissions);
+      const nextEffectivePermissions = resolveEffectivePermissions(role, nextPermissions);
       try {
         await client.query(
           `UPDATE memberships
            SET role = $3, status = $4, warehouse_scope_mode = $5,
                staff_code = $6, phone = $7, job_title = $8, note = $9,
-               commission_rate_bps = $10, base_salary_vnd = $11
+               commission_rate_bps = $10, base_salary_vnd = $11, permissions = $12::jsonb
            WHERE store_id = $1 AND user_id = $2`,
-          [storeId, userId, role, status, scopeMode, nextStaffCode, nextPhone, nextJobTitle, nextNote, nextCommissionBps, nextBaseSalaryVnd]
+          [storeId, userId, role, status, scopeMode, nextStaffCode, nextPhone, nextJobTitle, nextNote, nextCommissionBps, nextBaseSalaryVnd, JSON.stringify(nextPermissions)]
         );
       } catch (err) {
         if (err.code === '23505') throw new ApiError(409, 'staff_code_conflict', 'Mã nhân viên này đã tồn tại trong cửa hàng.');
@@ -619,13 +646,16 @@ function registerStaffRoutes(app, { pool, env }) {
           previousRole: current.role,
           previousStatus: current.status,
           previousWarehouseScopeMode: current.warehouse_scope_mode,
+          previousPermissions,
           role,
           status,
           warehouseScopeMode: scopeMode,
           warehouseIds,
+          permissions: nextPermissions,
+          effectivePermissions: nextEffectivePermissions,
         })]
       );
-      return { status: 'updated' };
+      return { status: 'updated', permissions: nextPermissions, effectivePermissions: nextEffectivePermissions };
     });
   });
 }
