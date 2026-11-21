@@ -54,13 +54,25 @@ async function bootTempApp() {
 }
 
 async function assertNoHorizontalOverflow(page, label) {
-  const dims = await page.evaluate(() => ({
-    scrollWidth: document.documentElement.scrollWidth,
-    innerWidth: window.innerWidth,
-  }));
+  const dims = await page.evaluate(() => {
+    const innerWidth = window.innerWidth;
+    const scrollWidth = document.documentElement.scrollWidth;
+    const offenders = scrollWidth > innerWidth + 1
+      ? Array.from(document.querySelectorAll('*'))
+        .map((el) => {
+          const r = el.getBoundingClientRect();
+          return r.right > innerWidth + 1 || el.scrollWidth > el.clientWidth + 1
+            ? `${el.tagName.toLowerCase()}${el.id ? '#' + el.id : ''}${typeof el.className === 'string' && el.className.trim() ? '.' + el.className.trim().split(/\s+/).join('.') : ''}(right=${Math.round(r.right)},sw=${el.scrollWidth},cw=${el.clientWidth})`
+            : null;
+        })
+        .filter(Boolean)
+        .slice(0, 8)
+      : [];
+    return { scrollWidth, innerWidth, offenders };
+  });
   assert.ok(
     dims.scrollWidth <= dims.innerWidth + 1,
-    `${label}: horizontal overflow ${dims.scrollWidth} > ${dims.innerWidth}`
+    `${label}: horizontal overflow ${dims.scrollWidth} > ${dims.innerWidth} [${dims.offenders.join(', ')}]`
   );
 }
 
@@ -195,6 +207,7 @@ async function runViewportAudit(browser, origin, viewport, label) {
       const btn = page.locator("[data-action='guided-tour-skip']:visible").first();
       if (await btn.count()) { await btn.click(); await page.waitForTimeout(150); }
     };
+    await page.locator("[data-action='guided-tour-skip']:visible").first().waitFor({ state: 'visible', timeout: 2000 }).catch(() => {});
     await skipTour();
 
     for (const route of ['dashboard', 'products', 'inventory', 'orders', 'workspace']) {
@@ -629,7 +642,7 @@ async function runViewportAudit(browser, origin, viewport, label) {
     const settingsBtn = page.locator("[data-action='account-settings']:visible, #primary-nav [data-route='settings']:visible").first();
     await settingsBtn.click();
     await page.waitForSelector('.settings-areas', { timeout: 15000 });
-    const storeSettingsTab = page.locator("[data-action='settings-area']", { hasText: 'Bán hàng & Máy in' }).first();
+    const storeSettingsTab = page.locator("[data-action='settings-area']", { hasText: 'Thanh toán & Tích hợp' }).first();
     await storeSettingsTab.click();
     await page.waitForSelector('#integration-settings-form', { timeout: 15000 });
     const settingsText = await page.locator('#integrations-panel').textContent();
@@ -643,7 +656,84 @@ async function runViewportAudit(browser, origin, viewport, label) {
       page.locator("#integration-settings-form button[type='submit']").click(),
     ]);
     assert.equal(intSaveRes.status(), 200, `${label}: saving VietQR integration config must succeed`);
+
+    // Verify toast does not block viewport and click-to-dismiss works immediately
+    await page.waitForSelector('.toast', { timeout: 5000 });
+    const toastBox = await page.locator('.toast').first().boundingBox();
+    assert.ok(toastBox && toastBox.height < 140 && toastBox.width <= 380, `${label}: toast must remain compact, got ${JSON.stringify(toastBox)}`);
+    await page.locator('.toast .toast-close').click();
+    assert.equal(await page.locator('.toast').count(), 0, `${label}: clicking toast close must dismiss immediately`);
+
+    // Verify Settings has 4 focused tabs + Advanced Integrations fold + POS Voice pref + Help 3.0 modal
+    const settingsTabs = page.locator("[data-action='settings-area']");
+    assert.equal(await settingsTabs.count(), 4, `${label}: Settings must have 4 clean tabs`);
+    assert.equal(await page.locator('.settings-advanced-fold').count(), 1, `${label}: Advanced integrations fold must remain reachable`);
     await assertNoHorizontalOverflow(page, `${label}:settings-integrations`);
+    await page.locator("[data-action='settings-area']", { hasText: 'Bán hàng & Thiết bị' }).first().click();
+    await page.waitForSelector("form[data-form='pos-prefs'] input[name='voiceAnnounce']", { timeout: 5000 });
+    assert.equal(await page.locator("form[data-form='pos-prefs'] input[name='voiceAnnounce']").isChecked(), true, `${label}: voiceAnnounce defaults to enabled`);
+    await assertNoHorizontalOverflow(page, `${label}:settings-pos-device`);
+
+    await page.locator('.topbar .help-button:visible').first().click();
+    await page.waitForSelector('.help-shortcut-grid', { timeout: 5000 });
+    assert.match(await page.locator('#modal-title').textContent() || '', /Trung tâm Trợ giúp Slink 3\.0/);
+    assert.equal(await page.locator('.help-shortcut-item').count(), 6, `${label}: Help modal must display 6 POS shortcuts`);
+    await assertNoHorizontalOverflow(page, `${label}:help-modal`);
+    await page.locator(".modal [data-action='close-modal']").first().click();
+    await page.locator('#modal').waitFor({ state: 'hidden' });
+
+    // 10. Test Staff direct-create, dynamic role permissions, VN banks dropdown, Payroll (staffPayroll) & Radar subtabs
+    await page.locator("#primary-nav [data-route='workspace']:visible, #mobile-nav [data-route='workspace']:visible").first().click();
+    const staffNavBtn = page.locator("#view [data-route='staff']");
+    if (!(await staffNavBtn.isVisible())) {
+      await page.locator("#view details.directory-fold:has([data-route='staff']) > summary").click();
+    }
+    await staffNavBtn.click();
+    await page.waitForSelector("[data-action='new-staff-direct']", { timeout: 15000 });
+
+    await page.locator("[data-action='new-staff-direct']").click();
+    await page.waitForSelector("form[data-form='staff-direct-create']", { timeout: 5000 });
+    await page.selectOption("form[data-form='staff-direct-create'] select[name='role']", 'manager');
+    assert.equal(
+      await page.locator("form[data-form='staff-direct-create'] [data-direct-perm='view_reports']").isChecked(),
+      true,
+      `${label}: changing role in staff-direct-create must sync granular permissions`
+    );
+    await page.fill("form[data-form='staff-direct-create'] input[name='displayName']", 'Nhân viên E2E');
+    await page.fill("form[data-form='staff-direct-create'] input[name='email']", `staff-${label}-${Date.now()}@slink.test`);
+    await page.fill("form[data-form='staff-direct-create'] input[name='password']", 'SlinkStaffPass123!');
+    const [directCreateRes] = await Promise.all([
+      page.waitForResponse((res) => res.url().includes('/staff/direct-create') && res.request().method() === 'POST'),
+      page.locator(".modal button[type='submit'][form='entity-form']").click(),
+    ]);
+    assert.equal(directCreateRes.status(), 201, `${label}: direct staff creation must succeed with 201`);
+    await page.locator('#modal').waitFor({ state: 'hidden' });
+    await page.locator('.staff-row', { hasText: 'Nhân viên E2E' }).first().waitFor({ timeout: 10000 });
+    if (await page.locator('.toast .toast-close').count()) {
+      await page.locator('.toast .toast-close').first().click();
+    }
+    await assertNoHorizontalOverflow(page, `${label}:staff-members`);
+
+    // Verify VN banks list (> 20 options) & bank account attribute alignment
+    await page.locator('.staff-row .staff-details > summary').first().click();
+    const bankOptionsCount = await page.locator('[data-member-bank-bin] option').first().evaluate((opt) => opt.parentElement.options.length);
+    assert.ok(bankOptionsCount > 20, `${label}: VN_BANKS dropdown must populate bank options, got ${bankOptionsCount}`);
+    assert.ok(await page.locator('[data-member-bank-acc]').count() > 0, `${label}: staff bank account input must use data-member-bank-acc`);
+
+    // Verify Payroll subtab loads staffPayroll rows & Radar subtab opens cleanly
+    await Promise.all([
+      page.waitForResponse((res) => res.url().includes('/payroll') && res.request().method() === 'GET'),
+      page.locator("[data-action='staff-subtab'][data-subtab='payroll']").click(),
+    ]);
+    await page.locator('tr[data-payroll-row]', { hasText: 'Nhân viên E2E' }).first().waitFor({ timeout: 10000 });
+    await assertNoHorizontalOverflow(page, `${label}:staff-payroll`);
+
+    await Promise.all([
+      page.waitForResponse((res) => res.url().includes('/loss-prevention-radar') && res.request().method() === 'GET'),
+      page.locator("[data-action='staff-subtab'][data-subtab='radar']").click(),
+    ]);
+    await page.getByText('Radar Chống Thất Thoát Thực Chiến').first().waitFor({ timeout: 10000 });
+    await assertNoHorizontalOverflow(page, `${label}:staff-radar`);
 
     const assetsOk = await page.evaluate(async () => {
       const urls = ['/offline-conflict-ui.js', '/supplier-returns-ui.js', '/barcode-tools.js', '/banks-vn.js', '/vietqr-tools.js', '/escpos-printer.js', '/integrations-ui.js', '/finance-vouchers-ui.js', '/sync-bus.js', '/pos-hardware.js', '/receipt-image.js'];

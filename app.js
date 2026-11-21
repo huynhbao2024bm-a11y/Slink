@@ -482,7 +482,7 @@
       if (set.has('customers') && (page === 'customers' || page === 'pos') && canAccessRoute('customers')) {
         jobs.push(loadCustomersPage(searchTerms.customers, customerOffset).catch(function () {}));
       }
-      if (set.has('staff') && page === 'staff' && hasPerm('manageStaff')) {
+      if (set.has('staff') && page === 'staff' && hasPerm('manageStaff') && (!ev?.meta?.skipLocalReload || ev?.remote)) {
         jobs.push(loadStaffPage().catch(function () {}));
       }
       if (set.has('reports') && page === 'reports' && hasPerm('viewReports')) {
@@ -504,9 +504,10 @@
         paperWidth: ['58mm', '80mm', 'a4'].includes(parsed.paperWidth) ? parsed.paperWidth : '80mm',
         autoPrint: Boolean(parsed.autoPrint),
         requireFullPayment: Boolean(parsed.requireFullPayment),
+        voiceAnnounce: parsed.voiceAnnounce !== false,
       };
     } catch (_) {
-      return { paperWidth: '80mm', autoPrint: false, requireFullPayment: false };
+      return { paperWidth: '80mm', autoPrint: false, requireFullPayment: false, voiceAnnounce: true };
     }
   }
   let posPrefs = loadPosPrefs();
@@ -1941,7 +1942,7 @@
     }
     if (canAccessRoute('pos')) {
       add('pos', 'pos-search', 'Tìm hàng & quét mã vạch', 'Gõ tên/mã hàng, dùng máy tít hoặc bấm biểu tượng quét camera để thêm ngay vào đơn.');
-      add('pos', 'pos-cart', 'Bán nhanh, bán thường & giao hàng', 'Chuyển chế độ bán ngay phía trên. Bán thường hỗ trợ giữ nhiều đơn cùng lúc và ghi nợ khách.');
+      add('pos', 'pos-cart', 'Tại quầy & Giao hàng', 'Chuyển nhanh giữa bán tại quầy (hỗ trợ nhiều hóa đơn song song, ghi nợ) và đơn giao vận.');
     }
     if (hasPerm('editProducts')) {
       add('products', 'products-add', 'Thêm hàng & in tem mã vạch', 'Tạo sản phẩm mới, thêm nhiều mã vạch cùng loại và in tem ngay tại đây.');
@@ -1949,7 +1950,7 @@
     if (hasPerm('recordCashbook') || hasPerm('viewReports')) {
       add('finance', 'finance-income', 'Thu chi & công nợ', 'Ghi phiếu thu chi, mở ca tiền mặt và theo dõi công nợ khách hàng / nhà cung cấp.');
     }
-    steps.push({ route: page, target: 'settings-gear', title: 'Cài đặt cửa hàng', detail: 'Cập nhật thông tin cửa hàng, tài khoản nhận VietQR và xem lại hướng dẫn khi cần.' });
+    steps.push({ route: page, target: 'settings-gear', title: 'Cài đặt cửa hàng', detail: 'Thiết lập thông tin cửa hàng, máy in/loa đọc tiền, tài khoản VietQR và sao lưu dữ liệu.' });
     return cart.length ? steps.filter(step => step.route === page) : steps;
   }
 
@@ -3344,7 +3345,7 @@
       const res = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/payroll?month=${encodeURIComponent(payrollState.periodMonth)}`);
       if (reqNum !== payrollState.requestNumber) return;
       payrollState.periodMonth = res.periodMonth || payrollState.periodMonth;
-      payrollState.rows = Array.isArray(res.rows) ? res.rows : [];
+      payrollState.rows = Array.isArray(res.staffPayroll) ? res.staffPayroll : (Array.isArray(res.rows) ? res.rows : []);
       payrollState.totalEstimatedPayableVnd = res.totalEstimatedPayableVnd || '0';
       payrollState.loading = false;
     } catch (error) {
@@ -3406,7 +3407,7 @@
         body: { amountVnd, method, note },
       });
       closeModal();
-      emitSyncDomains(['cashbook', 'staff', 'dashboard'], { source: 'staff-advance', userId });
+      emitSyncDomains(['cashbook', 'staff', 'dashboard'], { source: 'staff-advance', userId, skipLocalReload: true });
       toast('Đã ghi nhận ứng lương', `Đã tạo phiếu chi tạm ứng ${moneyVndText(amountVnd)}.`);
       if (staffSubTab === 'payroll') await loadStaffPayroll();
     } catch (error) {
@@ -3419,14 +3420,12 @@
     if (store.role !== 'owner') return;
     const row = (payrollState.rows || []).find(r => r.userId === userId);
     if (!row) return;
-    const daysInput = document.querySelector(`[data-payroll-days='${CSS.escape(userId)}']`);
+    const unitsInput = document.querySelector(`[data-payroll-units='${CSS.escape(userId)}']`);
     const bonusInput = document.querySelector(`[data-payroll-bonus='${CSS.escape(userId)}']`);
-    const penaltyInput = document.querySelector(`[data-payroll-penalty='${CSS.escape(userId)}']`);
-    const deductShortageBox = document.querySelector(`[data-payroll-deduct-shortage='${CSS.escape(userId)}']`);
-    const workedDaysCount = daysInput ? Number(daysInput.value || row.workedDaysCount || 0) : row.workedDaysCount;
+    const shortageBox = document.querySelector(`[data-payroll-shortage='${CSS.escape(userId)}']`);
+    const workedUnits = unitsInput ? Number(unitsInput.value ?? row.autoWorkedUnits ?? 0) : Number(row.autoWorkedUnits ?? 0);
     const bonusVnd = bonusInput ? String(Math.max(0, Math.trunc(Number(bonusInput.value || 0)))) : '0';
-    const manualPenaltyVnd = penaltyInput ? String(Math.max(0, Math.trunc(Number(penaltyInput.value || 0)))) : '0';
-    const deductShortage = deductShortageBox ? Boolean(deductShortageBox.checked) : true;
+    const includeShortages = shortageBox ? Boolean(shortageBox.checked) : true;
     if (button) button.disabled = true;
     try {
       const res = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/payroll/settle`, {
@@ -3435,15 +3434,16 @@
         body: {
           userId,
           periodMonth: payrollState.periodMonth,
-          workedDaysCount,
+          workedUnits,
           bonusVnd,
-          manualPenaltyVnd,
-          deductShortage,
+          includeShortages,
           paymentMethod: 'bank_transfer',
         },
       });
-      emitSyncDomains(['cashbook', 'staff', 'dashboard'], { source: 'payroll-settle', userId });
-      toast('Đã chốt phiếu lương', `${res.payslip?.payslipNumber || ''} · Thực lĩnh ${moneyVndText(res.payslip?.netPayableVnd || '0')}`);
+      emitSyncDomains(['cashbook', 'staff', 'dashboard'], { source: 'payroll-settle', userId, skipLocalReload: true });
+      const payslipNum = res.payslip?.payslip_number || res.payslip?.payslipNumber || '';
+      const netPayVnd = res.payslip?.net_payable_vnd || res.payslip?.netPayableVnd || '0';
+      toast('Đã chốt phiếu lương', `${payslipNum} · Thực lĩnh ${moneyVndText(netPayVnd)}`);
       await loadStaffPayroll();
       if (res.payslip) {
         await shareStaffPayslipPng(userId, res.payslip);
@@ -3458,38 +3458,38 @@
     const row = (payrollState.rows || []).find(r => r.userId === userId);
     if (!row || !window.SlinkReceiptImage || typeof window.SlinkReceiptImage.renderPayslipPng !== 'function') return;
     const ps = payslipOverride || row.settledPayslip;
-    const netPayableVnd = ps ? ps.netPayableVnd : row.estimatedNetPayableVnd;
-    let vietQrText = '';
-    if (row.bankBin && row.bankAccountNumber && BigInt(String(netPayableVnd || '0')) > 0n && window.SlinkVietQrTools) {
-      vietQrText = window.SlinkVietQrTools.buildVietQrPayload({
-        bankBin: row.bankBin,
-        accountNumber: row.bankAccountNumber,
-        amountVnd: Math.max(0, Math.trunc(Number(netPayableVnd || 0))),
-        description: `LUONG ${payrollState.periodMonth} ${row.staffCode || row.displayName}`.slice(0, 40),
-      });
-    }
+    const netPayableVnd = ps ? (ps.net_payable_vnd ?? ps.netPayableVnd ?? '0') : (row.netPayableVnd ?? row.estimatedNetPayableVnd ?? '0');
+    const payslipNumber = ps?.payslip_number || ps?.payslipNumber || `PL-${payrollState.periodMonth.replace('-', '')}`;
+    const paidAt = ps?.paid_at ? humanDate(ps.paid_at, true) : '';
+    const workedUnits = ps ? (ps.worked_units ?? ps.workedUnits ?? row.autoWorkedUnits) : (row.autoWorkedUnits ?? 0);
+    const basePayVnd = ps ? (ps.base_pay_vnd ?? ps.basePayVnd ?? '0') : (row.basePayVnd ?? '0');
+    const netSalesVnd = ps ? (ps.net_sales_vnd ?? ps.netSalesVnd ?? '0') : (row.netSalesVnd ?? '0');
+    const commissionPayVnd = ps ? (ps.commission_pay_vnd ?? ps.commissionPayVnd ?? '0') : (row.commissionPayVnd ?? '0');
+    const bonusVnd = ps ? (ps.bonus_vnd ?? ps.bonusVnd ?? '0') : '0';
+    const advanceDeductionVnd = ps ? (ps.advance_deduction_vnd ?? ps.advanceDeductionVnd ?? '0') : (row.advanceDeductionVnd ?? '0');
+    const shortageDeductionVnd = ps ? (ps.shortage_deduction_vnd ?? ps.shortageDeductionVnd ?? '0') : (row.shortageDeductionVnd ?? '0');
     try {
       const rendered = await window.SlinkReceiptImage.renderPayslipPng({
         storeName: store.settings.storeName || 'Slink',
-        payslipNumber: ps?.payslipNumber || `PL-${payrollState.periodMonth.replace('-', '')}`,
+        payslipNumber,
+        paidAt,
         periodMonth: payrollState.periodMonth,
-        staffName: row.displayName,
+        employeeName: row.displayName,
         staffCode: row.staffCode || '',
+        jobTitle: row.jobTitle || '',
         roleLabel: staffRoleName(row.role),
         salaryMode: row.salaryMode,
-        workedDaysCount: ps ? ps.workedDaysCount : row.workedDaysCount,
-        standardDaysCount: row.standardDaysCount,
-        baseSalaryComputedVnd: ps ? ps.baseSalaryVnd : row.baseSalaryComputedVnd,
-        netSalesVnd: ps ? ps.netSalesVnd : row.netSalesVnd,
-        commissionVnd: ps ? ps.commissionVnd : row.commissionVnd,
-        bonusVnd: ps ? ps.bonusVnd : '0',
-        advanceDeductedVnd: ps ? ps.advanceDeductedVnd : row.unsettledAdvancesVnd,
-        shortageDeductedVnd: ps ? ps.shortageDeductedVnd : row.unsettledShortageVnd,
-        manualPenaltyVnd: ps ? ps.manualPenaltyVnd : '0',
+        workedUnits,
+        basePayVnd,
+        netSalesVnd,
+        commissionPayVnd,
+        bonusVnd,
+        advanceDeductionVnd,
+        shortageDeductionVnd,
         netPayableVnd,
+        bankBin: row.bankBin || '',
         bankAccountNumber: row.bankAccountNumber || '',
         bankAccountOwner: row.bankAccountOwner || '',
-        vietQrText,
       });
       const filename = `phieu-luong-${payrollState.periodMonth}-${String(row.staffCode || row.displayName || 'nv').replace(/[^a-zA-Z0-9_-]+/g, '-')}.png`;
       await window.SlinkReceiptImage.sharePng({
@@ -3603,6 +3603,14 @@
     return currentSearchResult || store.products.find(function (p) { return p.id === id; }) || productCache.get(id);
   }
   function customerById(id) { return store.customers.find(function (c) { return c.id === id; }) || customerCache.get(id); }
+  let toastTimer = null;
+  function dismissToast() {
+    if (toastTimer) {
+      window.clearTimeout(toastTimer);
+      toastTimer = null;
+    }
+    if (toastStack) toastStack.replaceChildren();
+  }
   function toast(title, message, tone) {
     if(tone==='error'&&!modal.hidden&&modal.querySelector('form')){
       const form=modal.querySelector('form');let note=form.querySelector('[data-form-message]');
@@ -3610,11 +3618,19 @@
       note.textContent=title+(message?' · '+message:'');return;
     }
     if(tone==='error'&&/^Chưa (tải|làm mới|tìm được)/.test(title)){offlineState.issue=message||title;return;}
+    if (toastTimer) {
+      window.clearTimeout(toastTimer);
+      toastTimer = null;
+    }
     const node = document.createElement('div');
     node.className = 'toast' + (tone === 'error' ? ' error' : '');
-    node.innerHTML = '<strong>' + esc(title) + '</strong>' + (message ? '<small>' + esc(message) + '</small>' : '');
+    node.setAttribute('role', tone === 'error' ? 'alert' : 'status');
+    node.innerHTML = `<div class='toast-body'><strong>${esc(title)}</strong>${message ? `<small>${esc(message)}</small>` : ''}</div><button type='button' class='toast-close' data-action='dismiss-toast' aria-label='Đóng thông báo'>×</button>`;
     toastStack.replaceChildren(node);
-    window.setTimeout(function () { node.remove(); }, tone === 'error' ? 4500 : 1600);
+    toastTimer = window.setTimeout(function () {
+      node.remove();
+      toastTimer = null;
+    }, tone === 'error' ? 4500 : 1600);
   }
 
   function statusBadge(status) {
@@ -5664,29 +5680,28 @@
   }
 
   function renderPosPrefsSettings() {
-    return `<section class='panel settings-panel'><h2>POS &amp; Hóa đơn</h2><form data-form='pos-prefs'><div class='form-grid'><div class='form-field'><label class='input-label' for='pos-pref-paper'>Khổ giấy in mặc định</label><div class='select-wrap'><select class='input' id='pos-pref-paper' name='paperWidth'><option value='80mm' ${posPrefs.paperWidth === '80mm' ? 'selected' : ''}>Khổ nhiệt 80mm (phổ biến)</option><option value='58mm' ${posPrefs.paperWidth === '58mm' ? 'selected' : ''}>Khổ nhiệt 58mm (mini)</option><option value='a4' ${posPrefs.paperWidth === 'a4' ? 'selected' : ''}>Khổ giấy A4 / A5</option></select></div></div><div class='form-field' style='display:grid;gap:8px;align-content:end;padding-bottom:6px'><label style='display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:13px'><input type='checkbox' name='autoPrint' ${posPrefs.autoPrint ? 'checked' : ''}/><span>Tự động in hóa đơn sau thanh toán</span></label><label style='display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:13px'><input type='checkbox' name='requireFullPayment' ${posPrefs.requireFullPayment ? 'checked' : ''}/><span>Bắt buộc thanh toán đủ (ẩn Ghi nợ tại quầy)</span></label></div></div><div class='modal-footer' style='padding:14px 0 0;margin-top:8px'><button class='btn btn-primary' type='submit'>Lưu cấu hình POS</button></div></form></section>`;
+    const voiceEnabled = posPrefs.voiceAnnounce !== false;
+    return `<section class='panel settings-panel'><h2>POS &amp; Hóa đơn</h2><form data-form='pos-prefs'><div class='form-grid'><div class='form-field'><label class='input-label' for='pos-pref-paper'>Khổ giấy in mặc định</label><div class='select-wrap'><select class='input' id='pos-pref-paper' name='paperWidth'><option value='80mm' ${posPrefs.paperWidth === '80mm' ? 'selected' : ''}>Khổ nhiệt 80mm (phổ biến)</option><option value='58mm' ${posPrefs.paperWidth === '58mm' ? 'selected' : ''}>Khổ nhiệt 58mm (mini)</option><option value='a4' ${posPrefs.paperWidth === 'a4' ? 'selected' : ''}>Khổ giấy A4 / A5</option></select></div></div><div class='form-field' style='display:grid;gap:10px;align-content:end;padding-bottom:4px'><label style='display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:13px'><input type='checkbox' name='autoPrint' ${posPrefs.autoPrint ? 'checked' : ''}/><span>Tự động in hóa đơn sau thanh toán</span></label><label style='display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:13px'><input type='checkbox' name='requireFullPayment' ${posPrefs.requireFullPayment ? 'checked' : ''}/><span>Bắt buộc thanh toán đủ (ẩn Ghi nợ tại quầy)</span></label><label style='display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:13px'><input type='checkbox' name='voiceAnnounce' ${voiceEnabled ? 'checked' : ''}/><span>Loa đọc số tiền &amp; phát âm báo Ting-Ting khi thu tiền</span></label></div></div><div class='modal-footer' style='padding:14px 0 0;margin-top:8px;display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap'><button class='btn btn-secondary' type='button' data-action='test-pos-voice'>Thử loa đọc tiền</button><button class='btn btn-primary' type='submit'>Lưu cấu hình POS</button></div></form></section>`;
   }
 
   function renderSettings() {
     const canEdit = hasPerm('manageSettings');
     const disabled = canEdit ? '' : 'disabled';
+    const printerBlock = window.SlinkIntegrationsUI?.renderPrinterHardwareSection?.({ escposCaps: window.SlinkEscPosPrinter?.capabilities?.() }) || '';
     if (store.role === 'affiliate' || (!canEdit && !hasPerm('manageInventory') && !hasPerm('viewReports') && !hasPerm('recordCashbook'))) {
       return pageHeading('Cài đặt', '', '') +
-        `<section class='settings-panel settings-group' data-label='Tài khoản'>${renderAccountSummary()}${renderChangePasswordForm()}${renderAccountSecurity()}</section>` +
-        (hasPerm('posSell') ? `<section class='settings-panel settings-group' data-label='Bán hàng & Máy in'>${renderPosPrefsSettings()}</section>` : '') +
-        `<section class='settings-panel settings-group' data-label='Dữ liệu & Ứng dụng'>${renderDeviceSettings()}</section>`;
+        (hasPerm('posSell') ? `<section class='settings-panel settings-group' data-label='Bán hàng & Thiết bị'>${renderPosPrefsSettings()}${printerBlock}</section>` : '') +
+        `<section class='settings-panel settings-group' data-label='Tài khoản & Ứng dụng'>${renderAccountSummary()}${renderChangePasswordForm()}${renderAccountSecurity()}${renderDeviceSettings()}</section>`;
     }
     const storeInfoBlock = `<section class='panel settings-panel'><h2>Thông tin cửa hàng</h2><form id='entity-form' data-form='settings' data-version='${store.settings.version || 1}'><div class='form-grid'><div class='form-field full'><label class='input-label' for='setting-store-name'>Tên cửa hàng *</label><input class='input' id='setting-store-name' name='storeName' value='${esc(store.settings.storeName)}' required minlength='2' maxlength='160' ${disabled}/></div><div class='form-field'><label class='input-label' for='setting-phone'>Số điện thoại</label><input class='input' id='setting-phone' name='phone' value='${esc(store.settings.phone)}' inputmode='tel' maxlength='40' ${disabled}/></div><div class='form-field full'><label class='input-label' for='setting-address'>Địa chỉ</label><input class='input' id='setting-address' name='address' value='${esc(store.settings.address)}' maxlength='300' ${disabled}/></div><div class='form-field full'><label class='input-label' for='setting-footer'>Lời chào biên nhận</label><input class='input' id='setting-footer' name='receiptFooter' value='${esc(store.settings.receiptFooter)}' maxlength='240' placeholder='Cảm ơn quý khách' ${disabled}/></div></div>${canEdit ? `<div class='modal-footer' style='padding:17px 0 0;margin-top:12px'><button class='btn btn-primary' type='submit'>Lưu thay đổi</button></div>` : ''}</form></section>`;
     const integrationsBlock = canEdit && window.SlinkIntegrationsUI
-      ? window.SlinkIntegrationsUI.renderIntegrationSettingsSection({ data: integrationState.data, loading: integrationState.loading, error: integrationState.error, canEdit })
+      ? window.SlinkIntegrationsUI.renderIntegrationSettingsSection({ data: integrationState.data, loading: integrationState.loading, error: integrationState.error, canEdit, includeHardware: false })
       : '';
-    const opsBlock = `<section class='panel settings-panel'><h2>Nhân sự &amp; Vận hành</h2>${renderWorkspaceLinks([{ title: '', routes: ['staff', 'inventory', 'promotions', 'audit'] }])}</section>`;
     return pageHeading('Cài đặt', '', '') +
       `<section class='settings-panel settings-group' data-label='Cửa hàng'>${storeInfoBlock}${renderBusinessProfileSettings(canEdit)}</section>` +
-      `<section class='settings-panel settings-group' data-label='Bán hàng & Máy in'>${renderPosPrefsSettings()}${integrationsBlock}</section>` +
-      `<section class='settings-panel settings-group' data-label='Nhân sự & Vận hành'>${opsBlock}</section>` +
-      `<section class='settings-panel settings-group' data-label='Tài khoản & Bảo mật'>${renderAccountSummary()}${renderChangePasswordForm()}${renderAccountSecurity()}</section>` +
-      `<section class='settings-panel settings-group' data-label='Dữ liệu & Ứng dụng'>${renderDeviceSettings()}</section>`;
+      `<section class='settings-panel settings-group' data-label='Bán hàng & Thiết bị'>${renderPosPrefsSettings()}${printerBlock}</section>` +
+      (integrationsBlock ? `<section class='settings-panel settings-group' data-label='Thanh toán & Tích hợp'>${integrationsBlock}</section>` : '') +
+      `<section class='settings-panel settings-group' data-label='Tài khoản & Ứng dụng'>${renderAccountSummary()}${renderChangePasswordForm()}${renderAccountSecurity()}${renderDeviceSettings()}</section>`;
   }
 
   function renderAccountSummary() {
@@ -5698,9 +5713,8 @@
     const startOptions = taskFocusOptions();
     const focus = store.id && startOptions.length ? `<section class='panel settings-panel'><h2>Màn hình mở đầu</h2><form data-form='task-focus'><div class='task-focus-choices'>${renderTaskFocusChoices(taskFocusRoute)}</div><button class='btn btn-primary' type='submit'>Lưu</button></form><button class='link-button' type='button' data-action='replay-guided-tour'>Xem lại hướng dẫn</button></section>` : '';
     const data = `<section class='panel settings-panel'><h2>Dữ liệu &amp; sao lưu</h2><div class='settings-actions'>${store.id ? `<button class='btn btn-secondary' type='button' data-action='offline-records'>Chứng từ trên máy</button>` : ''}${canExportData() && store.id ? `<button class='btn btn-secondary' type='button' data-action='open-export'>Xuất dữ liệu cửa hàng</button>` : ''}<button class='btn btn-secondary' type='button' data-action='open-legal' data-kind='terms'>Điều khoản</button><button class='btn btn-secondary' type='button' data-action='open-legal' data-kind='privacy'>Chính sách bảo mật</button></div></section>`;
-    const operations = store.id ? `<section class='panel settings-panel'><h2>Quản lý nhanh</h2>${renderWorkspaceLinks([{ title: '', routes: ['staff', 'inventory', 'promotions'] }])}</section>` : '';
     const updates = window.SlinkAndroid ? `<section class='panel settings-panel' data-app-update-state><h2>Phiên bản ứng dụng</h2><p data-app-version>Slink</p><p data-app-update-message></p><div class='settings-actions'><button class='btn btn-secondary' type='button' data-action='check-app-update'>Kiểm tra cập nhật</button><button class='btn btn-primary' type='button' data-action='install-app-update' hidden>Cài bản mới</button></div></section>` : '';
-    return focus + data + operations + updates;
+    return focus + data + updates;
   }
 
   function renderBusinessProfileSettings(canEdit) {
@@ -5937,7 +5951,7 @@
       const hay = `${member.staff_code || ''} ${member.display_name || ''} ${member.email || ''} ${member.phone || ''} ${member.job_title || ''}`.toLocaleLowerCase('vi');
       return hay.includes(q);
     });
-    const bankOptionsHtml = (selectedBin) => `<option value=''>— Chọn ngân hàng nhận lương —</option>` + ((window.SlinkBanksVn?.BANKS || []).map(function (b) {
+    const bankOptionsHtml = (selectedBin) => `<option value=''>— Chọn ngân hàng nhận lương —</option>` + ((window.SlinkBanksVn?.VN_BANKS || window.SlinkBanksVn?.BANKS || []).map(function (b) {
       return `<option value='${esc(b.bin)}' ${selectedBin === b.bin ? 'selected' : ''}>${esc(b.shortName)} · ${esc(b.name)}</option>`;
     }).join(''));
     const memberRows = filteredMembers.map(function (member) {
@@ -5950,7 +5964,7 @@
       const codeBadge = member.staff_code ? `<span class='badge badge-neutral' style='margin-right:6px'>${esc(member.staff_code)}</span>` : '';
       const commPercent = Number(member.commission_rate_bps || 0) / 100;
       const perfSummary = `${number(member.orders_count || 0)} đơn bán · Doanh số ${moneyVndText(member.revenue_vnd || '0')}${commPercent > 0 ? ` · Hoa hồng (${commPercent}%): ${moneyVndText(member.commission_vnd || '0')}` : ''}${Number(member.base_salary_vnd || 0) > 0 ? ` · Lương cứng: ${moneyVndText(member.base_salary_vnd)}` : ''}${Number(member.shifts_count || 0) > 0 ? ` · ${number(member.shifts_count)} ca thu ngân` : ''}`;
-      return `<article class='staff-row'><div class='staff-person'><span class='avatar'>${esc(initials(member.display_name))}</span><span><div>${codeBadge}<button type='button' class='link-button' data-action='staff-activity' data-id='${esc(member.user_id)}'>${esc(member.display_name)}</button>${member.job_title ? ` <small class='muted'>(${esc(member.job_title)})</small>` : ''}</div><small>${esc(member.email)}${member.phone ? ` · SĐT: ${esc(member.phone)}` : ''}</small><small>${esc(staffRoleName(member.role))} · ${member.status === 'suspended' ? 'Tạm khóa' : 'Đang làm'} · Tham gia ${esc(joined)}</small><small style='color:var(--accent-strong);font-weight:600'>${perfSummary}</small></span><div style='margin-left:auto'><button type='button' class='btn btn-secondary' data-action='open-staff-advance' data-id='${esc(member.user_id)}'>💸 Ứng lương</button></div></div><details class='staff-details' data-staff-detail='${esc(member.user_id)}' ${staffExpandedIds.has(member.user_id) ? 'open' : ''}><summary>Sửa hồ sơ, lương hoa hồng &amp; quyền</summary><div class='staff-controls' style='display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px'><label><span>Họ tên</span><input class='input' data-member-name='${member.user_id}' value='${esc(member.display_name || '')}' maxlength='120'/></label><label><span>Mã NV</span><input class='input' data-member-code='${member.user_id}' value='${esc(member.staff_code || '')}' maxlength='40' placeholder='NV-001'/></label><label><span>Số điện thoại</span><input class='input' data-member-phone='${member.user_id}' value='${esc(member.phone || '')}' maxlength='32' placeholder='09xx...'/></label><label><span>Chức danh / Ca</span><input class='input' data-member-title='${member.user_id}' value='${esc(member.job_title || '')}' maxlength='120' placeholder='Thu ngân ca sáng'/></label><label><span>Vai trò</span><select class='input' data-member-role='${member.user_id}'>${Array.from(['manager', 'cashier', 'stockkeeper', 'accountant']).map(function (role) { return `<option value='${role}' ${member.role === role ? 'selected' : ''}>${staffRoleName(role)}</option>`; }).join('')}</select></label><label><span>Trạng thái</span><select class='input' data-member-status='${member.user_id}'><option value='active' ${member.status === 'active' ? 'selected' : ''}>Đang hoạt động</option><option value='suspended' ${member.status === 'suspended' ? 'selected' : ''}>Tạm khóa</option></select></label><label><span>Hình thức lương</span><select class='input' data-member-salary-mode='${member.user_id}'><option value='monthly' ${(member.salary_mode || 'monthly') === 'monthly' ? 'selected' : ''}>Theo tháng (26 công)</option><option value='shift' ${member.salary_mode === 'shift' ? 'selected' : ''}>Theo ca làm việc</option><option value='hourly' ${member.salary_mode === 'hourly' ? 'selected' : ''}>Theo giờ làm việc</option></select></label><label><span>Mức lương cơ bản (đ)</span><input class='input' type='number' min='0' step='1' data-member-salary='${member.user_id}' value='${esc(member.base_salary_vnd || '0')}'/></label><label><span>Hoa hồng doanh số (%)</span><input class='input' type='number' min='0' max='100' step='0.1' data-member-commission='${member.user_id}' value='${esc(commPercent)}'/></label><label><span>Ngân hàng nhận lương</span><select class='input' data-member-bank-bin='${member.user_id}'>${bankOptionsHtml(member.bank_bin || '')}</select></label><label><span>Số tài khoản</span><input class='input' data-member-bank-account='${member.user_id}' value='${esc(member.bank_account_number || '')}' maxlength='40' placeholder='STK nhận lương'/></label><label><span>Chủ tài khoản</span><input class='input' data-member-bank-owner='${member.user_id}' value='${esc(member.bank_account_owner || '')}' maxlength='120' placeholder='NGUYEN VAN A'/></label><label style='grid-column:1 / -1'><span>Ghi chú hồ sơ</span><input class='input' data-member-note='${member.user_id}' value='${esc(member.note || '')}' maxlength='500' placeholder='Ghi chú hợp đồng, ca làm việc...'/></label><div style='grid-column:1 / -1;display:flex;justify-content:flex-end'><button class='btn btn-primary' data-action='save-staff-member' data-id='${member.user_id}'>Lưu hồ sơ &amp; quyền</button></div></div>${renderStaffPermFieldset(member)}<fieldset class='staff-scope' data-member-scope='${member.user_id}' ${member.role === 'stockkeeper' ? '' : 'hidden'}><legend>Phạm vi kho của nhân viên kho</legend><label class='staff-scope-mode'><span>Kho được phép truy cập</span><select class='input' data-member-scope-mode='${member.user_id}'><option value='all' ${scopeMode === 'all' ? 'selected' : ''}>Tất cả kho hiện tại và kho mới</option><option value='selected' ${scopeMode === 'selected' ? 'selected' : ''}>Chỉ các kho đã chọn</option></select></label><div class='staff-warehouse-options' data-member-warehouse-list='${member.user_id}' ${scopeMode === 'selected' ? '' : 'hidden'}>${warehouseChecks || `<small>Chưa có kho đang hoạt động.</small>`}</div><small>Kho mới chỉ tự cấp cho nhân viên ở chế độ “Tất cả kho”.</small></fieldset></details></article>`;
+      return `<article class='staff-row'><div class='staff-person'><span class='avatar'>${esc(initials(member.display_name))}</span><span class='staff-person-info'><div>${codeBadge}<button type='button' class='link-button' data-action='staff-activity' data-id='${esc(member.user_id)}'>${esc(member.display_name)}</button>${member.job_title ? ` <small class='muted'>(${esc(member.job_title)})</small>` : ''}</div><small>${esc(member.email)}${member.phone ? ` · SĐT: ${esc(member.phone)}` : ''}</small><small>${esc(staffRoleName(member.role))} · ${member.status === 'suspended' ? 'Tạm khóa' : 'Đang làm'} · Tham gia ${esc(joined)}</small><small style='color:var(--accent-strong);font-weight:600'>${perfSummary}</small></span><div class='staff-person-actions'><button type='button' class='btn btn-secondary' data-action='open-staff-advance' data-id='${esc(member.user_id)}'>💸 Ứng lương</button></div></div><details class='staff-details' data-staff-detail='${esc(member.user_id)}' ${staffExpandedIds.has(member.user_id) ? 'open' : ''}><summary>Sửa hồ sơ, lương hoa hồng &amp; quyền</summary><div class='staff-controls' style='display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px'><label><span>Họ tên</span><input class='input' data-member-name='${member.user_id}' value='${esc(member.display_name || '')}' maxlength='120'/></label><label><span>Mã NV</span><input class='input' data-member-code='${member.user_id}' value='${esc(member.staff_code || '')}' maxlength='40' placeholder='NV-001'/></label><label><span>Số điện thoại</span><input class='input' data-member-phone='${member.user_id}' value='${esc(member.phone || '')}' maxlength='32' placeholder='09xx...'/></label><label><span>Chức danh / Ca</span><input class='input' data-member-title='${member.user_id}' value='${esc(member.job_title || '')}' maxlength='120' placeholder='Thu ngân ca sáng'/></label><label><span>Vai trò</span><select class='input' data-member-role='${member.user_id}'>${Array.from(['manager', 'cashier', 'stockkeeper', 'accountant']).map(function (role) { return `<option value='${role}' ${member.role === role ? 'selected' : ''}>${staffRoleName(role)}</option>`; }).join('')}</select></label><label><span>Trạng thái</span><select class='input' data-member-status='${member.user_id}'><option value='active' ${member.status === 'active' ? 'selected' : ''}>Đang hoạt động</option><option value='suspended' ${member.status === 'suspended' ? 'selected' : ''}>Tạm khóa</option></select></label><label><span>Hình thức lương</span><select class='input' data-member-salary-mode='${member.user_id}'><option value='monthly' ${(member.salary_mode || 'monthly') === 'monthly' ? 'selected' : ''}>Theo tháng (26 công)</option><option value='shift' ${member.salary_mode === 'shift' ? 'selected' : ''}>Theo ca làm việc</option><option value='hourly' ${member.salary_mode === 'hourly' ? 'selected' : ''}>Theo giờ làm việc</option></select></label><label><span>Mức lương cơ bản (đ)</span><input class='input' type='number' min='0' step='1' data-member-salary='${member.user_id}' value='${esc(member.base_salary_vnd || '0')}'/></label><label><span>Hoa hồng doanh số (%)</span><input class='input' type='number' min='0' max='100' step='0.1' data-member-commission='${member.user_id}' value='${esc(commPercent)}'/></label><label><span>Ngân hàng nhận lương</span><select class='input' data-member-bank-bin='${member.user_id}'>${bankOptionsHtml(member.bank_bin || '')}</select></label><label><span>Số tài khoản</span><input class='input' data-member-bank-acc='${member.user_id}' value='${esc(member.bank_account_number || '')}' maxlength='40' placeholder='STK nhận lương'/></label><label><span>Chủ tài khoản</span><input class='input' data-member-bank-owner='${member.user_id}' value='${esc(member.bank_account_owner || '')}' maxlength='120' placeholder='NGUYEN VAN A'/></label><label style='grid-column:1 / -1'><span>Ghi chú hồ sơ</span><input class='input' data-member-note='${member.user_id}' value='${esc(member.note || '')}' maxlength='500' placeholder='Ghi chú hợp đồng, ca làm việc...'/></label><div style='grid-column:1 / -1;display:flex;justify-content:flex-end'><button class='btn btn-primary' data-action='save-staff-member' data-id='${member.user_id}'>Lưu hồ sơ &amp; quyền</button></div></div>${renderStaffPermFieldset(member)}<fieldset class='staff-scope' data-member-scope='${member.user_id}' ${member.role === 'stockkeeper' ? '' : 'hidden'}><legend>Phạm vi kho của nhân viên kho</legend><label class='staff-scope-mode'><span>Kho được phép truy cập</span><select class='input' data-member-scope-mode='${member.user_id}'><option value='all' ${scopeMode === 'all' ? 'selected' : ''}>Tất cả kho hiện tại và kho mới</option><option value='selected' ${scopeMode === 'selected' ? 'selected' : ''}>Chỉ các kho đã chọn</option></select></label><div class='staff-warehouse-options' data-member-warehouse-list='${member.user_id}' ${scopeMode === 'selected' ? '' : 'hidden'}>${warehouseChecks || `<small>Chưa có kho đang hoạt động.</small>`}</div><small>Kho mới chỉ tự cấp cho nhân viên ở chế độ “Tất cả kho”.</small></fieldset></details></article>`;
     }).join('');
     const inviteRows = staffState.invitations.map(function (invite) {
       const pendingInvite = invite.status === 'pending';
@@ -5971,9 +5985,9 @@
       <article class='stat-card'><div class='stat-top'><span class='stat-label'>Lương &amp; Hoa hồng dự kiến</span><span class='stat-icon'>${icon('wallet', 15)}</span></div><div class='stat-value'>${moneyVndText(summary.totalEstimatedPayoutVnd)}</div><small class='muted'>Lương cơ bản + Hoa hồng doanh số</small></article>
     </div>`;
     const subTabs = `<nav class='workspace-tabs' aria-label='Phân hệ quản trị nhân sự' style='margin-bottom:12px'>
-      <button type='button' data-action='staff-subtab' data-tab='members' ${staffSubTab === 'members' ? "aria-current='page'" : ''}>Hồ sơ &amp; Phân quyền (${number(staffState.members.length)})</button>
-      <button type='button' data-action='staff-subtab' data-tab='payroll' ${staffSubTab === 'payroll' ? "aria-current='page'" : ''}>Bảng lương tự động &amp; Chốt lương</button>
-      <button type='button' data-action='staff-subtab' data-tab='radar' ${staffSubTab === 'radar' ? "aria-current='page'" : ''}>Cảnh báo thất thoát (F8 &amp; Lệch két)</button>
+      <button type='button' data-action='staff-subtab' data-subtab='members' ${staffSubTab === 'members' ? "aria-current='page'" : ''}>Nhân viên (${number(staffState.members.length)})</button>
+      <button type='button' data-action='staff-subtab' data-subtab='payroll' ${staffSubTab === 'payroll' ? "aria-current='page'" : ''}>Bảng lương</button>
+      <button type='button' data-action='staff-subtab' data-subtab='radar' ${staffSubTab === 'radar' ? "aria-current='page'" : ''}>Cảnh báo thất thoát</button>
     </nav>`;
     if (staffSubTab === 'payroll') {
       return pageHeading('Quản lý nhân viên', '', `<button class='btn btn-secondary' data-action='new-staff-invite'>✉ Mời qua Email</button><button class='btn btn-primary' data-action='new-staff-direct'>${icon('plus', 15)} Tạo nhanh nhân viên</button>`) + kpiHtml + subTabs + renderStaffPayrollSection();
@@ -10702,8 +10716,27 @@
   }
 
   function showHelp() {
-    const body = `<div class='notice-list'><div class='notice-item'><span>${icon('receipt', 18)}</span><span><strong>Bán hàng</strong><small>Chạm mặt hàng để thêm, bấm Thanh toán, kiểm tra số tiền rồi xác nhận.</small></span></div><div class='notice-item'><span>${icon('box', 18)}</span><span><strong>Hàng và kho</strong><small>Thêm mặt hàng, ghi nhận hàng nhận về và xem số lượng còn lại.</small></span></div><div class='notice-item'><span>${icon('card', 18)}</span><span><strong>Tiền</strong><small>Chuyển khoản, QR và thẻ hiện do nhân viên xác nhận thủ công.</small></span></div></div>`;
-    showModal('Trợ giúp', 'Chọn việc cần làm hoặc xem lại hướng dẫn.', body, `<button class='btn btn-secondary' data-action='change-task-focus'>Đổi việc chính</button><button class='btn btn-secondary' data-action='replay-guided-tour'>Xem lại hướng dẫn</button><button class='btn btn-primary' data-action='close-modal'>Đóng</button>`, true);
+    const body = `<div class='help-section'>
+        <h3>Quy trình vận hành chính</h3>
+        <div class='notice-list'>
+          <div class='notice-item'><span>${icon('cart', 18)}</span><span><strong>Bán hàng &amp; QR Ngân hàng</strong><small>Chạm mặt hàng hoặc quét mã vạch, bấm <strong>Thanh toán</strong>, chọn Tiền mặt / VietQR / Ghi nợ. Bật loa đọc tiền tự động trong Cài đặt → Bán hàng &amp; Thiết bị.</small></span></div>
+          <div class='notice-item'><span>${icon('users', 18)}</span><span><strong>Nhân sự &amp; Chấm công tự động</strong><small>Cấp tài khoản đăng nhập trực tiếp tại quầy, hệ thống tự tính ngày công, hoa hồng thực thu (đã trừ hàng trả), tạm ứng và cảnh báo lệch két.</small></span></div>
+          <div class='notice-item'><span>${icon('receipt', 18)}</span><span><strong>Khách hàng, Đổi trả &amp; Bảo hành</strong><small>Tích điểm tự động theo số điện thoại, tra cứu Serial / IMEI còn hạn bảo hành và hoàn trả hàng trừ trực tiếp doanh số thực thu.</small></span></div>
+          <div class='notice-item'><span>${icon('layers', 18)}</span><span><strong>Kho, Nhập hàng &amp; Đồng bộ Offline</strong><small>Kiểm kê nhanh theo quét mã, nhập hàng từ nhà cung cấp và tự động xếp hàng gửi lại đơn khi mất mạng tạm thời.</small></span></div>
+        </div>
+      </div>
+      <div class='help-section'>
+        <h3>Phím tắt bán hàng nhanh (PC / Laptop tại quầy)</h3>
+        <div class='help-shortcut-grid'>
+          <div class='help-shortcut-item'><kbd>F1</kbd><span>Thêm đơn chờ mới</span></div>
+          <div class='help-shortcut-item'><kbd>F2</kbd><span>Tìm / quét sản phẩm</span></div>
+          <div class='help-shortcut-item'><kbd>F4</kbd><span>Chọn khách hàng</span></div>
+          <div class='help-shortcut-item'><kbd>F6</kbd><span>Giảm giá / chiết khấu</span></div>
+          <div class='help-shortcut-item'><kbd>F8</kbd><span>In phiếu tạm tính</span></div>
+          <div class='help-shortcut-item'><kbd>F9</kbd><span>Thanh toán ngay</span></div>
+        </div>
+      </div>`;
+    showModal('Trung tâm Trợ giúp Slink 3.0', 'Hướng dẫn vận hành nhanh tại quầy, nhân sự, bảo hành & phím tắt.', body, `<button class='btn btn-secondary' type='button' data-action='change-task-focus'>Đổi màn hình mở đầu</button><button class='btn btn-secondary' type='button' data-action='replay-guided-tour'>Xem hướng dẫn tương tác</button><button class='btn btn-primary' type='button' data-action='close-modal'>Đóng</button>`, true);
   }
 
   function addSerialToCart(product, serialCode) {
@@ -10890,7 +10923,7 @@
       else toast(result.offlineQueued ? 'Đã lưu đơn trên máy' : 'Đã lưu đơn hàng', order.number);
       if (!result.offlineQueued) {
         const confirmedAmount = result.order?.totalVnd ?? payload.totalVnd;
-        if (Number(confirmedAmount) > 0 && window.SlinkPosHardware && typeof window.SlinkPosHardware.playTingTing === 'function') {
+        if (posPrefs.voiceAnnounce !== false && Number(confirmedAmount) > 0 && window.SlinkPosHardware && typeof window.SlinkPosHardware.playTingTing === 'function') {
           window.SlinkPosHardware.playTingTing(confirmedAmount).catch(function () {});
         }
         emitSyncDomains(['orders', 'stock', 'products', 'cashbook', 'debts', 'customers', 'dashboard', 'reports'], { source: 'sale', orderId: order?.id || '' });
@@ -13217,7 +13250,8 @@
         },
       });
       closeModal();
-      emitSyncDomains(['staff'], { source: 'staff-direct-create' });
+      staffSubTab = 'members';
+      emitSyncDomains(['staff'], { source: 'staff-direct-create', skipLocalReload: true });
       toast('Đã tạo tài khoản nhân viên', `${result.member?.display_name || ''} (${result.member?.staff_code || ''}) đã có thể đăng nhập ngay.`);
       await loadStaffPage();
     } catch (error) {
@@ -13282,7 +13316,7 @@
           permissions,
         },
       });
-      emitSyncDomains(['staff', 'me'], { source: 'staff-member-save', userId });
+      emitSyncDomains(['staff', 'me'], { source: 'staff-member-save', userId, skipLocalReload: true });
       toast('Đã cập nhật hồ sơ & quyền nhân viên', 'Thông tin lương, hoa hồng và phân quyền đã được lưu.');
       await loadStaffPage();
     } catch (error) {
@@ -14246,6 +14280,7 @@
   window.addEventListener('scroll', guidedTourViewportChanged, { passive: true, capture: true });
 
   document.addEventListener('click', function (event) {
+    if (event.target.closest('.toast') || event.target.closest("[data-action='dismiss-toast']")) { dismissToast(); return; }
     const conflictBtn = event.target.closest('[data-conflict-action]');
     if (conflictBtn) { handleOfflineConflictAction(conflictBtn); return; }
     const editorMenu = modal.querySelector('[data-product-editor-more][open]');
@@ -15001,6 +15036,12 @@
         loadStaffPage();
       }
     }
+    else if (action === 'test-pos-voice') {
+      if (window.SlinkPosHardware && typeof window.SlinkPosHardware.playTingTing === 'function') {
+        window.SlinkPosHardware.playTingTing(150000).catch(function () {});
+      }
+      toast('Đã phát âm thanh thử', 'Kiểm tra loa điện thoại hoặc máy tính.');
+    }
     else if (action === 'reload-payroll') loadStaffPayroll();
     else if (action === 'reload-radar') loadLossPreventionRadar();
     else if (action === 'open-staff-advance') openStaffAdvanceModal(id);
@@ -15614,6 +15655,19 @@
     if (event.target.id === 'staff-invite-role') {
       const help = modal.querySelector('.staff-role-help');
       if (help) help.textContent = staffRoleDescription(event.target.value);
+      return;
+    }
+    if (event.target.matches("form[data-form='staff-direct-create'] select[name='role']")) {
+      const form = event.target.closest("form[data-form='staff-direct-create']");
+      const eff = resolveEffectivePermissions(event.target.value, null, null);
+      if (form) {
+        form.querySelectorAll('[data-direct-perm]').forEach(function (el) {
+          const k = el.dataset.directPerm;
+          if (k === 'pos_max_discount_pct') el.value = String(eff.pos_max_discount_pct ?? 0);
+          else if (k) el.checked = Boolean(eff[k]);
+        });
+      }
+      return;
     }
     if (event.target.matches('[data-purchase-mode]')) {
       const row = event.target.closest('[data-purchase-line]');
@@ -15730,7 +15784,7 @@
     else if (type === 'warranty-lookup') lookupWarrantyBySerial(new FormData(form).get('code'));
     else if (type === 'pos-prefs') {
       const fd = new FormData(form);
-      savePosPrefs({ paperWidth: String(fd.get('paperWidth') || '80mm'), autoPrint: fd.get('autoPrint') === 'on', requireFullPayment: fd.get('requireFullPayment') === 'on' });
+      savePosPrefs({ paperWidth: String(fd.get('paperWidth') || '80mm'), autoPrint: fd.get('autoPrint') === 'on', requireFullPayment: fd.get('requireFullPayment') === 'on', voiceAnnounce: fd.get('voiceAnnounce') === 'on' });
       toast('Đã lưu cấu hình POS & Hóa đơn');
     }
     else if (type === 'discount') {

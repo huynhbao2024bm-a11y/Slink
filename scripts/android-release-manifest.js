@@ -4,7 +4,7 @@ const { readFileSync, writeFileSync } = require('node:fs');
 const { createHash } = require('node:crypto');
 
 function makeManifest({ apk, versionCode, versionName, tag }) {
-  if (!Number.isSafeInteger(versionCode) || versionCode < 1 || !/^\d+\.\d+\.\d+$/.test(versionName) || tag !== 'android-v' + versionName) {
+  if (!Number.isSafeInteger(versionCode) || versionCode < 1 || !/^\d+\.\d+\.\d+(?:\.\d+)?$/.test(versionName) || tag !== 'android-v' + versionName) {
     throw new Error('Release tag, versionName and versionCode must agree.');
   }
   const bytes = readFileSync(apk);
