@@ -258,6 +258,16 @@
   let lastImportedPrintItems = [];
   const offlineConflictInspections = new Map();
   let lastCompletedSale = null;
+  let posCustomerInlineText = '';
+  let posAssistantState = { data: null, loading: false, query: '', timer: 0, requestNumber: 0 };
+  let posRedeemPointsActive = false;
+  let posBundlePriorDebtActive = false;
+  let posSellers = [];
+  let posSellerId = '';
+  let activePosPrebillId = '';
+  let staffSubTab = 'members';
+  let payrollState = { periodMonth: new Date().toISOString().slice(0, 7), rows: [], totalEstimatedPayableVnd: '0', loading: false, error: '', requestNumber: 0 };
+  let radarState = { prebillAlerts: [], refundAlerts: [], shortageAlerts: [], loading: false, error: '', requestNumber: 0 };
   const productCache = new Map();
   const customerCache = new Map();
   const orderNoteHistoryCache = new Map();
@@ -2416,6 +2426,7 @@
     productLoading = page === 'pos';
     render();
     if (page === 'pos') {
+      loadPosSellers();
       await loadWarehouses({ includeTransfers: false, view: 'picker' });
       await loadProductsPage('', 0);
     } else if (page === 'inventory') {
@@ -3218,6 +3229,14 @@
 
   async function loadStaffPage() {
     if (!authSession || !store.id || store.role !== 'owner') return;
+    if (staffSubTab === 'payroll') {
+      await loadStaffPayroll();
+      return;
+    }
+    if (staffSubTab === 'radar') {
+      await loadLossPreventionRadar();
+      return;
+    }
     const storeId = store.id, session = authSession, request = ++staffRequestNumber;
     const current = () => store.id === storeId && authSession === session && request === staffRequestNumber;
     staffState.loading = true;
@@ -3238,6 +3257,266 @@
       if (error.status === 401) return showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
     }
     if (page === 'staff') render();
+  }
+
+  async function loadPosSellers() {
+    if (!authSession || !store.id) return;
+    try {
+      const res = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/pos/sellers`);
+      posSellers = Array.isArray(res.sellers) ? res.sellers : [];
+      if (!posSellerId && authSession?.user?.id) posSellerId = authSession.user.id;
+      if (page === 'pos') refreshCartPanels();
+    } catch (_) {}
+  }
+
+  async function loadPosCustomerAssistant(opts = {}) {
+    if (!authSession || !store.id || !navigator.onLine) return;
+    const reqNum = ++posAssistantState.requestNumber;
+    const q = opts.q !== undefined ? String(opts.q || '').trim() : '';
+    const cid = opts.customerId !== undefined ? String(opts.customerId || '').trim() : '';
+    if (!q && !cid) {
+      posAssistantState.data = null;
+      if (page === 'pos') refreshCartPanels();
+      return;
+    }
+    try {
+      const params = new URLSearchParams();
+      if (cid) params.set('customerId', cid);
+      else if (q) params.set('q', q);
+      const res = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/pos/customer-assistant?${params}`);
+      if (reqNum !== posAssistantState.requestNumber) return;
+      posAssistantState.data = res;
+      if (res.matched && res.customer && (res.exactTailMatch || cid === res.customer.id)) {
+        const c = res.customer;
+        if (!store.customers.some(item => item.id === c.id)) {
+          store.customers.push({
+            id: c.id,
+            customerCode: c.customerCode || '',
+            name: c.name,
+            phone: c.phone || '',
+            customerType: c.customerType || 'retail',
+            discountRateBps: Number(c.discountRateBps || 0),
+            shippingAddress: c.shippingAddress || '',
+            debt: Math.max(0, Number(res.debt?.balanceVnd || 0)),
+          });
+        }
+        if (cartCustomerId !== c.id) {
+          cartCustomerId = c.id;
+          posRedeemPointsActive = false;
+          posBundlePriorDebtActive = false;
+          const rateBps = Number(c.discountRateBps || 0);
+          const sub = cartTotals().subtotal;
+          if (rateBps > 0 && sub > 0 && !cart.discount) {
+            cart.discount = Math.min(maxAllowedDiscountVnd(sub), Math.round(sub * rateBps / 10000));
+          }
+        }
+      } else if (!cid && !res.exactTailMatch) {
+        if (cartCustomerId && q) {
+          cartCustomerId = '';
+          posRedeemPointsActive = false;
+          posBundlePriorDebtActive = false;
+        }
+      }
+      if (page === 'pos') {
+        const activeInput = document.getElementById('pos-customer-inline-input');
+        const wasFocused = document.activeElement === activeInput;
+        const posStart = activeInput?.selectionStart || 0;
+        refreshCartPanels();
+        if (wasFocused) {
+          const nextInput = document.getElementById('pos-customer-inline-input');
+          if (nextInput) {
+            nextInput.focus({ preventScroll: true });
+            try { nextInput.setSelectionRange(posStart, posStart); } catch {}
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  async function loadStaffPayroll(monthOverride) {
+    if (!authSession || !store.id || store.role !== 'owner') return;
+    if (monthOverride) payrollState.periodMonth = monthOverride;
+    const reqNum = ++payrollState.requestNumber;
+    payrollState.loading = true;
+    payrollState.error = '';
+    if (page === 'staff') render();
+    try {
+      const res = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/payroll?month=${encodeURIComponent(payrollState.periodMonth)}`);
+      if (reqNum !== payrollState.requestNumber) return;
+      payrollState.periodMonth = res.periodMonth || payrollState.periodMonth;
+      payrollState.rows = Array.isArray(res.rows) ? res.rows : [];
+      payrollState.totalEstimatedPayableVnd = res.totalEstimatedPayableVnd || '0';
+      payrollState.loading = false;
+    } catch (error) {
+      if (reqNum !== payrollState.requestNumber) return;
+      payrollState.loading = false;
+      payrollState.error = error.message;
+    }
+    if (page === 'staff') render();
+  }
+
+  async function loadLossPreventionRadar() {
+    if (!authSession || !store.id || store.role !== 'owner') return;
+    const reqNum = ++radarState.requestNumber;
+    radarState.loading = true;
+    radarState.error = '';
+    if (page === 'staff') render();
+    try {
+      const res = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/loss-prevention-radar`);
+      if (reqNum !== radarState.requestNumber) return;
+      radarState.prebillAlerts = Array.isArray(res.prebillAlerts) ? res.prebillAlerts : [];
+      radarState.refundAlerts = Array.isArray(res.refundAlerts) ? res.refundAlerts : [];
+      radarState.shortageAlerts = Array.isArray(res.shortageAlerts) ? res.shortageAlerts : [];
+      radarState.loading = false;
+    } catch (error) {
+      if (reqNum !== radarState.requestNumber) return;
+      radarState.loading = false;
+      radarState.error = error.message;
+    }
+    if (page === 'staff') render();
+  }
+
+  function openStaffAdvanceModal(userId) {
+    if (store.role !== 'owner') return toast('Không đủ quyền', 'Chỉ chủ cửa hàng mới được ghi ứng lương.', 'error');
+    const member = (staffState.members || []).find(m => m.user_id === userId) || (payrollState.rows || []).find(r => r.userId === userId);
+    const name = member?.display_name || member?.displayName || 'Nhân viên';
+    const form = `<form id='entity-form' data-form='staff-advance' data-id='${esc(userId)}'>
+      <div class='form-grid'>
+        <div class='form-field'><label class='input-label' for='advance-amount'>Số tiền ứng (VND) *</label><input class='input' id='advance-amount' name='amountVnd' type='number' min='1000' step='1000' required placeholder='500000'/></div>
+        <div class='form-field'><label class='input-label' for='advance-method'>Nguồn tiền chi *</label><select class='input' id='advance-method' name='method'><option value='bank_transfer'>Chuyển khoản ngân hàng</option><option value='cash'>Tiền mặt tại két</option></select></div>
+        <div class='form-field full'><label class='input-label' for='advance-note'>Ghi chú ứng lương</label><input class='input' id='advance-note' name='note' maxlength='240' placeholder='Ứng lương giữa tháng…'/></div>
+      </div>
+      <div class='modal-note'>Slink sẽ tự động tạo phiếu chi trong Sổ quỹ và tự động trừ khoản ứng này khi chốt bảng lương cuối tháng của <strong>${esc(name)}</strong>.</div>
+    </form>`;
+    showModal(`Ứng lương · ${name}`, 'Ghi nhận khoản tạm ứng lương nhanh 1 chạm.', form, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Hủy</button><button class='btn btn-primary' type='submit' form='entity-form'>Xác nhận chi ứng lương</button>`);
+  }
+
+  async function submitStaffAdvanceForm(form) {
+    const userId = form.dataset.id;
+    const fd = new FormData(form);
+    const amountVnd = String(fd.get('amountVnd') || '0').trim();
+    const method = String(fd.get('method') || 'bank_transfer');
+    const note = String(fd.get('note') || '').trim();
+    const submit = modal.querySelector('button[type="submit"][form="entity-form"]');
+    if (submit) submit.disabled = true;
+    try {
+      await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/staff/${encodeURIComponent(userId)}/advances`, {
+        method: 'POST',
+        headers: { 'idempotency-key': newIdempotencyKey() },
+        body: { amountVnd, method, note },
+      });
+      closeModal();
+      emitSyncDomains(['cashbook', 'staff', 'dashboard'], { source: 'staff-advance', userId });
+      toast('Đã ghi nhận ứng lương', `Đã tạo phiếu chi tạm ứng ${moneyVndText(amountVnd)}.`);
+      if (staffSubTab === 'payroll') await loadStaffPayroll();
+    } catch (error) {
+      if (submit?.isConnected) submit.disabled = false;
+      toast('Chưa ghi nhận được ứng lương', error.message, 'error');
+    }
+  }
+
+  async function settleStaffPayroll(userId, button) {
+    if (store.role !== 'owner') return;
+    const row = (payrollState.rows || []).find(r => r.userId === userId);
+    if (!row) return;
+    const daysInput = document.querySelector(`[data-payroll-days='${CSS.escape(userId)}']`);
+    const bonusInput = document.querySelector(`[data-payroll-bonus='${CSS.escape(userId)}']`);
+    const penaltyInput = document.querySelector(`[data-payroll-penalty='${CSS.escape(userId)}']`);
+    const deductShortageBox = document.querySelector(`[data-payroll-deduct-shortage='${CSS.escape(userId)}']`);
+    const workedDaysCount = daysInput ? Number(daysInput.value || row.workedDaysCount || 0) : row.workedDaysCount;
+    const bonusVnd = bonusInput ? String(Math.max(0, Math.trunc(Number(bonusInput.value || 0)))) : '0';
+    const manualPenaltyVnd = penaltyInput ? String(Math.max(0, Math.trunc(Number(penaltyInput.value || 0)))) : '0';
+    const deductShortage = deductShortageBox ? Boolean(deductShortageBox.checked) : true;
+    if (button) button.disabled = true;
+    try {
+      const res = await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/payroll/settle`, {
+        method: 'POST',
+        headers: { 'idempotency-key': newIdempotencyKey() },
+        body: {
+          userId,
+          periodMonth: payrollState.periodMonth,
+          workedDaysCount,
+          bonusVnd,
+          manualPenaltyVnd,
+          deductShortage,
+          paymentMethod: 'bank_transfer',
+        },
+      });
+      emitSyncDomains(['cashbook', 'staff', 'dashboard'], { source: 'payroll-settle', userId });
+      toast('Đã chốt phiếu lương', `${res.payslip?.payslipNumber || ''} · Thực lĩnh ${moneyVndText(res.payslip?.netPayableVnd || '0')}`);
+      await loadStaffPayroll();
+      if (res.payslip) {
+        await shareStaffPayslipPng(userId, res.payslip);
+      }
+    } catch (error) {
+      if (button?.isConnected) button.disabled = false;
+      toast('Chưa chốt được lương', error.message, 'error');
+    }
+  }
+
+  async function shareStaffPayslipPng(userId, payslipOverride) {
+    const row = (payrollState.rows || []).find(r => r.userId === userId);
+    if (!row || !window.SlinkReceiptImage || typeof window.SlinkReceiptImage.renderPayslipPng !== 'function') return;
+    const ps = payslipOverride || row.settledPayslip;
+    const netPayableVnd = ps ? ps.netPayableVnd : row.estimatedNetPayableVnd;
+    let vietQrText = '';
+    if (row.bankBin && row.bankAccountNumber && BigInt(String(netPayableVnd || '0')) > 0n && window.SlinkVietQrTools) {
+      vietQrText = window.SlinkVietQrTools.buildVietQrPayload({
+        bankBin: row.bankBin,
+        accountNumber: row.bankAccountNumber,
+        amountVnd: Math.max(0, Math.trunc(Number(netPayableVnd || 0))),
+        description: `LUONG ${payrollState.periodMonth} ${row.staffCode || row.displayName}`.slice(0, 40),
+      });
+    }
+    try {
+      const rendered = await window.SlinkReceiptImage.renderPayslipPng({
+        storeName: store.settings.storeName || 'Slink',
+        payslipNumber: ps?.payslipNumber || `PL-${payrollState.periodMonth.replace('-', '')}`,
+        periodMonth: payrollState.periodMonth,
+        staffName: row.displayName,
+        staffCode: row.staffCode || '',
+        roleLabel: staffRoleName(row.role),
+        salaryMode: row.salaryMode,
+        workedDaysCount: ps ? ps.workedDaysCount : row.workedDaysCount,
+        standardDaysCount: row.standardDaysCount,
+        baseSalaryComputedVnd: ps ? ps.baseSalaryVnd : row.baseSalaryComputedVnd,
+        netSalesVnd: ps ? ps.netSalesVnd : row.netSalesVnd,
+        commissionVnd: ps ? ps.commissionVnd : row.commissionVnd,
+        bonusVnd: ps ? ps.bonusVnd : '0',
+        advanceDeductedVnd: ps ? ps.advanceDeductedVnd : row.unsettledAdvancesVnd,
+        shortageDeductedVnd: ps ? ps.shortageDeductedVnd : row.unsettledShortageVnd,
+        manualPenaltyVnd: ps ? ps.manualPenaltyVnd : '0',
+        netPayableVnd,
+        bankAccountNumber: row.bankAccountNumber || '',
+        bankAccountOwner: row.bankAccountOwner || '',
+        vietQrText,
+      });
+      const filename = `phieu-luong-${payrollState.periodMonth}-${String(row.staffCode || row.displayName || 'nv').replace(/[^a-zA-Z0-9_-]+/g, '-')}.png`;
+      await window.SlinkReceiptImage.sharePng({
+        dataUrl: rendered.dataUrl,
+        blob: rendered.blob,
+        filename,
+        title: `Phiếu lương tháng ${payrollState.periodMonth} · ${row.displayName}`,
+        text: `${store.settings.storeName || 'Slink'} · Phiếu lương tháng ${payrollState.periodMonth} · ${row.displayName} · Thực lĩnh ${moneyVndText(netPayableVnd)}`,
+      });
+    } catch (error) {
+      toast('Chưa tạo được ảnh phiếu lương', error.message, 'error');
+    }
+  }
+
+  async function toggleWaiveShortage(sessionId, waived) {
+    if (store.role !== 'owner' || !sessionId) return;
+    try {
+      await apiRequest(`/api/stores/${encodeURIComponent(store.id)}/cash-sessions/${encodeURIComponent(sessionId)}/waive-variance`, {
+        method: 'POST',
+        body: { waived: Boolean(waived) },
+      });
+      toast(waived ? 'Đã bỏ qua lệch két ca này' : 'Đã khôi phục trừ lệch két');
+      if (staffSubTab === 'radar') await loadLossPreventionRadar();
+      else if (staffSubTab === 'payroll') await loadStaffPayroll();
+    } catch (error) {
+      toast('Chưa cập nhật được lệch két', error.message, 'error');
+    }
   }
 
   async function loadAuditEvents(filters, offset) {
@@ -3778,6 +4057,11 @@
     if (checkoutPendingPayload) return;
     const idNum = Number(billId);
     if (posBills.length <= 1) return;
+    if (activePosPrebillId && activePosBillId === idNum && navigator.onLine) {
+      const prebillToAbandon = activePosPrebillId;
+      activePosPrebillId = '';
+      apiRequest(`/api/stores/${encodeURIComponent(store.id)}/pos/prebill-events/${encodeURIComponent(prebillToAbandon)}/abandon`, { method: 'POST', body: {} }).catch(() => {});
+    }
     syncActivePosBillFromCart();
     posBills = posBills.filter(b => b.id !== idNum);
     if (activePosBillId === idNum) {
@@ -3787,6 +4071,11 @@
   }
 
   function resetPosBillsAfterSale() {
+    posCustomerInlineText = '';
+    posAssistantState.data = null;
+    posRedeemPointsActive = false;
+    posBundlePriorDebtActive = false;
+    activePosPrebillId = '';
     if (posBills.length > 1) {
       posBills = posBills.filter(b => b.id !== activePosBillId);
       loadPosBillIntoCart(posBills[0]);
@@ -3827,39 +4116,100 @@
     </div>`;
   }
 
+  function posEffectivePayable(totals = cartTotals()) {
+    const assist = posAssistantState.data;
+    const matchedCust = assist && assist.matched && assist.customer && assist.customer.id === cartCustomerId;
+    const redeemablePts = matchedCust ? Math.max(0, Number(assist.loyalty?.redeemablePoints || 0)) : 0;
+    const redeemUnitVnd = matchedCust ? Math.max(1, Number(assist.loyalty?.redeemValueVnd || 1000)) : 1000;
+    const maxPtsForOrder = Math.floor(Math.max(0, totals.total) / redeemUnitVnd);
+    const pointsUsed = (posRedeemPointsActive && matchedCust) ? Math.min(redeemablePts, maxPtsForOrder) : 0;
+    const pointsDiscountVnd = pointsUsed * redeemUnitVnd;
+    const orderNetVnd = Math.max(0, totals.total - pointsDiscountVnd);
+    const priorDebtVnd = matchedCust ? Math.max(0, Number(assist.debt?.balanceVnd || 0)) : 0;
+    const bundledDebtVnd = (posBundlePriorDebtActive && matchedCust && priorDebtVnd > 0) ? priorDebtVnd : 0;
+    return {
+      pointsUsed,
+      pointsDiscountVnd,
+      orderNetVnd,
+      priorDebtVnd,
+      bundledDebtVnd,
+      grandCollectVnd: orderNetVnd + bundledDebtVnd,
+    };
+  }
+
+  function renderPosCustomerAssistantBox(totals, disabled) {
+    const assist = posAssistantState.data;
+    const sellerBar = posSellers.length > 1
+      ? `<div class='pos-seller-pills' role='group' aria-label='Nhân viên bán đơn này'><small>Người bán:</small>${posSellers.slice(0, 6).map(function (s) {
+          const active = (posSellerId || authSession?.user?.id) === s.user_id;
+          return `<button type='button' class='pos-seller-pill ${active ? 'active' : ''}' data-action='pos-select-seller' data-id='${esc(s.user_id)}' ${disabled}>${esc(s.display_name)}</button>`;
+        }).join('')}</div>`
+      : '';
+    const inlineInput = `<div class='pos-inline-customer-row'><input class='input' id='pos-customer-inline-input' type='search' maxlength='140' placeholder='Gõ 4 số cuối SĐT hoặc "09xx Tên khách"…' value='${esc(posCustomerInlineText)}' aria-label='Gõ 4 số cuối SĐT khách quen hoặc nhập SĐT kèm tên khách mới' ${disabled}/>${(cartCustomerId || posCustomerInlineText) ? `<button type='button' class='link-button' data-action='pos-clear-customer' ${disabled}>Xóa</button>` : ''}</div>`;
+    let detailCard = '';
+    if (assist && assist.matched && assist.customer && assist.customer.id === cartCustomerId) {
+      const ptsBalance = Number(assist.loyalty?.pointsBalance || 0);
+      const redeemablePts = Number(assist.loyalty?.redeemablePoints || 0);
+      const maxRedeemVnd = Math.min(totals.total, Number(assist.loyalty?.maxRedeemVnd || 0));
+      const priorDebt = Number(assist.debt?.balanceVnd || 0);
+      const favs = Array.isArray(assist.favoriteItems) ? assist.favoriteItems : [];
+      const tierNames = { diamond: 'Kim cương', gold: 'VIP Vàng', silver: 'Thân thiết', member: 'Thành viên' };
+      const tierBadge = `<span class='badge badge-info'>${esc(tierNames[assist.customer.loyaltyTier] || 'Thành viên')}</span>`;
+      const ptsChip = redeemablePts > 0 && totals.total > 0
+        ? `<button type='button' class='pos-assist-chip ${posRedeemPointsActive ? 'active' : ''}' data-action='pos-toggle-redeem-points' ${disabled}>${posRedeemPointsActive ? '✓ Đang dùng' : 'Dùng'} ${number(redeemablePts)} điểm (−${money(maxRedeemVnd)})</button>`
+        : `<small class='muted'>Điểm: ${number(ptsBalance)}</small>`;
+      const favChips = favs.map(function (f) {
+        return `<button type='button' class='pos-assist-fav' data-action='add-cart' data-id='${esc(f.productId)}' title='Chạm để thêm nhanh vào giỏ' ${disabled}>＋ ${esc(f.name)}</button>`;
+      }).join('');
+      const line1 = `<div class='pos-assist-line'>${tierBadge} ${ptsChip}${assist.activeWarrantyCount > 0 ? `<small class='muted'>· ${number(assist.activeWarrantyCount)} SP còn BH</small>` : ''}${favChips}</div>`;
+      const line2 = priorDebt > 0
+        ? `<div class='pos-assist-line pos-assist-debt'><span>Nợ cũ: <strong>${money(priorDebt)}</strong></span><button type='button' class='pos-assist-chip pos-assist-debt-btn ${posBundlePriorDebtActive ? 'active' : ''}' data-action='pos-toggle-bundle-debt' ${disabled}>${posBundlePriorDebtActive ? '✓ Đã gộp thu nợ cũ' : 'Gộp thu luôn nợ cũ'} (+${money(priorDebt)})</button></div>`
+        : '';
+      detailCard = `<div class='pos-customer-assistant-card'>${line1}${line2}</div>`;
+    } else if (!cartCustomerId && assist && assist.inlineNewCustomerPreview) {
+      const p = assist.inlineNewCustomerPreview;
+      detailCard = `<div class='pos-customer-assistant-card'><div class='pos-assist-line'><span class='badge badge-success'>Khách mới</span><span><strong>${esc(p.explicitName || p.fallbackName)}</strong> (${esc(p.phoneDisplay)}) · <small class='muted'>Tự tạo hồ sơ khi thanh toán</small></span></div></div>`;
+    }
+    return `${sellerBar}${inlineInput}${detailCard}`;
+  }
+
   function renderPosModeFooter(totals, disabled) {
     if (checkoutPendingPayload) {
       return `<button class='btn btn-primary' data-action='checkout'>Kiểm tra đơn chờ <span style='margin-left:auto'>${money(checkoutPendingPayload.totalVnd)} →</span></button>`;
     }
+    const eff = posEffectivePayable(totals);
+    const collectTotal = eff.grandCollectVnd;
     if (posMode === 'delivery') {
       const label = posDelivery.collection === 'prepaid' ? 'Xác nhận đã thu & giao' : posDelivery.collection === 'debt' ? 'Tạo đơn giao · Ghi nợ' : 'Tạo đơn giao · COD';
-      return `<button class='btn btn-primary' type='button' data-action='submit-delivery-sale' ${cart.length ? '' : 'disabled'}>${label} <span style='margin-left:auto'>${money(totals.total)} →</span></button>`;
+      return `<button class='btn btn-primary' type='button' data-action='submit-delivery-sale' ${cart.length ? '' : 'disabled'}>${label} <span style='margin-left:auto'>${money(eff.orderNetVnd)} →</span></button>`;
     }
     if (posPrefs.requireFullPayment && posStandardMethod === 'debt') posStandardMethod = 'cash';
     const methods = posPrefs.requireFullPayment
       ? [['cash', 'Tiền mặt'], ['bank_transfer', 'Chuyển khoản']]
       : [['cash', 'Tiền mặt'], ['bank_transfer', 'Chuyển khoản'], ['debt', 'Ghi nợ']];
-    const payLabel = posStandardMethod === 'debt' ? 'Ghi nợ khách' : posStandardMethod === 'bank_transfer' ? 'Thu chuyển khoản' : 'Thu tiền mặt';
+    const payLabel = posStandardMethod === 'debt'
+      ? 'Ghi nợ khách'
+      : (eff.bundledDebtVnd > 0 ? 'Thu đơn + Nợ cũ' : posStandardMethod === 'bank_transfer' ? 'Thu chuyển khoản' : 'Thu tiền mặt');
     let cashBlock = '';
     if (posStandardMethod === 'cash' && cart.length) {
-      const presets = fastCashPresets(totals.total);
-      const enteredCash = posFastCashInput !== '' ? Number(posFastCashInput) : totals.total;
-      const validCash = Number.isSafeInteger(enteredCash) && enteredCash >= totals.total;
-      const changeVnd = validCash ? enteredCash - totals.total : 0;
+      const presets = fastCashPresets(collectTotal);
+      const enteredCash = posFastCashInput !== '' ? Number(posFastCashInput) : collectTotal;
+      const validCash = Number.isSafeInteger(enteredCash) && enteredCash >= collectTotal;
+      const changeVnd = validCash ? enteredCash - collectTotal : 0;
       cashBlock = `<div class='pos-fast-presets' role='group' aria-label='Mệnh giá gợi ý'>${presets.map(function (v, idx) {
         return `<button type='button' class='pos-fast-chip ${enteredCash === v ? 'active' : ''}' data-action='fast-cash-preset' data-amount='${v}'>${idx === 0 ? 'Đủ tiền' : money(v)}</button>`;
       }).join('')}</div>
-      <div class='pos-fast-cash-row'><label class='input-label' for='pos-fast-cash'>Khách đưa</label><input class='input' id='pos-fast-cash' type='number' min='0' step='1' value='${esc(posFastCashInput)}' placeholder='${totals.total}'/></div>
-      ${posFastCashInput !== '' ? `<div class='pos-fast-change'><span>${validCash ? 'Thối lại' : 'Còn thiếu'}</span><strong>${money(validCash ? changeVnd : totals.total - (Number.isSafeInteger(enteredCash) ? enteredCash : 0))}</strong></div>` : ''}`;
+      <div class='pos-fast-cash-row'><label class='input-label' for='pos-fast-cash'>Khách đưa</label><input class='input' id='pos-fast-cash' type='number' min='0' step='1' value='${esc(posFastCashInput)}' placeholder='${collectTotal}'/></div>
+      ${posFastCashInput !== '' ? `<div class='pos-fast-change'><span>${validCash ? 'Thối lại' : 'Còn thiếu'}</span><strong>${money(validCash ? changeVnd : collectTotal - (Number.isSafeInteger(enteredCash) ? enteredCash : 0))}</strong></div>` : ''}`;
     }
     const qrBtn = posStandardMethod === 'bank_transfer' && cart.length
-      ? `<button class='btn btn-secondary' type='button' data-action='pos-show-vietqr'>Hiện mã VietQR</button>`
+      ? `<button class='btn btn-secondary' type='button' data-action='pos-show-vietqr'>Hiện mã VietQR${eff.bundledDebtVnd > 0 ? ` (${money(collectTotal)})` : ''}</button>`
       : '';
     return `<div class='pos-standard-pay'>
       <div class='pos-standard-methods' role='radiogroup' aria-label='Phương thức thanh toán'>${methods.map(([m, label]) => `<button type='button' class='pos-fast-chip ${posStandardMethod === m ? 'active' : ''}' data-action='standard-method' data-method='${m}' ${disabled}>${label}</button>`).join('')}</div>
       ${cashBlock}
       ${qrBtn}
-      <button class='btn btn-primary' type='button' data-pos-primary-pay data-action='${posStandardMethod === 'debt' ? 'checkout' : 'standard-pay'}' ${cart.length ? '' : 'disabled'}>${payLabel} <span style='margin-left:auto'>${money(totals.total)} →</span></button>
+      <button class='btn btn-primary' type='button' data-pos-primary-pay data-action='${posStandardMethod === 'debt' ? 'checkout' : 'standard-pay'}' ${cart.length ? '' : 'disabled'}>${payLabel} <span style='margin-left:auto'>${money(collectTotal)} →</span></button>
       <div style='display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:2px'>
         <button class='link-button pos-fast-more' type='button' data-action='pos-proforma' ${cart.length ? '' : 'disabled'}>In tạm tính (F8)</button>
         <button class='link-button pos-fast-more' type='button' data-action='checkout' ${cart.length ? '' : 'disabled'}>Chia thanh toán / Mã giảm →</button>
@@ -3869,6 +4219,7 @@
 
   function cartPanel(totals = cartTotals(), isDesktop = false) {
     const customer = customerById(cartCustomerId);
+    const eff = posEffectivePayable(totals);
     const pendingNote = checkoutPendingPayload ? `<div class='modal-note' style='margin:0 14px 10px'>Có đơn đang chờ xác nhận. <button class='link-button' data-action='retry-pending-sale'>Kiểm tra đơn →</button></div>` : '';
     const rows = cart.map(cartRow).join('');
     const disabled = checkoutPendingPayload ? 'disabled' : '';
@@ -3879,9 +4230,11 @@
       : '';
     const customerBlock = posMode === 'fast'
       ? (customer ? `<div class='cart-customer'><button data-action='pick-customer' ${disabled}><span class='avatar' style='width:22px;height:22px;font-size:8px'>${esc(initials(customer.name))}</span><span>${esc(customer.name)}</span><strong>Đổi</strong></button></div>` : '')
-      : `<div class='cart-customer'><button data-action='pick-customer' ${disabled}><span class='avatar' style='width:24px;height:24px;font-size:8px'>${customer ? esc(initials(customer.name)) : '+'}</span><span>${customer ? esc(customer.name) : 'Chọn khách hàng'}${customer && customer.debt > 0 ? ` <small class='stock-number low'>· Nợ ${money(customer.debt)}</small>` : ''}</span><strong>${customer ? esc(customer.phone || 'Đổi') : '＋'}</strong></button></div>`;
+      : `<div class='cart-customer'><button data-action='pick-customer' ${disabled}><span class='avatar' style='width:24px;height:24px;font-size:8px'>${customer ? esc(initials(customer.name)) : '+'}</span><span>${customer ? esc(customer.name) : 'Chọn khách hàng'}${customer && customer.debt > 0 ? ` <small class='stock-number low'>· Nợ ${money(customer.debt)}</small>` : ''}</span><strong>${customer ? esc(customer.phone || 'Đổi') : '＋'}</strong></button>${renderPosCustomerAssistantBox(totals, disabled)}</div>`;
     const cartTitle = posMode === 'delivery' ? `<h2>Đơn giao hàng</h2>` : '';
-    return `<section class='panel cart-panel' ${isDesktop ? "data-tour-target='pos-cart-desktop'" : ''}>${billsBar}<div class='cart-heading ${cartTitle ? '' : 'is-compact'}'>${cartTitle}<div class='cart-heading-actions'><span>${number(totals.count)} SP</span><button class='cart-close mobile-only' data-action='close-cart' aria-label='Đóng giỏ hàng'>×</button></div></div>${customerBlock}<div class='cart-add-product mobile-only'><button class='btn btn-secondary' data-action='add-more-products' ${disabled}>＋ Thêm sản phẩm</button></div>${pendingNote}<div class='cart-items'>${rows || `<div class='cart-empty'><div>${checkoutPendingPayload ? 'Đơn đang chờ xác nhận.' : 'Chạm sản phẩm hoặc quét mã vạch'}</div></div>`}</div>${standardNoteRow}${deliverySection}<div class='cart-totals'><div class='cart-total-line'><span>Tạm tính</span><strong>${money(totals.subtotal)}</strong></div>${getMaxDiscountPct() > 0 ? `<button class='cart-total-line' data-action='discount' ${disabled} style='border:0;background:transparent;padding:0;text-align:left'><span>Giảm giá <span style='color:#4a7b58'>＋</span></span><strong>${totals.discount ? '−' + money(totals.discount) : 'Thêm'}</strong></button>` : `<div class='cart-total-line'><span>Giảm giá</span><strong>${totals.discount ? '−' + money(totals.discount) : '0đ'}</strong></div>`}<div class='cart-total-line total'><span>Khách cần trả</span><strong>${money(totals.total)}</strong></div></div><div class='cart-footer'>${renderPosModeFooter(totals, disabled)}</div></section>`;
+    const pointsLine = eff.pointsDiscountVnd > 0 ? `<div class='cart-total-line'><span>Trừ ${number(eff.pointsUsed)} điểm</span><strong style='color:var(--accent-strong)'>−${money(eff.pointsDiscountVnd)}</strong></div>` : '';
+    const debtBundleLine = eff.bundledDebtVnd > 0 ? `<div class='cart-total-line'><span>Gộp thu nợ cũ</span><strong class='stock-number low'>+${money(eff.bundledDebtVnd)}</strong></div>` : '';
+    return `<section class='panel cart-panel' ${isDesktop ? "data-tour-target='pos-cart-desktop'" : ''}>${billsBar}<div class='cart-heading ${cartTitle ? '' : 'is-compact'}'>${cartTitle}<div class='cart-heading-actions'><span>${number(totals.count)} SP</span><button class='cart-close mobile-only' data-action='close-cart' aria-label='Đóng giỏ hàng'>×</button></div></div>${customerBlock}<div class='cart-add-product mobile-only'><button class='btn btn-secondary' data-action='add-more-products' ${disabled}>＋ Thêm sản phẩm</button></div>${pendingNote}<div class='cart-items'>${rows || `<div class='cart-empty'><div>${checkoutPendingPayload ? 'Đơn đang chờ xác nhận.' : 'Chạm sản phẩm hoặc quét mã vạch'}</div></div>`}</div>${standardNoteRow}${deliverySection}<div class='cart-totals'><div class='cart-total-line'><span>Tạm tính</span><strong>${money(totals.subtotal)}</strong></div>${getMaxDiscountPct() > 0 ? `<button class='cart-total-line' data-action='discount' ${disabled} style='border:0;background:transparent;padding:0;text-align:left'><span>Giảm giá <span style='color:#4a7b58'>＋</span></span><strong>${totals.discount ? '−' + money(totals.discount) : 'Thêm'}</strong></button>` : `<div class='cart-total-line'><span>Giảm giá</span><strong>${totals.discount ? '−' + money(totals.discount) : '0đ'}</strong></div>`}${pointsLine}${debtBundleLine}<div class='cart-total-line total'><span>${eff.bundledDebtVnd > 0 ? 'Tổng thu (Đơn + Nợ cũ)' : 'Khách cần trả'}</span><strong>${money(eff.grandCollectVnd)}</strong></div></div><div class='cart-footer'>${renderPosModeFooter(totals, disabled)}</div></section>`;
   }
 
   function updateProductSelections(changedId) {
@@ -4183,13 +4536,14 @@
     const selectedSaved = selectedCustomerSavedSegment();
     const segmentOptions = [
       ['', 'Tất cả khách hàng'],
-      ['owing', 'Còn công nợ'],
+      ['owing', 'Đang nợ tiền'],
       ['over_credit_limit', 'Vượt hạn mức nợ'],
-      ['vip_tier', 'Khách VIP / Đại lý'],
+      ['vip_tier', 'VIP Mua nhiều / Đại lý'],
+      ['inactive30', 'Khách quen >30 ngày chưa ghé'],
+      ['no_purchase', 'Chưa mua lần nào'],
       ['wholesale', 'Khách sỉ'],
       ['repeat', 'Mua lại (từ 2 đơn)'],
       ['birthday_month', 'Sinh nhật tháng này'],
-      ['no_purchase', 'Chưa từng mua'],
       ['inactive90', '90 ngày chưa mua'],
     ].map(([value, label]) => `<option value='${value}' ${customerSegmentFilter === value ? 'selected' : ''}>${label}</option>`).join('');
     const savedSegmentOptions = [`<option value=''>Bộ lọc đã lưu…</option>`].concat(customerSavedSegments.map(function (segment) {
@@ -4201,9 +4555,9 @@
       <article class='stat-card'><div class='stat-top'><span class='stat-label'>Tổng khách hàng</span><span class='stat-icon'>${icon('users', 15)}</span></div><div class='stat-value'>${number(customerTotal)}</div></article>
       <article class='stat-card'><div class='stat-top'><span class='stat-label'>Còn công nợ</span><span class='stat-icon'>${icon('wallet', 15)}</span></div><div class='stat-value'>${number(owingCustomers.length)}</div><small class='muted'>${money(totalDebtVisible)}</small></article>
     </div>`;
-    return pageHeading('Khách hàng', '', (canEdit ? `<button class='btn btn-primary' data-action='new-customer'><span class='btn-icon'>＋</span> Thêm khách</button>` : '') + ((canImport || canExportData()) ? `<details class='catalog-more'><summary class='btn btn-secondary'>Khác</summary><div>${canImport ? `<button class='btn btn-secondary' data-action='import-customers'>Nhập CSV</button>` : ''}${canExportData() ? `<button class='btn btn-secondary' data-action='open-export'>Xuất CSV</button>` : ''}</div></details>` : '')) +
+    return pageHeading('Khách hàng', '', (canEdit ? `<button class='btn btn-primary' data-action='new-customer'><span class='btn-icon'>＋</span> Thêm khách</button>` : '') + (canExportData() ? `<button class='btn btn-secondary' data-action='export-customers'>Xuất Excel / CSV</button>` : '') + ((canImport || canExportData()) ? `<details class='catalog-more'><summary class='btn btn-secondary'>Khác</summary><div>${canImport ? `<button class='btn btn-secondary' data-action='import-customers'>Nhập CSV</button>` : ''}${canExportData() ? `<button class='btn btn-secondary' data-action='open-export'>Tùy chọn xuất CSV</button>` : ''}</div></details>` : '')) +
       kpiHtml +
-      `<nav class='workspace-tabs' aria-label='Nhóm khách hàng'><button type='button' data-action='customer-quick-filter' data-segment='' ${!customerSegmentFilter ? `aria-current='page'` : ''}>Tất cả</button><button type='button' data-action='customer-quick-filter' data-segment='owing' ${customerSegmentFilter === 'owing' ? `aria-current='page'` : ''}>Còn nợ</button><button type='button' data-action='customer-quick-filter' data-segment='vip_tier' ${customerSegmentFilter === 'vip_tier' ? `aria-current='page'` : ''}>VIP / Đại lý</button><button type='button' data-action='customer-quick-filter' data-segment='wholesale' ${customerSegmentFilter === 'wholesale' ? `aria-current='page'` : ''}>Khách sỉ</button><button type='button' data-action='customer-quick-filter' data-segment='repeat' ${customerSegmentFilter === 'repeat' ? `aria-current='page'` : ''}>Mua lại</button></nav><div class='customer-main-search'><div class='search-wrap'><span class='search-symbol'>⌕</span><input class='input' id='customer-search' type='search' placeholder='Tìm tên, SĐT hoặc mã KH…' value='${esc(searchTerms.customers)}' aria-label='Tìm khách hàng'></div></div><button class='customer-more-filters' type='button' data-action='toggle-customer-filters' aria-controls='customer-advanced' aria-expanded='${customerAdvancedOpen}'>${esc(filterToggleLabel)}</button><div id='customer-advanced' class='customer-advanced' ${customerAdvancedOpen ? '' : 'hidden'}><div class='customer-saved-tools'><label class='customer-saved-select-wrap'><span>Bộ lọc đã lưu</span><select class='input' id='customer-saved-segment-select' aria-label='Chọn bộ lọc khách hàng đã lưu'>${savedSegmentOptions}</select></label>${canManageSegments ? `<button class='btn btn-secondary' data-action='save-customer-segment' ${hasSavedCriteria ? '' : 'disabled'}>${selectedSaved ? 'Cập nhật' : 'Lưu bộ lọc'}</button>${selectedSaved ? `<button class='btn btn-secondary' data-action='delete-customer-segment' data-id='${esc(selectedSaved.id)}'>Xóa</button>` : ''}` : ''}</div><div class='toolbar'><div class='toolbar-left customer-filters'><input class='input customer-tag-filter' id='customer-tag-filter' type='search' maxlength='32' placeholder='Theo nhãn…' value='${esc(customerTagFilter)}' aria-label='Lọc khách hàng theo nhãn'/><select class='input customer-segment-filter' id='customer-segment-filter' aria-label='Phân khúc khách hàng'>${segmentOptions}</select><label class='customer-spend-filter'><span>Chi tiêu từ (đ)</span><input class='input customer-min-spent' id='customer-min-spent' type='number' min='0' max='9223372036854775807' step='1' inputmode='numeric' placeholder='Không giới hạn' value='${esc(customerMinSpentVnd)}' aria-describedby='customer-spend-error'/><small id='customer-spend-error' class='customer-spend-error' hidden></small></label></div></div></div><section class='panel'><div class='table-wrap'><table class='data-table'><thead><tr><th>Khách hàng</th><th>Đơn</th><th class='text-right'>Chi tiêu</th><th class='text-right'>Công nợ</th><th></th></tr></thead><tbody>${customerRows(customers) || `<tr><td colspan='5'><div class='empty-state'><strong>${hasCustomerFilters ? 'Không tìm thấy khách hàng' : 'Chưa có khách hàng'}</strong><span>${hasCustomerFilters ? 'Thử từ khóa hoặc bộ lọc khác.' : 'Bấm “＋ Thêm khách” để bắt đầu.'}</span></div></td></tr>`}</tbody></table></div><div class='pagination'><span>Hiển thị ${customers.length} / ${number(customerTotal)}</span><span class='pagination-actions'>${customerOffset > 0 ? `<button class='page-button' data-action='customers-page' data-offset='${Math.max(0, customerOffset - 100)}'>‹</button>` : ''}<span class='page-button current'>${Math.floor(customerOffset / 100) + 1}</span>${customerNextOffset !== null ? `<button class='page-button' data-action='customers-page' data-offset='${customerNextOffset}'>›</button>` : ''}</span></div></section>`;
+      `<nav class='workspace-tabs' aria-label='Nhóm khách hàng'><button type='button' data-action='customer-quick-filter' data-segment='' ${!customerSegmentFilter ? `aria-current='page'` : ''}>Tất cả</button><button type='button' data-action='customer-quick-filter' data-segment='owing' ${customerSegmentFilter === 'owing' ? `aria-current='page'` : ''}>Đang nợ tiền</button><button type='button' data-action='customer-quick-filter' data-segment='vip_tier' ${customerSegmentFilter === 'vip_tier' ? `aria-current='page'` : ''}>VIP Mua nhiều</button><button type='button' data-action='customer-quick-filter' data-segment='inactive30' ${customerSegmentFilter === 'inactive30' ? `aria-current='page'` : ''}>>30 ngày chưa ghé</button><button type='button' data-action='customer-quick-filter' data-segment='no_purchase' ${customerSegmentFilter === 'no_purchase' ? `aria-current='page'` : ''}>Chưa mua lần nào</button></nav><div class='customer-main-search'><div class='search-wrap'><span class='search-symbol'>⌕</span><input class='input' id='customer-search' type='search' placeholder='Tìm tên, SĐT hoặc mã KH…' value='${esc(searchTerms.customers)}' aria-label='Tìm khách hàng'></div></div><button class='customer-more-filters' type='button' data-action='toggle-customer-filters' aria-controls='customer-advanced' aria-expanded='${customerAdvancedOpen}'>${esc(filterToggleLabel)}</button><div id='customer-advanced' class='customer-advanced' ${customerAdvancedOpen ? '' : 'hidden'}><div class='customer-saved-tools'><label class='customer-saved-select-wrap'><span>Bộ lọc đã lưu</span><select class='input' id='customer-saved-segment-select' aria-label='Chọn bộ lọc khách hàng đã lưu'>${savedSegmentOptions}</select></label>${canManageSegments ? `<button class='btn btn-secondary' data-action='save-customer-segment' ${hasSavedCriteria ? '' : 'disabled'}>${selectedSaved ? 'Cập nhật' : 'Lưu bộ lọc'}</button>${selectedSaved ? `<button class='btn btn-secondary' data-action='delete-customer-segment' data-id='${esc(selectedSaved.id)}'>Xóa</button>` : ''}` : ''}</div><div class='toolbar'><div class='toolbar-left customer-filters'><input class='input customer-tag-filter' id='customer-tag-filter' type='search' maxlength='32' placeholder='Theo nhãn…' value='${esc(customerTagFilter)}' aria-label='Lọc khách hàng theo nhãn'/><select class='input customer-segment-filter' id='customer-segment-filter' aria-label='Phân khúc khách hàng'>${segmentOptions}</select><label class='customer-spend-filter'><span>Chi tiêu từ (đ)</span><input class='input customer-min-spent' id='customer-min-spent' type='number' min='0' max='9223372036854775807' step='1' inputmode='numeric' placeholder='Không giới hạn' value='${esc(customerMinSpentVnd)}' aria-describedby='customer-spend-error'/><small id='customer-spend-error' class='customer-spend-error' hidden></small></label></div></div></div><section class='panel'><div class='table-wrap'><table class='data-table'><thead><tr><th>Khách hàng</th><th>Đơn</th><th class='text-right'>Chi tiêu</th><th class='text-right'>Công nợ</th><th></th></tr></thead><tbody>${customerRows(customers) || `<tr><td colspan='5'><div class='empty-state'><strong>${hasCustomerFilters ? 'Không tìm thấy khách hàng' : 'Chưa có khách hàng'}</strong><span>${hasCustomerFilters ? 'Thử từ khóa hoặc bộ lọc khác.' : 'Bấm “＋ Thêm khách” để bắt đầu.'}</span></div></td></tr>`}</tbody></table></div><div class='pagination'><span>Hiển thị ${customers.length} / ${number(customerTotal)}</span><span class='pagination-actions'>${customerOffset > 0 ? `<button class='page-button' data-action='customers-page' data-offset='${Math.max(0, customerOffset - 100)}'>‹</button>` : ''}<span class='page-button current'>${Math.floor(customerOffset / 100) + 1}</span>${customerNextOffset !== null ? `<button class='page-button' data-action='customers-page' data-offset='${customerNextOffset}'>›</button>` : ''}</span></div></section>`;
   }
 
   function movementLabel(movement) {
@@ -5452,6 +5806,128 @@
     return `<fieldset class='staff-perms' data-member-perms='${uid}'><div class='staff-perm-header'><span class='staff-perm-title'>Quyền chi tiết theo nhân viên</span><button class='link-button' type='button' data-action='reset-member-perms' data-id='${uid}'>Đặt lại theo vai trò</button></div><div class='staff-perm-grid'>${toggles}</div><label class='staff-perm-discount'><span>Mức giảm giá tối đa tại POS (%)</span><input class='input' type='number' min='0' max='100' step='1' data-member-perm='${uid}' data-perm-key='pos_max_discount_pct' value='${esc(String(eff.pos_max_discount_pct ?? 0))}'/></label></fieldset>`;
   }
 
+  function renderStaffPayrollSection() {
+    const rows = payrollState.rows || [];
+    const modeLabel = (m) => ({ monthly: 'Theo tháng', shift: 'Theo ca', hourly: 'Theo giờ' })[m] || 'Theo tháng';
+    const unitLabel = (m) => ({ monthly: 'ngày công', shift: 'ca', hourly: 'giờ' })[m] || 'ngày công';
+    const rowsHtml = rows.map(function (row) {
+      const settled = row.settledPayslip;
+      const hasShortages = Number(row.shortageDeductionVnd || 0) > 0;
+      return `<tr data-payroll-row='${esc(row.userId)}'>
+        <td>
+          <div class='product-name-stack'>
+            <strong>${esc(row.displayName)}${row.staffCode ? ` <small class='badge badge-neutral'>${esc(row.staffCode)}</small>` : ''}</strong>
+            <small>${esc(staffRoleName(row.role))} · ${esc(modeLabel(row.salaryMode))} (${moneyVndText(row.baseSalaryVnd)})</small>
+            ${row.firstSeenAt ? `<small class='muted'>Hoạt động: ${humanDate(row.firstSeenAt, true)} → ${humanDate(row.lastSeenAt, true)}</small>` : ''}
+          </div>
+        </td>
+        <td>
+          <div style='display:flex;align-items:center;gap:6px'>
+            <input class='input' type='number' min='0' max='744' step='0.5' style='width:78px' data-payroll-units='${esc(row.userId)}' value='${esc(String(settled ? settled.worked_units : row.autoWorkedUnits))}' aria-label='Số công của ${esc(row.displayName)}'/>
+            <small class='muted'>${esc(unitLabel(row.salaryMode))}<br>(Tự đếm: ${number(row.activeDays)} ngày)</small>
+          </div>
+        </td>
+        <td class='text-right'><strong>${moneyVndText(settled ? settled.base_pay_vnd : row.basePayVnd)}</strong></td>
+        <td class='text-right'>
+          <div class='product-name-stack'>
+            <strong style='color:var(--accent-strong)'>+${moneyVndText(settled ? settled.commission_pay_vnd : row.commissionPayVnd)}</strong>
+            <small class='muted'>DT thực thu: ${moneyVndText(settled ? settled.net_sales_vnd : row.netSalesVnd)} (${number(row.commissionRateBps / 100)}%)</small>
+          </div>
+        </td>
+        <td class='text-right'>
+          ${Number(row.advanceDeductionVnd || 0) > 0
+            ? `<span class='stock-number low'>−${moneyVndText(row.advanceDeductionVnd)}</span>`
+            : settled && Number(settled.advance_deduction_vnd || 0) > 0
+              ? `<small class='muted'>Đã trừ −${moneyVndText(settled.advance_deduction_vnd)}</small>`
+              : `<span class='muted'>0 ₫</span>`}
+          <div><button type='button' class='link-button' data-action='open-staff-advance' data-id='${esc(row.userId)}'>＋ Ứng lương</button></div>
+        </td>
+        <td class='text-right'>
+          ${hasShortages
+            ? `<label style='display:inline-flex;align-items:center;gap:6px;cursor:pointer'><input type='checkbox' data-payroll-shortage='${esc(row.userId)}' checked/><span class='stock-number low'>−${moneyVndText(row.shortageDeductionVnd)}</span></label>`
+            : `<span class='muted'>0 ₫</span>`}
+        </td>
+        <td class='text-right'>
+          <strong style='font-size:15px;color:var(--accent-strong)'>${moneyVndText(settled ? settled.net_payable_vnd : row.netPayableVnd)}</strong>
+          ${settled ? `<div><span class='badge badge-success'>Đã chốt ${esc(settled.payslip_number)}</span></div>` : ''}
+        </td>
+        <td class='text-right'>
+          <div style='display:flex;flex-direction:column;gap:6px;align-items:flex-end'>
+            <button type='button' class='btn btn-primary' data-action='settle-staff-payroll' data-id='${esc(row.userId)}'>${settled ? 'Chốt bổ sung' : 'Chốt & Chi lương'}</button>
+            <button type='button' class='btn btn-secondary' data-action='share-staff-payslip-png' data-id='${esc(row.userId)}'>Ảnh phiếu lương</button>
+          </div>
+        </td>
+      </tr>`;
+    }).join('');
+    return `<section class='panel staff-panel'>
+      <div class='panel-header'>
+        <div>
+          <h2>Bảng lương tự động 1 trang</h2>
+          <p>Tự đếm ngày công từ ca &amp; đơn bán, tự tính hoa hồng thực thu (đã trừ hàng trả), tự gom tiền ứng lương và lệch két.</p>
+        </div>
+        <div style='display:flex;align-items:center;gap:8px'>
+          <label style='display:flex;align-items:center;gap:6px'><span class='muted'>Kỳ lương:</span><input class='input' id='payroll-month-input' type='month' value='${esc(payrollState.periodMonth)}' style='width:155px'/></label>
+          <button type='button' class='btn btn-secondary' data-action='reload-payroll'>Làm mới</button>
+        </div>
+      </div>
+      ${payrollState.error ? `<div class='auth-message error'>${esc(payrollState.error)}</div>` : ''}
+      ${payrollState.loading ? `<div class='empty-state'><strong>Đang tổng hợp bảng lương…</strong></div>` : `
+      <div class='table-wrap'>
+        <table class='data-table'>
+          <thead>
+            <tr>
+              <th>Nhân viên</th>
+              <th>Số công / Ca</th>
+              <th class='text-right'>Lương cơ bản</th>
+              <th class='text-right'>Hoa hồng thực thu</th>
+              <th class='text-right'>Trừ tạm ứng</th>
+              <th class='text-right'>Trừ lệch két</th>
+              <th class='text-right'>Thực lĩnh</th>
+              <th class='text-right'>Thao tác</th>
+            </tr>
+          </thead>
+          <tbody>${rowsHtml || `<tr><td colspan='8'><div class='empty-state'><strong>Chưa có nhân viên trong bảng lương</strong></div></td></tr>`}</tbody>
+        </table>
+      </div>`}
+    </section>`;
+  }
+
+  function renderStaffRadarSection() {
+    const prebills = radarState.prebillAlerts || [];
+    const refunds = radarState.refundAlerts || [];
+    const shortages = radarState.shortageAlerts || [];
+    return `<section class='panel staff-panel'>
+      <div class='panel-header'>
+        <div>
+          <h2>Radar Chống Thất Thoát Thực Chiến</h2>
+          <p>Tự động bắt 3 hành vi gây thất thoát tiền mặt tại quầy: In tạm tính (F8) rồi xóa giỏ/sửa giảm món, hoàn trả tiền mặt và đóng ca lệch thiếu két.</p>
+        </div>
+        <button type='button' class='btn btn-secondary' data-action='reload-radar'>Làm mới</button>
+      </div>
+      ${radarState.loading ? `<div class='empty-state'><strong>Đang quét dữ liệu kiểm soát…</strong></div>` : `
+      <div style='display:grid;gap:14px'>
+        <div class='panel' style='padding:14px'>
+          <h3 style='margin:0 0 8px;font-size:14px'>1. In hóa đơn tạm tính (F8) nhưng xóa giỏ hoặc giảm tiền &gt; 15% (${number(prebills.length)})</h3>
+          ${prebills.length ? `<div class='staff-list'>${prebills.map(function (a) {
+            return `<article class='staff-invite-row'><div><strong style='color:#b91c1c'>${esc(a.description)}</strong><small>${humanDate(a.printedAt, true)} · ${number(a.lineCount)} dòng hàng</small></div><span class='badge badge-warning'>Cần kiểm tra</span></article>`;
+          }).join('')}</div>` : `<small class='muted'>Chưa phát hiện trường hợp in tạm tính F8 bất thường.</small>`}
+        </div>
+        <div class='panel' style='padding:14px'>
+          <h3 style='margin:0 0 8px;font-size:14px'>2. Các ca đóng két lệch thiếu tiền mặt (${number(shortages.length)})</h3>
+          ${shortages.length ? `<div class='staff-list'>${shortages.map(function (s) {
+            return `<article class='staff-invite-row'><div><strong>${esc(s.description)}</strong><small>Đóng ca: ${humanDate(s.closedAt, true)} · ${s.settled ? 'Đã chốt vào phiếu lương' : s.waived ? 'Đã bỏ qua (không trừ lương)' : 'Đang chờ trừ lương'}</small></div>${!s.settled ? `<button type='button' class='btn btn-secondary' data-action='toggle-waive-shortage' data-id='${esc(s.id)}' data-waived='${s.waived ? 'false' : 'true'}'>${s.waived ? 'Đưa lại vào trừ lương' : 'Bỏ qua (Không trừ lương)'}</button>` : ''}</article>`;
+          }).join('')}</div>` : `<small class='muted'>Không có ca đóng két nào bị lệch thiếu tiền mặt.</small>`}
+        </div>
+        <div class='panel' style='padding:14px'>
+          <h3 style='margin:0 0 8px;font-size:14px'>3. Nhật ký trả hàng &amp; hoàn tiền gần đây (${number(refunds.length)})</h3>
+          ${refunds.length ? `<div class='staff-list'>${refunds.map(function (r) {
+            return `<article class='staff-invite-row'><div><strong>${esc(r.description)}</strong><small>${humanDate(r.createdAt, true)} · Lý do: ${esc(r.reason)}</small></div>${r.walkinCustomer ? `<span class='badge badge-warning'>Khách lẻ không SĐT</span>` : `<span class='badge badge-neutral'>Có hồ sơ KH</span>`}</article>`;
+          }).join('')}</div>` : `<small class='muted'>Chưa phát sinh giao dịch hoàn trả hàng.</small>`}
+        </div>
+      </div>`}
+    </section>`;
+  }
+
   function renderStaff() {
     if (store.role !== 'owner') return `<section class='panel locked-page'><div class='empty-icon'>${icon('users', 23)}</div><h2>Không có quyền quản lý nhân viên</h2><p>Chỉ chủ cửa hàng mới có thể mời, phân quyền hoặc tạm khóa thành viên.</p></section>`;
     const q = staffSearchTerm.trim().toLocaleLowerCase('vi');
@@ -5461,6 +5937,9 @@
       const hay = `${member.staff_code || ''} ${member.display_name || ''} ${member.email || ''} ${member.phone || ''} ${member.job_title || ''}`.toLocaleLowerCase('vi');
       return hay.includes(q);
     });
+    const bankOptionsHtml = (selectedBin) => `<option value=''>— Chọn ngân hàng nhận lương —</option>` + ((window.SlinkBanksVn?.BANKS || []).map(function (b) {
+      return `<option value='${esc(b.bin)}' ${selectedBin === b.bin ? 'selected' : ''}>${esc(b.shortName)} · ${esc(b.name)}</option>`;
+    }).join(''));
     const memberRows = filteredMembers.map(function (member) {
       const joined = member.joined_at ? humanDate(member.joined_at) : 'Chưa có ngày tham gia';
       const scopeMode = member.warehouse_scope_mode || 'all';
@@ -5471,7 +5950,7 @@
       const codeBadge = member.staff_code ? `<span class='badge badge-neutral' style='margin-right:6px'>${esc(member.staff_code)}</span>` : '';
       const commPercent = Number(member.commission_rate_bps || 0) / 100;
       const perfSummary = `${number(member.orders_count || 0)} đơn bán · Doanh số ${moneyVndText(member.revenue_vnd || '0')}${commPercent > 0 ? ` · Hoa hồng (${commPercent}%): ${moneyVndText(member.commission_vnd || '0')}` : ''}${Number(member.base_salary_vnd || 0) > 0 ? ` · Lương cứng: ${moneyVndText(member.base_salary_vnd)}` : ''}${Number(member.shifts_count || 0) > 0 ? ` · ${number(member.shifts_count)} ca thu ngân` : ''}`;
-      return `<article class='staff-row'><div class='staff-person'><span class='avatar'>${esc(initials(member.display_name))}</span><span><div>${codeBadge}<button type='button' class='link-button' data-action='staff-activity' data-id='${esc(member.user_id)}'>${esc(member.display_name)}</button>${member.job_title ? ` <small class='muted'>(${esc(member.job_title)})</small>` : ''}</div><small>${esc(member.email)}${member.phone ? ` · SĐT: ${esc(member.phone)}` : ''}</small><small>${esc(staffRoleName(member.role))} · ${member.status === 'suspended' ? 'Tạm khóa' : 'Đang làm'} · Tham gia ${esc(joined)}</small><small style='color:var(--accent-strong);font-weight:600'>${perfSummary}</small></span></div><details class='staff-details' data-staff-detail='${esc(member.user_id)}' ${staffExpandedIds.has(member.user_id) ? 'open' : ''}><summary>Sửa hồ sơ, lương hoa hồng &amp; quyền</summary><div class='staff-controls' style='display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px'><label><span>Họ tên</span><input class='input' data-member-name='${member.user_id}' value='${esc(member.display_name || '')}' maxlength='120'/></label><label><span>Mã NV</span><input class='input' data-member-code='${member.user_id}' value='${esc(member.staff_code || '')}' maxlength='40' placeholder='NV-001'/></label><label><span>Số điện thoại</span><input class='input' data-member-phone='${member.user_id}' value='${esc(member.phone || '')}' maxlength='32' placeholder='09xx...'/></label><label><span>Chức danh / Ca</span><input class='input' data-member-title='${member.user_id}' value='${esc(member.job_title || '')}' maxlength='120' placeholder='Thu ngân ca sáng'/></label><label><span>Vai trò</span><select class='input' data-member-role='${member.user_id}'>${Array.from(['manager', 'cashier', 'stockkeeper', 'accountant']).map(function (role) { return `<option value='${role}' ${member.role === role ? 'selected' : ''}>${staffRoleName(role)}</option>`; }).join('')}</select></label><label><span>Trạng thái</span><select class='input' data-member-status='${member.user_id}'><option value='active' ${member.status === 'active' ? 'selected' : ''}>Đang hoạt động</option><option value='suspended' ${member.status === 'suspended' ? 'selected' : ''}>Tạm khóa</option></select></label><label><span>Lương cơ bản (đ/tháng)</span><input class='input' type='number' min='0' step='1' data-member-salary='${member.user_id}' value='${esc(member.base_salary_vnd || '0')}'/></label><label><span>Hoa hồng doanh số (%)</span><input class='input' type='number' min='0' max='100' step='0.1' data-member-commission='${member.user_id}' value='${esc(commPercent)}'/></label><label style='grid-column:1 / -1'><span>Ghi chú hồ sơ</span><input class='input' data-member-note='${member.user_id}' value='${esc(member.note || '')}' maxlength='500' placeholder='Ghi chú hợp đồng, ca làm việc...'/></label><div style='grid-column:1 / -1;display:flex;justify-content:flex-end'><button class='btn btn-primary' data-action='save-staff-member' data-id='${member.user_id}'>Lưu hồ sơ &amp; quyền</button></div></div>${renderStaffPermFieldset(member)}<fieldset class='staff-scope' data-member-scope='${member.user_id}' ${member.role === 'stockkeeper' ? '' : 'hidden'}><legend>Phạm vi kho của nhân viên kho</legend><label class='staff-scope-mode'><span>Kho được phép truy cập</span><select class='input' data-member-scope-mode='${member.user_id}'><option value='all' ${scopeMode === 'all' ? 'selected' : ''}>Tất cả kho hiện tại và kho mới</option><option value='selected' ${scopeMode === 'selected' ? 'selected' : ''}>Chỉ các kho đã chọn</option></select></label><div class='staff-warehouse-options' data-member-warehouse-list='${member.user_id}' ${scopeMode === 'selected' ? '' : 'hidden'}>${warehouseChecks || `<small>Chưa có kho đang hoạt động.</small>`}</div><small>Kho mới chỉ tự cấp cho nhân viên ở chế độ “Tất cả kho”.</small></fieldset></details></article>`;
+      return `<article class='staff-row'><div class='staff-person'><span class='avatar'>${esc(initials(member.display_name))}</span><span><div>${codeBadge}<button type='button' class='link-button' data-action='staff-activity' data-id='${esc(member.user_id)}'>${esc(member.display_name)}</button>${member.job_title ? ` <small class='muted'>(${esc(member.job_title)})</small>` : ''}</div><small>${esc(member.email)}${member.phone ? ` · SĐT: ${esc(member.phone)}` : ''}</small><small>${esc(staffRoleName(member.role))} · ${member.status === 'suspended' ? 'Tạm khóa' : 'Đang làm'} · Tham gia ${esc(joined)}</small><small style='color:var(--accent-strong);font-weight:600'>${perfSummary}</small></span><div style='margin-left:auto'><button type='button' class='btn btn-secondary' data-action='open-staff-advance' data-id='${esc(member.user_id)}'>💸 Ứng lương</button></div></div><details class='staff-details' data-staff-detail='${esc(member.user_id)}' ${staffExpandedIds.has(member.user_id) ? 'open' : ''}><summary>Sửa hồ sơ, lương hoa hồng &amp; quyền</summary><div class='staff-controls' style='display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px'><label><span>Họ tên</span><input class='input' data-member-name='${member.user_id}' value='${esc(member.display_name || '')}' maxlength='120'/></label><label><span>Mã NV</span><input class='input' data-member-code='${member.user_id}' value='${esc(member.staff_code || '')}' maxlength='40' placeholder='NV-001'/></label><label><span>Số điện thoại</span><input class='input' data-member-phone='${member.user_id}' value='${esc(member.phone || '')}' maxlength='32' placeholder='09xx...'/></label><label><span>Chức danh / Ca</span><input class='input' data-member-title='${member.user_id}' value='${esc(member.job_title || '')}' maxlength='120' placeholder='Thu ngân ca sáng'/></label><label><span>Vai trò</span><select class='input' data-member-role='${member.user_id}'>${Array.from(['manager', 'cashier', 'stockkeeper', 'accountant']).map(function (role) { return `<option value='${role}' ${member.role === role ? 'selected' : ''}>${staffRoleName(role)}</option>`; }).join('')}</select></label><label><span>Trạng thái</span><select class='input' data-member-status='${member.user_id}'><option value='active' ${member.status === 'active' ? 'selected' : ''}>Đang hoạt động</option><option value='suspended' ${member.status === 'suspended' ? 'selected' : ''}>Tạm khóa</option></select></label><label><span>Hình thức lương</span><select class='input' data-member-salary-mode='${member.user_id}'><option value='monthly' ${(member.salary_mode || 'monthly') === 'monthly' ? 'selected' : ''}>Theo tháng (26 công)</option><option value='shift' ${member.salary_mode === 'shift' ? 'selected' : ''}>Theo ca làm việc</option><option value='hourly' ${member.salary_mode === 'hourly' ? 'selected' : ''}>Theo giờ làm việc</option></select></label><label><span>Mức lương cơ bản (đ)</span><input class='input' type='number' min='0' step='1' data-member-salary='${member.user_id}' value='${esc(member.base_salary_vnd || '0')}'/></label><label><span>Hoa hồng doanh số (%)</span><input class='input' type='number' min='0' max='100' step='0.1' data-member-commission='${member.user_id}' value='${esc(commPercent)}'/></label><label><span>Ngân hàng nhận lương</span><select class='input' data-member-bank-bin='${member.user_id}'>${bankOptionsHtml(member.bank_bin || '')}</select></label><label><span>Số tài khoản</span><input class='input' data-member-bank-account='${member.user_id}' value='${esc(member.bank_account_number || '')}' maxlength='40' placeholder='STK nhận lương'/></label><label><span>Chủ tài khoản</span><input class='input' data-member-bank-owner='${member.user_id}' value='${esc(member.bank_account_owner || '')}' maxlength='120' placeholder='NGUYEN VAN A'/></label><label style='grid-column:1 / -1'><span>Ghi chú hồ sơ</span><input class='input' data-member-note='${member.user_id}' value='${esc(member.note || '')}' maxlength='500' placeholder='Ghi chú hợp đồng, ca làm việc...'/></label><div style='grid-column:1 / -1;display:flex;justify-content:flex-end'><button class='btn btn-primary' data-action='save-staff-member' data-id='${member.user_id}'>Lưu hồ sơ &amp; quyền</button></div></div>${renderStaffPermFieldset(member)}<fieldset class='staff-scope' data-member-scope='${member.user_id}' ${member.role === 'stockkeeper' ? '' : 'hidden'}><legend>Phạm vi kho của nhân viên kho</legend><label class='staff-scope-mode'><span>Kho được phép truy cập</span><select class='input' data-member-scope-mode='${member.user_id}'><option value='all' ${scopeMode === 'all' ? 'selected' : ''}>Tất cả kho hiện tại và kho mới</option><option value='selected' ${scopeMode === 'selected' ? 'selected' : ''}>Chỉ các kho đã chọn</option></select></label><div class='staff-warehouse-options' data-member-warehouse-list='${member.user_id}' ${scopeMode === 'selected' ? '' : 'hidden'}>${warehouseChecks || `<small>Chưa có kho đang hoạt động.</small>`}</div><small>Kho mới chỉ tự cấp cho nhân viên ở chế độ “Tất cả kho”.</small></fieldset></details></article>`;
     }).join('');
     const inviteRows = staffState.invitations.map(function (invite) {
       const pendingInvite = invite.status === 'pending';
@@ -5491,6 +5970,17 @@
       <article class='stat-card'><div class='stat-top'><span class='stat-label'>Doanh số nhân viên</span><span class='stat-icon'>${icon('spark', 15)}</span></div><div class='stat-value'>${moneyVndText(summary.totalTeamRevenueVnd)}</div><small class='muted'>Tính từ đơn bán hoàn tất</small></article>
       <article class='stat-card'><div class='stat-top'><span class='stat-label'>Lương &amp; Hoa hồng dự kiến</span><span class='stat-icon'>${icon('wallet', 15)}</span></div><div class='stat-value'>${moneyVndText(summary.totalEstimatedPayoutVnd)}</div><small class='muted'>Lương cơ bản + Hoa hồng doanh số</small></article>
     </div>`;
+    const subTabs = `<nav class='workspace-tabs' aria-label='Phân hệ quản trị nhân sự' style='margin-bottom:12px'>
+      <button type='button' data-action='staff-subtab' data-tab='members' ${staffSubTab === 'members' ? "aria-current='page'" : ''}>Hồ sơ &amp; Phân quyền (${number(staffState.members.length)})</button>
+      <button type='button' data-action='staff-subtab' data-tab='payroll' ${staffSubTab === 'payroll' ? "aria-current='page'" : ''}>Bảng lương tự động &amp; Chốt lương</button>
+      <button type='button' data-action='staff-subtab' data-tab='radar' ${staffSubTab === 'radar' ? "aria-current='page'" : ''}>Cảnh báo thất thoát (F8 &amp; Lệch két)</button>
+    </nav>`;
+    if (staffSubTab === 'payroll') {
+      return pageHeading('Quản lý nhân viên', '', `<button class='btn btn-secondary' data-action='new-staff-invite'>✉ Mời qua Email</button><button class='btn btn-primary' data-action='new-staff-direct'>${icon('plus', 15)} Tạo nhanh nhân viên</button>`) + kpiHtml + subTabs + renderStaffPayrollSection();
+    }
+    if (staffSubTab === 'radar') {
+      return pageHeading('Quản lý nhân viên', '', `<button class='btn btn-secondary' data-action='new-staff-invite'>✉ Mời qua Email</button><button class='btn btn-primary' data-action='new-staff-direct'>${icon('plus', 15)} Tạo nhanh nhân viên</button>`) + kpiHtml + subTabs + renderStaffRadarSection();
+    }
     const roleTabs = `<nav class='workspace-tabs' aria-label='Lọc vai trò nhân viên'>${[['', 'Tất cả'], ['cashier', 'Thu ngân'], ['stockkeeper', 'Nhân viên kho'], ['accountant', 'Kế toán'], ['manager', 'Quản lý']].map(([val, label]) => `<button type='button' data-action='staff-role-filter' data-role='${val}' ${staffRoleFilter === val ? "aria-current='page'" : ''}>${label}</button>`).join('')}</nav>`;
     const permRows = [
       ['Bán hàng tại quầy (POS)', 'posSell'],
@@ -5507,7 +5997,7 @@
     const permRoles = [['owner', 'Chủ'], ['manager', 'Quản lý'], ['cashier', 'Thu ngân'], ['stockkeeper', 'Kho'], ['accountant', 'Kế toán']];
     const permMatrixHtml = `<section class='panel staff-panel'><div class='panel-header'><div><h2>Bảng phân quyền theo vai trò</h2><p>Quyền được áp dụng đồng thời cả trên giao diện và máy chủ API.</p></div></div><div class='table-wrap'><table class='data-table'><thead><tr><th>Chức năng</th>${permRoles.map(([, l]) => `<th class='text-right'>${l}</th>`).join('')}</tr></thead><tbody>${permRows.map(([label, key]) => `<tr><td>${label}</td>${permRoles.map(([r]) => `<td class='text-right'>${ROLE_CAPABILITIES[r]?.[key] ? `<span class='badge badge-success'>Có</span>` : `<span class='muted'>—</span>`}</td>`).join('')}</tr>`).join('')}</tbody></table></div></section>`;
     return pageHeading('Quản lý nhân viên', '', `<button class='btn btn-secondary' data-action='new-staff-invite' data-tour-target='staff-invite'>✉ Mời qua Email</button><button class='btn btn-primary' data-action='new-staff-direct'>${icon('plus', 15)} Tạo nhanh nhân viên</button>`) +
-      kpiHtml + roleTabs +
+      kpiHtml + subTabs + roleTabs +
       `<div class='toolbar' style='margin-bottom:12px'><div class='toolbar-left'><div class='search-wrap'><span class='search-symbol'>⌕</span><input class='input' id='staff-search-input' type='search' placeholder='Tìm theo mã NV, họ tên, SĐT, chức danh hoặc email…' value='${esc(staffSearchTerm)}' aria-label='Tìm nhân viên'/></div></div></div>` +
       `${staffState.error ? `<div class='auth-message error'>${esc(staffState.error)} <button class='link-button' data-action='reload-staff'>Tải lại</button></div>` : ''}<section class='panel staff-panel'><div class='panel-header'><div><h2>Hồ sơ &amp; Hiệu suất nhân viên</h2></div><span class='badge badge-info'><i class='badge-dot'></i>${filteredMembers.length} nhân viên</span></div>${staffState.loading ? `<div class='empty-state'><strong>Đang tải thành viên…</strong></div>` : memberRows ? `<div class='staff-list'>${memberRows}</div>` : `<div class='empty-state'><strong>Chưa có nhân viên phù hợp</strong><span>Bấm “＋ Tạo nhanh nhân viên” để cấp tài khoản dùng ngay tại quầy.</span></div>`}</section>${permMatrixHtml}<section class='panel staff-panel'><div class='panel-header'><div><h2>Lời mời qua Email</h2></div></div>${inviteRows ? `<div class='staff-list'>${inviteRows}</div>` : `<div class='empty-state'><strong>Chưa có lời mời</strong></div>`}</section>`;
   }
@@ -10479,10 +10969,16 @@
       if (amountReceivedVnd > checkoutTotal && cashReceived === 0) return toast('Không thể tính tiền thối', 'Chỉ khoản tiền mặt mới được nhận cao hơn số còn phải thanh toán.', 'error');
       if (amountReceivedVnd < checkoutTotal && !customerId) return toast('Chọn khách hàng', 'Cần gắn khách hàng để lưu khoản còn nợ.', 'error');
       checkoutIdempotencyKey = checkoutIdempotencyKey || newIdempotencyKey();
+      const eff = posEffectivePayable(totals);
       checkoutPendingPayload = {
         _slinkOfflineVersion: 1,
         items: buildSalePayloadItems(),
         customerId: customerId,
+        customerInline: (!customerId && posCustomerInlineText.trim()) ? posCustomerInlineText.trim() : undefined,
+        sellerId: posSellerId || authSession?.user?.id || undefined,
+        redeemPoints: Boolean(posRedeemPointsActive && eff.pointsUsed > 0),
+        settlePriorDebt: false,
+        prebillEventId: activePosPrebillId || undefined,
         discountVnd: totals.discount,
         promotionCode: String(data.get('promotionCode') || '').trim().toUpperCase() || undefined,
         promotionDiscountVnd: String(form.dataset.promotionDiscountVnd || '0'),
@@ -10505,15 +11001,17 @@
     const short = cart.find(item => { const p = productById(item.id); return !p || item.qty > availableForSale(p); });
     if (short) return toast('Số hàng có thể bán đã đổi', 'Kiểm tra lại số lượng trong giỏ.', 'error');
     const totals = cartTotals();
+    const eff = posEffectivePayable(totals);
+    const collectTotal = eff.grandCollectVnd;
     const maxAllowedDisc = maxAllowedDiscountVnd(totals.subtotal);
     if (totals.discount > maxAllowedDisc) {
       return toast('Vượt hạn mức giảm giá', `Tài khoản này chỉ được giảm tối đa ${number(getMaxDiscountPct())}% (${money(maxAllowedDisc)}).`, 'error');
     }
     const safeMethod = method === 'bank_transfer' ? 'bank_transfer' : 'cash';
-    let received = totals.total;
+    let received = collectTotal;
     if (safeMethod === 'cash' && posFastCashInput !== '') {
       const parsed = Number(posFastCashInput);
-      if (!Number.isSafeInteger(parsed) || parsed < totals.total) {
+      if (!Number.isSafeInteger(parsed) || parsed < collectTotal) {
         return toast('Tiền khách đưa chưa đủ', 'Nhập đúng số tiền khách đưa hoặc bấm Đủ tiền.', 'error');
       }
       received = parsed;
@@ -10523,6 +11021,11 @@
       _slinkOfflineVersion: 1,
       items: buildSalePayloadItems(),
       customerId: cartCustomerId || null,
+      customerInline: (!cartCustomerId && posCustomerInlineText.trim()) ? posCustomerInlineText.trim() : undefined,
+      sellerId: posSellerId || authSession?.user?.id || undefined,
+      redeemPoints: Boolean(posRedeemPointsActive && eff.pointsUsed > 0),
+      settlePriorDebt: Boolean(posBundlePriorDebtActive && eff.bundledDebtVnd > 0),
+      prebillEventId: activePosPrebillId || undefined,
       discountVnd: totals.discount,
       method: safeMethod,
       tenders: received > 0 ? [{ method: safeMethod, amountReceivedVnd: received }] : [],
@@ -10541,6 +11044,8 @@
     }
     const settings = integrationState.data?.settings || {};
     const totals = cartTotals();
+    const eff = posEffectivePayable(totals);
+    const collectTotal = eff.grandCollectVnd;
     if (!settings.bankBin || !settings.bankAccountNumber || !window.SlinkIntegrationsUI) {
       const canConfig = hasPerm('manageSettings');
       showModal('Chưa cài tài khoản VietQR', '', `<div class='empty-state'><strong>Chưa có số tài khoản ngân hàng</strong><span>Nhập Ngân hàng và Số tài khoản trong Cài đặt để tự tạo mã VietQR cho từng đơn (không cần kết nối API).</span></div>`, `${canConfig ? `<button class='btn btn-primary' type='button' data-route='settings'>Mở Cài đặt →</button>` : ''}<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button>`);
@@ -10551,11 +11056,11 @@
       bankAccountNumber: settings.bankAccountNumber,
       bankAccountName: settings.bankAccountName,
       bankName: settings.bankName,
-      amountVnd: String(totals.total),
-      note: `${store.settings.storeName || 'SLINK'} ${totals.total}`.slice(0, 45),
+      amountVnd: String(collectTotal),
+      note: `${store.settings.storeName || 'SLINK'} ${collectTotal}`.slice(0, 45),
     });
-    const fullscreenBody = `<div class='vietqr-fullscreen-body'><div class='vietqr-fullscreen-amount'>${money(totals.total)}</div>${qrHtml}</div>`;
-    const fullscreenFooter = `<div class='vietqr-fullscreen-actions'><button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button><button class='btn btn-primary' type='button' data-action='pos-confirm-vietqr'>Đã nhận tiền · Hoàn tất (${money(totals.total)})</button></div>`;
+    const fullscreenBody = `<div class='vietqr-fullscreen-body'><div class='vietqr-fullscreen-amount'>${money(collectTotal)}</div>${eff.bundledDebtVnd > 0 ? `<p class='muted' style='text-align:center;margin:4px 0 8px'>Đã gộp đơn mới (${money(eff.orderNetVnd)}) + nợ cũ (${money(eff.bundledDebtVnd)})</p>` : ''}${qrHtml}</div>`;
+    const fullscreenFooter = `<div class='vietqr-fullscreen-actions'><button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button><button class='btn btn-primary' type='button' data-action='pos-confirm-vietqr'>Đã nhận tiền · Hoàn tất (${money(collectTotal)})</button></div>`;
     showModal('Quét VietQR thanh toán', '', fullscreenBody, fullscreenFooter, true);
     modal.classList.add('modal-vietqr-fullscreen');
     vietqrBrightnessActive = true;
@@ -10570,15 +11075,17 @@
     if (short) return toast('Không đủ hàng để bán', 'Kiểm tra lại số lượng trong giỏ.', 'error');
     if (posStandardMethod === 'debt') return openCheckout();
     const totals = cartTotals();
+    const eff = posEffectivePayable(totals);
+    const collectTotal = eff.grandCollectVnd;
     const maxAllowedDisc = maxAllowedDiscountVnd(totals.subtotal);
     if (totals.discount > maxAllowedDisc) {
       return toast('Vượt hạn mức giảm giá', `Tài khoản này chỉ được giảm tối đa ${number(getMaxDiscountPct())}% (${money(maxAllowedDisc)}).`, 'error');
     }
     const safeMethod = posStandardMethod === 'bank_transfer' ? 'bank_transfer' : 'cash';
-    let received = totals.total;
+    let received = collectTotal;
     if (safeMethod === 'cash' && posFastCashInput !== '') {
       const parsed = Number(posFastCashInput);
-      if (!Number.isSafeInteger(parsed) || parsed < totals.total) {
+      if (!Number.isSafeInteger(parsed) || parsed < collectTotal) {
         return toast('Tiền khách đưa chưa đủ', 'Nhập đúng số tiền khách đưa hoặc bấm Đủ tiền.', 'error');
       }
       received = parsed;
@@ -10588,6 +11095,11 @@
       _slinkOfflineVersion: 1,
       items: buildSalePayloadItems(),
       customerId: cartCustomerId || null,
+      customerInline: (!cartCustomerId && posCustomerInlineText.trim()) ? posCustomerInlineText.trim() : undefined,
+      sellerId: posSellerId || authSession?.user?.id || undefined,
+      redeemPoints: Boolean(posRedeemPointsActive && eff.pointsUsed > 0),
+      settlePriorDebt: Boolean(posBundlePriorDebtActive && eff.bundledDebtVnd > 0),
+      prebillEventId: activePosPrebillId || undefined,
       discountVnd: totals.discount,
       method: safeMethod,
       tenders: received > 0 ? [{ method: safeMethod, amountReceivedVnd: received }] : [],
@@ -12738,6 +13250,10 @@
     const phone = document.querySelector(`[data-member-phone='${userId}']`)?.value?.trim();
     const jobTitle = document.querySelector(`[data-member-title='${userId}']`)?.value?.trim();
     const baseSalaryVnd = document.querySelector(`[data-member-salary='${userId}']`)?.value?.trim() || '0';
+    const salaryMode = document.querySelector(`[data-member-salary-mode='${userId}']`)?.value || 'monthly';
+    const bankBin = document.querySelector(`[data-member-bank-bin='${userId}']`)?.value?.trim() || '';
+    const bankAccountNumber = document.querySelector(`[data-member-bank-acc='${userId}']`)?.value?.trim() || '';
+    const bankAccountOwner = document.querySelector(`[data-member-bank-owner='${userId}']`)?.value?.trim() || '';
     const commPct = Number(document.querySelector(`[data-member-commission='${userId}']`)?.value || 0);
     const commissionRateBps = Number.isFinite(commPct) && commPct >= 0 && commPct <= 100 ? Math.round(commPct * 100) : 0;
     const note = document.querySelector(`[data-member-note='${userId}']`)?.value?.trim();
@@ -12755,6 +13271,10 @@
           ...(phone !== undefined ? { phone } : {}),
           ...(jobTitle !== undefined ? { jobTitle } : {}),
           baseSalaryVnd,
+          salaryMode,
+          bankBin,
+          bankAccountNumber,
+          bankAccountOwner,
           commissionRateBps,
           ...(note !== undefined ? { note } : {}),
           warehouseScopeMode,
@@ -13012,6 +13532,23 @@
     if (!cart.length) return toast('Giỏ hàng đang trống', 'Thêm sản phẩm trước khi in tạm tính.', 'error');
     const totals = cartTotals();
     const customer = customerById(cartCustomerId);
+    if (navigator.onLine && store.id) {
+      apiRequest(`/api/stores/${encodeURIComponent(store.id)}/pos/prebill-events`, {
+        method: 'POST',
+        body: {
+          billTabLabel: posBills.find(b => b.id === activePosBillId)?.label || 'Đơn 1',
+          customerName: customer?.name || posCustomerInlineText.trim() || 'Khách lẻ',
+          itemCount: totals.count,
+          totalVnd: String(totals.total),
+          itemsSnapshot: cart.map(line => {
+            const p = productById(line.id);
+            return { productId: line.id, name: p?.name || '', qty: line.qty, price: cartUnitPrice(line) };
+          }),
+        },
+      }).then(res => {
+        if (res?.prebillEvent?.id) activePosPrebillId = res.prebillEvent.id;
+      }).catch(() => {});
+    }
     const printer = window.SlinkEscPosPrinter;
     const caps = printer?.capabilities?.();
     if (printer && (caps?.btConnected || caps?.connected)) {
@@ -13524,7 +14061,7 @@
     else if (page === 'audit') loadAuditEvents(null, 0);
     else if (page === 'customers') loadCustomersPage(searchTerms.customers, 0).then(() => { if (page === 'customers') render(); });
     else if (page === 'orders') { loadIntegrationStatus(); loadOrdersPage(searchTerms.orders, 0).then(() => { if (page === 'orders') render(); }); }
-    else if (page === 'pos') { loadIntegrationStatus(); loadProductsPage('', 0, { silentLoading: true }); }
+    else if (page === 'pos') { loadIntegrationStatus(); loadPosSellers(); loadProductsPage('', 0, { silentLoading: true }); }
   }
 
   async function submitAuth(form) {
@@ -14283,6 +14820,8 @@
         store.customers.push({ id, name: button.dataset.name || '', phone: button.dataset.phone || '', discountRateBps: discBps, shippingAddress: addr });
       }
       cartCustomerId = id || '';
+      posRedeemPointsActive = false;
+      posBundlePriorDebtActive = false;
       if (id) {
         const cust = customerById(id);
         const rateBps = cust?.discountRateBps || discBps;
@@ -14294,6 +14833,9 @@
         }
         const shipAddr = cust?.shippingAddress || addr;
         if (shipAddr && !posDelivery.address) posDelivery.address = shipAddr;
+        loadPosCustomerAssistant({ customerId: id });
+      } else {
+        posAssistantState.data = null;
       }
       closeModal(); page = 'pos'; render();
     }
@@ -14451,6 +14993,42 @@
       staffRoleFilter = button.dataset.role || '';
       render();
     }
+    else if (action === 'staff-subtab') {
+      const nextSub = button.dataset.subtab || 'members';
+      if (nextSub !== staffSubTab) {
+        staffSubTab = nextSub;
+        render();
+        loadStaffPage();
+      }
+    }
+    else if (action === 'reload-payroll') loadStaffPayroll();
+    else if (action === 'reload-radar') loadLossPreventionRadar();
+    else if (action === 'open-staff-advance') openStaffAdvanceModal(id);
+    else if (action === 'settle-staff-payroll') settleStaffPayroll(id, button);
+    else if (action === 'share-staff-payslip-png') shareStaffPayslipPng(id);
+    else if (action === 'toggle-waive-shortage') toggleWaiveShortage(id, button.dataset.waived === 'true');
+    else if (action === 'pos-select-seller') {
+      posSellerId = id || '';
+      refreshCartPanels();
+    }
+    else if (action === 'pos-clear-customer') {
+      cartCustomerId = '';
+      posCustomerInlineText = '';
+      posAssistantState.data = null;
+      posRedeemPointsActive = false;
+      posBundlePriorDebtActive = false;
+      refreshCartPanels();
+    }
+    else if (action === 'pos-toggle-redeem-points') {
+      posRedeemPointsActive = !posRedeemPointsActive;
+      posFastCashInput = '';
+      refreshCartPanels();
+    }
+    else if (action === 'pos-toggle-bundle-debt') {
+      posBundlePriorDebtActive = !posBundlePriorDebtActive;
+      posFastCashInput = '';
+      refreshCartPanels();
+    }
     else if (action === 'save-staff-member') saveStaffMember(id);
     else if (action === 'staff-activity') openStaffActivity(id);
     else if (action === 'resend-staff-invite') resendStaffInvite(id);
@@ -14487,17 +15065,31 @@
       if (el) { el.focus(); try { el.setSelectionRange(pos, pos); } catch {} }
       return;
     }
+    if (event.target.id === 'pos-customer-inline-input') {
+      posCustomerInlineText = event.target.value;
+      window.clearTimeout(posAssistantState.timer);
+      const q = posCustomerInlineText.trim();
+      if (!q) {
+        posAssistantState.data = null;
+        return;
+      }
+      posAssistantState.timer = window.setTimeout(function () {
+        loadPosCustomerAssistant({ q });
+      }, 150);
+      return;
+    }
     if (event.target.id === 'pos-fast-cash') {
       posFastCashInput = event.target.value;
       const totals = cartTotals();
-      const entered = posFastCashInput !== '' ? Number(posFastCashInput) : totals.total;
-      const valid = Number.isSafeInteger(entered) && entered >= totals.total;
+      const collectTotal = posEffectivePayable(totals).grandCollectVnd;
+      const entered = posFastCashInput !== '' ? Number(posFastCashInput) : collectTotal;
+      const valid = Number.isSafeInteger(entered) && entered >= collectTotal;
       const panel = event.target.closest('.cart-panel');
       if (panel) {
         const ch = panel.querySelector('.pos-fast-change');
         if (ch) {
           ch.querySelector('span').textContent = valid ? 'Tiền thối lại' : 'Cần thu thêm';
-          ch.querySelector('strong').textContent = money(valid ? entered - totals.total : totals.total - (Number.isSafeInteger(entered) ? entered : 0));
+          ch.querySelector('strong').textContent = money(valid ? entered - collectTotal : collectTotal - (Number.isSafeInteger(entered) ? entered : 0));
         }
         panel.querySelectorAll('.pos-fast-chip').forEach(chip => chip.classList.toggle('active', Number(chip.dataset.amount) === entered));
       }
@@ -15011,6 +15603,13 @@
       reader.readAsText(file, 'UTF-8');
       return;
     }
+    if (event.target.id === 'payroll-month-input') {
+      const m = event.target.value;
+      if (/^\d{4}-(0[1-9]|1[0-2])$/.test(m)) {
+        loadStaffPayroll(m);
+      }
+      return;
+    }
     if (event.target.id === 'receive-payment-state') { updateReceivePurchaseTotal(event.target.form); return; }
     if (event.target.id === 'staff-invite-role') {
       const help = modal.querySelector('.staff-role-help');
@@ -15125,6 +15724,7 @@
     else if (type === 'order-shipping') saveOrderShipping(form);
     else if (type === 'staff-invite') saveStaffInvitation(form);
     else if (type === 'staff-direct-create') saveStaffDirectCreate(form);
+    else if (type === 'staff-advance') submitStaffAdvanceForm(form);
     else if (type === 'scan') addByCode(form);
     else if (type === 'rapid-stock-count') submitRapidStockCount(form);
     else if (type === 'warranty-lookup') lookupWarrantyBySerial(new FormData(form).get('code'));

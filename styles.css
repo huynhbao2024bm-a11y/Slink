@@ -793,3 +793,20 @@ body{min-height:100vh;min-height:100dvh;overflow-x:hidden}
 @media(prefers-reduced-motion:reduce){
   .scan-feedback-pill{animation:none}
 }
+
+/* Slink 3.0: Zero-Touch HR & CRM (4-Digit Customer Assistant, Debt Bundling, Payroll & Radar) */
+.pos-seller-pills{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 0 2px;font-size:12px}
+.pos-seller-pills small{color:var(--muted);font-weight:600;margin-right:2px}
+.pos-seller-pill{min-height:32px;padding:4px 10px;border-radius:999px;border:1px solid var(--border);background:var(--surface);font-size:12px;font-weight:600;color:var(--ink);cursor:pointer;max-width:100%;overflow-wrap:anywhere}
+.pos-seller-pill.active{border-color:var(--primary);background:#ecfdf5;color:#0f766e}
+.pos-inline-customer-row{display:flex;align-items:center;gap:6px;margin-top:6px;min-width:0}
+.pos-inline-customer-row .input{min-height:38px;font-size:13px;padding:6px 10px;flex:1 1 auto;min-width:0}
+.pos-customer-assistant-card{display:grid;gap:6px;margin-top:6px;padding:8px 10px;border-radius:10px;border:1px solid rgba(15,118,110,.28);background:#f0fdfa;font-size:12px;min-width:0;overflow-wrap:anywhere}
+.pos-assist-line{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0}
+.pos-assist-debt{justify-content:space-between;padding-top:6px;border-top:1px dashed rgba(15,118,110,.25)}
+.pos-assist-chip,.pos-assist-fav{display:inline-flex;align-items:center;gap:4px;min-height:30px;padding:3px 9px;border-radius:999px;border:1px solid var(--border);background:#fff;font-size:11.5px;font-weight:700;color:var(--ink);cursor:pointer;max-width:100%;overflow-wrap:anywhere}
+.pos-assist-chip.active{border-color:#0f766e;background:#0f766e;color:#fff}
+.pos-assist-debt-btn{border-color:#f59e0b;background:#fffbeb;color:#b45309}
+.pos-assist-debt-btn.active{border-color:#b45309;background:#b45309;color:#fff}
+.pos-assist-fav{border-style:dashed;color:#0f766e}
+.pos-assist-fav:hover{background:#ecfdf5}

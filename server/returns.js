@@ -125,7 +125,10 @@ function registerReturnRoutes(app, { pool, env }) {
         );
       }
       const orderResult = await client.query(
-        `SELECT id, order_number, customer_id, warehouse_id, status, total_vnd::text AS total_vnd FROM orders
+        `SELECT id, order_number, customer_id, warehouse_id, status, total_vnd::text AS total_vnd,
+                COALESCE(points_redeemed, 0)::int AS points_redeemed,
+                COALESCE(points_earned, 0)::int AS points_earned
+         FROM orders
          WHERE store_id = $1 AND id = $2 FOR UPDATE`,
         [storeId, orderId]
       );
@@ -335,6 +338,8 @@ function registerReturnRoutes(app, { pool, env }) {
           );
         }
       }
+      const totalSoldMilli = linesResult.rows.reduce((sum, line) => sum + quantityMilli(Number(line.quantity)), 0);
+      const returnedNowMilli = requestedLines.reduce((sum, item) => sum + item.requested.quantityMilli, 0);
       const totalRemaining = linesResult.rows.reduce((sum, line) => {
         const sold = quantityMilli(Number(line.quantity));
         const previousQuantity = Number(line.returned_quantity || 0);
@@ -343,13 +348,64 @@ function registerReturnRoutes(app, { pool, env }) {
         return sum + sold - previous - added;
       }, 0);
       const nextStatus = totalRemaining === 0 ? 'returned' : 'partially_returned';
+
+      let pointsRefunded = 0;
+      let pointsClawedBack = 0;
+      if (order.customer_id && totalSoldMilli > 0) {
+        if (Number(order.points_redeemed || 0) > 0) {
+          const priorRefundedRes = await client.query(
+            `SELECT COALESCE(SUM(pl.points_delta), 0)::int AS refunded_pts
+             FROM customer_point_ledger_entries pl
+             JOIN returns r ON r.store_id = pl.store_id AND r.id = pl.source_id
+             WHERE pl.store_id = $1 AND pl.customer_id = $2
+               AND pl.entry_type = 'return_refund_points' AND r.order_id = $3`,
+            [storeId, order.customer_id, orderId]
+          );
+          const alreadyRefundedPts = Number(priorRefundedRes.rows[0]?.refunded_pts || 0);
+          const remainingRedeemPts = Math.max(0, Number(order.points_redeemed) - alreadyRefundedPts);
+          pointsRefunded = totalRemaining === 0
+            ? remainingRedeemPts
+            : Math.min(remainingRedeemPts, Math.round((Number(order.points_redeemed) * returnedNowMilli) / totalSoldMilli));
+          if (pointsRefunded > 0) {
+            await client.query(
+              `INSERT INTO customer_point_ledger_entries (store_id, customer_id, entry_type, points_delta, source_type, source_id, note, actor_user_id)
+               VALUES ($1, $2, 'return_refund_points', $3, 'return', $4, $5, $6)`,
+              [storeId, order.customer_id, pointsRefunded, returnId, `Hoàn lại ${pointsRefunded} điểm đã dùng từ đơn ${order.order_number} (${returnNumber})`, auth.userId]
+            );
+          }
+        }
+        if (Number(order.points_earned || 0) > 0) {
+          const priorClawbackRes = await client.query(
+            `SELECT COALESCE(SUM(-pl.points_delta), 0)::int AS clawed_pts
+             FROM customer_point_ledger_entries pl
+             JOIN returns r ON r.store_id = pl.store_id AND r.id = pl.source_id
+             WHERE pl.store_id = $1 AND pl.customer_id = $2
+               AND pl.entry_type = 'return_clawback_points' AND r.order_id = $3`,
+            [storeId, order.customer_id, orderId]
+          );
+          const alreadyClawedPts = Number(priorClawbackRes.rows[0]?.clawed_pts || 0);
+          const remainingEarnedPts = Math.max(0, Number(order.points_earned) - alreadyClawedPts);
+          pointsClawedBack = totalRemaining === 0
+            ? remainingEarnedPts
+            : Math.min(remainingEarnedPts, Math.round((Number(order.points_earned) * returnedNowMilli) / totalSoldMilli));
+          if (pointsClawedBack > 0) {
+            await client.query(
+              `INSERT INTO customer_point_ledger_entries (store_id, customer_id, entry_type, points_delta, source_type, source_id, note, actor_user_id)
+               VALUES ($1, $2, 'return_clawback_points', $3, 'return', $4, $5, $6)`,
+              [storeId, order.customer_id, -pointsClawedBack, returnId, `Thu hồi ${pointsClawedBack} điểm thưởng đơn trả ${order.order_number} (${returnNumber})`, auth.userId]
+            );
+          }
+        }
+      }
+
       await client.query('UPDATE orders SET status = $3, updated_at = now() WHERE store_id = $1 AND id = $2', [storeId, orderId, nextStatus]);
       await client.query(
         `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, reason, metadata)
          VALUES ($1, $2, 'return.created', 'return', $3, $4,
                  jsonb_build_object('returnNumber', $5::text, 'refundVnd', $6::text,
-                                    'restockWarehouseId', $7::text, 'restockWarehouseName', $8::text))`,
-        [storeId, auth.userId, returnId, value.reason, returnNumber, refundTotal.toString(), restockWarehouse?.id || null, restockWarehouse?.name || null]
+                                    'restockWarehouseId', $7::text, 'restockWarehouseName', $8::text,
+                                    'pointsRefunded', $9::int, 'pointsClawedBack', $10::int))`,
+        [storeId, auth.userId, returnId, value.reason, returnNumber, refundTotal.toString(), restockWarehouse?.id || null, restockWarehouse?.name || null, pointsRefunded, pointsClawedBack]
       );
       const body = {
         return: {
@@ -360,6 +416,8 @@ function registerReturnRoutes(app, { pool, env }) {
           refundTotalVnd: refundTotal.toString(),
           refundedVnd: refundPayment.toString(),
           customerCreditVnd: customerCredit.toString(),
+          pointsRefunded,
+          pointsClawedBack,
           restockPolicy: value.restockPolicy,
           restockWarehouseId: restockWarehouse?.id || null,
           restockWarehouseName: restockWarehouse?.name || null,

@@ -39,6 +39,7 @@ const { registerWarehouseRoutes } = require('./warehouses');
 const { registerChannelMappingRoutes } = require('./channel-mappings');
 const { registerChannelOrderRoutes } = require('./channel-orders');
 const { registerIntegrationRoutes } = require('./integrations');
+const { registerHrCrmRoutes } = require('./hr-crm');
 const legalContent = require('../legal-content');
 
 const APP_ROOT = path.resolve(__dirname, '..');
@@ -237,6 +238,7 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
     registerChannelMappingRoutes(app, { pool, env });
     registerChannelOrderRoutes(app, { pool, env });
     registerIntegrationRoutes(app, { pool, env });
+    registerHrCrmRoutes(app, { pool, env });
   }
 
   for (const [route, fileName] of ASSETS) {
@@ -290,7 +292,17 @@ async function main() {
   const pool = createPool();
   const app = await buildServer({ pool });
   try {
-    await assertRuntimeSchema(pool);
+    const maxAttempts = process.env.RENDER === 'true' || process.env.NODE_ENV === 'production' ? 24 : 1;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        await assertRuntimeSchema(pool);
+        break;
+      } catch (err) {
+        if (attempt >= maxAttempts) throw err;
+        app.log.warn({ attempt, maxAttempts, err: err.message }, 'Waiting for database schema migration to complete...');
+        await new Promise((resolve) => setTimeout(resolve, 2500));
+      }
+    }
   } catch (error) {
     await app.close();
     throw error;

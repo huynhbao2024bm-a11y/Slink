@@ -14,7 +14,7 @@ const ORDER_VIEW_ROLES = new Set(['owner', 'manager', 'cashier', 'accountant']);
 const ORDER_COLLABORATE_ROLES = new Set(['owner', 'manager', 'cashier', 'accountant']);
 const MAX_BIGINT = 9223372036854775807n;
 const MAX_CUSTOMER_IMPORT_ROWS = 200;
-const CUSTOMER_SEGMENTS = new Set(['no_purchase', 'repeat', 'owing', 'inactive90', 'vip_tier', 'wholesale', 'birthday_month', 'over_credit_limit']);
+const CUSTOMER_SEGMENTS = new Set(['no_purchase', 'repeat', 'owing', 'inactive30', 'inactive90', 'vip_tier', 'wholesale', 'birthday_month', 'over_credit_limit']);
 
 function nonNegativeVnd(value, label) {
   if (value === undefined || value === null || value === '') return 0n;
@@ -307,7 +307,9 @@ function registerRecordRoutes(app, { pool, env }) {
                 COALESCE(c.company_name, '') AS company_name, COALESCE(c.tax_code, '') AS tax_code,
                 COALESCE(c.discount_rate_bps, 0)::int AS discount_rate_bps,
                 COALESCE(c.bonus_points, 0)::int AS bonus_points,
-                GREATEST(0, (customer_activity.total_spent_vnd / 100000)::int + COALESCE(c.bonus_points, 0))::int AS loyalty_points,
+                (COALESCE(c.bonus_points, 0)
+                 + COALESCE((SELECT SUM(pl.points_delta)::int FROM customer_point_ledger_entries pl WHERE pl.store_id = c.store_id AND pl.customer_id = c.id), 0)
+                 + (customer_activity.untracked_spent_vnd / 100000)::int)::int AS loyalty_points,
                 CASE
                   WHEN customer_activity.total_spent_vnd >= 50000000 THEN 'diamond'
                   WHEN customer_activity.total_spent_vnd >= 15000000 OR c.customer_type IN ('vip', 'agency') THEN 'gold'
@@ -335,6 +337,12 @@ function registerRecordRoutes(app, { pool, env }) {
            SELECT COUNT(*)::int AS order_count,
                   COALESCE(SUM(o.total_vnd - COALESCE((SELECT SUM(r.refund_total_vnd) FROM returns r
                     WHERE r.store_id = o.store_id AND r.order_id = o.id AND r.status = 'completed'), 0)), 0) AS total_spent_vnd,
+                  COALESCE(SUM(o.total_vnd - COALESCE((SELECT SUM(r.refund_total_vnd) FROM returns r
+                    WHERE r.store_id = o.store_id AND r.order_id = o.id AND r.status = 'completed'), 0))
+                    FILTER (WHERE NOT EXISTS (
+                      SELECT 1 FROM customer_point_ledger_entries pl2
+                      WHERE pl2.store_id = o.store_id AND pl2.source_type = 'order' AND pl2.source_id = o.id
+                    )), 0) AS untracked_spent_vnd,
                   MAX(o.occurred_at) AS latest_order_at
            FROM orders o WHERE o.store_id = c.store_id AND o.customer_id = c.id AND o.status <> 'voided'
          ) customer_activity ON true
@@ -357,6 +365,8 @@ function registerRecordRoutes(app, { pool, env }) {
              OR ($5 = 'vip_tier' AND (c.customer_type IN ('vip', 'agency') OR customer_activity.total_spent_vnd >= 15000000))
              OR ($5 = 'wholesale' AND c.customer_type = 'wholesale')
              OR ($5 = 'birthday_month' AND c.birthday IS NOT NULL AND EXTRACT(MONTH FROM c.birthday) = EXTRACT(MONTH FROM CURRENT_DATE))
+             OR ($5 = 'inactive30' AND customer_activity.order_count > 0
+                 AND customer_activity.latest_order_at < now() - interval '30 days')
              OR ($5 = 'inactive90' AND customer_activity.order_count > 0
                  AND customer_activity.latest_order_at < now() - interval '90 days'))
            AND ($6::bigint IS NULL OR customer_activity.total_spent_vnd >= $6::bigint)
@@ -531,14 +541,23 @@ function registerRecordRoutes(app, { pool, env }) {
                 COALESCE((SELECT COUNT(*) FROM orders o WHERE o.store_id = c.store_id AND o.customer_id = c.id AND o.status <> 'voided'), 0)::int AS order_count,
                 COALESCE((SELECT SUM(o.total_vnd - COALESCE((SELECT SUM(r.refund_total_vnd) FROM returns r
                            WHERE r.store_id = o.store_id AND r.order_id = o.id AND r.status = 'completed'), 0))
-                          FROM orders o WHERE o.store_id = c.store_id AND o.customer_id = c.id AND o.status <> 'voided'), 0)::text AS total_spent_vnd
+                          FROM orders o WHERE o.store_id = c.store_id AND o.customer_id = c.id AND o.status <> 'voided'), 0)::text AS total_spent_vnd,
+                COALESCE((SELECT SUM(o.total_vnd - COALESCE((SELECT SUM(r.refund_total_vnd) FROM returns r
+                           WHERE r.store_id = o.store_id AND r.order_id = o.id AND r.status = 'completed'), 0))
+                          FROM orders o WHERE o.store_id = c.store_id AND o.customer_id = c.id AND o.status <> 'voided'
+                            AND NOT EXISTS (
+                              SELECT 1 FROM customer_point_ledger_entries pl2
+                              WHERE pl2.store_id = o.store_id AND pl2.source_type = 'order' AND pl2.source_id = o.id
+                            )), 0)::text AS untracked_spent_vnd,
+                COALESCE((SELECT SUM(pl.points_delta)::int FROM customer_point_ledger_entries pl WHERE pl.store_id = c.store_id AND pl.customer_id = c.id), 0)::int AS ledger_points_delta
          FROM customers c WHERE c.store_id = $1 AND c.id = $2 AND c.status = 'active'`,
         [storeId, customerId]
       );
       if (!customerResult.rowCount) throw new ApiError(404, 'customer_not_found', 'Không tìm thấy khách hàng đang hoạt động.');
       const custRow = customerResult.rows[0];
       const spentBig = BigInt(custRow.total_spent_vnd || '0');
-      custRow.loyalty_points = Math.max(0, Number(spentBig / 100000n) + Number(custRow.bonus_points || 0));
+      const untrackedBig = BigInt(custRow.untracked_spent_vnd || '0');
+      custRow.loyalty_points = Number(untrackedBig / 100000n) + Number(custRow.bonus_points || 0) + Number(custRow.ledger_points_delta || 0);
       custRow.loyalty_tier = spentBig >= 50000000n ? 'diamond' : (spentBig >= 15000000n || ['vip', 'agency'].includes(custRow.customer_type)) ? 'gold' : spentBig >= 3000000n ? 'silver' : 'member';
       const tags = await client.query(
         `SELECT tag_key, tag FROM (
@@ -1297,7 +1316,9 @@ function registerRecordRoutes(app, { pool, env }) {
         );
       }
       const orderResult = await client.query(
-        `SELECT id, order_number, customer_id, warehouse_id, void_restock_warehouse_id, status, total_vnd::text AS total_vnd
+        `SELECT id, order_number, customer_id, warehouse_id, void_restock_warehouse_id, status, total_vnd::text AS total_vnd,
+                COALESCE(points_redeemed, 0)::int AS points_redeemed,
+                COALESCE(points_earned, 0)::int AS points_earned
          FROM orders WHERE store_id = $1 AND id = $2 FOR UPDATE`,
         [storeId, orderId]
       );
@@ -1365,6 +1386,22 @@ function registerRecordRoutes(app, { pool, env }) {
            VALUES ($1, $2, 'reversal', $3, 'order_void', $4, $5, $6)`,
           [storeId, order.customer_id, order.total_vnd, orderId, `Hủy đơn ${order.order_number}: ${reason}`, auth.userId]
         );
+      }
+      if (order.customer_id) {
+        if (Number(order.points_redeemed || 0) > 0) {
+          await client.query(
+            `INSERT INTO customer_point_ledger_entries (store_id, customer_id, entry_type, points_delta, source_type, source_id, note, actor_user_id)
+             VALUES ($1, $2, 'return_refund_points', $3, 'order_void', $4, $5, $6)`,
+            [storeId, order.customer_id, Number(order.points_redeemed), orderId, `Hoàn lại ${order.points_redeemed} điểm do hủy đơn ${order.order_number}`, auth.userId]
+          );
+        }
+        if (Number(order.points_earned || 0) > 0) {
+          await client.query(
+            `INSERT INTO customer_point_ledger_entries (store_id, customer_id, entry_type, points_delta, source_type, source_id, note, actor_user_id)
+             VALUES ($1, $2, 'return_clawback_points', $3, 'order_void', $4, $5, $6)`,
+            [storeId, order.customer_id, -Number(order.points_earned), orderId, `Thu hồi ${order.points_earned} điểm do hủy đơn ${order.order_number}`, auth.userId]
+          );
+        }
       }
       await client.query(
         `UPDATE product_serial_codes

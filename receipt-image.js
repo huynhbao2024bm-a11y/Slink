@@ -392,6 +392,108 @@
     });
   }
 
+  function renderPayslipPng(params, options) {
+    var p = params || {};
+    var opts = options || {};
+    var tools = opts.vietQrTools || (root && root.SlinkVietQrTools);
+    var width = 760;
+    var hasQr = Boolean(p.bankBin && p.bankAccountNumber && Number(p.netPayableVnd || 0) > 0 && tools && typeof tools.buildVietQrPayload === 'function');
+    var height = hasQr ? 1120 : 820;
+    var canvas = makeCanvas(width, height, opts.createCanvas);
+    var ctx = canvas.getContext('2d');
+
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.fillStyle = '#0f766e';
+    ctx.fillRect(0, 0, width, 150);
+
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ccfbf1';
+    ctx.font = '600 20px system-ui, -apple-system, sans-serif';
+    ctx.fillText(String(p.storeName || 'Cửa hàng Slink'), width / 2, 48);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '700 32px system-ui, -apple-system, sans-serif';
+    ctx.fillText('PHIẾU LƯƠNG NHÂN VIÊN · KỲ ' + String(p.periodMonth || ''), width / 2, 94);
+
+    ctx.fillStyle = '#e2e8f0';
+    ctx.font = '500 19px system-ui, -apple-system, sans-serif';
+    ctx.fillText('Mã phiếu: ' + String(p.payslipNumber || 'BẢNG TẠM TÍNH') + (p.paidAt ? ' • ' + String(p.paidAt) : ''), width / 2, 130);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(40, 176, width - 80, height - 216);
+    ctx.strokeStyle = '#e2e8f0';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(40, 176, width - 80, height - 216);
+
+    var padX = 76;
+    var y = 230;
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#0f172a';
+    ctx.font = '700 26px system-ui, -apple-system, sans-serif';
+    ctx.fillText(String(p.employeeName || 'Nhân viên') + (p.staffCode ? ' (' + p.staffCode + ')' : ''), padX, y);
+    y += 32;
+
+    ctx.fillStyle = '#64748b';
+    ctx.font = '500 20px system-ui, -apple-system, sans-serif';
+    ctx.fillText('Chức vụ / Hình thức: ' + String(p.jobTitle || p.roleLabel || 'Nhân viên') + ' • ' + String(p.workedUnits || 0) + ' công/ca', padX, y);
+    y += 28;
+
+    drawDashedDivider(ctx, padX, width - padX, y);
+    y += 38;
+
+    function row(label, valText, color, bold) {
+      ctx.textAlign = 'left';
+      ctx.fillStyle = bold ? '#0f172a' : '#334155';
+      ctx.font = (bold ? '700 24px' : '500 21px') + ' system-ui, -apple-system, sans-serif';
+      ctx.fillText(label, padX, y);
+      ctx.textAlign = 'right';
+      ctx.fillStyle = color || '#0f172a';
+      ctx.fillText(valText, width - padX, y);
+      y += bold ? 42 : 36;
+    }
+
+    row('1. Lương cơ bản (' + String(p.workedUnits || 0) + ' công/ca)', '+' + formatIntVnd(p.basePayVnd || 0), '#0f172a', false);
+    row('2. Doanh số thực thu kỳ này', formatIntVnd(p.netSalesVnd || 0), '#64748b', false);
+    row('3. Hoa hồng bán hàng thực thu', '+' + formatIntVnd(p.commissionPayVnd || 0), '#0f766e', false);
+    if (Number(p.bonusVnd || 0) > 0) {
+      row('4. Thưởng thêm', '+' + formatIntVnd(p.bonusVnd || 0), '#0f766e', false);
+    }
+    if (Number(p.advanceDeductionVnd || 0) > 0) {
+      row('5. Khấu trừ tạm ứng trong kỳ', '-' + formatIntVnd(p.advanceDeductionVnd || 0), '#b45309', false);
+    }
+    if (Number(p.shortageDeductionVnd || 0) > 0) {
+      row('6. Khấu trừ lệch thiếu két tiền mặt', '-' + formatIntVnd(p.shortageDeductionVnd || 0), '#dc2626', false);
+    }
+
+    y += 6;
+    drawDashedDivider(ctx, padX, width - padX, y);
+    y += 44;
+
+    row('THỰC LĨNH CUỐI KỲ', formatIntVnd(p.netPayableVnd || 0), '#0f766e', true);
+
+    if (hasQr) {
+      var qrPayload = tools.buildVietQrPayload({
+        bankBin: String(p.bankBin),
+        accountNumber: String(p.bankAccountNumber),
+        amountVnd: Math.max(0, Math.trunc(Number(p.netPayableVnd || 0))),
+        description: 'LUONG ' + String(p.periodMonth || '') + ' ' + String(p.staffCode || p.employeeName || ''),
+      });
+      if (qrPayload) {
+        y += 8;
+        drawQrMatrixOnCanvas(ctx, qrPayload, (width - 240) / 2, y, 240, tools);
+        y += 264;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#334155';
+        ctx.font = '600 19px system-ui, -apple-system, sans-serif';
+        ctx.fillText('STK nhận lương: ' + String(p.bankAccountNumber) + (p.bankAccountOwner ? ' • ' + p.bankAccountOwner : ''), width / 2, y);
+      }
+    }
+
+    return canvasToDataUrlAndBlob(canvas);
+  }
+
   function triggerDownload(dataUrl, filename) {
     if (typeof document === 'undefined' || !document.createElement) return false;
     var link = document.createElement('a');
@@ -483,6 +585,7 @@
     setAndroidBridge: setAndroidBridge,
     renderReceiptPng: renderReceiptPng,
     renderDebtVietQrCardPng: renderDebtVietQrCardPng,
+    renderPayslipPng: renderPayslipPng,
     sharePng: sharePng,
     triggerDownload: triggerDownload,
   };
