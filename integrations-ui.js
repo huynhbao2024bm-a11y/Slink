@@ -63,7 +63,41 @@
     </div>`;
   }
 
-  function renderIntegrationSettingsSection({ data, loading, error, canEdit, escposCaps } = {}) {
+  function renderPrinterHardwareSection({ escposCaps } = {}) {
+    const caps = escposCaps || root.SlinkEscPosPrinter?.capabilities?.() || { serialSupported: false, connected: false };
+    const printerSupported = Boolean(caps.serialSupported || caps.btSupported);
+    if (!printerSupported) {
+      return `<section class='panel settings-panel'>
+        <div class='panel-header'><div><h2>Máy in nhiệt &amp; Két tiền</h2><p>Kết nối máy in bill 58mm/80mm trực tiếp không cần phần mềm trung gian.</p></div></div>
+        <div class='integration-hardware-bar'>
+          <div>
+            <strong>Chế độ in trình duyệt / PDF</strong>
+            <small>Thiết bị hiện tại hỗ trợ in qua hộp thoại hệ thống hoặc chia sẻ ảnh biên nhận PNG qua Zalo. Để in Bluetooth ESC/POS trực tiếp, hãy dùng ứng dụng Slink Android hoặc Chrome Desktop qua cổng USB/COM.</small>
+          </div>
+        </div>
+      </section>`;
+    }
+    const printerTitle = caps.btSupported ? 'Máy in nhiệt Bluetooth (58mm / 80mm)' : 'Máy in nhiệt USB / COM';
+    const printerSubtitle = caps.btSupported
+      ? (caps.btDeviceName ? `Đã chọn: ${caps.btDeviceName}` : 'Ghép đôi máy in trong Cài đặt điện thoại rồi chọn tại đây')
+      : (caps.connected ? 'Đã kết nối' : 'Máy in 58mm / 80mm');
+    return `<section class='panel settings-panel'>
+      <div class='panel-header'><div><h2>Máy in nhiệt &amp; Két tiền</h2><p>In bill tức thì và tự động bung két khi thu tiền mặt.</p></div></div>
+      <div class='integration-hardware-bar'>
+        <div>
+          <strong>${esc(printerTitle)}</strong>
+          <small>${esc(printerSubtitle)}</small>
+        </div>
+        <div class='integration-hardware-actions'>
+          <button class='btn btn-secondary' type='button' data-action='escpos-connect'>${caps.connected ? 'Đổi máy in' : 'Chọn máy in'}</button>
+          <button class='btn btn-secondary' type='button' data-action='escpos-test-print'>In thử</button>
+          <button class='btn btn-secondary' type='button' data-action='escpos-kick-drawer'>Mở két</button>
+        </div>
+      </div>
+    </section>`;
+  }
+
+  function renderIntegrationSettingsSection({ data, loading, error, canEdit, escposCaps, includeHardware = true } = {}) {
     const settings = data?.settings || {};
     const webhookUrls = data?.webhookUrls || {};
     const banks = getBanksApi()?.VN_BANKS || [];
@@ -121,7 +155,7 @@
     const printerSubtitle = caps.btSupported
       ? (caps.btDeviceName ? `Đã chọn: ${caps.btDeviceName}` : 'Ghép đôi máy in trong Cài đặt điện thoại rồi chọn tại đây')
       : (caps.connected ? 'Đã kết nối' : 'Máy in 58mm / 80mm');
-    const serialHardwareHtml = printerSupported
+    const serialHardwareHtml = (includeHardware && printerSupported)
       ? `<div class='integration-hardware-bar' style='margin-top:12px'>
           <div>
             <strong>${esc(printerTitle)}</strong>
@@ -135,9 +169,8 @@
         </div>`
       : '';
 
-    const advancedBlock = hasAdvancedConfigured
-      ? `<details class='settings-advanced-fold' style='margin-top:14px'>
-          <summary style='cursor:pointer;font-weight:600;color:var(--muted)'>Kết nối mở rộng đã cấu hình</summary>
+    const advancedBlock = `<details class='settings-advanced-fold' ${hasAdvancedConfigured ? 'open' : ''} style='margin-top:14px'>
+          <summary style='cursor:pointer;font-weight:600;color:var(--ink)'>Tích hợp mở rộng (Vận chuyển, Đối soát tự động, HĐĐT)</summary>
           <div class='form-grid' style='margin-top:12px'>
             <div class='form-field full'>
               <label class='input-label' for='int-shipping-provider'>Đơn vị vận chuyển${ghnShopId ? ` · GHN #${esc(ghnShopId)}` : ''}</label>
@@ -176,8 +209,7 @@
               <input class='input' id='int-einvoice-serial' name='einvoiceSerial' value='${esc(settings.einvoiceSerial || '')}' maxlength='40' placeholder='VD: 1C26TYY' ${disabled}/>
             </div>
           </div>
-        </details>`
-      : '';
+        </details>`;
 
     return `<section class='panel settings-panel integrations-panel' id='integrations-panel'>
       <div class='panel-header'>
@@ -262,6 +294,7 @@
 
   return {
     renderVietQrCard,
+    renderPrinterHardwareSection,
     renderIntegrationSettingsSection,
     renderOrderIntegrationSection,
   };
