@@ -629,6 +629,22 @@ select.input {
     align-items: stretch;
     gap: 10px;
   }
+  .panel-header:has(> .link-button:last-child) {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .panel-header > .link-button {
+    min-height: 32px;
+    padding: 0 11px;
+    border-radius: 999px;
+    background: var(--primary-soft);
+    color: var(--primary);
+    font-size: 12.5px;
+    font-weight: 700;
+    text-decoration: none;
+    white-space: nowrap;
+  }
   .panel-header > div:first-child {
     flex: initial;
   }
