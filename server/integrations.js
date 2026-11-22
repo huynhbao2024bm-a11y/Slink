@@ -5,6 +5,13 @@ const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
 const { findBankByBin } = require('../banks-vn');
 const { getIntegrationCatalog } = require('./providers');
+const {
+  buildStoreEnv,
+  decryptStoreCredentials,
+  encryptStoreCredentials,
+  mergeCredentialUpdates,
+  summarizeCredentialStatus,
+} = require('./providers/credentials');
 const { insertCashMovement } = require('./cashbook-ledger');
 const { extractOrderCodeFromMemo, verifyAndParseBankWebhook } = require('./providers/bank-webhook');
 const { issueEinvoice } = require('./providers/einvoice');
@@ -84,12 +91,13 @@ function registerIntegrationRoutes(app, { pool, env }) {
       const res = await client.query(
         `SELECT id, name, bank_bin, bank_code, bank_name, bank_account_number, bank_account_name,
                 bank_webhook_provider, einvoice_provider, tax_code, einvoice_template_code,
-                einvoice_serial, shipping_provider
+                einvoice_serial, shipping_provider, integration_secrets_enc
          FROM stores WHERE id = $1 AND status = 'active'`,
         [storeId]
       );
       if (!res.rowCount) throw new ApiError(404, 'store_not_found', 'Không tìm thấy cửa hàng.');
       const row = res.rows[0];
+      const storeEnv = buildStoreEnv(env, row);
       const baseOrigin = resolveOrigin(request, env);
       return {
         settings: {
@@ -112,8 +120,9 @@ function registerIntegrationRoutes(app, { pool, env }) {
           momo: `${baseOrigin}/api/webhooks/momo/${storeId}`,
           ghn: `${baseOrigin}/api/webhooks/shipping/ghn/${storeId}`,
         },
-        ghnShopId: String(env.GHN_SHOP_ID || ''),
-        connectors: getIntegrationCatalog(env, row),
+        ghnShopId: String(storeEnv.GHN_SHOP_ID || ''),
+        credentials: summarizeCredentialStatus(storeEnv),
+        connectors: getIntegrationCatalog(storeEnv, row),
       };
     });
   });
@@ -126,42 +135,58 @@ function registerIntegrationRoutes(app, { pool, env }) {
     const input = validateSettingsInput(request.body);
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
       if (!ADMIN_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Chỉ chủ cửa hàng hoặc quản lý mới được cấu hình tích hợp.');
+      const cur = await client.query(
+        `SELECT integration_secrets_enc FROM stores WHERE id = $1 AND status = 'active' FOR UPDATE`,
+        [storeId]
+      );
+      if (!cur.rowCount) throw new ApiError(404, 'store_not_found', 'Không tìm thấy cửa hàng.');
+      const existingCreds = decryptStoreCredentials(cur.rows[0].integration_secrets_enc, env);
+      let merged;
+      try {
+        merged = mergeCredentialUpdates(existingCreds, request.body?.credentials, request.body?.clearCredentials);
+      } catch (err) {
+        throw new ApiError(400, 'validation_error', err.message || 'Thông tin khóa kết nối không hợp lệ.');
+      }
+      const nextEnc = merged.changedKeys.length
+        ? encryptStoreCredentials(merged.next, env)
+        : cur.rows[0].integration_secrets_enc;
       const updated = await client.query(
         `UPDATE stores
          SET bank_bin = $2, bank_code = $3, bank_name = $4, bank_account_number = $5, bank_account_name = $6,
              bank_webhook_provider = $7, einvoice_provider = $8, tax_code = $9,
              einvoice_template_code = $10, einvoice_serial = $11, shipping_provider = $12,
-             updated_at = now()
+             integration_secrets_enc = $13, updated_at = now()
          WHERE id = $1 AND status = 'active'
          RETURNING id, bank_bin, bank_code, bank_name, bank_account_number, bank_account_name,
                    bank_webhook_provider, einvoice_provider, tax_code, einvoice_template_code,
-                   einvoice_serial, shipping_provider`,
+                   einvoice_serial, shipping_provider, integration_secrets_enc`,
         [
           storeId, input.bankBin, input.bankCode, input.bankName, input.bankAccountNumber, input.bankAccountName,
           input.bankWebhookProvider, input.einvoiceProvider, input.taxCode,
-          input.einvoiceTemplateCode, input.einvoiceSerial, input.shippingProvider,
+          input.einvoiceTemplateCode, input.einvoiceSerial, input.shippingProvider, nextEnc,
         ]
       );
       if (!updated.rowCount) throw new ApiError(404, 'store_not_found', 'Không tìm thấy cửa hàng.');
       await client.query(
         `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, metadata)
          VALUES ($1, $2, 'store.integrations_updated', 'store', $1,
-                 jsonb_build_object('bankCode', $3::text, 'bankWebhookProvider', $4::text, 'einvoiceProvider', $5::text, 'shippingProvider', $6::text))`,
-        [storeId, auth.userId, input.bankCode, input.bankWebhookProvider, input.einvoiceProvider, input.shippingProvider]
+                 jsonb_build_object('bankCode', $3::text, 'bankWebhookProvider', $4::text, 'einvoiceProvider', $5::text, 'shippingProvider', $6::text, 'updatedCredentialKeys', $7::jsonb))`,
+        [storeId, auth.userId, input.bankCode, input.bankWebhookProvider, input.einvoiceProvider, input.shippingProvider, JSON.stringify(merged.changedKeys)]
       );
       const row = updated.rows[0];
-      return { settings: input, connectors: getIntegrationCatalog(env, row) };
+      const storeEnv = buildStoreEnv(env, row);
+      return {
+        settings: input,
+        ghnShopId: String(storeEnv.GHN_SHOP_ID || ''),
+        credentials: summarizeCredentialStatus(storeEnv),
+        connectors: getIntegrationCatalog(storeEnv, row),
+      };
     });
   });
 
   app.post('/api/webhooks/bank-transfer/:provider/:storeId', async (request, reply) => {
     const { provider, storeId } = request.params;
     if (!UUID_PATTERN.test(storeId)) throw new ApiError(400, 'validation_error', 'Cửa hàng không hợp lệ.');
-
-    const parsed = verifyAndParseBankWebhook(provider, request.headers, request.body, env);
-    if (!parsed.valid) {
-      throw new ApiError(parsed.statusCode || 401, parsed.code || 'invalid_webhook_signature', parsed.message);
-    }
 
     const digest = createHash('sha256').update(JSON.stringify(request.body || {})).digest();
     const client = await pool.connect();
@@ -170,13 +195,18 @@ function registerIntegrationRoutes(app, { pool, env }) {
       await client.query("SELECT set_config('app.store_id', $1, true)", [storeId]);
 
       const storeCheck = await client.query(
-        `SELECT s.id, s.bank_webhook_provider, s.bank_account_number,
+        `SELECT s.id, s.bank_webhook_provider, s.bank_account_number, s.integration_secrets_enc,
                 (SELECT m.user_id FROM memberships m WHERE m.store_id = s.id AND m.status = 'active' AND m.role = 'owner' ORDER BY m.joined_at, m.created_at LIMIT 1) AS owner_user_id
          FROM stores s WHERE s.id = $1 AND s.status = 'active'`,
         [storeId]
       );
       if (!storeCheck.rowCount) throw new ApiError(404, 'store_not_found', 'Không tìm thấy cửa hàng.');
       const storeRow = storeCheck.rows[0];
+      const storeEnv = buildStoreEnv(env, storeRow);
+      const parsed = verifyAndParseBankWebhook(provider, request.headers, request.body, storeEnv);
+      if (!parsed.valid) {
+        throw new ApiError(parsed.statusCode || 401, parsed.code || 'invalid_webhook_signature', parsed.message);
+      }
       if (storeRow.bank_webhook_provider !== String(provider).toLowerCase()) {
         throw new ApiError(403, 'webhook_provider_disabled', 'Cửa hàng chưa bật cổng đối soát này.');
       }
@@ -338,7 +368,7 @@ function registerIntegrationRoutes(app, { pool, env }) {
         throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền xuất hóa đơn điện tử.');
       }
       const st = await client.query(
-        `SELECT einvoice_provider, tax_code, einvoice_template_code, einvoice_serial FROM stores WHERE id = $1 AND status = 'active'`,
+        `SELECT einvoice_provider, tax_code, einvoice_template_code, einvoice_serial, integration_secrets_enc FROM stores WHERE id = $1 AND status = 'active'`,
         [storeId]
       );
       const ord = await client.query(
@@ -363,7 +393,7 @@ function registerIntegrationRoutes(app, { pool, env }) {
     if (!provider || provider === 'none') {
       throw new ApiError(400, 'einvoice_provider_unset', 'Hãy chọn nhà cung cấp Hóa đơn điện tử trong Cài đặt tích hợp.');
     }
-    const result = await issueEinvoice(provider, snapshot.order, snapshot.storeConfig, env);
+    const result = await issueEinvoice(provider, snapshot.order, snapshot.storeConfig, buildStoreEnv(env, snapshot.storeConfig));
     if (!result.ok) throw new ApiError(result.statusCode || 503, result.code || 'einvoice_failed', result.message);
 
     return withStore(pool, auth.userId, storeId, async (client) => {
@@ -393,7 +423,7 @@ function registerIntegrationRoutes(app, { pool, env }) {
       if (!new Set(['owner', 'manager', 'cashier', 'stockkeeper']).has(membership.role)) {
         throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền tạo vận đơn.');
       }
-      const st = await client.query(`SELECT name, phone, address, shipping_provider FROM stores WHERE id = $1 AND status = 'active'`, [storeId]);
+      const st = await client.query(`SELECT name, phone, address, shipping_provider, integration_secrets_enc FROM stores WHERE id = $1 AND status = 'active'`, [storeId]);
       const ord = await client.query(
         `SELECT id, order_number, status, total_vnd::text, shipping_tracking_code FROM orders WHERE store_id = $1 AND id = $2`,
         [storeId, orderId]
@@ -412,7 +442,7 @@ function registerIntegrationRoutes(app, { pool, env }) {
     if (!provider || provider === 'none') {
       throw new ApiError(400, 'shipping_provider_unset', 'Hãy chọn đơn vị vận chuyển (GHN hoặc GHTK) trong Cài đặt tích hợp.');
     }
-    const result = await createShippingOrder(provider, snapshot.order, request.body || {}, env, snapshot.storeProfile);
+    const result = await createShippingOrder(provider, snapshot.order, request.body || {}, buildStoreEnv(env, snapshot.storeProfile), snapshot.storeProfile);
     if (!result.ok) throw new ApiError(result.statusCode || 503, result.code || 'shipping_failed', result.message);
 
     return withStore(pool, auth.userId, storeId, async (client) => {
@@ -442,7 +472,7 @@ function registerIntegrationRoutes(app, { pool, env }) {
       if (!new Set(['owner', 'manager', 'cashier', 'stockkeeper', 'accountant']).has(membership.role)) {
         throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền tính phí vận chuyển.');
       }
-      const st = await client.query(`SELECT name, phone, address, shipping_provider FROM stores WHERE id = $1 AND status = 'active'`, [storeId]);
+      const st = await client.query(`SELECT name, phone, address, shipping_provider, integration_secrets_enc FROM stores WHERE id = $1 AND status = 'active'`, [storeId]);
       const ord = await client.query(
         `SELECT id, order_number, status, total_vnd::text FROM orders WHERE store_id = $1 AND id = $2`,
         [storeId, orderId]
@@ -456,7 +486,7 @@ function registerIntegrationRoutes(app, { pool, env }) {
     });
 
     const provider = String(request.body?.provider || snapshot.defaultProvider || 'ghn').toLowerCase();
-    const result = await previewShippingOrder(provider, snapshot.order, request.body || {}, env, snapshot.storeProfile);
+    const result = await previewShippingOrder(provider, snapshot.order, request.body || {}, buildStoreEnv(env, snapshot.storeProfile), snapshot.storeProfile);
     if (!result.ok) throw new ApiError(result.statusCode || 503, result.code || 'shipping_preview_failed', result.message);
     return {
       provider: result.provider,
@@ -472,10 +502,12 @@ function registerIntegrationRoutes(app, { pool, env }) {
     requireCsrf(request, env);
     const { storeId } = request.params;
     if (!UUID_PATTERN.test(storeId)) throw new ApiError(400, 'validation_error', 'Cửa hàng không hợp lệ.');
-    await withStore(pool, auth.userId, storeId, async (_client, membership) => {
+    const storeRow = await withStore(pool, auth.userId, storeId, async (client, membership) => {
       if (!ADMIN_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Chỉ chủ cửa hàng hoặc quản lý mới được kiểm tra kết nối đối tác.');
+      const st = await client.query(`SELECT integration_secrets_enc FROM stores WHERE id = $1 AND status = 'active'`, [storeId]);
+      return st.rows[0] || {};
     });
-    const verified = await verifyGhnConnection(env);
+    const verified = await verifyGhnConnection(buildStoreEnv(env, storeRow));
     if (!verified.ok) throw new ApiError(verified.statusCode || 503, verified.code || 'ghn_verify_failed', verified.message);
     return verified;
   });
@@ -490,6 +522,7 @@ function registerIntegrationRoutes(app, { pool, env }) {
       if (!new Set(['owner', 'manager', 'cashier', 'accountant']).has(membership.role)) {
         throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền tạo thanh toán MoMo.');
       }
+      const st = await client.query(`SELECT integration_secrets_enc FROM stores WHERE id = $1 AND status = 'active'`, [storeId]);
       const ord = await client.query(
         `SELECT id, order_number, status, total_vnd::text AS total_vnd FROM orders WHERE store_id = $1 AND id = $2`,
         [storeId, orderId]
@@ -505,7 +538,7 @@ function registerIntegrationRoutes(app, { pool, env }) {
       );
       const remaining = BigInt(ord.rows[0].total_vnd) - BigInt(balRes.rows[0].returned_vnd) - BigInt(balRes.rows[0].paid_vnd) + BigInt(balRes.rows[0].refunded_vnd);
       if (remaining <= 0n) throw new ApiError(409, 'order_already_paid', 'Đơn hàng này đã thanh toán đủ.');
-      return { orderNumber: ord.rows[0].order_number, amountVnd: remaining.toString() };
+      return { storeRow: st.rows[0] || {}, orderNumber: ord.rows[0].order_number, amountVnd: remaining.toString() };
     });
 
     const baseOrigin = resolveOrigin(request, env);
@@ -516,7 +549,7 @@ function registerIntegrationRoutes(app, { pool, env }) {
       amountVnd: snapshot.amountVnd,
       redirectUrl: `${baseOrigin}/?orderId=${encodeURIComponent(orderId)}`,
       ipnUrl: `${baseOrigin}/api/webhooks/momo/${encodeURIComponent(storeId)}`,
-    }, env);
+    }, buildStoreEnv(env, snapshot.storeRow));
     if (!session.ok) throw new ApiError(session.statusCode || 503, session.code || 'momo_payment_failed', session.message);
 
     return {
@@ -535,22 +568,6 @@ function registerIntegrationRoutes(app, { pool, env }) {
     const { storeId } = request.params;
     if (!UUID_PATTERN.test(storeId)) throw new ApiError(400, 'validation_error', 'Cửa hàng không hợp lệ.');
     const body = request.body || {};
-    const verified = verifyMomoIpnSignature(body, env);
-    if (!verified.configured) {
-      throw new ApiError(503, 'integration_not_configured', 'Cổng MoMo IPN chưa được cấu hình khóa đối tác.');
-    }
-    if (!verified.valid) {
-      throw new ApiError(401, 'invalid_webhook_signature', 'Chữ ký MoMo IPN không hợp lệ.');
-    }
-    if (Number(body.resultCode) !== 0) {
-      return reply.code(200).send({ ok: true, processed: 0, ignored: true, reason: 'non_zero_result_code' });
-    }
-    const amountRaw = String(Math.round(Number(body.amount || 0)));
-    if (!/^[1-9]\d{0,15}$/.test(amountRaw)) {
-      return reply.code(200).send({ ok: true, processed: 0, ignored: true, reason: 'invalid_amount' });
-    }
-    const transId = String(body.transId || body.requestId || '').trim();
-    if (!transId) throw new ApiError(400, 'missing_event_id', 'Thiếu mã giao dịch MoMo.');
 
     let extraOrderId = '';
     let extraOrderNumber = '';
@@ -570,7 +587,6 @@ function registerIntegrationRoutes(app, { pool, env }) {
     }
     const fallbackCode = extractOrderCodeFromMemo(`${body.orderInfo || ''} ${body.orderId || ''}`);
     const orderNumberCandidate = extraOrderNumber || fallbackCode || '';
-    const externalEventId = `momo:${transId}`;
     const digest = createHash('sha256').update(JSON.stringify(body)).digest();
 
     const client = await pool.connect();
@@ -578,12 +594,32 @@ function registerIntegrationRoutes(app, { pool, env }) {
       await client.query('BEGIN');
       await client.query("SELECT set_config('app.store_id', $1, true)", [storeId]);
       const storeCheck = await client.query(
-        `SELECT s.id,
+        `SELECT s.id, s.integration_secrets_enc,
                 (SELECT m.user_id FROM memberships m WHERE m.store_id = s.id AND m.status = 'active' AND m.role = 'owner' ORDER BY m.joined_at, m.created_at LIMIT 1) AS owner_user_id
          FROM stores s WHERE s.id = $1 AND s.status = 'active'`,
         [storeId]
       );
       if (!storeCheck.rowCount) throw new ApiError(404, 'store_not_found', 'Không tìm thấy cửa hàng.');
+      const storeEnv = buildStoreEnv(env, storeCheck.rows[0]);
+      const verified = verifyMomoIpnSignature(body, storeEnv);
+      if (!verified.configured) {
+        throw new ApiError(503, 'integration_not_configured', 'Cổng MoMo IPN chưa được cấu hình khóa đối tác.');
+      }
+      if (!verified.valid) {
+        throw new ApiError(401, 'invalid_webhook_signature', 'Chữ ký MoMo IPN không hợp lệ.');
+      }
+      if (Number(body.resultCode) !== 0) {
+        await client.query('ROLLBACK');
+        return reply.code(200).send({ ok: true, processed: 0, ignored: true, reason: 'non_zero_result_code' });
+      }
+      const amountRaw = String(Math.round(Number(body.amount || 0)));
+      if (!/^[1-9]\d{0,15}$/.test(amountRaw)) {
+        await client.query('ROLLBACK');
+        return reply.code(200).send({ ok: true, processed: 0, ignored: true, reason: 'invalid_amount' });
+      }
+      const transId = String(body.transId || body.requestId || '').trim();
+      if (!transId) throw new ApiError(400, 'missing_event_id', 'Thiếu mã giao dịch MoMo.');
+      const externalEventId = `momo:${transId}`;
       const ownerUserId = storeCheck.rows[0].owner_user_id;
       if (!ownerUserId) throw new ApiError(409, 'store_owner_missing', 'Không xác định được chủ cửa hàng.');
       await client.query("SELECT set_config('app.user_id', $1, true)", [ownerUserId]);

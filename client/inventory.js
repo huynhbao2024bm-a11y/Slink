@@ -201,6 +201,26 @@
   }
 
 
+  S.fn.inventoryMobileCards = function inventoryMobileCards(products) {
+    return products.map(function (product) {
+      const stockClass = product.stock <= 0 ? 'out' : product.stock <= product.minStock ? 'low' : '';
+      return `<article class='product-mobile-card'>
+        <div class='product-mobile-main'>
+          ${S.fn.productThumb(product)}
+          <div class='product-mobile-info'>
+            <strong>${S.fn.esc(product.name)}</strong>
+            <small>${S.fn.esc(product.sku)} · ${S.fn.esc(product.category)}</small>
+          </div>
+          <div class='product-mobile-side'>
+            <strong class='stock-number ${stockClass}'>${S.fn.number(product.stock)} ${S.fn.esc(product.unit)}</strong>
+            <small class='muted'>Nhắc ≤ ${S.fn.number(product.minStock)}</small>
+          </div>
+        </div>
+        ${S.fn.hasPerm('manageInventory') ? `<button class='product-card-menu-button' data-action='adjust-stock' data-id='${product.id}' aria-label='Kiểm kê ${S.fn.esc(product.name)}' title='Kiểm kê'>＋</button>` : ''}
+      </article>`;
+    }).join('');
+  }
+
   S.fn.renderInventoryList = function renderInventoryList() {
     const currentWarehouse = S.state.inventoryWarehouseId === S.state.selectedWarehouseId && S.state.inventoryLoadedFilter === S.state.inventoryStockFilter && S.state.inventoryLoadedQuery === S.state.searchTerms.inventory;
     const products = currentWarehouse ? S.state.inventoryProducts : [];
@@ -208,7 +228,8 @@
     const offset = currentWarehouse ? S.state.inventoryOffset : 0;
     const nextOffset = currentWarehouse ? S.state.inventoryNextOffset : null;
     const empty = S.state.inventoryLoading ? 'Đang tải tồn kho' : S.state.inventoryError ? 'Chưa tải được tồn kho' : S.state.searchTerms.inventory ? 'Không tìm thấy mặt hàng' : S.state.inventoryStockFilter === 'low' ? 'Không có mặt hàng sắp hết' : S.state.inventoryStockFilter === 'out' ? 'Không có mặt hàng hết hàng' : 'Chưa có sản phẩm trong kho';
-    return `<section class='panel' data-inventory-result-list><div class='panel-header'><div><h2>Tồn kho tại ${S.fn.esc((S.state.warehouses.find(function (item) { return item.id === S.state.selectedWarehouseId; }) || {}).name || 'kho')}</h2></div></div><div class='table-wrap'><table class='data-table'><thead><tr><th>Sản phẩm</th><th>Danh mục</th><th class='text-right'>Đang có</th><th class='text-right'>Nhắc khi còn</th><th>Biến động gần nhất</th><th>Thay đổi</th><th></th></tr></thead><tbody>${S.fn.inventoryRows(products) || `<tr><td colspan='7'><div class='empty-state'><strong>${empty}</strong>${S.state.inventoryError ? `<button type='button' class='link-button' data-action='inventory-page' data-offset='0'>Thử lại</button>` : ''}</div></td></tr>`}</tbody></table></div><div class='pagination'><span>Hiển thị ${products.length} trên ${S.fn.number(total)} mặt hàng</span><span class='pagination-actions'>${offset > 0 ? `<button class='page-button' data-action='inventory-page' data-offset='${Math.max(0, offset - 100)}'>‹</button>` : ''}<span class='page-button current'>${Math.floor(offset / 100) + 1}</span>${nextOffset !== null ? `<button class='page-button' data-action='inventory-page' data-offset='${nextOffset}'>›</button>` : ''}</span></div></section>`;
+    const emptyMobile = `<div class='empty-state'><strong>${empty}</strong>${S.state.inventoryError ? `<button type='button' class='link-button' data-action='inventory-page' data-offset='0'>Thử lại</button>` : ''}</div>`;
+    return `<section class='panel' data-inventory-result-list><div class='panel-header'><div><h2>Tồn kho tại ${S.fn.esc((S.state.warehouses.find(function (item) { return item.id === S.state.selectedWarehouseId; }) || {}).name || 'kho')}</h2></div></div><div class='table-wrap desktop-only-table'><table class='data-table'><thead><tr><th>Sản phẩm</th><th>Danh mục</th><th class='text-right'>Đang có</th><th class='text-right'>Nhắc khi còn</th><th>Biến động gần nhất</th><th>Thay đổi</th><th></th></tr></thead><tbody>${S.fn.inventoryRows(products) || `<tr><td colspan='7'><div class='empty-state'><strong>${empty}</strong>${S.state.inventoryError ? `<button type='button' class='link-button' data-action='inventory-page' data-offset='0'>Thử lại</button>` : ''}</div></td></tr>`}</tbody></table></div><div class='mobile-only-cards'>${S.fn.inventoryMobileCards(products) || emptyMobile}</div><div class='pagination'><span>Hiển thị ${products.length} trên ${S.fn.number(total)} mặt hàng</span><span class='pagination-actions'>${offset > 0 ? `<button class='page-button' data-action='inventory-page' data-offset='${Math.max(0, offset - 100)}'>‹</button>` : ''}<span class='page-button current'>${Math.floor(offset / 100) + 1}</span>${nextOffset !== null ? `<button class='page-button' data-action='inventory-page' data-offset='${nextOffset}'>›</button>` : ''}</span></div></section>`;
   }
 
 
