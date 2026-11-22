@@ -355,44 +355,10 @@
     if (!customer) return;
     const debtVnd = Math.max(0, Math.trunc(Number(customer.debt || customer.balanceVnd || 0)));
     const message = `Chào ${customer.name}, ${S.state.store.settings.storeName} xin nhắc khoản còn phải thanh toán là ${S.fn.moneyVndText(debtVnd)}. Nếu bạn đã thanh toán, vui lòng phản hồi để cửa hàng kiểm tra. Cảm ơn bạn!`;
-    if (!S.state.integrationState.data && !S.state.integrationState.loading && typeof S.fn.loadIntegrationStatus === 'function') {
-      await S.fn.loadIntegrationStatus().catch(function () {});
-    }
-    const bankSettings = S.state.integrationState.data?.settings || {};
-    const hasBankQr = Boolean(bankSettings.bankBin && bankSettings.bankAccountNumber && debtVnd > 0 && window.SlinkReceiptImage && window.SlinkVietQrTools);
     S.state.activeDebtQrPreview = { dataUrl: '', blob: null, filename: '', text: message };
-    let qrCardHtml = '';
-    if (hasBankQr) {
-      try {
-        const card = await window.SlinkReceiptImage.renderDebtVietQrCardPng({
-          storeName: S.state.store.settings.storeName || 'Cửa hàng Slink',
-          customerName: customer.name,
-          customerPhone: customer.phone || '',
-          amountVnd: debtVnd,
-          bankBin: bankSettings.bankBin,
-          accountNumber: bankSettings.bankAccountNumber,
-          accountName: bankSettings.bankAccountName || '',
-          bankName: bankSettings.bankName || '',
-          description: `NO ${customer.phone || customer.name}`.slice(0, 40),
-        });
-        S.state.activeDebtQrPreview = {
-          dataUrl: card.dataUrl,
-          blob: card.blob,
-          filename: `nhac-no-${String(customer.name || 'khach').replace(/[^a-zA-Z0-9_-]+/g, '-').slice(0, 32)}.png`,
-          text: message,
-        };
-        qrCardHtml = `<div class='debt-qr-png-preview'><img src='${card.dataUrl}' alt='Thẻ VietQR nhắc nợ ${S.fn.esc(customer.name)}'/></div>
-          <div class='receipt-png-actions'>
-            <button class='btn btn-primary' type='button' data-action='share-debt-qr-png'>Chia sẻ ảnh QR</button>
-            <button class='btn btn-secondary' type='button' data-action='download-debt-qr-png'>Tải ảnh QR</button>
-          </div>`;
-      } catch (_) {}
-    } else if (debtVnd > 0) {
-      qrCardHtml = `<div class='modal-note'>Thiết lập tài khoản ngân hàng VietQR trong Cài đặt để tạo thẻ ảnh QR kèm số tiền nợ tự động.</div>`;
-    }
-    const body = `${qrCardHtml}<label class='form-field' style='margin-top:10px'><span class='input-label'>Lời nhắc${customer.phone ? ' · ' + S.fn.esc(customer.phone) : ''}</span><textarea class='input finance-reminder-text' rows='4' data-finance-reminder>${S.fn.esc(message)}</textarea></label>`;
-    const share = window.SlinkAndroid || typeof navigator.share === 'function' ? `<button class='btn ${hasBankQr ? 'btn-secondary' : 'btn-primary'}' type='button' data-action='share-finance-reminder'>Chia sẻ lời nhắc</button>` : '';
-    S.fn.showModal('Nhắc nợ & VietQR', 'Gửi thẻ ảnh VietQR hoặc sao chép lời nhắc gửi khách hàng.', body, `<button class='btn btn-secondary' type='button' data-action='copy-finance-reminder'>Sao chép</button>${share}`);
+    const body = `<label class='form-field'><span class='input-label'>Lời nhắc${customer.phone ? ' · ' + S.fn.esc(customer.phone) : ''}</span><textarea class='input finance-reminder-text' rows='4' data-finance-reminder>${S.fn.esc(message)}</textarea></label>`;
+    const share = window.SlinkAndroid || typeof navigator.share === 'function' ? `<button class='btn btn-primary' type='button' data-action='share-finance-reminder'>Chia sẻ</button>` : '';
+    S.fn.showModal('Nhắc nợ khách hàng', '', body, `<button class='btn btn-secondary' type='button' data-action='copy-finance-reminder'>Sao chép</button>${share}`);
   }
 
 

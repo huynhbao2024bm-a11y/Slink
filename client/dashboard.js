@@ -143,7 +143,7 @@
     const hasStock = invTotal > 0 && invOut < invTotal;
     const hasOrders = Boolean((d && Number(d.todayOrderCount) > 0) || S.state.store.orders.length > 0 || Number(S.state.analyticsData?.summary?.orderCount || 0) > 0);
     const steps = [
-      { key: 'settings', label: '1. Cửa hàng & QR', done: hasStoreInfo, attr: `data-route='settings'` },
+      { key: 'settings', label: '1. Cửa hàng', done: hasStoreInfo, attr: `data-route='settings'` },
       { key: 'products', label: '2. Thêm hàng', done: hasProducts, attr: S.fn.hasPerm('editProducts') ? `data-action='new-product'` : `data-route='products'` },
       { key: 'inventory', label: '3. Nhập kho', done: hasStock, attr: `data-route='inventory'` },
       { key: 'pos', label: '4. Bán đơn đầu', done: hasOrders, attr: `data-route='pos'` },

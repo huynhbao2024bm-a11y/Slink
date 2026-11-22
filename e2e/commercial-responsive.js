@@ -737,7 +737,6 @@ async function runViewportAudit(browser, origin, viewport, label) {
     await page.selectOption('#int-bank-bin', '970436');
     await page.fill('#int-bank-account', '1903668899');
     await page.fill('#int-bank-owner', 'SLINK TEST');
-    await page.waitForSelector('#int-vietqr-preview .vietqr-svg', { timeout: 5000 });
     const [intSaveRes] = await Promise.all([
       page.waitForResponse((res) => res.url().includes('/integrations/settings') && res.request().method() === 'PUT'),
       page.locator("#integration-settings-form button[type='submit']").click(),

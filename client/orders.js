@@ -990,15 +990,7 @@
   S.fn.buildReceiptImageData = function buildReceiptImageData(order) {
     const c = S.fn.customerById(order.customerId);
     const bankSettings = S.state.integrationState.data?.settings || {};
-    let vietQrText = '';
-    if (order.due > 0 && bankSettings.bankBin && bankSettings.bankAccountNumber && window.SlinkVietQrTools) {
-      vietQrText = window.SlinkVietQrTools.buildVietQrPayload({
-        bankBin: bankSettings.bankBin,
-        accountNumber: bankSettings.bankAccountNumber,
-        amountVnd: Math.max(0, Math.trunc(Number(order.due || 0))),
-        description: `SLINK ${order.number}`.slice(0, 40),
-      });
-    }
+    const vietQrText = '';
     return {
       storeName: S.state.store.settings.storeName || 'Slink',
       storeAddress: S.state.store.settings.address || '',
