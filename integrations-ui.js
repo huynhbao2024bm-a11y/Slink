@@ -68,21 +68,21 @@
     const printerSupported = Boolean(caps.serialSupported || caps.btSupported);
     if (!printerSupported) {
       return `<section class='panel settings-panel'>
-        <div class='panel-header'><div><h2>Máy in nhiệt &amp; Két tiền</h2><p>Kết nối máy in bill 58mm/80mm trực tiếp không cần phần mềm trung gian.</p></div></div>
+        <div class='panel-header'><h2>Máy in nhiệt &amp; Két tiền</h2></div>
         <div class='integration-hardware-bar'>
           <div>
             <strong>Chế độ in trình duyệt / PDF</strong>
-            <small>Thiết bị hiện tại hỗ trợ in qua hộp thoại hệ thống hoặc chia sẻ ảnh biên nhận PNG qua Zalo. Để in Bluetooth ESC/POS trực tiếp, hãy dùng ứng dụng Slink Android hoặc Chrome Desktop qua cổng USB/COM.</small>
+            <small>Hỗ trợ in hệ thống hoặc gửi ảnh PNG. Dùng Slink Android để in Bluetooth.</small>
           </div>
         </div>
       </section>`;
     }
     const printerTitle = caps.btSupported ? 'Máy in nhiệt Bluetooth (58mm / 80mm)' : 'Máy in nhiệt USB / COM';
     const printerSubtitle = caps.btSupported
-      ? (caps.btDeviceName ? `Đã chọn: ${caps.btDeviceName}` : 'Ghép đôi máy in trong Cài đặt điện thoại rồi chọn tại đây')
+      ? (caps.btDeviceName ? `Đã chọn: ${caps.btDeviceName}` : 'Chưa chọn máy in Bluetooth')
       : (caps.connected ? 'Đã kết nối' : 'Máy in 58mm / 80mm');
     return `<section class='panel settings-panel'>
-      <div class='panel-header'><div><h2>Máy in nhiệt &amp; Két tiền</h2><p>In bill tức thì và tự động bung két khi thu tiền mặt.</p></div></div>
+      <div class='panel-header'><h2>Máy in nhiệt &amp; Két tiền</h2></div>
       <div class='integration-hardware-bar'>
         <div>
           <strong>${esc(printerTitle)}</strong>

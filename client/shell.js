@@ -205,8 +205,8 @@
   S.fn.openTaskFocusOnboarding = function openTaskFocusOnboarding() {
     const options = S.fn.taskFocusOptions();
     if (!options.length) return S.fn.scheduleInitialGuidedTour();
-    const body = `<form id='task-focus-onboarding' data-form='task-focus'><div class='task-focus-role'>Tài khoản hiện có quyền: <strong>${S.fn.esc(S.fn.staffRoleName(S.state.store.role))}</strong></div><div class='task-focus-choices'>${S.fn.renderTaskFocusChoices(S.state.taskFocusRoute)}</div><p class='install-hint'>Lựa chọn này chỉ sắp xếp màn hình mở đầu và lối tắt trên thiết bị này; không thay đổi quyền tài khoản.</p></form>`;
-    S.fn.showModal('Bạn là ai trong cửa hàng?', 'Quyền tài khoản được chủ cửa hàng cấp. Chọn việc bạn thường làm để Slink đưa đúng màn hình lên trước.', body, `<button class='btn btn-primary' type='submit' form='task-focus-onboarding'>Tiếp tục</button>`, true);
+    const body = `<form id='task-focus-onboarding' data-form='task-focus'><div class='task-focus-role'>Vai trò: <strong>${S.fn.esc(S.fn.staffRoleName(S.state.store.role))}</strong></div><div class='task-focus-choices'>${S.fn.renderTaskFocusChoices(S.state.taskFocusRoute)}</div></form>`;
+    S.fn.showModal('Chọn màn hình chính', '', body, `<button class='btn btn-primary' type='submit' form='task-focus-onboarding'>Tiếp tục</button>`, true);
   }
 
 
@@ -332,12 +332,7 @@
 
 
   S.fn.scheduleInitialGuidedTour = function scheduleInitialGuidedTour() {
-    if (!S.state.authSession || !S.state.store.id || S.state.checkoutPendingPayload || (S.state.store.role === 'owner' && !S.state.store.onboardingCompletedAt) || S.fn.guidedTourWasSeen()) return;
-    const scheduledPage = S.state.page, scheduledStore = S.state.store.id;
-    window.setTimeout(function () {
-      if (!S.state.authSession || S.state.store.id !== scheduledStore || S.state.page !== scheduledPage || S.state.cart.length || S.state.offlineState.pending || !navigator.onLine || !S.dom.modal.hidden || S.state.checkoutPendingPayload || S.fn.guidedTourWasSeen()) return;
-      S.fn.startGuidedTour(false);
-    }, 650);
+    // Keep initial mobile/desktop screens uncluttered; tour remains accessible via Help or Settings.
   }
 
 

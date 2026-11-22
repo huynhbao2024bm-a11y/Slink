@@ -817,12 +817,12 @@
       emptyProductState = `<div class='panel empty-state pos-empty-start' style='grid-column:1/-1'><strong>Không tìm thấy mặt hàng phù hợp</strong><span>Thử đổi từ khóa hoặc chọn mục “Tất cả”.</span></div>`;
     } else if (!S.state.productLoading && !hasCatalog) {
       emptyProductState = canManageProducts
-        ? `<section class='panel pos-empty-start' style='grid-column:1/-1'><span class='pos-empty-icon' aria-hidden='true'>＋</span><strong>Thêm vài mặt hàng để bắt đầu bán</strong><span>Nhập tên và giá bán. Số lượng đang có có thể ghi luôn để bán ngay.</span><div class='pos-empty-actions'><button class='btn btn-primary' data-action='new-product'>Thêm mặt hàng đầu tiên</button><button class='btn btn-secondary' data-action='import-products'>Nhập danh sách có sẵn</button></div></section>`
-        : `<div class='panel empty-state pos-empty-start' style='grid-column:1/-1'><strong>Chưa có mặt hàng để bán</strong><span>Nhờ chủ cửa hàng thêm mặt hàng hoặc nhập danh sách có sẵn.</span></div>`;
+        ? `<section class='panel pos-empty-start' style='grid-column:1/-1'><span class='pos-empty-icon' aria-hidden='true'>＋</span><strong>Chưa có mặt hàng nào</strong><div class='pos-empty-actions'><button class='btn btn-primary' data-action='new-product'>＋ Thêm hàng</button><button class='btn btn-secondary' data-action='import-products'>Nhập CSV</button></div></section>`
+        : `<div class='panel empty-state pos-empty-start' style='grid-column:1/-1'><strong>Chưa có mặt hàng để bán</strong></div>`;
     } else if (!S.state.productLoading) {
       emptyProductState = canManageProducts
-        ? `<div class='panel empty-state pos-empty-start' style='grid-column:1/-1'><strong>Chưa có hàng sẵn để bán</strong><span>Kiểm tra số lượng trong kho đang chọn. Bạn có thể ghi số lượng đang có hoặc nhập hàng mới.</span><button class='btn btn-secondary' data-route='inventory'>Kiểm tra kho hàng</button></div>`
-        : `<div class='panel empty-state pos-empty-start' style='grid-column:1/-1'><strong>Chưa có hàng sẵn để bán</strong><span>Nhờ chủ cửa hàng kiểm tra số lượng trong kho.</span></div>`;
+        ? `<div class='panel empty-state pos-empty-start' style='grid-column:1/-1'><strong>Kho đang chọn hết hàng</strong><button class='btn btn-secondary' data-route='inventory'>Mở kho hàng</button></div>`
+        : `<div class='panel empty-state pos-empty-start' style='grid-column:1/-1'><strong>Kho đang chọn hết hàng</strong></div>`;
     }
     const activePosWarehouse = S.state.warehouses.find(function (warehouse) { return warehouse.id === S.state.selectedWarehouseId; }) || S.state.warehouses.find(function (warehouse) { return warehouse.is_default; }) || S.state.warehouses[0];
     const posWarehouseLocked = S.fn.hasAnyOpenPosBillItems() || Boolean(S.state.checkoutPendingPayload);
@@ -831,23 +831,23 @@
       : '';
     const shiftChip = S.fn.hasPerm('operateCashShift')
       ? (S.state.cashRegisterState.session
-        ? `<button class='pos-topbar-chip active' type='button' data-action='close-cash-session'>Ca: ${S.fn.moneyVndText(S.state.cashRegisterState.session.expectedCashVnd)} · Đóng ca</button>`
-        : `<button class='pos-topbar-chip' type='button' data-action='open-cash-session'>Mở ca tiền mặt</button>`)
+        ? `<button class='pos-topbar-chip active' type='button' data-action='close-cash-session'>Ca: ${S.fn.moneyVndText(S.state.cashRegisterState.session.expectedCashVnd)}</button>`
+        : `<button class='pos-topbar-chip' type='button' data-action='open-cash-session'>Mở ca</button>`)
       : '';
     const returnChip = S.fn.hasPerm('voidOrReturnOrder')
-      ? `<button class='pos-topbar-chip' type='button' data-action='pos-quick-return'>Đổi / Trả hàng</button>`
+      ? `<button class='pos-topbar-chip' type='button' data-action='pos-quick-return'>Đổi trả</button>`
       : '';
     const voiceOn = S.state.posPrefs?.voiceAnnounce !== false;
     const voiceChip = `<button class='pos-topbar-chip ${voiceOn ? 'active' : ''}' type='button' data-action='pos-toggle-voice' title='Bật/tắt loa đọc tiền sau thanh toán'>Loa: ${voiceOn ? 'Bật' : 'Tắt'}</button>`;
     const viewModeToggle = `<button class='pos-topbar-chip ${S.state.posViewMode === 'grid' ? 'active' : ''}' type='button' data-action='pos-view-mode' data-mode='grid' title='Hiển thị dạng thẻ lớn'>Lưới</button><button class='pos-topbar-chip ${S.state.posViewMode === 'list' ? 'active' : ''}' type='button' data-action='pos-view-mode' data-mode='list' title='Hiển thị dạng danh sách quét nhanh'>Danh sách</button>`;
     const addProductChip = canManageProducts
-      ? `<button class='pos-topbar-chip' type='button' data-action='new-product'>＋ Thêm hàng</button>`
+      ? `<button class='pos-topbar-chip' type='button' data-action='new-product'>＋ Hàng</button>`
       : '';
     const canBack = S.state.store.role !== 'cashier';
     const topbar = `<header class='pos-topbar'>
       ${canBack ? `<button type='button' class='pos-exit-btn' data-action='exit-pos' aria-label='Về trang quản trị'>${S.fn.icon('back', 16)}<span>Về quản trị</span></button>` : `<span class='pos-exit-btn' style='pointer-events:none'>${S.fn.esc(S.state.store.settings.storeName || 'Slink POS')}</span>`}
       <div class='pos-search-bar'>
-        <div class='search-wrap pos-search' data-tour-target='pos-search'><span class='search-symbol'>⌕</span><input class='input' id='pos-search' type='search' placeholder='Tìm tên, SKU, mã vạch (F2)…' value='${S.fn.esc(query)}' aria-label='Tìm sản phẩm'></div>
+        <div class='search-wrap pos-search' data-tour-target='pos-search'><span class='search-symbol'>⌕</span><input class='input' id='pos-search' type='search' placeholder='Tìm hàng, mã vạch…' value='${S.fn.esc(query)}' aria-label='Tìm sản phẩm'></div>
         <button class='pos-topbar-chip' type='button' data-action='pos-scan' aria-label='Quét mã vạch bằng camera' title='Quét mã vạch'>${S.fn.icon('scan', 17)}</button>
       </div>
       <div class='pos-topbar-actions'>
@@ -863,8 +863,8 @@
       return `<div class='pos-shell'>${topbar}<div class='pos-workspace-body'>${emptyProductState}</div></div>`;
     }
     const posModesBar = `<div class='pos-mode-bar' role='tablist' aria-label='Hình thức bán hàng'>
-      ${[['standard', 'Tại quầy', 'Nhiều đơn · tiền mặt · QR · nợ'], ['delivery', 'Giao hàng', 'Địa chỉ · COD · tự ship']].map(function (m) {
-        return `<button type='button' role='tab' class='pos-mode-tab ${S.state.posMode === m[0] ? 'active' : ''}' data-action='pos-mode' data-mode='${m[0]}' aria-selected='${S.state.posMode === m[0]}'><strong>${m[1]}</strong><small>${m[2]}</small></button>`;
+      ${[['standard', 'Tại quầy'], ['delivery', 'Giao hàng']].map(function (m) {
+        return `<button type='button' role='tab' class='pos-mode-tab ${S.state.posMode === m[0] ? 'active' : ''}' data-action='pos-mode' data-mode='${m[0]}' aria-selected='${S.state.posMode === m[0]}'><strong>${m[1]}</strong></button>`;
       }).join('')}
     </div>`;
     const mobileCheckoutAction = S.state.checkoutPendingPayload ? 'checkout' : (S.state.posMode === 'delivery' ? 'open-cart' : (S.state.posStandardMethod === 'debt' ? 'checkout' : 'standard-pay'));
