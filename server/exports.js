@@ -7,6 +7,7 @@ const { hasPermission } = require('./rbac');
 
 const MAX_EXPORT_ROWS = 50_000;
 const COST_COLUMN_KEYS = new Set(['cost_vnd', 'update_cost_vnd', 'stock_value_vnd', 'unit_cost_vnd']);
+const PURCHASE_COST_COLUMN_KEYS = new Set(['cost_vnd', 'update_cost_vnd', 'stock_value_vnd', 'unit_cost_vnd', 'line_total_vnd', 'subtotal_vnd', 'tax_vnd', 'total_vnd', 'paid_vnd']);
 
 function canExportDataset(membership, key) {
   if ([
@@ -410,10 +411,11 @@ function csvCell(value, kind) {
   return `"${text.replace(/"/g, '""')}"`;
 }
 
-function makeCsv(dataset, rows, { includeCostColumns = true } = {}) {
+function makeCsv(dataset, rows, { includeCostColumns = true, datasetKey = '' } = {}) {
+  const excludedSet = ['purchases', 'purchase-orders'].includes(datasetKey) ? PURCHASE_COST_COLUMN_KEYS : COST_COLUMN_KEYS;
   const columns = includeCostColumns
     ? dataset.columns
-    : dataset.columns.filter(([, colKey]) => !COST_COLUMN_KEYS.has(colKey));
+    : dataset.columns.filter(([, colKey]) => !excludedSet.has(colKey));
   const header = columns.map(([label]) => csvCell(label, 'text')).join(',');
   const body = rows.map((row) => columns.map(([, key, kind]) => csvCell(row[key], kind)).join(','));
   return `\uFEFF${[header, ...body].join('\r\n')}\r\n`;
@@ -482,7 +484,7 @@ function registerExportRoutes(app, { pool }) {
       .header('X-Content-Type-Options', 'nosniff')
       .header('Content-Disposition', `attachment; filename="${dataset.filename}"`)
       .type('text/csv; charset=utf-8')
-      .send(makeCsv(dataset, result.rows, { includeCostColumns: result.canViewCost }));
+      .send(makeCsv(dataset, result.rows, { includeCostColumns: result.canViewCost, datasetKey: key }));
   });
 }
 

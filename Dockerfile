@@ -17,6 +17,7 @@ COPY --from=dependencies --chown=node:node /app/node_modules ./node_modules
 COPY --chown=node:node package.json ./package.json
 COPY --chown=node:node app.js purchase-units.js money-inputs.js offline-store.js offline-ledger.js offline-sync.js offline-conflict-ui.js supplier-returns-ui.js barcode-tools.js banks-vn.js vietqr-tools.js escpos-printer.js integrations-ui.js finance-vouchers-ui.js legal-content.js sync-bus.js pos-hardware.js receipt-image.js index.html styles.css workspace.css manifest.webmanifest register-sw.js sw.js ./
 COPY --chown=node:node assets ./assets
+COPY --chown=node:node client ./client
 COPY --chown=node:node server ./server
 
 USER node

@@ -4,7 +4,7 @@ const { normalizeOffline, beginOffline, recordOffline } = require('./offline-ope
 const { createHash, randomUUID } = require('node:crypto');
 const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
-const { findAccessibleWarehouse } = require('./warehouse-access');
+const { findAccessibleWarehouse, allowedWarehouseIds } = require('./warehouse-access');
 const { hasPermission, requirePermission } = require('./rbac');
 
 function quantityMilli(value, label) {
@@ -401,6 +401,112 @@ function registerStockRoutes(app, { pool, env }) {
     });
     if (outcome.replayed) reply.header('idempotent-replayed', 'true');
     return reply.code(outcome.status).send(outcome.body);
+  });
+
+  app.get('/api/stores/:storeId/products/:productId/stock-card', async (request) => {
+    const auth = await authenticate(pool, request);
+    const { storeId, productId } = request.params;
+    if (!UUID_PATTERN.test(storeId) || !UUID_PATTERN.test(productId)) {
+      throw new ApiError(400, 'validation_error', 'Tham số cửa hàng hoặc sản phẩm không hợp lệ.');
+    }
+    return withStore(pool, auth.userId, storeId, async (client, membership) => {
+      const canViewCost = hasPermission(membership, 'view_cost_price');
+      const allowed = allowedWarehouseIds(membership);
+      const productResult = await client.query(
+        `SELECT id, sku, barcode, extra_barcodes, name, category, unit,
+                sale_price_vnd::text AS sale_price_vnd, cost_vnd::text AS cost_vnd,
+                low_stock_threshold::text AS low_stock_threshold,
+                inventory_tracked, serial_tracked, warranty_months, status, version
+         FROM products WHERE store_id = $1 AND id = $2`,
+        [storeId, productId]
+      );
+      if (!productResult.rowCount) throw new ApiError(404, 'product_not_found', 'Không tìm thấy sản phẩm.');
+      const productRow = productResult.rows[0];
+      const balancesResult = await client.query(
+        `SELECT w.id AS warehouse_id, w.code AS warehouse_code, w.name AS warehouse_name, w.is_default,
+                COALESCE(b.on_hand, 0)::text AS on_hand, COALESCE(b.reserved, 0)::text AS reserved,
+                COALESCE(b.version, 1) AS inventory_version, b.updated_at
+         FROM warehouses w
+         LEFT JOIN inventory_balances b ON b.store_id = $1 AND b.product_id = $2 AND b.warehouse_id = w.id
+         WHERE w.store_id = $1 AND w.status = 'active'
+           AND ($3::boolean = false OR w.id = ANY($4::uuid[]))
+         ORDER BY w.is_default DESC, w.name, w.id`,
+        [storeId, productId, allowed !== null, allowed || []]
+      );
+      const movementsResult = await client.query(
+        `SELECT m.id, m.warehouse_id, w.name AS warehouse_name, m.movement_type,
+                m.quantity_delta::text AS quantity_delta, m.quantity_after::text AS quantity_after,
+                m.reason, m.source_type, m.source_id, m.occurred_at,
+                u.display_name AS actor_name
+         FROM inventory_movements m
+         JOIN warehouses w ON w.store_id = m.store_id AND w.id = m.warehouse_id
+         LEFT JOIN users u ON u.id = m.actor_user_id
+         WHERE m.store_id = $1 AND m.product_id = $2
+           AND ($3::boolean = false OR m.warehouse_id = ANY($4::uuid[]))
+         ORDER BY m.occurred_at DESC, m.id DESC
+         LIMIT 100`,
+        [storeId, productId, allowed !== null, allowed || []]
+      );
+      const serialResult = await client.query(
+        `SELECT COUNT(*) FILTER (WHERE status = 'in_stock')::int AS in_stock_count,
+                COUNT(*) FILTER (WHERE status = 'sold')::int AS sold_count,
+                COUNT(*) FILTER (WHERE status = 'archived')::int AS archived_count
+         FROM product_serial_codes
+         WHERE store_id = $1 AND product_id = $2
+           AND ($3::boolean = false OR warehouse_id = ANY($4::uuid[]))`,
+        [storeId, productId, allowed !== null, allowed || []]
+      );
+      return {
+        product: {
+          id: productRow.id,
+          sku: productRow.sku,
+          barcode: productRow.barcode,
+          extraBarcodes: productRow.extra_barcodes || [],
+          name: productRow.name,
+          category: productRow.category,
+          unit: productRow.unit,
+          salePriceVnd: productRow.sale_price_vnd,
+          costVnd: canViewCost ? productRow.cost_vnd : null,
+          lowStockThreshold: productRow.low_stock_threshold,
+          inventoryTracked: productRow.inventory_tracked,
+          serialTracked: productRow.serial_tracked,
+          warrantyMonths: Number(productRow.warranty_months || 0),
+          status: productRow.status,
+          version: productRow.version,
+        },
+        balancesByWarehouse: balancesResult.rows.map((r) => ({
+          warehouseId: r.warehouse_id,
+          warehouseCode: r.warehouse_code,
+          warehouseName: r.warehouse_name,
+          isDefault: Boolean(r.is_default),
+          onHand: r.on_hand,
+          reserved: r.reserved,
+          inventoryVersion: Number(r.inventory_version),
+          updatedAt: r.updated_at,
+        })),
+        movements: movementsResult.rows.map((m) => ({
+          id: m.id,
+          warehouseId: m.warehouse_id,
+          warehouseName: m.warehouse_name,
+          movementType: m.movement_type,
+          quantityDelta: m.quantity_delta,
+          quantityAfter: m.quantity_after,
+          unitCostVnd: canViewCost ? productRow.cost_vnd : null,
+          reason: m.reason,
+          sourceType: m.source_type,
+          sourceId: m.source_id,
+          actorName: m.actor_name || 'Hệ thống',
+          occurredAt: m.occurred_at,
+        })),
+        serialSummary: serialResult.rows[0]
+          ? {
+            inStockCount: Number(serialResult.rows[0].in_stock_count),
+            soldCount: Number(serialResult.rows[0].sold_count),
+            archivedCount: Number(serialResult.rows[0].archived_count),
+          }
+          : { inStockCount: 0, soldCount: 0, archivedCount: 0 },
+      };
+    });
   });
 }
 

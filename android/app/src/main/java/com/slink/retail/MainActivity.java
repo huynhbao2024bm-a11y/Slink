@@ -61,7 +61,11 @@ public class MainActivity extends Activity {
             "offline-conflict-ui.js", "supplier-returns-ui.js", "barcode-tools.js",
             "banks-vn.js", "vietqr-tools.js", "escpos-printer.js", "integrations-ui.js",
             "finance-vouchers-ui.js", "legal-content.js", "sync-bus.js", "pos-hardware.js",
-            "receipt-image.js", "register-sw.js", "sw.js", "manifest.webmanifest",
+            "receipt-image.js", "client/core.js", "client/charts.js", "client/shell.js",
+            "client/dashboard.js", "client/pos.js", "client/products.js", "client/orders.js",
+            "client/inventory.js", "client/customers.js", "client/finance.js", "client/reports.js",
+            "client/staff.js", "client/settings.js", "client/actions.js",
+            "register-sw.js", "sw.js", "manifest.webmanifest",
             "assets/slink-icon.svg", "assets/slink-icon-180.png", "assets/slink-icon-192.png",
             "assets/slink-icon-512.png", "assets/slink-icon-maskable-512.png"));
     private WebView web;
@@ -234,7 +238,7 @@ public class MainActivity extends Activity {
             headers.put("Cache-Control", "no-cache");
             headers.put("X-Content-Type-Options", "nosniff");
             headers.put("Service-Worker-Allowed", "/");
-            headers.put("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'");
+            headers.put("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'");
             return new WebResourceResponse(mime, mime.startsWith("image/") ? null : "UTF-8", 200, "OK", headers,
                     getAssets().open("web/" + path));
         } catch (IOException error) { return null; }

@@ -207,35 +207,66 @@ async function runViewportAudit(browser, origin, viewport, label) {
       const btn = page.locator("[data-action='guided-tour-skip']:visible").first();
       if (await btn.count()) { await btn.click(); await page.waitForTimeout(150); }
     };
+    const exitPosIfFullscreen = async () => {
+      const exitBtn = page.locator("[data-action='exit-pos']:visible").first();
+      if (await exitBtn.count()) {
+        await exitBtn.click();
+        await page.waitForTimeout(200);
+      }
+    };
+    const goToRoute = async (route) => {
+      await skipTour();
+      if (route !== 'pos') await exitPosIfFullscreen();
+      const direct = page.locator(`[data-route='${route}']:visible`).first();
+      if (await direct.count()) {
+        await direct.click();
+        await page.waitForTimeout(250);
+        await skipTour();
+        return;
+      }
+      const moreBtn = page.locator("[data-action='more-menu']:visible").first();
+      assert.ok(await moreBtn.count(), `${label}: route '${route}' must be reachable via sidebar, bottom nav, or More drawer`);
+      await moreBtn.click();
+      await page.waitForSelector(".modal:not([hidden]) .more-drawer-grid", { timeout: 5000 });
+      await page.locator(`.modal [data-route='${route}']`).first().click();
+      await page.waitForTimeout(250);
+      await skipTour();
+    };
+
     await page.locator("[data-action='guided-tour-skip']:visible").first().waitFor({ state: 'visible', timeout: 2000 }).catch(() => {});
     await skipTour();
 
     if (process.env.SLINK_E2E_SCREENSHOT_DIR) {
       await fs.mkdir(process.env.SLINK_E2E_SCREENSHOT_DIR, { recursive: true });
     }
-    for (const route of ['dashboard', 'products', 'inventory', 'orders', 'workspace']) {
-      await skipTour();
-      const btn = page.locator(`[data-route='${route}']:visible`).first();
-      if (await btn.count()) {
-        await btn.click();
-        await page.waitForTimeout(250);
-        await skipTour();
-        await assertNoHorizontalOverflow(page, `${label}:${route}`);
-        if (process.env.SLINK_E2E_SCREENSHOT_DIR && ['dashboard', 'workspace'].includes(route)) {
-          await page.screenshot({ path: path.join(process.env.SLINK_E2E_SCREENSHOT_DIR, `${label}-${route}.png`) });
-        }
+    for (const route of ['dashboard', 'products', 'inventory', 'orders', 'suppliers', 'promotions']) {
+      await goToRoute(route);
+      await assertNoHorizontalOverflow(page, `${label}:${route}`);
+      if (route === 'dashboard') {
+        assert.ok(await page.locator('.onboarding-card').isVisible(), `${label}: onboarding checklist must show on dashboard when incomplete`);
+        await page.waitForSelector('.chart-svg');
+      }
+      if (process.env.SLINK_E2E_SCREENSHOT_DIR && ['dashboard', 'suppliers', 'promotions'].includes(route)) {
+        await page.screenshot({ path: path.join(process.env.SLINK_E2E_SCREENSHOT_DIR, `${label}-${route}.png`) });
       }
     }
 
-    // 1. Verify separated topbar Bán hàng CTA for Owner
-    const topbarPos = page.locator('#topbar-pos-cta:visible');
-    assert.equal(await topbarPos.count(), 1, `${label}: #topbar-pos-cta must be visible for owner`);
-    await topbarPos.click();
+    // 1. Verify separated Bán hàng (POS) CTA opens Fullscreen Hybrid POS + Grid/List toggle
+    await goToRoute('pos');
     await page.waitForSelector('.pos-product-grid button');
+    assert.equal(await page.evaluate(() => document.body.classList.contains('pos-fullscreen')), true, `${label}: POS must enable body.pos-fullscreen`);
+    assert.equal(await page.locator('.pos-topbar').isVisible(), true, `${label}: sticky .pos-topbar must be visible`);
     await assertNoHorizontalOverflow(page, `${label}:pos-topbar`);
     if (process.env.SLINK_E2E_SCREENSHOT_DIR) {
       await page.screenshot({ path: path.join(process.env.SLINK_E2E_SCREENSHOT_DIR, `${label}-pos.png`) });
     }
+
+    // Toggle Touch Grid <-> Fast Scan List mode
+    await page.locator("[data-action='pos-view-mode'][data-mode='list']").click();
+    await page.waitForSelector('.pos-fast-scan-table-wrap .pos-fast-scan-row');
+    await assertNoHorizontalOverflow(page, `${label}:pos-list-mode`);
+    await page.locator("[data-action='pos-view-mode'][data-mode='grid']").click();
+    await page.waitForSelector('.pos-product-grid button');
 
     // 2. Hardware barcode Enter auto-add + verify already-sold 1-unit barcode CANNOT be resold
     await page.fill('#pos-search', '8938505999911');
@@ -259,11 +290,20 @@ async function runViewportAudit(browser, origin, viewport, label) {
     const soldOutCount = await page.locator('.pos-mobile-cart .mobile-cart-count').textContent();
     assert.equal(soldOutCount.trim(), '0', `${label}: already-sold barcode must not re-enter cart`);
 
-    // 3b. Test multi-bill tabs in unified Tại quầy POS (Đơn 1 -> add item -> open Đơn 2 -> empty -> switch back -> 1-click pay)
+    // 3b. Test multi-bill tabs + Per-line Item Discount (5,000đ off 35,000đ = 30,000đ) in POS
     await page.fill('#pos-search', '8938505974194');
     await page.press('#pos-search', 'Enter');
     await page.waitForTimeout(250);
+    const applyLineDiscount = async (panelPrefix) => {
+      await page.locator(`${panelPrefix} [data-action='pos-line-discount']`).first().click();
+      await page.waitForSelector(".modal:not([hidden]) [data-form='pos-line-discount']");
+      await page.fill(".modal [data-form='pos-line-discount'] input[name='discount']", '5000');
+      await page.locator(".modal button[type='submit'][form='entity-form']").click();
+      await page.waitForSelector('#modal[hidden]', { state: 'attached' });
+      await page.waitForSelector(`${panelPrefix} .cart-line-discount-btn.has-discount`);
+    };
     if (await page.locator(".pos-layout > .cart-panel [data-action='pos-bill-add']").isVisible()) {
+      await applyLineDiscount('.pos-layout > .cart-panel');
       await page.locator(".pos-layout > .cart-panel [data-action='pos-bill-add']").click();
       await page.waitForTimeout(100);
       assert.equal(await page.locator(".pos-layout > .cart-panel .cart-row").count(), 0, `${label}: new Đơn 2 must start empty`);
@@ -274,13 +314,21 @@ async function runViewportAudit(browser, origin, viewport, label) {
         page.waitForResponse((res) => res.url().includes('/sales') && res.request().method() === 'POST'),
         page.locator(".pos-layout > .cart-panel [data-action='standard-pay']").click(),
       ]);
-      assert.equal(stdSaleRes.status(), 201, `${label}: standard-pay POST /sales must succeed with 201`);
+      assert.equal(stdSaleRes.status(), 201, `${label}: standard-pay with line discount POST /sales must succeed with 201`);
+      const stdSaleBody = await stdSaleRes.json();
+      assert.equal(stdSaleBody.order.totalVnd, '30000', `${label}: per-line 5,000 discount on 35,000 must persist totalVnd=30000`);
     } else {
+      await page.locator("[data-action='open-cart']:visible").first().click();
+      await page.waitForSelector('#drawer-cart.open');
+      await applyLineDiscount('#drawer-cart');
+      await page.locator("#drawer-cart [data-action='close-cart']").click().catch(() => {});
       const [stdSaleRes] = await Promise.all([
         page.waitForResponse((res) => res.url().includes('/sales') && res.request().method() === 'POST'),
         page.locator(".pos-mobile-checkout[data-action='standard-pay']").click(),
       ]);
       assert.equal(stdSaleRes.status(), 201, `${label}: mobile standard-pay POST /sales must succeed with 201`);
+      const stdSaleBody = await stdSaleRes.json();
+      assert.equal(stdSaleBody.order.totalVnd, '30000', `${label}: mobile per-line 5,000 discount must persist totalVnd=30000`);
     }
 
     // 4. Test Bán giao hàng (real delivery order + customer creation)
@@ -309,8 +357,8 @@ async function runViewportAudit(browser, origin, viewport, label) {
     await page.waitForSelector('.sale-saved');
     await assertNoHorizontalOverflow(page, `${label}:pos-delivery-after`);
 
-    // 5. Switch to Hàng hóa: test prominent barcode on quick product + Lưu & in tem + CSV import auto-barcode + print modal
-    await page.locator("#primary-nav [data-route='products']:visible, #mobile-nav [data-route='products']:visible").first().click();
+    // 5. Switch to Hàng hóa: test prominent barcode on quick product + Batch Bar + 4-tab Stock Card + CSV import
+    await goToRoute('products');
     await page.waitForSelector("[data-action='new-product']:visible");
     await page.locator("[data-action='new-product']:visible").first().click();
     await page.waitForSelector(".modal:not([hidden]) #product-barcode");
@@ -339,10 +387,39 @@ async function runViewportAudit(browser, origin, viewport, label) {
     if (viewport.width <= 640) {
       const card = page.locator('.product-mobile-card').filter({ hasText: 'Trà sữa E2E' });
       await card.locator('[data-action="product-card-menu"]').click();
-      assert.equal(await page.locator('.modal [data-action="product-card-choice"]').count(), 5, `${label}: one card menu exposes five non-overlapping actions including clone`);
-      await page.locator('.modal [data-action="close-modal"]').click();
+      assert.equal(await page.locator('.modal [data-action="product-card-choice"]').count(), 6, `${label}: card menu exposes six actions including detail/stock-card`);
+      await page.locator(".modal [data-action='product-card-choice'][data-kind='detail']").click();
+      await page.waitForSelector(".modal:not([hidden]) .detail-tabs");
+      for (const tab of ['stock-card', 'warehouses', 'serials', 'info']) {
+        await page.locator(`.modal [data-action='product-detail-tab'][data-tab='${tab}']`).click();
+        await assertNoHorizontalOverflow(page, `${label}:product-detail-${tab}`);
+      }
+      await page.locator('.modal [data-action="close-modal"]').first().click();
       await page.waitForSelector('#modal[hidden]', { state: 'attached' });
       await page.locator('.product-secondary-actions summary').click();
+    } else {
+      // Desktop: Batch Action Bar + 4-tab Stock Card modal
+      await page.locator("[data-action='product-select']").nth(0).check();
+      await page.locator("[data-action='product-select']").nth(1).check();
+      await page.waitForSelector('.batch-action-bar');
+      assert.match(await page.locator('.batch-action-bar').textContent() || '', /2/);
+      await page.locator("[data-action='batch-clear-products']").click();
+      assert.equal(await page.locator('.batch-action-bar').count(), 0, `${label}: batch bar must clear cleanly`);
+      await Promise.all([
+        page.waitForResponse((res) => res.url().includes('/stock-card') && res.request().method() === 'GET'),
+        page.locator("[data-action='product-detail']").first().click(),
+      ]);
+      await page.waitForSelector(".modal:not([hidden]) .detail-tabs");
+      for (const tab of ['stock-card', 'warehouses', 'serials', 'info']) {
+        await page.locator(`.modal [data-action='product-detail-tab'][data-tab='${tab}']`).click();
+        await assertNoHorizontalOverflow(page, `${label}:product-detail-${tab}`);
+      }
+      if (process.env.SLINK_E2E_SCREENSHOT_DIR) {
+        await page.locator(".modal [data-action='product-detail-tab'][data-tab='stock-card']").click();
+        await page.screenshot({ path: path.join(process.env.SLINK_E2E_SCREENSHOT_DIR, `${label}-product-stock-card.png`) });
+      }
+      await page.locator('.modal [data-action="close-modal"]').first().click();
+      await page.waitForSelector('#modal[hidden]', { state: 'attached' });
     }
 
     // 5b. Test CSV import with AUTO + blank barcode -> 1-click fill -> import -> print imported labels
@@ -480,7 +557,7 @@ async function runViewportAudit(browser, origin, viewport, label) {
     }
 
     // 6. Switch to Kho hàng: test restructured sub-tabs including Trả NCC
-    await page.locator("#primary-nav [data-route='inventory']:visible, #mobile-nav [data-route='inventory']:visible").first().click();
+    await goToRoute('inventory');
     await page.waitForSelector("[data-action='inventory-tab']");
     for (const tab of ['purchases', 'supplier-returns', 'stock-count', 'stock']) {
       const tabBtn = page.locator(`[data-action='inventory-tab'][data-tab='${tab}']`);
@@ -513,13 +590,13 @@ async function runViewportAudit(browser, origin, viewport, label) {
       ]);
       assert.equal(whRes.status(), 201, `${label}: creating second warehouse must return 201`);
       await page.waitForTimeout(300);
-      await page.locator("#primary-nav [data-route='pos']:visible, #mobile-nav [data-route='pos']:visible").first().click();
+      await goToRoute('pos');
       await page.waitForSelector('.pos-product-grid', { timeout: 15000 });
       assert.ok((await page.locator('.pos-product').count()) >= 1, `${label}: POS products must remain visible after creating secondary warehouse`);
     }
 
     // 7. Test Order Detail & Đổi hàng (SlinkReturnsExchangeUI)
-    await page.locator("#primary-nav [data-route='orders']:visible, #mobile-nav [data-route='orders']:visible").first().click();
+    await goToRoute('orders');
     await page.waitForSelector("[data-action='order-detail']", { timeout: 15000 });
     await assertNoHorizontalOverflow(page, `${label}:orders-segmented`);
     await page.locator("[data-action='order-detail']").nth(2).click();
@@ -539,8 +616,7 @@ async function runViewportAudit(browser, origin, viewport, label) {
     await page.locator(".modal [data-action='close-modal']").first().click().catch(() => {});
 
     // 8. Finance separates the actual cashbook, manual vouchers, shifts and debt work.
-    await page.locator("#primary-nav [data-route='workspace']:visible, #mobile-nav [data-route='workspace']:visible").first().click();
-    await page.locator("#view [data-route='finance']").click();
+    await goToRoute('finance');
     await page.waitForSelector("[data-action='finance-tab']");
     assert.equal(await page.locator("[data-action='finance-tab']").count(), 5, `${label}: owner finance must expose five distinct work areas`);
     for (const [tab, content] of [
@@ -593,24 +669,26 @@ async function runViewportAudit(browser, origin, viewport, label) {
     assert.equal(xferRes.status(), 201, `${label}: cash transfer POST must return 201`);
     await page.waitForTimeout(300);
 
-    // Check Reports displays Net Profit and Operating Expense 150.000
-    await page.locator("#primary-nav [data-route='workspace']:visible, #mobile-nav [data-route='workspace']:visible").first().click();
-    const reportsBtn = page.locator("#view [data-route='reports']");
-    if (!(await reportsBtn.isVisible())) {
-      await page.locator("#view details.directory-fold:has([data-route='reports']) > summary").click();
-    }
-    await reportsBtn.click();
+    // Check Reports 4 tabs, SVG charts, Net Profit and Operating Expense 150.000
+    await goToRoute('reports');
+    await page.waitForSelector(".detail-tabs [data-action='report-tab']", { timeout: 15000 });
+    await page.waitForSelector("svg[aria-label='Cơ cấu thanh toán']", { timeout: 15000 });
+    await assertNoHorizontalOverflow(page, `${label}:reports-eod`);
+    await page.locator("[data-action='report-tab'][data-tab='sales']").click();
     await page.waitForSelector('.fv-pnl-grid', { timeout: 15000 });
     await page.locator('.fv-pnl-grid').getByText('150.000 ₫').first().waitFor();
+    await page.waitForSelector('.chart-svg');
     await assertNoHorizontalOverflow(page, `${label}:reports-pnl`);
+    if (process.env.SLINK_E2E_SCREENSHOT_DIR) {
+      await page.screenshot({ path: path.join(process.env.SLINK_E2E_SCREENSHOT_DIR, `${label}-reports-sales.png`) });
+    }
+    for (const repTab of ['inventory', 'people', 'eod']) {
+      await page.locator(`[data-action='report-tab'][data-tab='${repTab}']`).click();
+      await assertNoHorizontalOverflow(page, `${label}:reports-${repTab}`);
+    }
 
     // Go back to Finance -> Cashbook and void the 150,000 expense cleanly
-    await page.locator("#primary-nav [data-route='workspace']:visible, #mobile-nav [data-route='workspace']:visible").first().click();
-    const financeBtn = page.locator("#view [data-route='finance']");
-    if (!(await financeBtn.isVisible())) {
-      await page.locator("#view details.directory-fold:has([data-route='finance']) > summary").click();
-    }
-    await financeBtn.click();
+    await goToRoute('finance');
     await page.waitForSelector("[data-action='finance-tab'][data-tab='cashbook']");
     await page.locator('#finance-cashbook-search').fill(`Tiền điện E2E ${label}`);
     await page.waitForTimeout(450);
@@ -700,12 +778,7 @@ async function runViewportAudit(browser, origin, viewport, label) {
     await page.locator('#modal').waitFor({ state: 'hidden' });
 
     // 10. Test Staff direct-create, dynamic role permissions, VN banks dropdown, Payroll (staffPayroll) & Radar subtabs
-    await page.locator("#primary-nav [data-route='workspace']:visible, #mobile-nav [data-route='workspace']:visible").first().click();
-    const staffNavBtn = page.locator("#view [data-route='staff']");
-    if (!(await staffNavBtn.isVisible())) {
-      await page.locator("#view details.directory-fold:has([data-route='staff']) > summary").click();
-    }
-    await staffNavBtn.click();
+    await goToRoute('staff');
     await page.waitForSelector("[data-action='new-staff-direct']", { timeout: 15000 });
 
     await page.locator("[data-action='new-staff-direct']").click();
@@ -756,9 +829,9 @@ async function runViewportAudit(browser, origin, viewport, label) {
     await assertNoHorizontalOverflow(page, `${label}:staff-radar`);
 
     const assetsOk = await page.evaluate(async () => {
-      const urls = ['/offline-conflict-ui.js', '/supplier-returns-ui.js', '/barcode-tools.js', '/banks-vn.js', '/vietqr-tools.js', '/escpos-printer.js', '/integrations-ui.js', '/finance-vouchers-ui.js', '/sync-bus.js', '/pos-hardware.js', '/receipt-image.js'];
+      const urls = ['/offline-conflict-ui.js', '/supplier-returns-ui.js', '/barcode-tools.js', '/banks-vn.js', '/vietqr-tools.js', '/escpos-printer.js', '/integrations-ui.js', '/finance-vouchers-ui.js', '/sync-bus.js', '/pos-hardware.js', '/receipt-image.js', '/client/core.js', '/client/charts.js', '/client/shell.js', '/client/pos.js', '/client/products.js', '/client/dashboard.js', '/client/reports.js'];
       const responses = await Promise.all(urls.map((u) => fetch(u, { credentials: 'same-origin' })));
-      return responses.every((r) => r.ok) && Boolean(window.SlinkBarcodeTools) && Boolean(window.SlinkOfflineConflictUI) && Boolean(window.SlinkReturnsExchangeUI) && Boolean(window.SlinkIntegrationsUI) && Boolean(window.SlinkVietQrTools) && Boolean(window.SlinkFinanceUI) && Boolean(window.SlinkSyncBus) && Boolean(window.SlinkPosHardware) && Boolean(window.SlinkReceiptImage);
+      return responses.every((r) => r.ok) && Boolean(window.Slink && window.Slink.charts) && Boolean(window.SlinkBarcodeTools) && Boolean(window.SlinkOfflineConflictUI) && Boolean(window.SlinkReturnsExchangeUI) && Boolean(window.SlinkIntegrationsUI) && Boolean(window.SlinkVietQrTools) && Boolean(window.SlinkFinanceUI) && Boolean(window.SlinkSyncBus) && Boolean(window.SlinkPosHardware) && Boolean(window.SlinkReceiptImage);
     });
     assert.equal(assetsOk, true, 'All standalone commercial UI bundles must be loaded');
     assert.ok(seeded.storeId);

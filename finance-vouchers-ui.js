@@ -379,6 +379,7 @@
   }
 
   function renderReportsPnlExtras({ summary, expenseBreakdown }) {
+    const hasProfit = summary.netProfitVnd != null || summary.grossProfitVnd != null;
     const netProfit = summary.netProfitVnd != null ? summary.netProfitVnd : summary.grossProfitVnd || '0';
     const otherIn = summary.otherIncomeVnd || '0';
     const opEx = summary.operatingExpenseVnd || '0';
@@ -387,7 +388,7 @@
       : `<div class='empty-state'><strong>Chưa có chi phí vận hành trong kỳ</strong><span>Khi lập phiếu chi có bật "Tính Lãi/Lỗ", chi phí sẽ được tổng hợp theo khoản mục ở đây.</span></div>`;
     return {
       pnlCardsHtml: `<article class='panel report-card'><small>Chi phí vận hành</small><strong>${moneyVnd(opEx)}</strong><span>Thu khác: ${moneyVnd(otherIn)}</span></article>
-        <article class='panel report-card'><small>Lãi ròng (Net Profit)</small><strong class='${String(netProfit).startsWith('-') ? 'finance-amount-out' : 'finance-amount-in'}'>${moneyVnd(netProfit)}</strong><span>= Lãi gộp + Thu khác − Chi vận hành</span></article>`,
+        <article class='panel report-card'><small>Lãi ròng (Net Profit)</small><strong class='${hasProfit ? (String(netProfit).startsWith('-') ? 'finance-amount-out' : 'finance-amount-in') : ''}'>${hasProfit ? moneyVnd(netProfit) : 'Ẩn theo quyền'}</strong><span>= Lãi gộp + Thu khác − Chi vận hành</span></article>`,
       expenseSectionHtml: `<section class='panel' style='margin-top:16px'><div class='panel-header'><div><h2>Chi phí vận hành theo khoản mục</h2><p>Chỉ tính các phiếu thu/chi có bật hạch toán KQKD (đã trừ phiếu hủy)</p></div></div><div class='report-breakdown'>${breakdownRows}</div></section>`,
     };
   }
