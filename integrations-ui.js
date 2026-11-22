@@ -163,7 +163,7 @@
       needs_store_config: ['Cần STK', 'is-warn'],
       needs_credentials: ['Chưa gắn khóa', 'is-muted'],
     };
-    const coreConnectors = connectors.filter((c) => ['vietqr', 'escpos', 'bank_webhook', 'ewallets', 'einvoice', 'shipping'].includes(c.id));
+    const coreConnectors = connectors.filter((c) => ['escpos', 'bank_webhook', 'ewallets', 'einvoice', 'shipping'].includes(c.id));
     const connectorsGridHtml = coreConnectors.length
       ? `<div class='integration-status-grid'>${coreConnectors.map((c) => {
           const [badgeText, badgeTone] = connectorStatusLabel[c.status] || ['Chưa cấu hình', 'is-muted'];
@@ -285,7 +285,7 @@
       <form id='integration-settings-form' data-form='integration-settings'>
         <div class='form-grid'>
           <div class='form-field'>
-            <label class='input-label' for='int-bank-bin'>Ngân hàng (VietQR)</label>
+            <label class='input-label' for='int-bank-bin'>Ngân hàng</label>
             <div class='select-wrap'><select class='input' id='int-bank-bin' name='bankBin' ${disabled}>${bankOptions}</select></div>
           </div>
           <div class='form-field'>
@@ -296,7 +296,6 @@
             <label class='input-label' for='int-bank-owner'>Chủ tài khoản</label>
             <input class='input' id='int-bank-owner' name='bankAccountName' value='${esc(settings.bankAccountName || '')}' maxlength='120' placeholder='VD: NGUYEN VAN A' ${disabled}/>
           </div>
-          <div class='form-field full' id='int-vietqr-preview' ${previewQr ? '' : 'hidden'}>${previewQr}</div>
         </div>
         ${advancedBlock}
         ${canEdit ? `<div class='modal-footer settings-form-footer'><button class='btn btn-primary' type='submit'>Lưu cấu hình tích hợp</button></div>` : ''}
@@ -313,17 +312,7 @@
     const canShipping = canShippingOpt !== undefined
       ? Boolean(canShippingOpt)
       : (canOperate || role === 'stockkeeper');
-    const qrHtml = (order.due > 0 && settings?.bankBin && settings?.bankAccountNumber)
-      ? renderVietQrCard({
-        bankBin: settings.bankBin,
-        bankAccountNumber: settings.bankAccountNumber,
-        bankAccountName: settings.bankAccountName,
-        bankName: settings.bankName,
-        amountVnd: order.dueVndText || String(order.due),
-        orderNumber: order.number,
-        note: `SLINK ${order.number}`,
-      })
-      : '';
+    const qrHtml = '';
 
     const hasEinvoice = Boolean(settings?.einvoiceProvider && settings.einvoiceProvider !== 'none');
     const einvoiceStatus = order.einvoiceStatus === 'issued'

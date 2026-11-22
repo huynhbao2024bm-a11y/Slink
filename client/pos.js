@@ -519,9 +519,7 @@
       <div class='pos-fast-cash-row'><label class='input-label' for='pos-fast-cash'>Khách đưa</label><input class='input' id='pos-fast-cash' type='number' min='0' step='1' value='${S.fn.esc(S.state.posFastCashInput)}' placeholder='${collectTotal}'/></div>
       ${S.state.posFastCashInput !== '' ? `<div class='pos-fast-change'><span>${validCash ? 'Thối lại' : 'Còn thiếu'}</span><strong>${S.fn.money(validCash ? changeVnd : collectTotal - (Number.isSafeInteger(enteredCash) ? enteredCash : 0))}</strong></div>` : ''}`;
     }
-    const qrBtn = S.state.posStandardMethod === 'bank_transfer' && S.state.cart.length
-      ? `<button class='btn btn-secondary' type='button' data-action='pos-show-vietqr'>Hiện mã VietQR${eff.bundledDebtVnd > 0 ? ` (${S.fn.money(collectTotal)})` : ''}</button>`
-      : '';
+    const qrBtn = '';
     return `<div class='pos-standard-pay'>
       <div class='pos-standard-methods' role='radiogroup' aria-label='Phương thức thanh toán'>${methods.map(([m, label]) => `<button type='button' class='pos-fast-chip ${S.state.posStandardMethod === m ? 'active' : ''}' data-action='standard-method' data-method='${m}' ${disabled}>${label}</button>`).join('')}</div>
       ${cashBlock}
@@ -921,21 +919,7 @@
     summary.textContent = `Tổng nhận ${S.fn.money(received)} · Đã thu ${S.fn.money(paid)} · Còn nợ ${S.fn.money(due)}${change ? ` · Tiền thối ${S.fn.money(change)}` : ''}`;
     summary.classList.remove('error');
     const qrBox = form.querySelector('#checkout-vietqr-box');
-    if (qrBox && window.SlinkIntegrationsUI) {
-      const bankTender = S.fn.checkoutTenderValues(form).find(t => (t.method === 'bank_qr' || t.method === 'bank_transfer') && Number(t.amountText) > 0);
-      const st = S.state.integrationState.data?.settings;
-      qrBox.innerHTML = bankTender && st?.bankBin && st?.bankAccountNumber
-        ? window.SlinkIntegrationsUI.renderVietQrCard({
-          bankBin: st.bankBin,
-          bankAccountNumber: st.bankAccountNumber,
-          bankAccountName: st.bankAccountName,
-          bankName: st.bankName,
-          amountVnd: bankTender.amountText,
-          note: 'SLINK POS',
-          subtitle: 'Quét VietQR để thanh toán đúng số tiền chuyển khoản.',
-        })
-        : '';
-    }
+    if (qrBox) qrBox.innerHTML = '';
   }
 
 
