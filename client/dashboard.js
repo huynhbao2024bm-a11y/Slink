@@ -143,20 +143,20 @@
     const hasStock = invTotal > 0 && invOut < invTotal;
     const hasOrders = Boolean((d && Number(d.todayOrderCount) > 0) || S.state.store.orders.length > 0 || Number(S.state.analyticsData?.summary?.orderCount || 0) > 0);
     const steps = [
-      { key: 'settings', label: '1. Cửa hàng & VietQR', detail: 'Điền SĐT, địa chỉ in hóa đơn và ngân hàng QR.', done: hasStoreInfo, attr: `data-route='settings'` },
-      { key: 'products', label: '2. Thêm sản phẩm đầu tiên', detail: 'Tạo mã hàng, giá bán và mã vạch.', done: hasProducts, attr: S.fn.hasPerm('editProducts') ? `data-action='new-product'` : `data-route='products'` },
-      { key: 'inventory', label: '3. Nhập hàng / Kiểm tồn', detail: 'Cập nhật tồn kho ban đầu để sẵn sàng bán.', done: hasStock, attr: `data-route='inventory'` },
-      { key: 'pos', label: '4. Tạo hóa đơn đầu tiên', detail: 'Trải nghiệm màn hình thu ngân POS.', done: hasOrders, attr: `data-route='pos'` },
+      { key: 'settings', label: '1. Cửa hàng & QR', done: hasStoreInfo, attr: `data-route='settings'` },
+      { key: 'products', label: '2. Thêm hàng', done: hasProducts, attr: S.fn.hasPerm('editProducts') ? `data-action='new-product'` : `data-route='products'` },
+      { key: 'inventory', label: '3. Nhập kho', done: hasStock, attr: `data-route='inventory'` },
+      { key: 'pos', label: '4. Bán đơn đầu', done: hasOrders, attr: `data-route='pos'` },
     ];
     const doneCount = steps.filter(function (s) { return s.done; }).length;
     if (doneCount === steps.length) return '';
     return `<section class='onboarding-card' aria-label='Thiết lập cửa hàng mới'>
       <div class='onboarding-head'>
-        <div><h2>Khởi tạo cửa hàng (${doneCount}/${steps.length} bước)</h2><small class='muted'>Hoàn thành 4 bước chuẩn ngành để vận hành trơn tru.</small></div>
-        <button type='button' class='link-button' data-action='dismiss-onboarding'>Ẩn hướng dẫn</button>
+        <h2>Khởi tạo (${doneCount}/${steps.length})</h2>
+        <button type='button' class='link-button' data-action='dismiss-onboarding'>Ẩn</button>
       </div>
       <div class='onboarding-steps'>${steps.map(function (s) {
-        return `<button type='button' class='onboarding-step ${s.done ? 'is-done' : ''}' ${s.attr}><div class='onboarding-step-top'><span>${s.done ? '✓ Đã xong' : 'Cần làm'}</span><span>→</span></div><strong>${S.fn.esc(s.label)}</strong><small>${S.fn.esc(s.detail)}</small></button>`;
+        return `<button type='button' class='onboarding-step ${s.done ? 'is-done' : ''}' ${s.attr}><div class='onboarding-step-top'><span>${s.done ? '✓ Đã xong' : 'Cần làm'}</span><span>→</span></div><strong>${S.fn.esc(s.label)}</strong></button>`;
       }).join('')}</div>
     </section>`;
   }
@@ -178,20 +178,20 @@
     const cardRevenue = `<article class='real-num-card real-num-hero' data-tour-target='dashboard-revenue'>
       <span class='real-num-label'>Doanh thu thuần hôm nay</span>
       <strong class='real-num-value'>${canViewRevenue ? S.fn.esc(S.fn.moneyVndText(todayRevenueVnd)) : '—'}</strong>
-      <small class='real-num-sub'>${canViewRevenue ? `${S.fn.number(d.todayOrderCount || 0)} đơn hợp lệ trong ngày` : 'Cần quyền xem báo cáo / đơn hàng'}</small>
+      <small class='real-num-sub'>${canViewRevenue ? `${S.fn.number(d.todayOrderCount || 0)} đơn` : 'Bị hạn chế'}</small>
       ${deltaHtml}
     </article>`;
 
     const cardFunds = `<article class='real-num-card'>
       <span class='real-num-label'>Tiền thực trong quỹ</span>
       <strong class='real-num-value'>${canViewFunds ? S.fn.esc(S.fn.moneyVndText(d.totalFundVnd)) : 'Bị hạn chế'}</strong>
-      <small class='real-num-sub'>${canViewFunds ? `Tiền mặt ${S.fn.esc(S.fn.moneyVndText(cashBalanceVnd))} · Ngân hàng ${S.fn.esc(S.fn.moneyVndText(bankBalanceVnd))}` : 'Cần quyền Sổ quỹ hoặc Báo cáo'}</small>
+      <small class='real-num-sub'>${canViewFunds ? `Tiền mặt ${S.fn.esc(S.fn.moneyVndText(cashBalanceVnd))} · Ngân hàng ${S.fn.esc(S.fn.moneyVndText(bankBalanceVnd))}` : 'Bị hạn chế'}</small>
     </article>`;
 
     const cardProfit = `<article class='real-num-card'>
       <span class='real-num-label'>Lãi ròng thật hôm nay</span>
       <strong class='real-num-value'>${canViewProfit ? S.fn.esc(S.fn.moneyVndText(d.todayNetProfitVnd)) : 'Bị hạn chế'}</strong>
-      <small class='real-num-sub'>${canViewProfit ? 'Đã trừ giá vốn &amp; chi phí KQKD' : 'Cần quyền Báo cáo + Xem giá vốn'}</small>
+      ${canViewProfit ? '' : `<small class='real-num-sub'>Cần quyền Báo cáo + Giá vốn</small>`}
     </article>`;
 
     const act = d.actionItems || d.actions || {};
@@ -205,28 +205,28 @@
       { action: 'dashboard-open-shifts', label: 'Ca tiền mặt đang mở', count: openShiftsCount, tone: '' },
     ];
     const actionPanel = `<section class='dashboard-action-panel' data-tour-target='dashboard-actions' aria-label='Việc cần xử lý ngay'>
-      <div class='panel-header' style='padding:0'><div><h2>Việc cần xử lý ngay</h2><p>Chạm vào từng mục để xử lý trực tiếp.</p></div></div>
+      <div class='panel-header' style='padding:0'><h2>Việc cần xử lý</h2></div>
       <div class='dashboard-action-list'>${actionItems.map(item => `<button type='button' class='dashboard-action-item ${item.tone}' data-action='${item.action}'><span><strong>${S.fn.esc(item.label)}</strong>${item.sub ? `<small style='display:block;color:var(--muted)'>${S.fn.esc(item.sub)}</small>` : ''}</span><span class='dashboard-action-count'>${S.fn.number(item.count)}</span></button>`).join('')}</div>
     </section>`;
 
     const quickNav = [
-      S.fn.canAccessRoute('pos') ? { label: 'Bán hàng', detail: 'Chọn hàng, nhận tiền', route: 'pos', image: 'cart' } : null,
-      (S.fn.hasPerm('viewFinance') || S.fn.hasPerm('recordCashbook')) ? { label: 'Thu chi', detail: 'Tiền và công nợ', route: 'finance', image: 'wallet' } : null,
-      (S.fn.hasPerm('manageInventory') || S.fn.hasPerm('recordCashbook')) ? { label: 'Nhập hàng', detail: 'Ghi hàng vừa nhận', action: 'receive-stock', image: 'box' } : null,
-      S.fn.canAccessRoute('inventory') ? { label: 'Xem kho', detail: 'Còn bao nhiêu hàng?', route: 'inventory', image: 'layers' } : null,
+      S.fn.canAccessRoute('pos') ? { label: 'Bán hàng', route: 'pos', image: 'cart' } : null,
+      (S.fn.hasPerm('viewFinance') || S.fn.hasPerm('recordCashbook')) ? { label: 'Thu chi', route: 'finance', image: 'wallet' } : null,
+      (S.fn.hasPerm('manageInventory') || S.fn.hasPerm('recordCashbook')) ? { label: 'Nhập hàng', action: 'receive-stock', image: 'box' } : null,
+      S.fn.canAccessRoute('inventory') ? { label: 'Xem kho', route: 'inventory', image: 'layers' } : null,
     ].filter(Boolean);
 
     const chartPanel = S.fn.hasPerm('viewReports')
-      ? `<section class='panel' style='margin-bottom:18px'><div class='panel-header'><div><h2>Doanh thu 7 ngày gần nhất</h2><p>Doanh thu thuần sau chiết khấu và trả hàng</p></div><button class='link-button' data-route='reports'>Xem chi tiết →</button></div>${S.charts?.renderRevenueBarChart ? S.charts.renderRevenueBarChart(S.state.analyticsData?.days || [], { height: 210 }) : ''}</section>`
+      ? `<section class='panel' style='margin-bottom:18px'><div class='panel-header'><h2>Doanh thu 7 ngày</h2><button class='link-button' data-route='reports'>Xem chi tiết →</button></div>${S.charts?.renderRevenueBarChart ? S.charts.renderRevenueBarChart(S.state.analyticsData?.days || [], { height: 210 }) : ''}</section>`
       : '';
 
-    return S.fn.pageHeading('Tổng quan', '', `${S.fn.hasPerm('viewReports') ? `<button class='btn btn-secondary' data-route='reports'>Xem báo cáo →</button>` : ''}`) +
-      S.fn.renderOnboardingChecklist(d) +
+    return S.fn.pageHeading('Tổng quan', '', '') +
       `<section class='dashboard-real-numbers' aria-label='Chỉ số kinh doanh hôm nay'>${cardRevenue}${cardFunds}${cardProfit}</section>` +
+      S.fn.renderOnboardingChecklist(d) +
       chartPanel +
       actionPanel +
-      `<section class='daily-actions' aria-label='Việc thường làm'>${quickNav.map(item => `<button ${item.route ? `data-route='${item.route}'` : `data-action='${item.action}'`}><span>${S.fn.icon(item.image, 24)}</span><strong>${S.fn.esc(item.label)}</strong><small>${S.fn.esc(item.detail)}</small></button>`).join('')}</section>` +
-      (S.fn.canAccessRoute('orders') ? `<section class='panel'><div class='panel-header'><h2>Đơn mới nhất</h2><button class='link-button' data-route='orders'>Xem tất cả →</button></div><div class='activity-list'>${(S.state.store.orders.slice(0, 3).map(order => `<button class='activity-item recent-order' data-action='order-detail' data-id='${S.fn.esc(order.id)}'><span class='activity-mark'>${S.fn.icon('receipt', 20)}</span><span class='activity-text'><strong>${S.fn.esc(order.number)}</strong><small>${S.fn.esc(order.customerName || 'Khách lẻ')} · ${S.fn.humanDate(order.createdAt, true)}</small></span><strong>${S.fn.money(order.total)}</strong></button>`).join('') || `<div class='empty-state'>Đơn bán mới sẽ hiện ở đây.</div>`)}</div></section>` : '');
+      `<section class='daily-actions' aria-label='Việc thường làm'>${quickNav.map(item => `<button ${item.route ? `data-route='${item.route}'` : `data-action='${item.action}'`}><span>${S.fn.icon(item.image, 20)}</span><strong>${S.fn.esc(item.label)}</strong></button>`).join('')}</section>` +
+      (S.fn.canAccessRoute('orders') ? `<section class='panel'><div class='panel-header'><h2>Đơn mới nhất</h2><button class='link-button' data-route='orders'>Xem tất cả →</button></div><div class='activity-list'>${(S.state.store.orders.slice(0, 3).map(order => `<button class='activity-item recent-order' data-action='order-detail' data-id='${S.fn.esc(order.id)}'><span class='activity-mark'>${S.fn.icon('receipt', 20)}</span><span class='activity-text'><strong>${S.fn.esc(order.number)}</strong><small>${S.fn.esc(order.customerName || 'Khách lẻ')} · ${S.fn.humanDate(order.createdAt, true)}</small></span><strong>${S.fn.money(order.total)}</strong></button>`).join('') || `<div class='empty-state'>Chưa có đơn hàng.</div>`)}</div></section>` : '');
   }
 
 })(window.Slink = window.Slink || { dom: {}, c: {}, state: {}, fn: {}, charts: {} });

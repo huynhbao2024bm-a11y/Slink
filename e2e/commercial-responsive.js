@@ -396,7 +396,7 @@ async function runViewportAudit(browser, origin, viewport, label) {
       }
       await page.locator('.modal [data-action="close-modal"]').first().click();
       await page.waitForSelector('#modal[hidden]', { state: 'attached' });
-      await page.locator('.product-secondary-actions summary').click();
+      await page.locator('.page-heading .catalog-more summary').click();
     } else {
       // Desktop: Batch Action Bar + 4-tab Stock Card modal
       await page.locator("[data-action='product-select']").nth(0).check();
@@ -658,7 +658,7 @@ async function runViewportAudit(browser, origin, viewport, label) {
     await page.waitForTimeout(300);
 
     // Internal cash transfer cash -> bank (drawer has seeded 150k/pos cash; transfer 20k)
-    await page.locator("[data-finance-content] [data-action='open-cash-transfer']").first().click();
+    await page.locator("[data-action='open-cash-transfer']:visible").first().click();
     await page.waitForSelector(".modal [data-form='cash-transfer']");
     await page.fill(".modal [data-form='cash-transfer'] [name='amount']", '20000');
     await page.fill(".modal [data-form='cash-transfer'] [name='note']", 'Nộp quỹ ngân hàng E2E');

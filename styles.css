@@ -616,7 +616,14 @@ select.input {
 }
 
 @media (max-width: 720px) {
-  .page-heading,
+  .page-heading {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
   .panel-header {
     flex-direction: column;
     align-items: stretch;
@@ -626,7 +633,16 @@ select.input {
     flex: initial;
   }
   .heading-actions {
-    width: 100%;
+    gap: 6px;
+  }
+}
+
+@media (max-width: 640px) {
+  .heading-actions .btn,
+  .heading-actions .catalog-more > summary {
+    min-height: 38px;
+    padding: 0 12px;
+    font-size: 13px;
   }
 }
 
@@ -1182,7 +1198,7 @@ select.input {
 
 @media (max-width: 640px) {
   .toast-stack {
-    top: 10px;
+    top: 64px;
     left: 50%;
     right: auto;
     transform: translateX(-50%);

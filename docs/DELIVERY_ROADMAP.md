@@ -4,6 +4,16 @@
 
 Status labels: **Not started**, **In progress**, **Blocked by external dependency**, **Evidence passed**. “Evidence passed” applies only to the named milestone, never to the whole product by implication.
 
+## Cập nhật Slink 0.8.0.1 — Tinh gọn Toàn diện Giao diện Android/Mobile & Loại bỏ Giải thích Thừa (2026-11-22)
+
+- **Hoàn thiện kiểu dáng & bố cục trên màn hình nhỏ (`workspace.css`, `styles.css`):**
+  - Bổ sung đầy đủ CSS cho các lớp tab/bộ lọc (`.workspace-tabs`, `.inventory-stock-filters`), trạng thái tab Cài đặt đang chọn (`.settings-areas button[aria-selected="true"]`), `.avatar`, `.finance-balance`, `.finance-debt-layout` (ẩn khung gợi ý trống trên mobile), `.daily-actions` (2×2 gọn trên mobile, 4 cột trên desktop) và `.customer-more-filters`.
+  - Giữ tiêu đề `.page-heading` trên 1 hàng gọn cùng nút thao tác, dời `.toast-stack` xuống dưới topbar (`top: 64px`), thu gọn topbar POS di động (hàng 1: nút quay lại `<` + tìm kiếm + quét; hàng 2: thanh chip cuộn ngang 1 dòng), chế độ tab `Tại quầy | Giao hàng` 1 dòng, thanh tab cuộn ngang 1 dòng và bật thẻ danh sách mobile (`.mobile-only-cards` / `.desktop-only-table`) trên `Nhà cung cấp` & `Khuyến mãi`.
+- **Loại bỏ nút trùng lặp & chữ giải thích thừa (`client/*.js`, `finance-vouchers-ui.js`, `integrations-ui.js`):**
+  - Đưa 3 thẻ số liệu thực (`Doanh thu thuần`, `Tiền quỹ`, `Lãi ròng`) lên đầu màn `Tổng quan` trước `Khởi tạo (n/4)` 2×2; xóa các dòng mô tả thừa trên Tổng quan, POS, Kho hàng, Báo cáo, Nhân viên, Thu chi, Cài đặt, Nhà cung cấp, Khuyến mãi và các hộp thoại; xóa thanh nút lặp `.product-secondary-actions` / `.mobile-task-actions` trên `Sản phẩm`, `Kho hàng`, `Thu chi` và tắt tự động bật guided tour làm phiền khi mới vào app (`scheduleInitialGuidedTour`).
+- **Bằng chứng kiểm thử (`0.8.0.1` / `versionCode: 3019`):**
+  - `node --check` 18/18 tệp PASS; `node --test server/test/*.test.js` đạt **`103/103 PASS`** (`0` lỗi, `0` bỏ qua); Playwright E2E `node e2e/commercial-responsive.js` PASS trên `390×844` mobile & `1440×900` desktop (`0` tràn ngang, `0` lỗi console/page/5xx) kèm rà soát trực quan 13 ảnh chụp màn hình trước khi phát hành. Không có DB migration mới.
+
 ## Cập nhật Slink 0.8.0 — Đại phẫu Chuẩn Ngành Bán Lẻ (KiotViet / Sapo POS) & Tách Mô-đun Frontend (2026-11-22)
 
 - **Kiến trúc Điều hướng & IA Chuẩn Bán Lẻ (`client/shell.js`, `styles.css`, `workspace.css`, `index.html`):**

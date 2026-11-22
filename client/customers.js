@@ -674,11 +674,29 @@
         </td>
       </tr>`;
     }).join('');
-    const headingActions = `${canManage ? `<button class='btn btn-primary' type='button' data-action='new-supplier'>＋ Thêm nhà cung cấp</button><button class='btn btn-secondary' type='button' data-action='receive-stock'>Nhập hàng</button>` : ''}`;
-    return S.fn.pageHeading('Nhà cung cấp', 'Quản lý đối tác nhập hàng và theo dõi công nợ phải trả.', headingActions) +
-      (canViewFinance ? `<div class='stat-grid' style='margin-bottom:16px'><article class='stat-card'><div class='stat-top'><span class='stat-label'>Tổng nhà cung cấp</span></div><div class='stat-value'>${S.fn.number(suppliers.length)}</div></article><article class='stat-card'><div class='stat-top'><span class='stat-label'>Nhà cung cấp đang nợ</span></div><div class='stat-value'>${S.fn.number(owingCount)}</div></article><article class='stat-card'><div class='stat-top'><span class='stat-label'>Tổng phải trả NCC</span></div><div class='stat-value' style='color:var(--warning)'>${S.fn.money(totalPayable)}</div></article></div>` : '') +
-      `<div class='toolbar'><div class='toolbar-left'><div class='search-wrap'><span class='search-symbol'>⌕</span><input class='input' id='supplier-search' type='search' placeholder='Tìm tên nhà cung cấp…' value='${S.fn.esc(S.state.searchTerms.suppliers || '')}' aria-label='Tìm nhà cung cấp'></div><span class='result-count'>${S.fn.number(suppliers.length)} nhà cung cấp</span></div></div>` +
-      `<section class='panel'><div class='table-wrap'><table class='data-table'><thead><tr><th>Nhà cung cấp</th><th class='text-right'>Công nợ phải trả</th><th class='text-right'>Thao tác</th></tr></thead><tbody>${rows || `<tr><td colspan='3'><div class='empty-state'><strong>${S.state.financeLoading ? 'Đang tải danh sách nhà cung cấp…' : query ? 'Không tìm thấy nhà cung cấp phù hợp' : 'Chưa có nhà cung cấp nào'}</strong></div></td></tr>`}</tbody></table></div></section>`;
+    const mobileCards = suppliers.map(function (s) {
+      const bal = Number(s.balance_vnd || 0);
+      const balText = canViewFinance ? S.fn.moneyVndText(s.balance_vnd || '0') : '—';
+      return `<article class='product-mobile-card'>
+        <div class='product-mobile-info'>
+          <strong>${S.fn.esc(s.name)}</strong>
+          ${s.last_activity_at ? `<small class='muted'>${S.fn.humanDate(s.last_activity_at, true)}</small>` : ''}
+        </div>
+        <div class='product-mobile-side'>
+          <strong style='color:${bal > 0 ? 'var(--warning)' : 'var(--ink)'}'>${balText}</strong>
+          <div style='display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end'>
+            ${canViewFinance ? `<button class='btn btn-secondary' type='button' data-action='supplier-balance' data-id='${S.fn.esc(s.id)}' style='min-height:32px;padding:4px 10px;font-size:12px'>Sổ nợ</button>` : ''}
+            ${canPay && bal > 0 ? `<button class='btn btn-primary' type='button' data-action='supplier-payment' data-id='${S.fn.esc(s.id)}' style='min-height:32px;padding:4px 10px;font-size:12px'>Trả nợ</button>` : ''}
+          </div>
+        </div>
+      </article>`;
+    }).join('');
+    const headingActions = `${canManage ? `<button class='btn btn-primary' type='button' data-action='new-supplier'>＋ Thêm NCC</button><button class='btn btn-secondary desktop-only-btn' type='button' data-action='receive-stock'>Nhập hàng</button>` : ''}`;
+    return S.fn.pageHeading('Nhà cung cấp', '', headingActions) +
+      (canViewFinance ? `<div class='stat-grid' style='margin-bottom:16px'><article class='stat-card'><div class='stat-top'><span class='stat-label'>Tổng NCC</span></div><div class='stat-value'>${S.fn.number(suppliers.length)}</div></article><article class='stat-card'><div class='stat-top'><span class='stat-label'>NCC đang nợ</span></div><div class='stat-value'>${S.fn.number(owingCount)}</div></article><article class='stat-card'><div class='stat-top'><span class='stat-label'>Tổng phải trả</span></div><div class='stat-value' style='color:var(--warning)'>${S.fn.money(totalPayable)}</div></article></div>` : '') +
+      `<div class='toolbar'><div class='toolbar-left'><div class='search-wrap'><span class='search-symbol'>⌕</span><input class='input' id='supplier-search' type='search' placeholder='Tìm tên nhà cung cấp…' value='${S.fn.esc(S.state.searchTerms.suppliers || '')}' aria-label='Tìm nhà cung cấp'></div><span class='result-count'>${S.fn.number(suppliers.length)} NCC</span></div></div>` +
+      `<section class='panel desktop-only-table'><div class='table-wrap'><table class='data-table'><thead><tr><th>Nhà cung cấp</th><th class='text-right'>Công nợ phải trả</th><th class='text-right'>Thao tác</th></tr></thead><tbody>${rows || `<tr><td colspan='3'><div class='empty-state'><strong>${S.state.financeLoading ? 'Đang tải…' : 'Chưa có nhà cung cấp'}</strong></div></td></tr>`}</tbody></table></div></section>` +
+      `<div class='mobile-only-cards'>${mobileCards || `<section class='panel empty-state'><strong>${S.state.financeLoading ? 'Đang tải…' : 'Chưa có nhà cung cấp'}</strong></section>`}</div>`;
   }
 
 })(window.Slink = window.Slink || { dom: {}, c: {}, state: {}, fn: {}, charts: {} });

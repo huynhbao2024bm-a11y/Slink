@@ -111,7 +111,6 @@
     </div>`;
 
     const headerActions = `<div class='fv-panel-actions'>
-      ${canRecord ? `<button type='button' class='btn btn-secondary fv-compact-btn' data-action='open-cash-transfer'>⇄ Chuyển quỹ nội bộ</button>` : ''}
       ${canExport ? `<button type='button' class='link-button' data-action='open-export'>Xuất CSV</button>` : ''}
     </div>`;
 
@@ -206,7 +205,7 @@
     </div>` : '';
 
     return `${kpis}<section class='panel finance-record-panel' data-tour-target='finance-register'>
-      <div class='panel-header'><div><h2>Sổ quỹ thu chi</h2><p>${total} chứng từ · tách bạch Tiền mặt &amp; Ngân hàng</p></div>${headerActions}</div>
+      <div class='panel-header'><div><h2>Sổ quỹ thu chi</h2><p>${total} chứng từ</p></div>${headerActions}</div>
       ${fundSwitcher}${filterBar}${listHtml}${pager}
     </section>`;
   }
@@ -250,7 +249,7 @@
     </div>` : `<div class='empty-state'><strong>Chưa có phiếu thu / chi / chuyển quỹ nào</strong><span>Dùng các nút thao tác ở trên để lập phiếu.</span></div>`;
 
     return `<section class='panel finance-record-panel'>
-      <div class='panel-header'><div><h2>Phiếu thu / chi &amp; Chuyển quỹ</h2><p>${vouchers.length} chứng từ nội bộ gần nhất</p></div>${toolbar}</div>
+      <div class='panel-header'><div><h2>Phiếu thu / chi &amp; Chuyển quỹ</h2><p>${vouchers.length} phiếu</p></div>${toolbar}</div>
       ${list}
     </section>`;
   }
@@ -333,7 +332,7 @@
       <label class='form-field full'><span class='input-label'>Ghi chú</span>
         <textarea class='input finance-reminder-text' name='note' rows='2' maxlength='300' placeholder='Ví dụ: Nộp tiền mặt cuối ngày vào ngân hàng'></textarea>
       </label>
-    </div><p class='modal-note'>Chuyển quỹ nội bộ tạo cặp bút toán CQ tự động, giữ nguyên tổng tiền cửa hàng và không hạch toán vào Lãi/Lỗ.</p></form>`;
+    </div></form>`;
   }
 
   function renderVoidMovementModalHtml(movement) {
@@ -343,7 +342,6 @@
       <label class='form-field full' style='margin-top:12px'><span class='input-label'>Lý do hủy / đảo phiếu *</span>
         <textarea class='input finance-reminder-text' name='reason' rows='3' minlength='3' maxlength='240' required placeholder='Ví dụ: Nhập nhầm số tiền hoặc sai phương thức'></textarea>
       </label>
-      <p class='modal-note'>Sổ quỹ không cho phép xóa sửa chứng từ đã ghi. Thao tác này sẽ tạo một bút toán đảo (HUY) giữ nguyên dấu vết kiểm toán.</p>
     </form>`;
   }
 
@@ -385,11 +383,11 @@
     const opEx = summary.operatingExpenseVnd || '0';
     const breakdownRows = Array.isArray(expenseBreakdown) && expenseBreakdown.length
       ? expenseBreakdown.map(item => `<div class='breakdown-row'><span>${esc(item.category)}</span><strong>${moneyVnd(item.amountVnd)}</strong></div>`).join('')
-      : `<div class='empty-state'><strong>Chưa có chi phí vận hành trong kỳ</strong><span>Khi lập phiếu chi có bật "Tính Lãi/Lỗ", chi phí sẽ được tổng hợp theo khoản mục ở đây.</span></div>`;
+      : `<div class='empty-state'><strong>Chưa có chi phí vận hành trong kỳ</strong></div>`;
     return {
       pnlCardsHtml: `<article class='panel report-card'><small>Chi phí vận hành</small><strong>${moneyVnd(opEx)}</strong><span>Thu khác: ${moneyVnd(otherIn)}</span></article>
-        <article class='panel report-card'><small>Lãi ròng (Net Profit)</small><strong class='${hasProfit ? (String(netProfit).startsWith('-') ? 'finance-amount-out' : 'finance-amount-in') : ''}'>${hasProfit ? moneyVnd(netProfit) : 'Ẩn theo quyền'}</strong><span>= Lãi gộp + Thu khác − Chi vận hành</span></article>`,
-      expenseSectionHtml: `<section class='panel' style='margin-top:16px'><div class='panel-header'><div><h2>Chi phí vận hành theo khoản mục</h2><p>Chỉ tính các phiếu thu/chi có bật hạch toán KQKD (đã trừ phiếu hủy)</p></div></div><div class='report-breakdown'>${breakdownRows}</div></section>`,
+        <article class='panel report-card'><small>Lãi ròng (Net Profit)</small><strong class='${hasProfit ? (String(netProfit).startsWith('-') ? 'finance-amount-out' : 'finance-amount-in') : ''}'>${hasProfit ? moneyVnd(netProfit) : 'Ẩn theo quyền'}</strong></article>`,
+      expenseSectionHtml: `<section class='panel' style='margin-top:16px'><div class='panel-header'><h2>Chi phí vận hành</h2></div><div class='report-breakdown'>${breakdownRows}</div></section>`,
     };
   }
 
