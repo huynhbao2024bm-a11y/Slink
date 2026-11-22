@@ -799,3 +799,78 @@ test('KiotViet/Sapo Staff direct-create, CRM loyalty/tiers, and multi-barcode pr
   assert.equal(searchExtra.json().products[0].sku, 'POLO-01');
   assert.deepEqual(searchExtra.json().products[0].extra_barcodes, ['8935000000999', 'OLD-BOX-CODE-1']);
 });
+
+test('per-store encrypted integration credentials isolate tenants, mask secrets, and power webhooks without process env', async (t) => {
+  const { app } = await setupApp(t, { INTEGRATION_ENCRYPTION_KEY: 'test-store-integration-master-key-0810' });
+  const ownerA = await registerOwner(app, 'creds-a@slink.test', 'Shop A Creds');
+  const ownerB = await registerOwner(app, 'creds-b@slink.test', 'Shop B Creds');
+
+  // Store A saves its own SePay webhook token + GHN credentials
+  const saveA = await app.inject({
+    method: 'PUT',
+    url: `/api/stores/${ownerA.storeId}/integrations/settings`,
+    headers: ownerA.headers,
+    payload: {
+      bankBin: '970407',
+      bankAccountNumber: '1903668899',
+      bankAccountName: 'SHOP A',
+      bankWebhookProvider: 'sepay',
+      shippingProvider: 'ghn',
+      credentials: {
+        SEPAY_WEBHOOK_TOKEN: 'store_a_secret_9876',
+        GHN_TOKEN: 'ghn_live_token_abcd',
+        GHN_SHOP_ID: '123456',
+      },
+    },
+  });
+  assert.equal(saveA.statusCode, 200, saveA.body);
+  assert.equal(saveA.json().ghnShopId, '123456');
+  assert.equal(saveA.json().credentials.SEPAY_WEBHOOK_TOKEN.set, true);
+  assert.equal(saveA.json().credentials.SEPAY_WEBHOOK_TOKEN.masked, '••••9876');
+  assert.equal(JSON.stringify(saveA.json()).includes('store_a_secret_9876'), false);
+  assert.equal(JSON.stringify(saveA.json()).includes('ghn_live_token_abcd'), false);
+
+  const bankConnA = saveA.json().connectors.find((c) => c.id === 'bank_webhook');
+  const shipConnA = saveA.json().connectors.find((c) => c.id === 'shipping');
+  assert.equal(bankConnA.status, 'configured');
+  assert.equal(shipConnA.status, 'configured');
+
+  // Store B remains unconfigured (tenant isolation)
+  const statusB = await app.inject({
+    method: 'GET',
+    url: `/api/stores/${ownerB.storeId}/integrations/status`,
+    headers: ownerB.headers,
+  });
+  assert.equal(statusB.statusCode, 200);
+  assert.equal(statusB.json().credentials.SEPAY_WEBHOOK_TOKEN.set, false);
+  assert.equal(statusB.json().ghnShopId, '');
+
+  // SePay webhook using Store A's per-store token authenticates without process.env.SEPAY_WEBHOOK_TOKEN
+  const hookRes = await app.inject({
+    method: 'POST',
+    url: `/api/webhooks/bank-transfer/sepay/${ownerA.storeId}`,
+    headers: { authorization: 'Apikey store_a_secret_9876' },
+    payload: { id: 'sp-store-cred-1', transferType: 'out', transferAmount: 10000, content: 'ignore outbound' },
+  });
+  assert.equal(hookRes.statusCode, 200, hookRes.body);
+  assert.equal(hookRes.json().ignored, true);
+
+  // Clearing Store A's GHN_TOKEN reverts shipping connector to needs_credentials
+  const clearA = await app.inject({
+    method: 'PUT',
+    url: `/api/stores/${ownerA.storeId}/integrations/settings`,
+    headers: ownerA.headers,
+    payload: {
+      bankBin: '970407',
+      bankAccountNumber: '1903668899',
+      bankAccountName: 'SHOP A',
+      bankWebhookProvider: 'sepay',
+      shippingProvider: 'ghn',
+      clearCredentials: ['GHN_TOKEN', 'GHN_SHOP_ID'],
+    },
+  });
+  assert.equal(clearA.statusCode, 200, clearA.body);
+  assert.equal(clearA.json().credentials.GHN_TOKEN.set, false);
+  assert.equal(clearA.json().credentials.SEPAY_WEBHOOK_TOKEN.set, true);
+  assert.equal(clearA.json().connectors.find((c) => c.id === 'shipping').status, 'needs_credentials');
+});

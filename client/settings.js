@@ -56,6 +56,13 @@
     if (!S.fn.hasPerm('manageSettings')) return;
     const data = new FormData(form);
     const submit = form.querySelector('[type="submit"]');
+    const credentials = {};
+    for (const [key, val] of data.entries()) {
+      if (typeof key === 'string' && key.startsWith('cred:')) {
+        const trimmed = String(val || '').trim();
+        if (trimmed) credentials[key.slice(5)] = trimmed;
+      }
+    }
     const payload = {
       bankBin: String(data.get('bankBin') || '').trim(),
       bankAccountNumber: String(data.get('bankAccountNumber') || '').trim(),
@@ -66,18 +73,43 @@
       einvoiceTemplateCode: String(data.get('einvoiceTemplateCode') || '').trim(),
       einvoiceSerial: String(data.get('einvoiceSerial') || '').trim(),
       shippingProvider: String(data.get('shippingProvider') || 'none').trim(),
+      credentials,
     };
     if (submit) submit.disabled = true;
     try {
       const result = await S.fn.apiRequest(`/api/stores/${encodeURIComponent(S.state.store.id)}/integrations/settings`, { method: 'PUT', body: payload });
       delete form.dataset.dirty;
-      S.state.integrationState.data = { ...(S.state.integrationState.data || {}), settings: result.settings, connectors: result.connectors };
+      S.state.integrationState.data = {
+        ...(S.state.integrationState.data || {}),
+        settings: result.settings,
+        connectors: result.connectors,
+        credentials: result.credentials,
+        ghnShopId: result.ghnShopId,
+      };
       await S.fn.loadIntegrationStatus(true);
-      S.fn.toast('Đã lưu tài khoản VietQR', result.settings.bankAccountNumber ? `${result.settings.bankName || result.settings.bankBin} · ${result.settings.bankAccountNumber}` : 'Đã cập nhật');
+      S.fn.toast('Đã lưu cấu hình tích hợp', result.settings.bankAccountNumber ? `${result.settings.bankName || result.settings.bankBin} · ${result.settings.bankAccountNumber}` : 'Đã cập nhật');
     } catch (error) {
       if (error.status === 401) S.fn.showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
       else S.fn.toast('Chưa lưu được tích hợp', error.message, 'error');
       if (submit?.isConnected) submit.disabled = false;
+    }
+  }
+
+  S.fn.clearIntegrationCredential = async function clearIntegrationCredential(key, button) {
+    if (!S.fn.hasPerm('manageSettings') || !key) return;
+    const current = S.state.integrationState.data?.settings || {};
+    if (button) button.disabled = true;
+    try {
+      await S.fn.apiRequest(`/api/stores/${encodeURIComponent(S.state.store.id)}/integrations/settings`, {
+        method: 'PUT',
+        body: { ...current, clearCredentials: [key] },
+      });
+      await S.fn.loadIntegrationStatus(true);
+      S.fn.toast('Đã xóa khóa kết nối', key);
+    } catch (error) {
+      if (error.status === 401) S.fn.showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
+      else S.fn.toast('Chưa xóa được khóa', error.message, 'error');
+      if (button?.isConnected) button.disabled = false;
     }
   }
 

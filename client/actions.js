@@ -1067,6 +1067,7 @@
     }
     else if (action === 'reload-integrations') S.fn.loadIntegrationStatus(true);
     else if (action === 'verify-ghn-token') S.fn.verifyGhnIntegrationToken(button);
+    else if (action === 'clear-integration-cred') S.fn.clearIntegrationCredential(button.dataset.credKey, button);
     else if (action === 'copy-integration-url') {
       const value = button.dataset.copyValue || '';
       if (value) navigator.clipboard?.writeText(value).then(() => S.fn.toast('Đã sao chép URL webhook', value)).catch(() => S.fn.toast('Sao chép thủ công', value));

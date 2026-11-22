@@ -2082,17 +2082,25 @@ body.pos-fullscreen .view {
     display: grid;
     gap: 2px;
     min-width: 0;
+    flex: 1;
   }
   .product-mobile-info strong {
     font-size: 14px;
     color: var(--ink);
     overflow-wrap: anywhere;
   }
+  .product-mobile-info small {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   .product-mobile-side {
     display: grid;
     justify-items: end;
-    gap: 4px;
+    gap: 3px;
     flex: none;
+    min-width: 78px;
+    text-align: right;
   }
 }
 
@@ -2255,24 +2263,102 @@ body.pos-fullscreen .view {
 
 @media (max-width: 640px) {
   .report-filter-bar .segmented {
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
     border-radius: 14px;
+    width: 100%;
+    -webkit-overflow-scrolling: touch;
+  }
+  .report-filter-bar .segmented::-webkit-scrollbar {
+    display: none;
+  }
+  .report-filter-bar .segmented button {
+    flex: none;
+    white-space: nowrap;
+  }
+  .report-date-form,
+  .report-custom-range {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    width: 100%;
+  }
+  .report-date-form > span,
+  .report-custom-range > span {
+    display: none;
+  }
+  .report-date-form > button[type='submit'],
+  .report-custom-range > button[type='submit'] {
+    grid-column: 1 / -1;
+    width: 100%;
   }
   .stat-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-rows: 1fr;
     gap: 10px;
+  }
+  .stat-card {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+  .stat-card-top {
+    min-height: 34px;
+    align-items: flex-start;
   }
   .stat-grid .stat-card:last-child:nth-child(odd) {
     grid-column: 1 / -1;
   }
   .pos-product-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: stretch;
     gap: 10px;
   }
   .pos-product {
-    min-height: 112px;
+    display: flex;
+    flex-direction: column;
+    min-height: 118px;
     padding: 10px;
     gap: 6px;
+  }
+  .pos-product-price {
+    margin-top: auto;
+  }
+  .toolbar,
+  .search-toolbar {
+    width: 100%;
+  }
+  .toolbar > .search-box,
+  .toolbar > .input-wrap,
+  .toolbar > input[type='search'],
+  .search-toolbar > .search-box,
+  .search-toolbar > input[type='search'] {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .staff-person-card {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .staff-person-actions {
+    width: 100%;
+    justify-content: flex-end;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+  }
+  .settings-panel .modal-footer {
+    background: transparent;
+    border-top: 1px solid var(--border);
+    padding: 14px 0 0;
+    margin-top: 12px;
+  }
+  .integration-hardware-actions {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    width: 100%;
   }
   .pos-exit-btn span {
     display: none;
@@ -2291,6 +2377,60 @@ body.pos-fullscreen .view {
   .page-heading h1 {
     font-size: 21px;
   }
+}
+
+.integration-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+@media (max-width: 640px) {
+  .integration-status-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.integration-status-card {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-soft);
+}
+.integration-status-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.integration-status-head strong {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.integration-badge {
+  flex: none;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 999px;
+}
+.integration-badge.is-ok {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+.integration-badge.is-warn {
+  background: #FEF3C7;
+  color: #92400E;
+}
+.integration-badge.is-muted {
+  background: var(--surface-2, #E2E8F0);
+  color: var(--ink-secondary);
+}
+.settings-form-footer {
+  background: transparent;
+  border-top: 1px solid var(--border);
+  padding: 14px 0 0;
+  margin-top: 14px;
 }
 
 /* ---- 9. Auxiliary Panels, Lists, Alerts, Order Details & Stock Count ---- */
