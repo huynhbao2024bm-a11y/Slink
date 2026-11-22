@@ -4,6 +4,25 @@
 
 Status labels: **Not started**, **In progress**, **Blocked by external dependency**, **Evidence passed**. “Evidence passed” applies only to the named milestone, never to the whole product by implication.
 
+## Cập nhật Slink 0.8.0 — Đại phẫu Chuẩn Ngành Bán Lẻ (KiotViet / Sapo POS) & Tách Mô-đun Frontend (2026-11-22)
+
+- **Kiến trúc Điều hướng & IA Chuẩn Bán Lẻ (`client/shell.js`, `styles.css`, `workspace.css`, `index.html`):**
+  - Hợp nhất toàn bộ Slink theo chuẩn bán lẻ (`KiotViet Retail / Sapo POS`): bỏ nhóm Affiliate/F&B khỏi luồng điều hướng chính (giữ nguyên tương thích ngược API máy chủ), thay hub `Quản lý` trung gian bằng **Desktop Backoffice Grouped Sidebar** (`Hàng hóa`, `Giao dịch`, `Đối tác`, `Tài chính & Báo cáo`, `Hệ thống`), đưa `Nhà cung cấp` (`suppliers`) và `Khuyến mãi` (`promotions`) thành route hạng nhất.
+  - Trên mobile (`<=1100px`), cung cấp thanh 5 tab (`Tổng quan · Đơn hàng · [Bán hàng] · Hàng hóa · Thêm`) cùng ngăn kéo `More Drawer` phân nhóm và `bottom-nav` không trùng lặp nút bán hàng ở topbar.
+- **POS Toàn Màn Hình Kết Hợp (`body.pos-fullscreen`, `client/pos.js`, `server/sales.js`, `offline-ledger.js`, `server/offline-conflicts.js`):**
+  - Tách biệt hoàn toàn **Backoffice** và **Màn hình Thu ngân POS Toàn màn hình** (`pos-topbar` gồm tìm/quét nhanh `F2`, nhiều tab đơn chờ cô lập trạng thái từng hóa đơn: giỏ, khách hàng inline, điểm thưởng, nợ gộp & `prebillEventId`, chọn kho, ca két, nút đọc tiền, chuyển chế độ **Lưới chạm (`grid`) ↔ Danh sách quét nhanh (`list`)**, và `Về quản trị`).
+  - Bổ sung **Chiết khấu từng dòng hàng (`%` hoặc `₫`)** ở cả POS online (`POST /api/stores/:storeId/sales` `items[].discountVnd`) lẫn hàng đợi offline (`offline-ledger.js`, `server/offline-conflicts.js`), cưỡng chế nghiêm ngặt trần `pos_max_discount_pct`, **Margin Guard** (bảo vệ giá vốn sau bước kiểm tra khách lẻ/nợ), và hoàn trả theo thực thu từng dòng (`return_lines.refund_vnd`).
+- **Thẻ Kho Sản Phẩm 4 Tab, Checklist Khởi Tạo & Báo Cáo Trực Quan (`server/stock.js`, `server/analytics.js`, `server/exports.js`, `client/products.js`, `client/dashboard.js`, `client/reports.js`, `client/charts.js`):**
+  - Bổ sung `GET /api/stores/:storeId/products/:productId/stock-card` (4 tab chi tiết: `Thông tin & Giá`, `Thẻ kho`, `Tồn theo kho`, `Serial & Bảo hành`) kèm cô lập kho `allowedWarehouseIds(membership)` và ẩn `costVnd`/`unitCostVnd` khi tắt `view_cost_price`.
+  - Bổ sung thanh thao tác hàng loạt (Batch Action Bar) & bộ lọc chuẩn KiotViet ở `Sản phẩm`, `Checklist Khởi tạo Cửa hàng 4 bước` trên `Tổng quan`, và `Báo cáo 4 tab` (`Cuối ngày`, `Bán hàng & Lợi nhuận`, `Hàng hóa & Kho`, `Nhân viên & Khách hàng`) hỗ trợ khoảng ngày tùy chọn `from`/`to` (<= 366 ngày), so sánh kỳ trước, biểu đồ SVG nội tuyến (`charts.js`), phạm vi kho ở `server/analytics.js` và ẩn cột tiền vốn khi xuất CSV đơn nhập (`server/exports.js`).
+- **Tách Mô-đun 100% Frontend & Hệ thống CSS 1 Lớp Sạch:**
+  - Tách `app.js` nguyên khối thành **14 mô-đun `client/*.js`** (`core.js`, `charts.js`, `shell.js`, `dashboard.js`, `pos.js`, `products.js`, `orders.js`, `inventory.js`, `customers.js`, `finance.js`, `reports.js`, `staff.js`, `settings.js`, `actions.js`) cùng `app.js` nạp đồng bộ trên cả `index.html`, `server/index.js`, `sw.js`, `Dockerfile`, `scripts/android-assets.js`, `MainActivity.java` và `android/app/build.gradle`.
+  - Viết lại `styles.css` và `workspace.css` theo cấu trúc 1 lớp sạch (xóa bỏ toàn bộ hack ghi đè `.calm-ui`).
+- **Bằng chứng kiểm thử, Rà soát kép & Phát hành (`0.8.0` / `versionCode: 3018`):**
+  - `node --check` đạt 23/23 tệp; `node --test server/test/*.test.js` đạt **`103/103` PASS (`0` lỗi, `0` bỏ qua)** (bao gồm `server/test/industry-standard-080.test.js` kiểm chứng chiết khấu dòng + RBAC + Margin Guard + Stock Card + Analytics phạm vi kho).
+  - Playwright E2E `node e2e/commercial-responsive.js` đạt 100% trên cả **`390×844` mobile và `1440×900` desktop** (`0` tràn ngang, `0` lỗi console/page/5xx) kèm rà soát trực quan ảnh chụp mọi màn hình chính.
+  - Đã rà soát kép độc lập bằng subagent `code-reviewer` + `security-reviewer` và xử lý dứt điểm toàn bộ phát hiện `HIGH`/`MEDIUM`/`LOW`. Không có DB migration mới.
+
 ## Cập nhật Slink 0.7.2.0 — Đại phẫu Giao diện theo Design System ui-ux-pro-max (2026-11-22)
 
 - **Chuẩn hóa Design System (`design-system/slink/MASTER.md`):** Thiết lập bộ quy chuẩn thị giác thống nhất cho Slink với bảng màu Emerald `#0F6B4E` + Cool Slate (`#0F172A`, `#52606D`, `#F4F6F5`, `#FFFFFF`), hệ phông chữ `Plus Jakarta Sans` + `JetBrains Mono` (`tabular-nums`), vùng chạm tối thiểu `44×44px` và độ tương phản đạt chuẩn WCAG AA (>= 4.5:1).

@@ -153,7 +153,8 @@
     if (operation.kind === 'sale') {
       if (!body.items?.length || body.items.length > 100) throw problem('offline_empty_sale', 'Đơn cần từ 1 đến 100 mặt hàng.');
       if (body.promotionCode) throw problem('offline_promotion_requires_network', 'Mã ưu đãi cần mạng để kiểm tra. Có thể dùng giảm giá bằng số tiền khi không có mạng.');
-      let subtotal = 0n;
+      if (body.redeemPoints || body.settlePriorDebt) throw problem('offline_points_or_debt_bundle_requires_network', 'Đổi điểm thưởng hoặc gộp thu nợ cũ cần mạng để đối chiếu số dư trên máy chủ.');
+      let subtotal = 0n, lineDiscountTotal = 0n;
       const lines = [];
       for (const item of body.items) {
         const product = findProduct(state, body.warehouseId, item.productId, operation, validate), milli = quantity(item.quantity);
@@ -164,12 +165,16 @@
           state.issues.push({ key: operation.key, code: 'offline_insufficient_stock' });
         }
         const price = item.expectedUnitPriceVnd ?? product.sale_price_vnd;
-        subtotal += lineTotal(price, milli); lines.push({ productId: product.id, name: product.name, quantity: milli / 1000, unitPriceVnd: String(price) });
+        const gross = lineTotal(price, milli);
+        const lineDisc = amount(item.discountVnd || 0);
+        if (lineDisc < 0n || lineDisc > gross) throw problem('offline_invalid_discount', 'Giảm giá từng món không hợp lệ.');
+        subtotal += gross; lineDiscountTotal += lineDisc;
+        lines.push({ productId: product.id, name: product.name, quantity: milli / 1000, unitPriceVnd: String(price), discountVnd: String(lineDisc) });
         move(state, operation, product, -milli, validate);
       }
       const discount = amount(body.discountVnd || 0);
-      if (discount > subtotal) throw problem('offline_invalid_discount', 'Giảm giá không được lớn hơn tiền hàng.');
-      const total = subtotal - discount;
+      if (lineDiscountTotal + discount > subtotal) throw problem('offline_invalid_discount', 'Giảm giá không được lớn hơn tiền hàng.');
+      const total = subtotal - lineDiscountTotal - discount;
       if (amount(body.totalVnd) !== total) throw problem('offline_total_changed', 'Tổng tiền không khớp với mặt hàng. Kiểm tra lại trước khi lưu.');
       let received = 0n, cashReceived = 0n; const used = new Set();
       for (const tender of body.tenders || []) {
@@ -184,7 +189,7 @@
       for (const tender of body.tenders || []) moneyEntry(state, operation, 'in', amount(tender.amountReceivedVnd), tender.method, 'Bán hàng', 'order_payment');
       moneyEntry(state, operation, 'out', change, 'cash', 'Tiền thối', 'order_change');
       if (body.customerId && received < total) state.customerDebtChanges.set(body.customerId, (state.customerDebtChanges.get(body.customerId) || 0n) + total - received);
-      state.localOrders.push({ key: operation.key, sequence: operation.sequence, items: lines, customerId: body.customerId || null, subtotalVnd: String(subtotal), discountVnd: String(discount), totalVnd: String(total), receivedVnd: String(received), changeVnd: String(change), queuedAt: operation.queuedAt });
+      state.localOrders.push({ key: operation.key, sequence: operation.sequence, items: lines, customerId: body.customerId || null, subtotalVnd: String(subtotal), discountVnd: String(lineDiscountTotal + discount), totalVnd: String(total), receivedVnd: String(received), changeVnd: String(change), queuedAt: operation.queuedAt });
       return state;
     }
     if (operation.kind === 'purchase') {

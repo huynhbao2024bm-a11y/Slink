@@ -50,7 +50,7 @@ tasks.register('prepareWeb', Exec) {
     workingDir rootProject.projectDir.parentFile
     commandLine 'node', 'scripts/android-assets.js'
     inputs.files fileTree(rootProject.projectDir.parentFile) {
-        include 'index.html', '*.js', '*.css', 'manifest.webmanifest', 'assets/slink-icon*'
+        include 'index.html', '*.js', 'client/*.js', '*.css', 'manifest.webmanifest', 'assets/slink-icon*'
         exclude 'node_modules/**', 'android/**'
     }
     outputs.dir 'src/main/assets/web'

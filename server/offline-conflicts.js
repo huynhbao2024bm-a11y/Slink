@@ -191,8 +191,10 @@ async function inspectSaleConflict(client, storeId, membership, payload, issue) 
   const clockBeforeShift = Boolean(usesCash && offline?.occurredAt && activeSession && new Date(offline.occurredAt) < new Date(activeSession.opened_at));
 
   const isManager = RESOLVE_ROLES.has(membership.role);
-  const offlineTotalVnd = lineSummary.offlineSubtotal >= sale.discountVnd ? lineSummary.offlineSubtotal - sale.discountVnd : 0n;
-  const serverTotalVnd = lineSummary.serverSubtotal >= sale.discountVnd ? lineSummary.serverSubtotal - sale.discountVnd : 0n;
+  const lineDiscountTotalVnd = sale.items.reduce((sum, item) => sum + BigInt(item.lineDiscountVnd || 0n), 0n);
+  const manualDiscountVnd = sale.discountVnd + lineDiscountTotalVnd;
+  const offlineTotalVnd = lineSummary.offlineSubtotal >= manualDiscountVnd ? lineSummary.offlineSubtotal - manualDiscountVnd : 0n;
+  const serverTotalVnd = lineSummary.serverSubtotal >= manualDiscountVnd ? lineSummary.serverSubtotal - manualDiscountVnd : 0n;
   const blockedReasons = [];
   if (!warehouseId) blockedReasons.push('Kho bán hàng không còn hoạt động.');
   if (sale.appliedPromotionCode) blockedReasons.push('Đơn ngoại tuyến có mã khuyến mãi cần kiểm tra lại trực tuyến.');
@@ -448,7 +450,9 @@ function buildResolvedFinancials(reqData, productMap) {
   if (offlineSubtotal > MAX_BIGINT || serverSubtotal > MAX_BIGINT) {
     throw new ApiError(400, 'validation_error', 'Tổng tiền đơn hàng vượt giới hạn lưu trữ.');
   }
-  if (offlineSubtotal < sale.discountVnd || offlineSubtotal - sale.discountVnd !== offlineTotalVnd) {
+  const lineDiscountTotalVnd = sale.items.reduce((sum, item) => sum + BigInt(item.lineDiscountVnd || 0n), 0n);
+  const manualDiscountVnd = sale.discountVnd + lineDiscountTotalVnd;
+  if (offlineSubtotal < manualDiscountVnd || offlineSubtotal - manualDiscountVnd !== offlineTotalVnd) {
     throw new ApiError(400, 'offline_total_changed', 'Tổng tiền đơn ngoại tuyến không khớp với giá bán và giảm giá lúc chốt trên máy.');
   }
 
@@ -461,7 +465,7 @@ function buildResolvedFinancials(reqData, productMap) {
   }
 
   const subtotal = resolutionMode === 'accept_historical_price' ? offlineSubtotal : serverSubtotal;
-  const totalDiscountVnd = sale.discountVnd + conflictAdjustmentDiscountVnd;
+  const totalDiscountVnd = manualDiscountVnd + conflictAdjustmentDiscountVnd;
   const total = subtotal - totalDiscountVnd;
   if (total > MAX_BIGINT || totalDiscountVnd > MAX_BIGINT) {
     throw new ApiError(400, 'validation_error', 'Tổng tiền hoặc chiết khấu vượt giới hạn lưu trữ.');

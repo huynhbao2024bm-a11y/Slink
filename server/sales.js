@@ -63,6 +63,7 @@ function normalizeSale(body) {
       throw new ApiError(400, 'validation_error', 'Có sản phẩm không hợp lệ trong đơn hàng.');
     }
     const milli = quantityMilli(line.quantity);
+    const lineDiscountVnd = amount(line.discountVnd ?? 0, 'Giảm giá dòng hàng');
     const lineSerials = line.serialCodes !== undefined && line.serialCodes !== null
       ? normalizeSerialCodeList(line.serialCodes, { maxCount: 200 })
       : [];
@@ -81,10 +82,12 @@ function normalizeSale(body) {
       }
       items[index].quantityMilli += milli;
       if (!Number.isSafeInteger(items[index].quantityMilli)) throw new ApiError(400, 'validation_error', 'Số lượng sản phẩm vượt giới hạn.');
+      items[index].lineDiscountVnd += lineDiscountVnd;
+      if (items[index].lineDiscountVnd > MAX_BIGINT) throw new ApiError(400, 'validation_error', 'Giảm giá dòng hàng vượt giới hạn lưu trữ.');
       items[index].serialCodes.push(...lineSerials);
     } else {
       indices.set(line.productId, items.length);
-      items.push({ productId: line.productId, quantityMilli: milli, serialCodes: lineSerials });
+      items.push({ productId: line.productId, quantityMilli: milli, lineDiscountVnd, serialCodes: lineSerials });
     }
   }
   const discountVnd = amount(body.discountVnd ?? 0, 'Khoản giảm giá');
@@ -151,11 +154,12 @@ function normalizeSale(body) {
   };
 }
 
-function distributeDiscount(lines, discount, subtotal) {
+function distributeDiscount(lines, discount, subtotal, weightKey = 'grossVnd') {
   if (discount === 0n) return lines.map(() => 0n);
   let allocated = 0n;
   const shares = lines.map((line, index) => {
-    const numerator = discount * line.grossVnd;
+    const weight = line[weightKey];
+    const numerator = discount * weight;
     const share = numerator / subtotal;
     allocated += share;
     return { index, share, remainder: numerator % subtotal };
@@ -181,11 +185,12 @@ function registerSalesRoutes(app, { pool, env }) {
     const offline = normalizeOffline(request.body?.offline);
     const prices = expectedPrices(request.body?.items, offline);
     const canonicalSale = {
-      items: sale.items.map((line) => (
-        line.serialCodes.length
-          ? { productId: line.productId, quantityMilli: line.quantityMilli, serialCodes: line.serialCodes }
-          : { productId: line.productId, quantityMilli: line.quantityMilli }
-      )),
+      items: sale.items.map((line) => {
+        const entry = { productId: line.productId, quantityMilli: line.quantityMilli };
+        if (line.lineDiscountVnd > 0n) entry.discountVnd = line.lineDiscountVnd;
+        if (line.serialCodes.length) entry.serialCodes = line.serialCodes;
+        return entry;
+      }),
       discountVnd: sale.discountVnd,
       amountReceivedVnd: sale.amountReceivedVnd,
       method: sale.method,
@@ -397,10 +402,16 @@ function registerSalesRoutes(app, { pool, env }) {
         const price = BigInt(product.sale_price_vnd);
         const cost = BigInt(product.cost_vnd);
         const grossVnd = (price * BigInt(line.quantityMilli) + 500n) / 1000n;
+        if (line.lineDiscountVnd > grossVnd) {
+          throw new ApiError(400, 'validation_error', `Khoản giảm giá của "${product.name}" không được vượt quá thành tiền dòng.`);
+        }
+        const netAfterLineVnd = grossVnd - line.lineDiscountVnd;
         const lineCostVnd = (cost * BigInt(line.quantityMilli) + 500n) / 1000n;
-        return { ...line, product, price, cost, grossVnd, lineCostVnd };
+        return { ...line, product, price, cost, grossVnd, netAfterLineVnd, lineCostVnd };
       });
       const subtotal = lines.reduce((sum, line) => sum + line.grossVnd, 0n);
+      const lineDiscountTotalVnd = lines.reduce((sum, line) => sum + line.lineDiscountVnd, 0n);
+      const manualDiscountTotalVnd = lineDiscountTotalVnd + sale.discountVnd;
       const totalCostVnd = lines.reduce((sum, line) => sum + line.lineCostVnd, 0n);
       const appliedPromotion = sale.appliedPromotionCode
         ? await calculatePromotion(client, {
@@ -408,23 +419,16 @@ function registerSalesRoutes(app, { pool, env }) {
         })
         : null;
       const promotionDiscountVnd = appliedPromotion?.discountVnd || 0n;
-      // Cap manual POS discount (store-approved promotionCode is governed by promotions.js).
+      // Cap combined manual POS discount (per-line + order-level; promotionCode is governed by promotions.js).
       const maxDiscountPct = getPosMaxDiscountPct(membership);
-      if (sale.discountVnd > 0n) {
-        if (maxDiscountPct === 0 || sale.discountVnd * 100n > subtotal * BigInt(maxDiscountPct)) {
+      if (manualDiscountTotalVnd > 0n) {
+        if (maxDiscountPct === 0 || manualDiscountTotalVnd * 100n > subtotal * BigInt(maxDiscountPct)) {
           throw new ApiError(
             403,
             'discount_limit_exceeded',
             maxDiscountPct === 0
               ? 'Tài khoản này không được phép giảm giá thủ công trên POS.'
               : `Mức giảm giá vượt giới hạn tối đa ${maxDiscountPct}% được cấp.`
-          );
-        }
-        if (storeProtectCostMargin && membership.role !== 'owner' && totalCostVnd > 0n && (subtotal - sale.discountVnd < totalCostVnd)) {
-          throw new ApiError(
-            403,
-            'margin_guard_violation',
-            'Chốt chặn bảo vệ giá vốn: Mức giảm giá làm giá bán thấp hơn giá vốn hàng hóa. Chỉ Chủ cửa hàng mới được phép bán dưới giá vốn.'
           );
         }
       }
@@ -437,8 +441,8 @@ function registerSalesRoutes(app, { pool, env }) {
         const requestedPoints = sale.pointsToRedeem > 0
           ? Math.min(sale.pointsToRedeem, availablePoints)
           : availablePoints;
-        const remainingAfterBaseDiscount = subtotal > (sale.discountVnd + promotionDiscountVnd)
-          ? subtotal - (sale.discountVnd + promotionDiscountVnd)
+        const remainingAfterBaseDiscount = subtotal > (manualDiscountTotalVnd + promotionDiscountVnd)
+          ? subtotal - (manualDiscountTotalVnd + promotionDiscountVnd)
           : 0n;
         const maxPointsForOrder = loyaltyRedeemValueVnd > 0n
           ? Number(remainingAfterBaseDiscount / loyaltyRedeemValueVnd)
@@ -447,12 +451,28 @@ function registerSalesRoutes(app, { pool, env }) {
         pointsRedeemedVnd = BigInt(pointsRedeemed) * loyaltyRedeemValueVnd;
       }
 
-      const totalDiscountVnd = sale.discountVnd + promotionDiscountVnd + pointsRedeemedVnd;
+      const totalDiscountVnd = manualDiscountTotalVnd + promotionDiscountVnd + pointsRedeemedVnd;
       if (subtotal > MAX_BIGINT || totalDiscountVnd > subtotal) {
         throw new ApiError(400, 'validation_error', 'Khoản giảm giá không được vượt quá tiền hàng.');
       }
       const total = subtotal - totalDiscountVnd;
       if (offline && total.toString() !== canonicalSale.offlineTotalVnd) throw new ApiError(409, 'offline_total_changed', 'Tổng tiền trên thiết bị không khớp. Chưa ghi đơn; cần kiểm tra chứng từ chờ.');
+      if (sale.tenders.length === 0 && total > 0n && !effectiveCustomerId) {
+        throw new ApiError(400, 'customer_required', 'Cần chọn khách hàng để ghi nhận phần còn nợ.');
+      }
+      if (
+        storeProtectCostMargin
+        && membership.role !== 'owner'
+        && totalCostVnd > 0n
+        && (manualDiscountTotalVnd > 0n || pointsRedeemedVnd > 0n)
+        && (subtotal - manualDiscountTotalVnd - pointsRedeemedVnd < totalCostVnd)
+      ) {
+        throw new ApiError(
+          403,
+          'margin_guard_violation',
+          'Chốt chặn bảo vệ giá vốn: Mức giảm giá làm giá bán thấp hơn giá vốn hàng hóa. Chỉ Chủ cửa hàng mới được phép bán dưới giá vốn.'
+        );
+      }
 
       let priorCustomerBalanceVnd = 0n;
       if (effectiveCustomerId) {
@@ -534,7 +554,9 @@ function registerSalesRoutes(app, { pool, env }) {
         };
       }).filter((tender) => tender.amountVnd > 0n || tender.cashMovementInVnd > 0n);
 
-      const allocatedDiscount = distributeDiscount(lines, totalDiscountVnd, subtotal || 1n);
+      const orderLevelDiscountVnd = sale.discountVnd + promotionDiscountVnd + pointsRedeemedVnd;
+      const allocatedOrderDiscount = distributeDiscount(lines, orderLevelDiscountVnd, (subtotal - lineDiscountTotalVnd) || 1n, 'netAfterLineVnd');
+      const allocatedDiscount = lines.map((line, index) => line.lineDiscountVnd + allocatedOrderDiscount[index]);
 
       if (appliedPromotion) await consumePromotion(client, { storeId, promotionId: appliedPromotion.id });
 
