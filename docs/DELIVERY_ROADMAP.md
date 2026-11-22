@@ -4,6 +4,15 @@
 
 Status labels: **Not started**, **In progress**, **Blocked by external dependency**, **Evidence passed**. “Evidence passed” applies only to the named milestone, never to the whole product by implication.
 
+## Cập nhật Slink 0.7.2.0 — Đại phẫu Giao diện theo Design System ui-ux-pro-max (2026-11-22)
+
+- **Chuẩn hóa Design System (`design-system/slink/MASTER.md`):** Thiết lập bộ quy chuẩn thị giác thống nhất cho Slink với bảng màu Emerald `#0F6B4E` + Cool Slate (`#0F172A`, `#52606D`, `#F4F6F5`, `#FFFFFF`), hệ phông chữ `Plus Jakarta Sans` + `JetBrains Mono` (`tabular-nums`), vùng chạm tối thiểu `44×44px` và độ tương phản đạt chuẩn WCAG AA (>= 4.5:1).
+- **Đại phẫu toàn bộ bề mặt giao diện (`index.html`, `app.js`, `styles.css`, `workspace.css`):**
+  - Tải phông `Plus Jakarta Sans` & `JetBrains Mono` qua Google Fonts (tương thích CSP hiện hành), cập nhật `theme-color` `#0F6B4E`, thay toàn bộ biểu tượng emoji cấu trúc (`?`, `💸`, `✉`, `⚡`) bằng SVG đồng bộ (`help-circle`, `wallet`, `mail`, `spark`).
+  - Nâng cấp thanh bên `236px` (hiển thị lại `.store-avatar`, email rút gọn 1 dòng chống xuống dòng), topbar & thanh điều hướng dưới đáy dạng frosted glass với pill active `#0F6B4E`.
+  - Làm mới Tổng quan (thẻ Doanh thu thuần hero Emerald đậm, lưới `.daily-actions` 2×2 / 4 cột), POS (`.pos-mode-bar` 2 cột cân đối, danh mục dạng pill, thẻ sản phẩm nổi nhẹ, thu gọn đệm `.cart-panel`, tăng đệm `.pos-mobile-cart-edit` trên mobile), danh mục Quản lý (`workspace-directory` auto-fit), tab Cài đặt/Quản lý chuyển trạng thái tức thì, thẻ KPI lẻ cuối hàng kéo full-width dưới `640px`, modal backdrop làm mờ và kéo dài thời gian hiển thị toast thường lên `2600ms`.
+- **Bằng chứng kiểm thử (`node --test server/test/*.test.js` & `e2e/commercial-responsive.js`):** Đạt `102/102` bài test server (`0` lỗi) và Playwright E2E trên cả `390×844` mobile & `1440×900` desktop (`0` tràn ngang, `0` lỗi console/page/5xx), đồng thời rà soát trực quan các ảnh chụp giao diện trước khi phát hành.
+
 ## Cập nhật Slink 0.7.1.0 — Tinh gọn Giao diện, Cài đặt 4 Tab, Trợ giúp 3.0, Toast & Sửa Triệt Để Trang Nhân Viên (2026-11-21)
 
 - **Cài đặt & Trung tâm Trợ giúp Slink 3.0 (`app.js`, `integrations-ui.js`, `index.html`, `styles.css`, `workspace.css`):** Tổ chức lại trang Cài đặt thành 4 tab gọn (`Cửa hàng`, `Bán hàng & Thiết bị`, `Thanh toán & Tích hợp`, `Tài khoản & Ứng dụng`), thêm tùy chọn bật/tắt & thử loa đọc tiền (`voiceAnnounce`, `test-pos-voice`), tách thẻ máy in nhiệt sang `renderPrinterHardwareSection` ở tab Thiết bị, hiển thị luôn mục tích hợp nâng cao (GHN/MoMo/Đơn vị vận chuyển), bỏ các liên kết/nút trùng lặp ở sidebar và Cài đặt, nâng cấp hộp thoại `showHelp()` thành `Trung tâm Trợ giúp Slink 3.0` kèm 6 phím tắt POS (`F1`, `F2`, `F4`, `F6`, `F8`, `F9`).

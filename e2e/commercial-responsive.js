@@ -210,6 +210,9 @@ async function runViewportAudit(browser, origin, viewport, label) {
     await page.locator("[data-action='guided-tour-skip']:visible").first().waitFor({ state: 'visible', timeout: 2000 }).catch(() => {});
     await skipTour();
 
+    if (process.env.SLINK_E2E_SCREENSHOT_DIR) {
+      await fs.mkdir(process.env.SLINK_E2E_SCREENSHOT_DIR, { recursive: true });
+    }
     for (const route of ['dashboard', 'products', 'inventory', 'orders', 'workspace']) {
       await skipTour();
       const btn = page.locator(`[data-route='${route}']:visible`).first();
@@ -218,6 +221,9 @@ async function runViewportAudit(browser, origin, viewport, label) {
         await page.waitForTimeout(250);
         await skipTour();
         await assertNoHorizontalOverflow(page, `${label}:${route}`);
+        if (process.env.SLINK_E2E_SCREENSHOT_DIR && ['dashboard', 'workspace'].includes(route)) {
+          await page.screenshot({ path: path.join(process.env.SLINK_E2E_SCREENSHOT_DIR, `${label}-${route}.png`) });
+        }
       }
     }
 
@@ -227,6 +233,9 @@ async function runViewportAudit(browser, origin, viewport, label) {
     await topbarPos.click();
     await page.waitForSelector('.pos-product-grid button');
     await assertNoHorizontalOverflow(page, `${label}:pos-topbar`);
+    if (process.env.SLINK_E2E_SCREENSHOT_DIR) {
+      await page.screenshot({ path: path.join(process.env.SLINK_E2E_SCREENSHOT_DIR, `${label}-pos.png`) });
+    }
 
     // 2. Hardware barcode Enter auto-add + verify already-sold 1-unit barcode CANNOT be resold
     await page.fill('#pos-search', '8938505999911');
@@ -659,8 +668,13 @@ async function runViewportAudit(browser, origin, viewport, label) {
 
     // Verify toast does not block viewport and click-to-dismiss works immediately
     await page.waitForSelector('.toast', { timeout: 5000 });
-    const toastBox = await page.locator('.toast').first().boundingBox();
-    assert.ok(toastBox && toastBox.height < 140 && toastBox.width <= 380, `${label}: toast must remain compact, got ${JSON.stringify(toastBox)}`);
+    const toastMetrics = await page.evaluate(() => {
+      const el = document.querySelector('.toast');
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { width: r.width, height: r.height };
+    });
+    assert.ok(toastMetrics && toastMetrics.height < 140 && toastMetrics.width <= 380, `${label}: toast must remain compact, got ${JSON.stringify(toastMetrics)}`);
     await page.locator('.toast .toast-close').click();
     assert.equal(await page.locator('.toast').count(), 0, `${label}: clicking toast close must dismiss immediately`);
 
@@ -673,6 +687,9 @@ async function runViewportAudit(browser, origin, viewport, label) {
     await page.waitForSelector("form[data-form='pos-prefs'] input[name='voiceAnnounce']", { timeout: 5000 });
     assert.equal(await page.locator("form[data-form='pos-prefs'] input[name='voiceAnnounce']").isChecked(), true, `${label}: voiceAnnounce defaults to enabled`);
     await assertNoHorizontalOverflow(page, `${label}:settings-pos-device`);
+    if (process.env.SLINK_E2E_SCREENSHOT_DIR) {
+      await page.screenshot({ path: path.join(process.env.SLINK_E2E_SCREENSHOT_DIR, `${label}-settings.png`) });
+    }
 
     await page.locator('.topbar .help-button:visible').first().click();
     await page.waitForSelector('.help-shortcut-grid', { timeout: 5000 });
@@ -713,6 +730,9 @@ async function runViewportAudit(browser, origin, viewport, label) {
       await page.locator('.toast .toast-close').first().click();
     }
     await assertNoHorizontalOverflow(page, `${label}:staff-members`);
+    if (process.env.SLINK_E2E_SCREENSHOT_DIR) {
+      await page.screenshot({ path: path.join(process.env.SLINK_E2E_SCREENSHOT_DIR, `${label}-staff.png`) });
+    }
 
     // Verify VN banks list (> 20 options) & bank account attribute alignment
     await page.locator('.staff-row .staff-details > summary').first().click();
