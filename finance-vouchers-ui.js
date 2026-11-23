@@ -386,7 +386,7 @@
       : `<div class='empty-state'><strong>Chưa có chi phí vận hành trong kỳ</strong></div>`;
     return {
       pnlCardsHtml: `<article class='panel report-card'><small>Chi phí vận hành</small><strong>${moneyVnd(opEx)}</strong><span>Thu khác: ${moneyVnd(otherIn)}</span></article>
-        <article class='panel report-card'><small>Lãi ròng (Net Profit)</small><strong class='${hasProfit ? (String(netProfit).startsWith('-') ? 'finance-amount-out' : 'finance-amount-in') : ''}'>${hasProfit ? moneyVnd(netProfit) : 'Ẩn theo quyền'}</strong></article>`,
+        <article class='panel report-card'><small>Lãi ròng</small><strong class='${hasProfit ? (String(netProfit).startsWith('-') ? 'finance-amount-out' : 'finance-amount-in') : ''}'>${hasProfit ? moneyVnd(netProfit) : 'Ẩn theo quyền'}</strong></article>`,
       expenseSectionHtml: `<section class='panel' style='margin-top:16px'><div class='panel-header'><h2>Chi phí vận hành</h2></div><div class='report-breakdown'>${breakdownRows}</div></section>`,
     };
   }

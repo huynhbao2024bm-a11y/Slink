@@ -1127,7 +1127,7 @@
     S.dom.root.dataset.page = S.state.page;
     S.fn.renderShell();
     const renderers = { workspace: S.fn.renderWorkspace, affiliate: S.fn.renderAffiliate, dashboard: S.fn.renderDashboard, products: S.fn.renderProducts, pos: S.fn.renderPOS, orders: S.fn.renderOrders, promotions: S.fn.renderPromotions, customers: S.fn.renderCustomers, suppliers: S.fn.renderSuppliers, inventory: S.fn.renderInventory, finance: S.fn.renderFinance, reports: S.fn.renderReports, settings: S.fn.renderSettings, channels: S.fn.renderChannelMappings, staff: S.fn.renderStaff, audit: S.fn.renderAudit };
-    const pageHtml = renderers[S.state.page] ? renderers[S.state.page]() : `<section class='panel locked-page'><div class='empty-icon'>${S.fn.icon('clock', 23)}</div><h2>Đang hoàn thiện</h2><p>Khu vực này đang được kết nối với dữ liệu cửa hàng và quy trình lưu sổ. Các thao tác mẫu đã được khóa để tránh tạo giao dịch không có thật.</p><button class='btn btn-primary' data-route='products'>Mở danh mục sản phẩm</button></section>`;
+    const pageHtml = renderers[S.state.page] ? renderers[S.state.page]() : `<section class='panel locked-page'><div class='empty-icon'>${S.fn.icon('clock', 23)}</div><h2>Đang hoàn thiện</h2><p>Mục này hiện chưa khả dụng.</p><button class='btn btn-primary' data-route='products'>Mở danh mục sản phẩm</button></section>`;
     S.dom.root.innerHTML = pageHtml;
     S.fn.enhanceWorkspace();
     drafts.forEach(function (draft) {
@@ -1295,7 +1295,7 @@
           <div class='help-shortcut-item'><kbd>F9</kbd><span>Thanh toán ngay</span></div>
         </div>
       </div>`;
-    S.fn.showModal('Trung tâm Trợ giúp Slink 3.0', 'Hướng dẫn vận hành nhanh tại quầy, nhân sự, bảo hành & phím tắt.', body, `<button class='btn btn-secondary' type='button' data-action='change-task-focus'>Đổi màn hình mở đầu</button><button class='btn btn-secondary' type='button' data-action='replay-guided-tour'>Xem hướng dẫn tương tác</button><button class='btn btn-primary' type='button' data-action='close-modal'>Đóng</button>`, true);
+    S.fn.showModal('Hướng dẫn sử dụng', 'Thao tác nhanh tại quầy và phím tắt.', body, `<button class='btn btn-secondary' type='button' data-action='change-task-focus'>Đổi màn hình mở đầu</button><button class='btn btn-primary' type='button' data-action='close-modal'>Đóng</button>`, true);
   }
 
 

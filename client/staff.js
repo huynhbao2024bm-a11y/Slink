@@ -324,8 +324,7 @@
     return `<section class='panel staff-panel'>
       <div class='panel-header'>
         <div>
-          <h2>Bảng lương tự động 1 trang</h2>
-          <p>Tự đếm ngày công từ ca &amp; đơn bán, tự tính hoa hồng thực thu (đã trừ hàng trả), tự gom tiền ứng lương và lệch két.</p>
+          <h2>Bảng lương</h2>
         </div>
         <div style='display:flex;align-items:center;gap:8px'>
           <label style='display:flex;align-items:center;gap:6px'><span class='muted'>Kỳ lương:</span><input class='input' id='payroll-month-input' type='month' value='${S.fn.esc(S.state.payrollState.periodMonth)}' style='width:155px'/></label>
@@ -362,18 +361,17 @@
     return `<section class='panel staff-panel'>
       <div class='panel-header'>
         <div>
-          <h2>Radar Chống Thất Thoát Thực Chiến</h2>
-          <p>Tự động bắt 3 hành vi gây thất thoát tiền mặt tại quầy: In tạm tính (F8) rồi xóa giỏ/sửa giảm món, hoàn trả tiền mặt và đóng ca lệch thiếu két.</p>
+          <h2>Kiểm soát thất thoát</h2>
         </div>
         <button type='button' class='btn btn-secondary' data-action='reload-radar'>Làm mới</button>
       </div>
-      ${S.state.radarState.loading ? `<div class='empty-state'><strong>Đang quét dữ liệu kiểm soát…</strong></div>` : `
+      ${S.state.radarState.loading ? `<div class='empty-state'><strong>Đang tải…</strong></div>` : `
       <div style='display:grid;gap:14px'>
         <div class='panel' style='padding:14px'>
-          <h3 style='margin:0 0 8px;font-size:14px'>1. In hóa đơn tạm tính (F8) nhưng xóa giỏ hoặc giảm tiền &gt; 15% (${S.fn.number(prebills.length)})</h3>
+          <h3 style='margin:0 0 8px;font-size:14px'>1. In tạm tính rồi xóa giỏ / giảm &gt; 15% (${S.fn.number(prebills.length)})</h3>
           ${prebills.length ? `<div class='staff-list'>${prebills.map(function (a) {
             return `<article class='staff-invite-row'><div><strong style='color:#b91c1c'>${S.fn.esc(a.description)}</strong><small>${S.fn.humanDate(a.printedAt, true)} · ${S.fn.number(a.lineCount)} dòng hàng</small></div><span class='badge badge-warning'>Cần kiểm tra</span></article>`;
-          }).join('')}</div>` : `<small class='muted'>Chưa phát hiện trường hợp in tạm tính F8 bất thường.</small>`}
+          }).join('')}</div>` : `<small class='muted'>Chưa phát hiện bất thường.</small>`}
         </div>
         <div class='panel' style='padding:14px'>
           <h3 style='margin:0 0 8px;font-size:14px'>2. Các ca đóng két lệch thiếu tiền mặt (${S.fn.number(shortages.length)})</h3>
@@ -477,7 +475,7 @@
   S.fn.showInvitationResult = function showInvitationResult(result, title) {
     S.fn.closeModal();
     if (result.developmentInviteUrl) {
-      S.fn.showModal(title || 'Đã tạo lời mời', 'Môi trường phát triển chưa gửi email; dùng liên kết dưới đây để tiếp tục.', `<div class='notice-item'><span>${S.fn.icon('users', 18)}</span><span><strong>${S.fn.esc(result.invitation.email)}</strong><small>${S.fn.staffRoleName(result.invitation.role)} · Liên kết sẽ hết hạn sau 7 ngày</small></span></div><a class='staff-invite-link' href='${S.fn.esc(result.developmentInviteUrl)}' target='_blank' rel='noopener'>Mở trang nhận lời mời →</a>`, `<button class='btn btn-secondary' data-action='close-modal'>Đóng</button><button class='btn btn-primary' data-action='reload-staff'>Xong</button>`, true);
+      S.fn.showModal(title || 'Đã tạo lời mời', 'Gửi liên kết dưới đây cho nhân viên để tham gia cửa hàng.', `<div class='notice-item'><span>${S.fn.icon('users', 18)}</span><span><strong>${S.fn.esc(result.invitation.email)}</strong><small>${S.fn.staffRoleName(result.invitation.role)} · Liên kết sẽ hết hạn sau 7 ngày</small></span></div><a class='staff-invite-link' href='${S.fn.esc(result.developmentInviteUrl)}' target='_blank' rel='noopener'>Mở trang nhận lời mời →</a>`, `<button class='btn btn-secondary' data-action='close-modal'>Đóng</button><button class='btn btn-primary' data-action='reload-staff'>Xong</button>`, true);
     } else {
       S.fn.toast(title || 'Đã gửi lời mời', result.message || 'Email mời đã được chấp nhận để gửi.');
       S.fn.closeModal();

@@ -495,7 +495,7 @@
       if (S.state.cashRegisterError) {
         cashSessionContent = `<div class='notice-item'><span>${S.fn.icon('alert', 18)}</span><span><strong>Chưa tải được trạng thái ca</strong></span></div>`;
       } else if (cashSession) {
-        const closePermissionNote = canCloseCash ? 'Chốt ca sẽ ghi nhận tiền đếm thực tế; nếu lệch, cần nhập lý do và Slink sẽ ghi một bút toán điều chỉnh.' : S.state.store.role === 'cashier' ? 'Thu ngân chỉ có thể chốt ca do mình mở. Hãy nhờ người mở ca hoặc quản lý thực hiện.' : 'Vai trò của bạn chỉ xem được ca. Hãy nhờ người mở ca hoặc chủ cửa hàng/quản lý chốt.';
+        const closePermissionNote = canCloseCash ? '' : S.state.store.role === 'cashier' ? 'Chỉ người mở ca mới chốt được ca.' : '';
         cashSessionContent = `<div class='cash-session-summary'><div><small>Trạng thái</small><strong>Đang mở · ${S.fn.esc(cashSession.openedByName || 'Nhân viên')}</strong></div><div><small>Tiền đầu ca</small><strong>${S.fn.moneyVndText(cashSession.openingFloatVnd)}</strong></div><div><small>Thu bằng tiền mặt</small><strong>${S.fn.moneyVndText(cashSession.cashInVnd)}</strong></div><div><small>Chi bằng tiền mặt</small><strong>${S.fn.moneyVndText(cashSession.cashOutVnd)}</strong></div><div><small>Dự kiến trong quầy</small><strong>${S.fn.moneyVndText(cashSession.expectedCashVnd)}</strong></div></div><div class='modal-note'>Mở lúc ${S.fn.humanDate(cashSession.openedAt, true)}. ${closePermissionNote}</div>`;
       } else {
         const message = canOpenCash ? 'Mở ca và nhập tiền đầu ca trước khi ghi giao dịch tiền mặt.' : 'Nhân viên có quyền mở ca sẽ cần bắt đầu trước khi phát sinh giao dịch tiền mặt.';
@@ -526,8 +526,7 @@
       }
       const vouchers = S.state.store.cashbook.filter(row => row.sourceType === 'manual_cash_movement');
       return `<section class='panel finance-record-panel'><div class='panel-header'><div><h2>Phiếu thu và phiếu chi</h2><p>Phiếu ghi tay trong ${S.fn.number(S.state.store.cashbook.length)} giao dịch gần nhất</p></div></div>
-        <div class='finance-cash-list'>${S.fn.cashRows(vouchers) || `<div class='empty-state'><strong>${S.state.financeDataReady ? 'Chưa có phiếu ghi tay gần đây' : 'Đang tải phiếu thu chi…'}</strong></div>`}</div>
-        ${S.state.financeMovementTotal > S.state.store.cashbook.length ? `<p class='finance-list-note'>Sổ quỹ còn giao dịch cũ hơn; phần này chỉ hiển thị dữ liệu đã tải.</p>` : ''}</section>`;
+        <div class='finance-cash-list'>${S.fn.cashRows(vouchers) || `<div class='empty-state'><strong>${S.state.financeDataReady ? 'Chưa có phiếu ghi tay gần đây' : 'Đang tải…'}</strong></div>`}</div></section>`;
     }
     if (canViewCashbook && window.SlinkFinanceUI && S.state.offlineState.mode === 'online') {
       return window.SlinkFinanceUI.renderCashbookPanel({
