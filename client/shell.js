@@ -6,14 +6,14 @@
     { id: 'pos', label: 'Bán hàng (POS)', icon: 'cart', accent: true },
     { id: 'products', label: 'Sản phẩm', icon: 'box' },
     { id: 'inventory', label: 'Tồn kho', icon: 'layers' },
-    { id: 'inventory-count', label: 'Kiểm kho', icon: 'check' },
-    { id: 'inventory-transfer', label: 'Chuyển kho', icon: 'truck' },
-    { id: 'orders', label: 'Hóa đơn', icon: 'receipt' },
+    { id: 'inventory-count', label: 'Kiểm kê', icon: 'check' },
+    { id: 'inventory-transfer', label: 'Điều chuyển', icon: 'truck' },
+    { id: 'orders', label: 'Đơn hàng', icon: 'receipt' },
     { id: 'inventory-receive', label: 'Nhập hàng', icon: 'download' },
     { id: 'promotions', label: 'Khuyến mãi', icon: 'tag' },
     { id: 'customers', label: 'Khách hàng', icon: 'users' },
     { id: 'suppliers', label: 'Nhà cung cấp', icon: 'shop' },
-    { id: 'finance', label: 'Sổ quỹ & Công nợ', icon: 'wallet' },
+    { id: 'finance', label: 'Thu chi', icon: 'wallet' },
     { id: 'reports', label: 'Báo cáo', icon: 'chart' },
     { id: 'staff', label: 'Nhân viên', icon: 'users' },
     { id: 'audit', label: 'Nhật ký', icon: 'clock' },
@@ -1070,7 +1070,7 @@
       if (extras.length && (actions.children.length > 1 || menu)) {
         if (!menu) {
           menu = document.createElement('details'); menu.className = 'catalog-more';
-          menu.innerHTML = "<summary class='btn btn-secondary'>Thêm</summary><div></div>";
+          menu.innerHTML = "<summary class='btn btn-secondary'>Khác</summary><div></div>";
           actions.append(menu);
         }
         extras.forEach(function (node) { menu.querySelector('div').append(node); });
@@ -1174,9 +1174,9 @@
   S.fn.openMoreDrawer = function openMoreDrawer() {
     const groups = [
       { title: 'Hàng hóa & Kho', routes: ['products', 'inventory', 'inventory-count', 'inventory-transfer', 'inventory-receive'] },
-      { title: 'Bán hàng & Đối tác', routes: ['pos', 'orders', 'promotions', 'customers', 'suppliers'] },
+      { title: 'Bán hàng & Đối tác', routes: ['pos', 'promotions', 'customers', 'suppliers'] },
       { title: 'Tài chính & Báo cáo', routes: ['finance', 'reports'] },
-      { title: 'Hệ thống & Kênh bán', routes: ['staff', 'channels', 'audit', 'settings'] },
+      { title: 'Hệ thống', routes: ['staff', 'audit', 'settings'] },
     ];
     const sections = groups.map(function (group) {
       const items = group.routes.filter(S.fn.canAccessRoute).map(function (id) {

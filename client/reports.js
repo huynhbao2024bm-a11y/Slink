@@ -211,11 +211,11 @@
 
     const filterBar = `<section class='report-filter-bar'>
       <div class='segmented' role='group' aria-label='Chọn nhanh kỳ báo cáo'>${presetsHtml}</div>
-      <div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'>
-        <input class='input' id='report-from' type='date' value='${S.fn.esc(fromVal)}' aria-label='Từ ngày' style='width:auto;min-height:36px'/>
+      <div class='report-date-range'>
+        <input class='input' id='report-from' type='date' value='${S.fn.esc(fromVal)}' aria-label='Từ ngày'/>
         <span class='muted'>→</span>
-        <input class='input' id='report-to' type='date' value='${S.fn.esc(toVal)}' aria-label='Đến ngày' style='width:auto;min-height:36px'/>
-        <button type='button' class='btn btn-secondary' data-action='report-custom-range' style='min-height:36px'>Xem</button>
+        <input class='input' id='report-to' type='date' value='${S.fn.esc(toVal)}' aria-label='Đến ngày'/>
+        <button type='button' class='btn btn-secondary' data-action='report-custom-range'>Xem</button>
       </div>
     </section>`;
 
