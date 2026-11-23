@@ -242,8 +242,11 @@ async function createShippingOrder(provider, order, shippingInput = {}, env = pr
   if (provider === 'ghtk' && !String(env.GHTK_TOKEN || '').trim()) {
     return { ok: false, statusCode: 503, code: 'integration_not_configured', message: 'Chưa gắn token Giao Hàng Tiết Kiệm (GHTK_TOKEN).' };
   }
-  if (!['ghn', 'ghtk'].includes(provider)) {
-    return { ok: false, statusCode: 400, code: 'unsupported_provider', message: 'Hãy chọn đơn vị vận chuyển GHN hoặc GHTK.' };
+  if (provider === 'viettelpost' && !String(env.VTP_TOKEN || '').trim()) {
+    return { ok: false, statusCode: 503, code: 'integration_not_configured', message: 'Chưa gắn token Viettel Post (VTP_TOKEN).' };
+  }
+  if (!['ghn', 'ghtk', 'viettelpost'].includes(provider)) {
+    return { ok: false, statusCode: 400, code: 'unsupported_provider', message: 'Hãy chọn đơn vị vận chuyển GHN, GHTK hoặc Viettel Post.' };
   }
 
   const validated = validateShippingInput(shippingInput);
@@ -292,6 +295,77 @@ async function createShippingOrder(provider, order, shippingInput = {}, env = pr
     districtName: shippingInput.districtName || shippingInput.district,
     provinceName: shippingInput.provinceName || shippingInput.province,
   });
+  if (provider === 'viettelpost') {
+    const vtpOrigin = String(env.VTP_ENDPOINT || env.VTP_API_URL || 'https://partner.viettelpost.vn').replace(/\/+$/, '');
+    const parsedCreate = parseHttpsEndpoint(`${vtpOrigin}/v2/order/createOrder`, env, 'Viettel Post');
+    if (parsedCreate.error) return parsedCreate.error;
+    const token = String(env.VTP_TOKEN).trim();
+    let groupAddressId = Number(shippingInput.groupAddressId || env.VTP_GROUPADDRESS_ID || 0);
+    let cusId = Number(shippingInput.cusId || env.VTP_CUS_ID || 0);
+    let senderName = String(storeProfile.name || 'Cửa hàng Slink').trim();
+    let senderPhone = String(storeProfile.phone || '').trim();
+    let senderAddress = String(storeProfile.address || '').trim();
+    if (!groupAddressId || !cusId) {
+      const invRes = await fetch(`${vtpOrigin}/v2/user/listInventory`, {
+        method: 'GET',
+        redirect: 'error',
+        headers: { 'content-type': 'application/json', Token: token },
+        signal: AbortSignal.timeout(10000),
+      }).catch(() => null);
+      const invJson = invRes ? await invRes.json().catch(() => ({})) : {};
+      const firstInv = Array.isArray(invJson?.data) ? invJson.data[0] : null;
+      if (firstInv) {
+        groupAddressId = Number(firstInv.groupaddressId || groupAddressId || 0);
+        cusId = Number(firstInv.cusId || cusId || 0);
+        senderName = String(firstInv.name || senderName);
+        senderPhone = String(firstInv.phone || senderPhone);
+        senderAddress = String(firstInv.address || senderAddress);
+      }
+    }
+    const itemsList = (order.lines || []).map((l) => `${l.product_name_snapshot} x${Number(l.quantity)}`).join(', ').slice(0, 250) || 'Hàng hóa';
+    let vtpRes;
+    try {
+      vtpRes = await fetch(parsedCreate.url, {
+        method: 'POST',
+        redirect: 'error',
+        headers: { 'content-type': 'application/json', Token: token },
+        body: JSON.stringify({
+          ORDER_NUMBER: order.order_number,
+          GROUPADDRESS_ID: groupAddressId || undefined,
+          CUS_ID: cusId || undefined,
+          SENDER_FULLNAME: senderName,
+          SENDER_ADDRESS: senderAddress || toParts.fullAddress,
+          SENDER_PHONE: senderPhone || validated.receiverPhone,
+          RECEIVER_FULLNAME: validated.receiverName,
+          RECEIVER_ADDRESS: toParts.fullAddress,
+          RECEIVER_PHONE: validated.receiverPhone,
+          PRODUCT_NAME: itemsList,
+          PRODUCT_QUANTITY: Math.max(1, (order.lines || []).reduce((acc, l) => acc + Math.max(1, Number(l.quantity) || 1), 0)),
+          PRODUCT_PRICE: Number(order.total_vnd),
+          PRODUCT_WEIGHT: Number(validated.weightGrams || 500),
+          MONEY_COLLECTION: validated.codRaw,
+          ORDER_PAYMENT: validated.codRaw > 0 ? 3 : 1,
+          ORDER_SERVICE: String(shippingInput.serviceCode || 'VCN'),
+          ORDER_NOTE: String(shippingInput.note || 'Cho xem hàng').slice(0, 200),
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+    } catch {
+      return { ok: false, statusCode: 502, code: 'provider_unreachable', message: 'Không kết nối được tới Viettel Post.' };
+    }
+    const vtpJson = await vtpRes.json().catch(() => ({}));
+    const trackingCode = String(vtpJson?.data?.ORDER_NUMBER || '').trim();
+    if (!vtpRes.ok || vtpJson?.error || !trackingCode) {
+      return { ok: false, statusCode: 502, code: 'shipping_provider_error', message: vtpJson?.message || 'Viettel Post không tạo được vận đơn. Kiểm tra lại token hoặc địa chỉ.' };
+    }
+    return {
+      ok: true,
+      trackingCode,
+      feeVnd: safeFeeVnd(vtpJson?.data?.MONEY_TOTAL),
+      status: 'ready_to_pick',
+    };
+  }
+
   const parsed = parseHttpsEndpoint(env.GHTK_ENDPOINT || env.GHTK_API_URL || 'https://services.giaohangtietkiem.vn/services/shipment/order', env, 'GHTK');
   if (parsed.error) return parsed.error;
   let res;

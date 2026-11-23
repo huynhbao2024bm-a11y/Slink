@@ -15,7 +15,7 @@ const {
 const { insertCashMovement } = require('./cashbook-ledger');
 const { extractOrderCodeFromMemo, verifyAndParseBankWebhook } = require('./providers/bank-webhook');
 const { issueEinvoice } = require('./providers/einvoice');
-const { createMomoPaymentSession, verifyMomoIpnSignature } = require('./providers/payment-gateways');
+const { createMomoPaymentSession, verifyMomoIpnSignature, buildVnpayPaymentUrl, verifyVnpayIpn } = require('./providers/payment-gateways');
 const { createShippingOrder, previewShippingOrder, verifyGhnConnection } = require('./providers/shipping');
 
 const ADMIN_ROLES = new Set(['owner', 'manager']);
@@ -112,12 +112,15 @@ function registerIntegrationRoutes(app, { pool, env }) {
           einvoiceTemplateCode: row.einvoice_template_code || '',
           einvoiceSerial: row.einvoice_serial || '',
           shippingProvider: row.shipping_provider || 'none',
+          momoConfigured: Boolean(storeEnv.MOMO_PARTNER_CODE && storeEnv.MOMO_ACCESS_KEY && storeEnv.MOMO_SECRET_KEY),
+          vnpayConfigured: Boolean(storeEnv.VNPAY_TMN_CODE && storeEnv.VNPAY_HASH_SECRET),
         },
         webhookUrls: {
           sepay: `${baseOrigin}/api/webhooks/bank-transfer/sepay/${storeId}`,
           casso: `${baseOrigin}/api/webhooks/bank-transfer/casso/${storeId}`,
           payos: `${baseOrigin}/api/webhooks/bank-transfer/payos/${storeId}`,
           momo: `${baseOrigin}/api/webhooks/momo/${storeId}`,
+          vnpay: `${baseOrigin}/api/webhooks/vnpay/${storeId}`,
           ghn: `${baseOrigin}/api/webhooks/shipping/ghn/${storeId}`,
         },
         ghnShopId: String(storeEnv.GHN_SHOP_ID || ''),
@@ -176,7 +179,11 @@ function registerIntegrationRoutes(app, { pool, env }) {
       const row = updated.rows[0];
       const storeEnv = buildStoreEnv(env, row);
       return {
-        settings: input,
+        settings: {
+          ...input,
+          momoConfigured: Boolean(storeEnv.MOMO_PARTNER_CODE && storeEnv.MOMO_ACCESS_KEY && storeEnv.MOMO_SECRET_KEY),
+          vnpayConfigured: Boolean(storeEnv.VNPAY_TMN_CODE && storeEnv.VNPAY_HASH_SECRET),
+        },
         ghnShopId: String(storeEnv.GHN_SHOP_ID || ''),
         credentials: summarizeCredentialStatus(storeEnv),
         connectors: getIntegrationCatalog(storeEnv, row),
@@ -725,6 +732,185 @@ function registerIntegrationRoutes(app, { pool, env }) {
       );
       await client.query('COMMIT');
       return reply.code(200).send({ ok: true, results: [{ externalEventId, status: evtStatus, matchedOrderId, detail }] });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  });
+
+  app.post('/api/stores/:storeId/orders/:orderId/vnpay-payment', async (request) => {
+    const auth = await authenticate(pool, request);
+    requireCsrf(request, env);
+    const { storeId, orderId } = request.params;
+    if (!UUID_PATTERN.test(storeId) || !UUID_PATTERN.test(orderId)) throw new ApiError(400, 'validation_error', 'Thông tin đơn hàng không hợp lệ.');
+
+    const snapshot = await withStore(pool, auth.userId, storeId, async (client, membership) => {
+      if (!new Set(['owner', 'manager', 'cashier', 'accountant']).has(membership.role)) {
+        throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền tạo thanh toán VNPAY.');
+      }
+      const st = await client.query(`SELECT integration_secrets_enc FROM stores WHERE id = $1 AND status = 'active'`, [storeId]);
+      const ord = await client.query(
+        `SELECT id, order_number, status, total_vnd::text AS total_vnd FROM orders WHERE store_id = $1 AND id = $2`,
+        [storeId, orderId]
+      );
+      if (!ord.rowCount) throw new ApiError(404, 'order_not_found', 'Không tìm thấy đơn hàng.');
+      if (ord.rows[0].status === 'voided') throw new ApiError(409, 'order_voided', 'Không thể thu tiền cho đơn đã hủy.');
+      const balRes = await client.query(
+        `SELECT
+           COALESCE((SELECT SUM(amount_vnd) FROM payments WHERE store_id = $1 AND order_id = $2 AND status = 'succeeded'), 0)::text AS paid_vnd,
+           COALESCE((SELECT SUM(refund_total_vnd) FROM returns WHERE store_id = $1 AND order_id = $2 AND status = 'completed'), 0)::text AS returned_vnd,
+           COALESCE((SELECT SUM(f.amount_vnd) FROM refunds f JOIN returns r ON r.id = f.return_id WHERE f.store_id = $1 AND r.store_id = $1 AND r.order_id = $2 AND r.status = 'completed' AND f.status = 'succeeded'), 0)::text AS refunded_vnd`,
+        [storeId, orderId]
+      );
+      const remaining = BigInt(ord.rows[0].total_vnd) - BigInt(balRes.rows[0].returned_vnd) - BigInt(balRes.rows[0].paid_vnd) + BigInt(balRes.rows[0].refunded_vnd);
+      if (remaining <= 0n) throw new ApiError(409, 'order_already_paid', 'Đơn hàng này đã thanh toán đủ.');
+      return { storeRow: st.rows[0] || {}, orderNumber: ord.rows[0].order_number, amountVnd: remaining.toString() };
+    });
+
+    const baseOrigin = resolveOrigin(request, env);
+    const now = new Date(Date.now() + 7 * 3600 * 1000);
+    const createDate = now.toISOString().replace(/[-:TZ.]/g, '').slice(0, 14);
+    const txnRef = `${snapshot.orderNumber}-${randomUUID().slice(0, 6)}`.replace(/[^A-Za-z0-9-]/g, '').slice(0, 40);
+    const built = buildVnpayPaymentUrl({
+      txnRef,
+      amountVnd: snapshot.amountVnd,
+      orderInfo: `Thanh toan ${snapshot.orderNumber}`,
+      ipAddr: request.ip || '127.0.0.1',
+      returnUrl: `${baseOrigin}/?orderId=${encodeURIComponent(orderId)}`,
+      createDate,
+    }, buildStoreEnv(env, snapshot.storeRow));
+    if (!built.configured) {
+      throw new ApiError(503, 'integration_not_configured', 'Cổng VNPAY chưa được cấu hình (VNPAY_TMN_CODE, VNPAY_HASH_SECRET).');
+    }
+    return {
+      provider: 'vnpay',
+      orderId,
+      orderNumber: snapshot.orderNumber,
+      amountVnd: snapshot.amountVnd,
+      txnRef,
+      payUrl: built.url,
+    };
+  });
+
+  app.get('/api/webhooks/vnpay/:storeId', async (request, reply) => {
+    const { storeId } = request.params;
+    if (!UUID_PATTERN.test(storeId)) throw new ApiError(400, 'validation_error', 'Cửa hàng không hợp lệ.');
+    const q = request.query || {};
+    const digest = createHash('sha256').update(JSON.stringify(q)).digest();
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('app.store_id', $1, true)", [storeId]);
+      const storeCheck = await client.query(
+        `SELECT s.id, s.integration_secrets_enc,
+                (SELECT m.user_id FROM memberships m WHERE m.store_id = s.id AND m.status = 'active' AND m.role = 'owner' ORDER BY m.joined_at, m.created_at LIMIT 1) AS owner_user_id
+         FROM stores s WHERE s.id = $1 AND s.status = 'active'`,
+        [storeId]
+      );
+      if (!storeCheck.rowCount) return reply.code(200).send({ RspCode: '01', Message: 'Order not found' });
+      const storeEnv = buildStoreEnv(env, storeCheck.rows[0]);
+      const verified = verifyVnpayIpn(q, storeEnv);
+      if (!verified.configured || !verified.valid) {
+        await client.query('ROLLBACK').catch(() => {});
+        return reply.code(200).send({ RspCode: '97', Message: 'Invalid Checksum' });
+      }
+      if (String(q.vnp_ResponseCode || '') !== '00' || String(q.vnp_TransactionStatus || '00') !== '00') {
+        await client.query('ROLLBACK').catch(() => {});
+        return reply.code(200).send({ RspCode: '00', Message: 'Confirm Success' });
+      }
+      const rawMinor = BigInt(String(q.vnp_Amount || '0').replace(/[^0-9]/g, '') || '0');
+      const amountRaw = (rawMinor / 100n).toString();
+      if (rawMinor <= 0n || amountRaw === '0') {
+        await client.query('ROLLBACK').catch(() => {});
+        return reply.code(200).send({ RspCode: '04', Message: 'Invalid Amount' });
+      }
+      const transId = String(q.vnp_TransactionNo || q.vnp_TxnRef || '').trim();
+      const externalEventId = `vnpay:${transId}`;
+      const ownerUserId = storeCheck.rows[0].owner_user_id;
+      if (!ownerUserId) {
+        await client.query('ROLLBACK').catch(() => {});
+        return reply.code(200).send({ RspCode: '99', Message: 'Store owner missing' });
+      }
+      await client.query("SELECT set_config('app.user_id', $1, true)", [ownerUserId]);
+
+      const dup = await client.query(
+        `SELECT id FROM integration_webhook_events WHERE store_id = $1 AND provider = 'vnpay' AND external_event_id = $2`,
+        [storeId, externalEventId]
+      );
+      if (dup.rowCount) {
+        await client.query('COMMIT');
+        return reply.code(200).send({ RspCode: '02', Message: 'Order already confirmed' });
+      }
+
+      const orderNumberCandidate = extractOrderCodeFromMemo(`${q.vnp_OrderInfo || ''} ${q.vnp_TxnRef || ''}`) || '';
+      const normalizedCode = orderNumberCandidate.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+      let evtStatus = 'ignored';
+      let matchedOrderId = null;
+      let detail = 'Không tìm thấy đơn hàng khớp giao dịch VNPAY.';
+      const ordRes = normalizedCode ? await client.query(
+        `SELECT id, order_number, customer_id, total_vnd::text AS total_vnd
+         FROM orders
+         WHERE store_id = $1
+           AND (upper(order_number) = upper($2) OR replace(upper(order_number), '-', '') = $3)
+           AND status NOT IN ('voided', 'returned')
+         LIMIT 1 FOR UPDATE`,
+        [storeId, orderNumberCandidate, normalizedCode]
+      ) : { rowCount: 0, rows: [] };
+
+      if (ordRes.rowCount) {
+        const ord = ordRes.rows[0];
+        matchedOrderId = ord.id;
+        const balRes = await client.query(
+          `SELECT
+             COALESCE((SELECT SUM(amount_vnd) FROM payments WHERE store_id = $1 AND order_id = $2 AND status = 'succeeded'), 0)::text AS paid_vnd,
+             COALESCE((SELECT SUM(refund_total_vnd) FROM returns WHERE store_id = $1 AND order_id = $2 AND status = 'completed'), 0)::text AS returned_vnd,
+             COALESCE((SELECT SUM(f.amount_vnd) FROM refunds f JOIN returns r ON r.id = f.return_id WHERE f.store_id = $1 AND r.store_id = $1 AND r.order_id = $2 AND r.status = 'completed' AND f.status = 'succeeded'), 0)::text AS refunded_vnd`,
+          [storeId, ord.id]
+        );
+        const remaining = BigInt(ord.total_vnd) - BigInt(balRes.rows[0].returned_vnd) - BigInt(balRes.rows[0].paid_vnd) + BigInt(balRes.rows[0].refunded_vnd);
+        const incoming = BigInt(amountRaw);
+        if (remaining > 0n) {
+          const applyVnd = incoming > remaining ? remaining : incoming;
+          const paymentId = randomUUID();
+          await client.query(
+            `INSERT INTO payments (id, store_id, order_id, method, status, amount_vnd, provider, provider_reference, recorded_by)
+             VALUES ($1, $2, $3, 'bank_qr', 'succeeded', $4, 'vnpay', $5, $6)`,
+            [paymentId, storeId, ord.id, applyVnd.toString(), `${storeId}:${externalEventId}`, ownerUserId]
+          );
+          await insertCashMovement(client, {
+            storeId,
+            direction: 'in',
+            category: 'Bán hàng (VNPAY IPN)',
+            amountVnd: applyVnd.toString(),
+            method: 'bank_qr',
+            sourceType: 'order_payment',
+            sourceId: paymentId,
+            note: `Tự động đối soát VNPAY đơn ${ord.order_number}`,
+            actorUserId: ownerUserId,
+            counterpartyKind: ord.customer_id ? 'customer' : null,
+            counterpartyId: ord.customer_id || null,
+          });
+          await client.query(
+            `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, reason, metadata)
+             VALUES ($1, $2, 'payment.webhook_reconciled', 'order', $3, $4,
+                     jsonb_build_object('provider', 'vnpay', 'externalEventId', $5::text, 'amountVnd', $6::text))`,
+            [storeId, ownerUserId, ord.id, `Webhook VNPAY gạch nợ ${applyVnd.toString()} đ`, externalEventId, applyVnd.toString()]
+          );
+          evtStatus = 'processed';
+          detail = `Đã gạch nợ VNPAY ${applyVnd.toString()} đ cho đơn ${ord.order_number}`;
+        }
+      }
+
+      await client.query(
+        `INSERT INTO integration_webhook_events (store_id, provider, external_event_id, payload_digest, matched_order_id, status, detail)
+         VALUES ($1, 'vnpay', $2, $3, $4, $5, $6)`,
+        [storeId, externalEventId, digest, matchedOrderId, evtStatus, detail]
+      );
+      await client.query('COMMIT');
+      return reply.code(200).send({ RspCode: '00', Message: 'Confirm Success' });
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
       throw error;
