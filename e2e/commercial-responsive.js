@@ -770,7 +770,7 @@ async function runViewportAudit(browser, origin, viewport, label) {
 
     await page.locator('.topbar .help-button:visible').first().click();
     await page.waitForSelector('.help-shortcut-grid', { timeout: 5000 });
-    assert.match(await page.locator('#modal-title').textContent() || '', /Trung tâm Trợ giúp Slink 3\.0/);
+    assert.match(await page.locator('#modal-title').textContent() || '', /Hướng dẫn sử dụng/);
     assert.equal(await page.locator('.help-shortcut-item').count(), 6, `${label}: Help modal must display 6 POS shortcuts`);
     await assertNoHorizontalOverflow(page, `${label}:help-modal`);
     await page.locator(".modal [data-action='close-modal']").first().click();
@@ -824,7 +824,7 @@ async function runViewportAudit(browser, origin, viewport, label) {
       page.waitForResponse((res) => res.url().includes('/loss-prevention-radar') && res.request().method() === 'GET'),
       page.locator("[data-action='staff-subtab'][data-subtab='radar']").click(),
     ]);
-    await page.getByText('Radar Chống Thất Thoát Thực Chiến').first().waitFor({ timeout: 10000 });
+    await page.getByText('Kiểm soát thất thoát').first().waitFor({ timeout: 10000 });
     await assertNoHorizontalOverflow(page, `${label}:staff-radar`);
 
     const assetsOk = await page.evaluate(async () => {
