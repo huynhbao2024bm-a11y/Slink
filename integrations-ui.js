@@ -333,15 +333,20 @@
       ? `<button class='btn btn-secondary' type='button' data-action='create-order-momo' data-id='${esc(order.id)}'>MoMo</button>`
       : '';
 
+    const hasVnpay = Boolean(settings?.vnpayConfigured);
+    const vnpayBtn = (hasVnpay && canOperate && order.due > 0 && order.rawStatus !== 'voided')
+      ? `<button class='btn btn-secondary' type='button' data-action='create-order-vnpay' data-id='${esc(order.id)}'>VNPAY</button>`
+      : '';
+
     const caps = root.SlinkEscPosPrinter?.capabilities?.() || {};
     const serialSupported = Boolean(caps.serialSupported || caps.btSupported);
     const escposBtn = serialSupported
       ? `<button class='btn btn-secondary' type='button' data-action='escpos-print-order' data-id='${esc(order.id)}'>In bill nhiệt</button>`
       : '';
 
-    if (!qrHtml && !einvoiceStatus && !shippingStatus && !escposBtn && !momoBtn) return '';
+    if (!qrHtml && !einvoiceStatus && !shippingStatus && !escposBtn && !momoBtn && !vnpayBtn) return '';
 
-    return `${qrHtml}${escposBtn || momoBtn || einvoiceStatus || shippingStatus ? `<div class='order-integration-bar'>${escposBtn}${momoBtn}${einvoiceStatus}${shippingStatus}</div>` : ''}`;
+    return `${qrHtml}${escposBtn || momoBtn || vnpayBtn || einvoiceStatus || shippingStatus ? `<div class='order-integration-bar'>${escposBtn}${momoBtn}${vnpayBtn}${einvoiceStatus}${shippingStatus}</div>` : ''}`;
   }
 
   return {

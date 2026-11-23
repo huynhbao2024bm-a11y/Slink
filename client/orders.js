@@ -165,6 +165,27 @@
       await S.fn.previewOrderShippingFee(orderId, button);
       return;
     }
+    if (action === 'create-order-vnpay') {
+      if (button?.disabled) return;
+      if (button) button.disabled = true;
+      try {
+        const result = await S.fn.apiRequest(`/api/stores/${encodeURIComponent(S.state.store.id)}/orders/${encodeURIComponent(orderId)}/vnpay-payment`, {
+          method: 'POST',
+          body: {},
+        });
+        const rawLink = String(result.payUrl || '').trim();
+        const link = /^https?:\/\//i.test(rawLink) ? rawLink : '';
+        const body = `<div class='checkout-total'><span>Thanh toán VNPAY · ${S.fn.esc(result.orderNumber)}</span><strong>${S.fn.moneyVndText(result.amountVnd)}</strong></div>
+          ${link ? `<div class='integration-webhook-box' style='margin-top:12px'><div><span class='input-label'>Liên kết thanh toán VNPAY</span><code>${S.fn.esc(link)}</code></div><a class='btn btn-primary' href='${S.fn.esc(link)}' target='_blank' rel='noopener noreferrer'>Mở cổng VNPAY</a></div>` : ''}`;
+        S.fn.showModal('Thanh toán VNPAY', 'Khách mở liên kết VNPAY; khi hoàn tất, IPN tự động gạch nợ đơn hàng.', body, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button>`);
+      } catch (error) {
+        if (error.status === 401) S.fn.showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
+        else S.fn.toast('Chưa tạo được phiên VNPAY', error.message, 'error');
+      } finally {
+        if (button?.isConnected) button.disabled = false;
+      }
+      return;
+    }
     if (action === 'create-order-momo') {
       if (button?.disabled) return;
       if (button) button.disabled = true;

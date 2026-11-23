@@ -1073,7 +1073,7 @@
       if (value) navigator.clipboard?.writeText(value).then(() => S.fn.toast('Đã sao chép URL webhook', value)).catch(() => S.fn.toast('Sao chép thủ công', value));
     }
     else if (['escpos-connect', 'escpos-test-print', 'escpos-kick-drawer', 'escpos-print-order'].includes(action)) S.fn.handleEscPosAction(action, id);
-    else if (['issue-order-einvoice', 'create-order-shipping', 'preview-order-shipping', 'create-order-momo'].includes(action)) S.fn.handleOrderIntegrationAction(action, id, button);
+    else if (['issue-order-einvoice', 'create-order-shipping', 'preview-order-shipping', 'create-order-momo', 'create-order-vnpay'].includes(action)) S.fn.handleOrderIntegrationAction(action, id, button);
     else if (['receipt-share', 'receipt-copy', 'receipt-download', 'receipt-share-png', 'receipt-download-png'].includes(action)) S.fn.useDigitalReceipt(action, button);
     else if (action === 'download-reports-csv') S.fn.downloadReportsCsv();
     else if (action === 'print-reports-pdf') S.fn.printReportsPdf();
