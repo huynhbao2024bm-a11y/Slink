@@ -1273,8 +1273,13 @@ body.pos-fullscreen .view {
 
 .dashboard-action-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
+}
+@media (max-width: 1024px) {
+  .dashboard-action-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .dashboard-action-item {
@@ -1829,7 +1834,7 @@ body.pos-fullscreen .view {
 }
 
 /* ---- 8. Responsive Breakpoints ---- */
-@media (max-width: 1100px) {
+@media (max-width: 960px) {
   .sidebar {
     display: none;
   }
@@ -2278,20 +2283,29 @@ body.pos-fullscreen .view {
     white-space: nowrap;
   }
   .report-date-form,
-  .report-custom-range {
+  .report-custom-range,
+  .report-date-range {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
     width: 100%;
   }
   .report-date-form > span,
-  .report-custom-range > span {
+  .report-custom-range > span,
+  .report-date-range > span {
     display: none;
   }
-  .report-date-form > button[type='submit'],
-  .report-custom-range > button[type='submit'] {
+  .report-date-form > button,
+  .report-custom-range > button,
+  .report-date-range > button {
     grid-column: 1 / -1;
     width: 100%;
+  }
+  .cart-panel textarea,
+  #pos-order-note {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
   }
   .stat-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));

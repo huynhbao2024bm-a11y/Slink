@@ -325,6 +325,43 @@ select.input {
   min-width: 0;
 }
 
+select.input,
+.select-wrap select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  padding-right: 32px;
+}
+
+.detail-row,
+.summary-row,
+.checkout-total,
+.cart-item-meta {
+  gap: 10px;
+}
+
+.settings-identity {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-identity > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-identity dt {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.settings-identity dd {
+  margin: 0;
+  font-weight: 600;
+}
+
 .input-label {
   display: block;
   margin-bottom: 6px;

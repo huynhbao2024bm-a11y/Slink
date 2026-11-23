@@ -117,6 +117,13 @@
   }
 
 
+  S.fn.integrationErrorMessage = function integrationErrorMessage(error) {
+    if (error?.status === 503 || ['integration_not_configured', 'einvoice_provider_unset', 'shipping_provider_unset', 'unsupported_provider'].includes(error?.code)) {
+      return 'Xin lỗi, tính năng này hiện chưa được kết nối với nhà cung cấp.';
+    }
+    return error?.message || 'Chưa thực hiện được thao tác này.';
+  }
+
   S.fn.verifyGhnIntegrationToken = async function verifyGhnIntegrationToken(button) {
     if (button) button.disabled = true;
     try {
@@ -128,7 +135,7 @@
       S.fn.loadIntegrationStatus(true);
     } catch (error) {
       if (error.status === 401) S.fn.showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
-      else S.fn.toast('Chưa kết nối được GHN', error.message, 'error');
+      else S.fn.toast('Chưa kết nối được GHN', S.fn.integrationErrorMessage(error), 'error');
     } finally {
       if (button?.isConnected) button.disabled = false;
     }
@@ -149,7 +156,7 @@
       await S.fn.openOrder(orderId);
     } catch (error) {
       if (error.status === 401) S.fn.showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
-      else S.fn.toast('Chưa tạo được vận đơn', error.message, 'error');
+      else S.fn.toast('Chưa tạo được vận đơn', S.fn.integrationErrorMessage(error), 'error');
       if (submit?.isConnected) submit.disabled = false;
     }
   }
@@ -180,7 +187,7 @@
         S.fn.showModal('Thanh toán VNPAY', 'Khách mở liên kết VNPAY; khi hoàn tất, IPN tự động gạch nợ đơn hàng.', body, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button>`);
       } catch (error) {
         if (error.status === 401) S.fn.showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
-        else S.fn.toast('Chưa tạo được phiên VNPAY', error.message, 'error');
+        else S.fn.toast('Chưa tạo được phiên VNPAY', S.fn.integrationErrorMessage(error), 'error');
       } finally {
         if (button?.isConnected) button.disabled = false;
       }
@@ -201,7 +208,7 @@
         S.fn.showModal('Thanh toán ví MoMo', 'Khách quét mã hoặc mở liên kết MoMo; khi hoàn tất, IPN tự động gạch nợ đơn hàng.', body, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button>`);
       } catch (error) {
         if (error.status === 401) S.fn.showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
-        else S.fn.toast('Chưa tạo được phiên MoMo', error.message, 'error');
+        else S.fn.toast('Chưa tạo được phiên MoMo', S.fn.integrationErrorMessage(error), 'error');
       } finally {
         if (button?.isConnected) button.disabled = false;
       }
