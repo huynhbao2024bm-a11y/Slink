@@ -262,7 +262,7 @@
       if (requestNumber !== S.state.auditState.requestNumber) return;
       S.state.auditState.loading = false;
       S.state.auditState.error = error.status === 404
-        ? 'Máy chủ Slink chưa có phiên bản nhật ký này. Hãy khởi động lại API rồi tải lại trang.'
+        ? 'Chưa tải được nhật ký lúc này. Vui lòng thử lại.'
         : error.message;
       if (error.status === 401) return S.fn.showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
     }
@@ -292,7 +292,7 @@
     return S.fn.pageHeading('Cài đặt', '', '') +
       `<section class='settings-panel settings-group' data-label='Cửa hàng'>${storeInfoBlock}${S.fn.renderBusinessProfileSettings(canEdit)}</section>` +
       `<section class='settings-panel settings-group' data-label='Bán hàng & Thiết bị'>${S.fn.renderPosPrefsSettings()}${printerBlock}</section>` +
-      (integrationsBlock ? `<section class='settings-panel settings-group' data-label='Thanh toán & Tích hợp'>${integrationsBlock}</section>` : '') +
+      (integrationsBlock ? `<section class='settings-panel settings-group' data-label='Ngân hàng'>${integrationsBlock}</section>` : '') +
       `<section class='settings-panel settings-group' data-label='Tài khoản & Ứng dụng'>${S.fn.renderAccountSummary()}${S.fn.renderChangePasswordForm()}${S.fn.renderAccountSecurity()}${S.fn.renderDeviceSettings()}</section>`;
   }
 
@@ -369,9 +369,10 @@
 
   S.fn.renderAudit = function renderAudit() {
     if (!S.fn.canAccessRoute('audit')) return `<section class='panel locked-page'><h2>Không có quyền xem nhật ký</h2><p>Khu vực này chỉ dành cho chủ cửa hàng và quản lý.</p></section>`;
+    const entityLabels = { order: 'Đơn hàng', product: 'Sản phẩm', customer: 'Khách hàng', supplier: 'Nhà cung cấp', store: 'Cửa hàng', cash_session: 'Ca tiền mặt', cash_movement: 'Phiếu thu/chi', purchase_order: 'Đơn nhập', membership: 'Nhân viên' };
     const rows = S.state.auditState.events.map(function (item) {
-      const entity = `${item.entityType} · ${String(item.entityId).slice(0, 8)}`;
-      return `<tr><td>${S.fn.humanDate(item.occurredAt, true)}</td><td>${S.fn.esc(item.actor.name)}</td><td><strong>${S.fn.esc(S.fn.auditActionLabel(item.action))}</strong><small class='table-subtitle'>${S.fn.esc(item.action)}</small></td><td>${S.fn.esc(entity)}</td><td>${S.fn.esc(item.reason || '—')}</td></tr>`;
+      const entity = entityLabels[item.entityType] || 'Bản ghi';
+      return `<tr><td>${S.fn.humanDate(item.occurredAt, true)}</td><td>${S.fn.esc(item.actor.name)}</td><td><strong>${S.fn.esc(S.fn.auditActionLabel(item.action))}</strong></td><td>${S.fn.esc(entity)}</td><td>${S.fn.esc(item.reason || '—')}</td></tr>`;
     }).join('');
     return S.fn.pageHeading('Nhật ký hoạt động', '', `<button class='btn btn-secondary' data-action='reload-audit'>Tải lại</button>`) +
       `<section class='panel'><form id='audit-filter-form' data-form='audit-filter' class='audit-filter-form'><div class='form-field'><label class='input-label' for='audit-from'>Từ ngày</label><input class='input' id='audit-from' name='from' type='date' value='${S.fn.esc(S.state.auditState.filters.from)}'/></div><div class='form-field'><label class='input-label' for='audit-to'>Đến ngày</label><input class='input' id='audit-to' name='to' type='date' value='${S.fn.esc(S.state.auditState.filters.to)}'/></div><div class='form-field audit-search-field'><label class='input-label' for='audit-q'>Tìm thao tác, nhân viên, mã bản ghi hoặc lý do</label><input class='input' id='audit-q' name='q' type='search' maxlength='100' value='${S.fn.esc(S.state.auditState.filters.q)}' placeholder='Ví dụ: nhập hàng, Nguyễn…'/></div><button class='btn btn-primary audit-filter-button' type='submit'>Lọc nhật ký</button></form>${S.state.auditState.loading ? `<div class='install-hint' role='status' aria-live='polite'>Đang tải nhật ký hoạt động…</div>` : ''}${S.state.auditState.error ? `<div class='auth-message error' role='alert'>${S.fn.esc(S.state.auditState.error)}</div>` : ''}<div class='table-wrap'><table class='data-table'><thead><tr><th>Thời gian</th><th>Người thực hiện</th><th>Thao tác</th><th>Bản ghi</th><th>Lý do</th></tr></thead><tbody>${rows || `<tr><td colspan='5'><div class='empty-state'><strong>${S.state.auditState.loading ? 'Đang tải nhật ký…' : S.state.auditState.error ? 'Chưa tải được nhật ký' : 'Chưa có thao tác phù hợp'}</strong><span>${S.state.auditState.error ? 'Hãy thử tải lại hoặc điều chỉnh bộ lọc.' : 'Các thay đổi nghiệp vụ sẽ xuất hiện sau khi được ghi nhận trên máy chủ.'}</span></div></td></tr>`}</tbody></table></div><div class='pagination'><span>${S.state.auditState.total ? `Hiển thị ${S.state.auditState.offset + 1}–${S.state.auditState.offset + S.state.auditState.events.length} trên ${S.fn.number(S.state.auditState.total)} mục` : `${S.fn.number(S.state.auditState.total)} mục`}</span><span class='pagination-actions'>${S.state.auditState.offset > 0 ? `<button class='page-button' data-action='audit-page' data-offset='${Math.max(0, S.state.auditState.offset - S.state.auditState.limit)}' aria-label='Trang trước'>‹</button>` : ''}<span class='page-button current'>${Math.floor(S.state.auditState.offset / S.state.auditState.limit) + 1}</span>${S.state.auditState.nextOffset !== null ? `<button class='page-button' data-action='audit-page' data-offset='${S.state.auditState.nextOffset}' aria-label='Trang sau'>›</button>` : ''}</span></div></section>`;

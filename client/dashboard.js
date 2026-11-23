@@ -191,7 +191,7 @@
     const cardProfit = `<article class='real-num-card'>
       <span class='real-num-label'>Lãi ròng thật hôm nay</span>
       <strong class='real-num-value'>${canViewProfit ? S.fn.esc(S.fn.moneyVndText(d.todayNetProfitVnd)) : 'Bị hạn chế'}</strong>
-      ${canViewProfit ? '' : `<small class='real-num-sub'>Cần quyền Báo cáo + Giá vốn</small>`}
+      ${canViewProfit ? '' : `<small class='real-num-sub'>Không có quyền xem</small>`}
     </article>`;
 
     const act = d.actionItems || d.actions || {};

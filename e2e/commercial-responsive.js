@@ -729,7 +729,7 @@ async function runViewportAudit(browser, origin, viewport, label) {
     const settingsBtn = page.locator("[data-action='account-settings']:visible, #primary-nav [data-route='settings']:visible").first();
     await settingsBtn.click();
     await page.waitForSelector('.settings-areas', { timeout: 15000 });
-    const storeSettingsTab = page.locator("[data-action='settings-area']", { hasText: 'Thanh toán & Tích hợp' }).first();
+    const storeSettingsTab = page.locator("[data-action='settings-area']", { hasText: 'Ngân hàng' }).first();
     await storeSettingsTab.click();
     await page.waitForSelector('#integration-settings-form', { timeout: 15000 });
     const settingsText = await page.locator('#integrations-panel').textContent();
@@ -758,7 +758,7 @@ async function runViewportAudit(browser, origin, viewport, label) {
     // Verify Settings has 4 focused tabs + Advanced Integrations fold + POS Voice pref + Help 3.0 modal
     const settingsTabs = page.locator("[data-action='settings-area']");
     assert.equal(await settingsTabs.count(), 4, `${label}: Settings must have 4 clean tabs`);
-    assert.equal(await page.locator('.settings-advanced-fold').count(), 1, `${label}: Advanced integrations fold must remain reachable`);
+    assert.equal(await page.locator('.settings-advanced-fold').count(), 0, `${label}: Settings must stay clean without raw developer credential folds`);
     await assertNoHorizontalOverflow(page, `${label}:settings-integrations`);
     await page.locator("[data-action='settings-area']", { hasText: 'Bán hàng & Thiết bị' }).first().click();
     await page.waitForSelector("form[data-form='pos-prefs'] input[name='voiceAnnounce']", { timeout: 5000 });
