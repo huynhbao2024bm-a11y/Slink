@@ -4,6 +4,12 @@
 
 Status labels: **Not started**, **In progress**, **Blocked by external dependency**, **Evidence passed**. “Evidence passed” applies only to the named milestone, never to the whole product by implication.
 
+## 2026-11-24 · Slink 0.9.1.3 — Cổng đăng nhập 2 cột sinh động, Thanh tab trượt & Chuyển động uyển chuyển
+
+- Loại bỏ hoàn toàn nhãn `"Ảnh chụp giao diện thực tế"` cạnh thanh tab Hero; sửa xung đột CSS để `.lp-header-wrap` ghim dính (`position: sticky`) theo cuộn trang kèm scroll-spy tự trượt vạch chọn mục.
+- Xây dựng hệ thống tab trượt `.slink-tab-glider` dùng chung cho `.lp-nav`, `.lp-stage-tabs`, `.lp-industry-tabs`, `.auth-mode-tabs`, `.workspace-tabs`, `.settings-areas` và `.inventory-stock-filters`; bổ sung canvas nền chuyển động 60fps tương tác con trỏ, nghiêng 3D theo chuột và chuyển nội dung tại chỗ không giật trang.
+- Nâng cấp màn hình đăng nhập/tạo cửa hàng web lên cổng `.auth-portal-shell` 2 cột có bản xem trước sản phẩm thực tế, lưới nhập gọn 2 cột cho biểu mẫu đăng ký kèm thanh đo độ dài mật khẩu tối thiểu 12 ký tự; cập nhật Android mặc định `0.9.1.3` (`versionCode: 3030`).
+
 ## 2026-11-24 · Slink 0.9.1.2 — Hoàn thiện Trang chủ, Tải APK mới nhất, SEO, Nén tĩnh & Bảo mật
 
 - Trang giới thiệu web tinh gọn nhãn trạng thái `Ảnh chụp giao diện thực tế` không viền ở Hero, bổ sung nút tải Android `.apk`, rút gọn mật độ chữ ở khối tính năng/ngành hàng cùng khoảng thở rộng hơn, và mở rộng chân trang 4 cột kèm khối cam kết bảo mật dữ liệu.

@@ -521,9 +521,34 @@
 
   document.addEventListener('input', function (event) {
     const form = event.target.closest('form');
-    if (!form || !form.querySelector('[data-password-confirm-for]')) return;
-    const confirmation = form.querySelector('[data-password-confirm-for]');
-    if (event.target === confirmation || event.target.id === confirmation.dataset.passwordConfirmFor) S.fn.updatePasswordConfirmation(form);
+    if (!form) return;
+    if (form.querySelector('[data-password-confirm-for]')) {
+      const confirmation = form.querySelector('[data-password-confirm-for]');
+      if (event.target === confirmation || event.target.id === confirmation.dataset.passwordConfirmFor) S.fn.updatePasswordConfirmation(form);
+    }
+    const meter = form.querySelector('[data-password-meter]');
+    if (meter) {
+      const pwd = document.getElementById('auth-password');
+      const confirm = document.getElementById('auth-password-confirm');
+      const bar = meter.querySelector('.auth-password-meter-bar');
+      const hint = meter.querySelector('.auth-password-meter-hint');
+      const len = pwd ? pwd.value.length : 0;
+      const pct = Math.min(100, Math.round((len / 12) * 100));
+      const strong = len >= 12;
+      const hasConfirm = Boolean(confirm && confirm.value.length > 0);
+      const matches = strong && (!hasConfirm || confirm.value === pwd.value);
+      if (bar) bar.style.width = pct + '%';
+      meter.classList.toggle('is-strong', strong);
+      meter.classList.toggle('is-match', strong && hasConfirm && confirm.value === pwd.value);
+      meter.classList.toggle('is-mismatch', hasConfirm && Boolean(pwd) && confirm.value !== pwd.value);
+      if (hint) {
+        if (!len) hint.textContent = 'Tối thiểu 12 ký tự để bảo vệ cửa hàng';
+        else if (!strong) hint.textContent = `Đã nhập ${len}/12 ký tự tối thiểu`;
+        else if (hasConfirm && !matches) hint.textContent = 'Hai lần nhập mật khẩu chưa khớp';
+        else if (hasConfirm && matches) hint.textContent = 'Mật khẩu đạt chuẩn an toàn và đã khớp';
+        else hint.textContent = 'Độ dài mật khẩu đạt chuẩn an toàn (≥ 12 ký tự)';
+      }
+    }
   });
 
   document.addEventListener('click', function (event) {
@@ -678,6 +703,7 @@
       button.parentElement.querySelector('[aria-current]')?.removeAttribute('aria-current');
       button.setAttribute('aria-current', 'page');
       S.fn.refreshFinanceBody();
+      S.fn.syncTabGliders?.(S.dom.root);
       if (S.state.financeTab === 'receivables') S.fn.loadFinanceReceivables(0);
       else if (S.state.financeTab === 'cashbook' || S.state.financeTab === 'vouchers') S.fn.loadFinanceCashbook(0);
       else if (S.state.financeTab === 'payables') S.fn.loadFinancePayables(0);
