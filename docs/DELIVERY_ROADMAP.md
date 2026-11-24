@@ -4,6 +4,11 @@
 
 Status labels: **Not started**, **In progress**, **Blocked by external dependency**, **Evidence passed**. “Evidence passed” applies only to the named milestone, never to the whole product by implication.
 
+## 2026-11-24 · Trang giới thiệu web có ảnh giao diện thật
+
+- Trang công khai hiển thị ảnh Slink trên máy tính và điện thoại, cho phép đổi giữa Bán hàng và Tổng quan. Tên cửa hàng nhập ở trang giới thiệu điền sẵn vào biểu mẫu tạo cửa hàng.
+- Đã kiểm tra ảnh, thao tác và độ rộng trên trình duyệt ở 320, 390 và 1.899 px. Chế độ Android ở 1.024 px mở thẳng vào thẻ tài khoản. Không thay đổi dữ liệu hay nghiệp vụ.
+
 ## 2026-11-24 · Màn hình tài khoản Android 0.9.1.1
 
 - Android hiển thị thẻ đăng nhập hoặc tạo cửa hàng riêng. Web tiếp tục có trang giới thiệu. Màn hình tài khoản dùng các biểu mẫu hiện hành và mở điều khoản, quyền riêng tư ngay trong ứng dụng.

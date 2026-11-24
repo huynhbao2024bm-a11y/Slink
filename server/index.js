@@ -48,6 +48,9 @@ const ASSETS = new Map([
   ['/index.html', 'index.html'],
   ['/verify', 'index.html'],
   ['/invite', 'index.html'],
+  ['/assets/slink-showcase-web-pos.webp', 'assets/slink-showcase-web-pos.webp'],
+  ['/assets/slink-showcase-web-dashboard.webp', 'assets/slink-showcase-web-dashboard.webp'],
+  ['/assets/slink-showcase-mobile-pos.webp', 'assets/slink-showcase-mobile-pos.webp'],
   ['/styles.css', 'styles.css'],
   ['/workspace.css', 'workspace.css'],
   ['/assets/vendor/gsap.min.js', 'assets/vendor/gsap.min.js'],
@@ -212,6 +215,8 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
     }, 'API request completed');
   });
 
+  app.get('/download/android', async (_request, reply) =>
+    reply.redirect('https://github.com/huynhbao2024bm-a11y/Slink/releases/latest/download/Slink.apk'));
   app.get('/api/health', async () => ({ status: 'ok' }));
   app.get('/legal/terms', async (_request, reply) => reply.type('text/html; charset=utf-8').send(legalContent.renderStandaloneLegalPage('terms')));
   app.get('/legal/privacy', async (_request, reply) => reply.type('text/html; charset=utf-8').send(legalContent.renderStandaloneLegalPage('privacy')));
