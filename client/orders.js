@@ -119,7 +119,7 @@
 
   S.fn.integrationErrorMessage = function integrationErrorMessage(error) {
     if (error?.status === 503 || ['integration_not_configured', 'einvoice_provider_unset', 'shipping_provider_unset', 'unsupported_provider'].includes(error?.code)) {
-      return 'Xin lỗi, tính năng này hiện chưa được kết nối với nhà cung cấp.';
+      return 'Xin lỗi, dịch vụ này hiện chưa được kết nối với nhà cung cấp.';
     }
     return error?.message || 'Chưa thực hiện được thao tác này.';
   }
@@ -131,11 +131,11 @@
         method: 'POST',
         body: {},
       });
-      S.fn.toast('Kết nối GHN thành công', `Shop #${res.shopId} · ${res.shopName || res.phone || 'Đang hoạt động'}`);
+      S.fn.toast('Kết nối thành công', `${res.shopName || res.phone || 'Đang hoạt động'}`);
       S.fn.loadIntegrationStatus(true);
     } catch (error) {
       if (error.status === 401) S.fn.showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
-      else S.fn.toast('Chưa kết nối được GHN', S.fn.integrationErrorMessage(error), 'error');
+      else S.fn.toast('Chưa kết nối', S.fn.integrationErrorMessage(error), 'error');
     } finally {
       if (button?.isConnected) button.disabled = false;
     }
@@ -156,7 +156,7 @@
       await S.fn.openOrder(orderId);
     } catch (error) {
       if (error.status === 401) S.fn.showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
-      else S.fn.toast('Chưa tạo được vận đơn', S.fn.integrationErrorMessage(error), 'error');
+      else S.fn.toast('Chưa kết nối', S.fn.integrationErrorMessage(error), 'error');
       if (submit?.isConnected) submit.disabled = false;
     }
   }
@@ -184,10 +184,10 @@
         const link = /^https?:\/\//i.test(rawLink) ? rawLink : '';
         const body = `<div class='checkout-total'><span>Thanh toán VNPAY · ${S.fn.esc(result.orderNumber)}</span><strong>${S.fn.moneyVndText(result.amountVnd)}</strong></div>
           ${link ? `<div class='integration-webhook-box' style='margin-top:12px'><div><span class='input-label'>Liên kết thanh toán VNPAY</span><code>${S.fn.esc(link)}</code></div><a class='btn btn-primary' href='${S.fn.esc(link)}' target='_blank' rel='noopener noreferrer'>Mở cổng VNPAY</a></div>` : ''}`;
-        S.fn.showModal('Thanh toán VNPAY', 'Khách mở liên kết VNPAY; khi hoàn tất, IPN tự động gạch nợ đơn hàng.', body, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button>`);
+        S.fn.showModal('Thanh toán VNPAY', '', body, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button>`);
       } catch (error) {
         if (error.status === 401) S.fn.showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
-        else S.fn.toast('Chưa tạo được phiên VNPAY', S.fn.integrationErrorMessage(error), 'error');
+        else S.fn.toast('Chưa kết nối', S.fn.integrationErrorMessage(error), 'error');
       } finally {
         if (button?.isConnected) button.disabled = false;
       }
@@ -205,10 +205,10 @@
         const link = /^(https?:\/\/|momo:\/\/)/i.test(rawLink) ? rawLink : '';
         const body = `<div class='checkout-total'><span>Thanh toán MoMo · ${S.fn.esc(result.orderNumber)}</span><strong>${S.fn.moneyVndText(result.amountVnd)}</strong></div>
           ${link ? `<div class='integration-webhook-box' style='margin-top:12px'><div><span class='input-label'>Liên kết thanh toán MoMo</span><code>${S.fn.esc(link)}</code></div><a class='btn btn-primary' href='${S.fn.esc(link)}' target='_blank' rel='noopener noreferrer'>Mở cổng MoMo</a></div>` : ''}`;
-        S.fn.showModal('Thanh toán ví MoMo', 'Khách quét mã hoặc mở liên kết MoMo; khi hoàn tất, IPN tự động gạch nợ đơn hàng.', body, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button>`);
+        S.fn.showModal('Thanh toán ví MoMo', '', body, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button>`);
       } catch (error) {
         if (error.status === 401) S.fn.showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
-        else S.fn.toast('Chưa tạo được phiên MoMo', S.fn.integrationErrorMessage(error), 'error');
+        else S.fn.toast('Chưa kết nối', S.fn.integrationErrorMessage(error), 'error');
       } finally {
         if (button?.isConnected) button.disabled = false;
       }
@@ -225,7 +225,7 @@
       await S.fn.openOrder(orderId);
     } catch (error) {
       if (error.status === 401) S.fn.showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
-      else S.fn.toast('Chưa xuất được hóa đơn điện tử', error.message, 'error');
+      else S.fn.toast('Chưa kết nối', S.fn.integrationErrorMessage(error), 'error');
       if (button?.isConnected) button.disabled = false;
     }
   }
@@ -396,7 +396,7 @@
     const more = `<details class='order-more-actions'><summary>Thao tác khác</summary><div class='order-more-actions-buttons'><button class='btn btn-secondary' data-action='print-order' data-id='${o.id}'>In biên nhận</button><button class='btn btn-secondary' data-action='share-order' data-id='${o.id}'>Chia sẻ biên nhận</button>${canCollect && canReturn ? `<button class='btn btn-secondary' data-action='exchange-order' data-id='${o.id}'>Đổi hàng</button><button class='btn btn-secondary' data-action='return-order' data-id='${o.id}'>Trả hàng</button>` : ''}${canVoid ? `<button class='btn btn-danger' data-action='void-order' data-id='${o.id}'>Hủy đơn</button>` : ''}</div>${integrationActions}${collaborationPanel}</details>`;
     const completeBody = body.replace(/<\/div>$/, `${more}</div>`);
     const footer = `<button class='btn btn-secondary' data-action='close-modal'>Đóng</button>${primary}`;
-    S.fn.showModal('Chi tiết đơn hàng', 'Hàng đã bán, tiền đã thu và phần còn phải thu.', completeBody, footer, true);
+    S.fn.showModal('Chi tiết đơn hàng', '', completeBody, footer, true);
   }
 
 

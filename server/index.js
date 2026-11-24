@@ -71,6 +71,7 @@ const ASSETS = new Map([
   ['/receipt-image.js', 'receipt-image.js'],
   ['/client/core.js', 'client/core.js'],
   ['/client/charts.js', 'client/charts.js'],
+  ['/client/landing.js', 'client/landing.js'],
   ['/client/shell.js', 'client/shell.js'],
   ['/client/dashboard.js', 'client/dashboard.js'],
   ['/client/pos.js', 'client/pos.js'],

@@ -67,109 +67,114 @@
     const caps = escposCaps || root.SlinkEscPosPrinter?.capabilities?.() || { serialSupported: false, connected: false };
     const printerSupported = Boolean(caps.serialSupported || caps.btSupported);
     if (!printerSupported) {
-      return `<section class='panel settings-panel'>
-        <div class='panel-header'><h2>Máy in nhiệt &amp; Két tiền</h2></div>
-        <div class='integration-hardware-bar'>
-          <div>
-            <strong>Chế độ in trình duyệt / PDF</strong>
-            <small>Hỗ trợ in hệ thống hoặc gửi ảnh PNG. Dùng Slink Android để in Bluetooth.</small>
+      return `<section class='panel settings-panel settings-card'>
+        <div class='settings-card-head'><h2>Máy in hóa đơn &amp; Két tiền</h2></div>
+        <div class='settings-partner-row'>
+          <div class='settings-partner-info'>
+            <span class='settings-partner-badge'>IN</span>
+            <div>
+              <strong>In trực tiếp qua trình duyệt</strong>
+              <small class='muted'>Dùng ứng dụng Slink Android để kết nối máy in nhiệt Bluetooth.</small>
+            </div>
           </div>
+          <span class='partner-status-pill is-ready'>Sẵn sàng</span>
         </div>
       </section>`;
     }
-    const printerTitle = caps.btSupported ? 'Máy in nhiệt Bluetooth (58mm / 80mm)' : 'Máy in nhiệt USB / COM';
+    const printerTitle = caps.btSupported ? 'Máy in nhiệt Bluetooth (58mm / 80mm)' : 'Máy in nhiệt USB';
     const printerSubtitle = caps.btSupported
       ? (caps.btDeviceName ? `Đã chọn: ${caps.btDeviceName}` : 'Chưa chọn máy in Bluetooth')
-      : (caps.connected ? 'Đã kết nối' : 'Máy in 58mm / 80mm');
-    return `<section class='panel settings-panel'>
-      <div class='panel-header'><h2>Máy in nhiệt &amp; Két tiền</h2></div>
-      <div class='integration-hardware-bar'>
-        <div>
-          <strong>${esc(printerTitle)}</strong>
-          <small>${esc(printerSubtitle)}</small>
+      : (caps.connected ? 'Đã kết nối' : 'Chưa kết nối máy in');
+    return `<section class='panel settings-panel settings-card'>
+      <div class='settings-card-head'><h2>Máy in hóa đơn &amp; Két tiền</h2></div>
+      <div class='settings-partner-row'>
+        <div class='settings-partner-info'>
+          <span class='settings-partner-badge'>IN</span>
+          <div>
+            <strong>${esc(printerTitle)}</strong>
+            <small class='muted'>${esc(printerSubtitle)}</small>
+          </div>
         </div>
         <div class='integration-hardware-actions'>
-          <button class='btn btn-secondary' type='button' data-action='escpos-connect'>${caps.connected ? 'Đổi máy in' : 'Chọn máy in'}</button>
-          <button class='btn btn-secondary' type='button' data-action='escpos-test-print'>In thử</button>
-          <button class='btn btn-secondary' type='button' data-action='escpos-kick-drawer'>Mở két</button>
+          <button class='btn btn-secondary btn-sm' type='button' data-action='escpos-connect'>${caps.connected ? 'Đổi máy in' : 'Chọn máy in'}</button>
+          <button class='btn btn-secondary btn-sm' type='button' data-action='escpos-test-print'>In thử</button>
+          <button class='btn btn-secondary btn-sm' type='button' data-action='escpos-kick-drawer'>Mở két</button>
         </div>
       </div>
     </section>`;
   }
 
-  function renderIntegrationSettingsSection({ data, loading, error, canEdit, escposCaps, includeHardware = true } = {}) {
+  function renderPartnerRowsHtml(groups, settings, connectors) {
+    const connectorMap = new Map((connectors || []).map((item) => [item.id, item]));
+    return `<div class='settings-partner-groups'>
+      ${groups.map((group) => `<div class='settings-partner-group'>
+        <h3>${esc(group.title)}</h3>
+        <div class='settings-partner-list'>
+          ${group.items.map((item) => {
+            const c = connectorMap.get(item.id);
+            const active = item.isConnected ? item.isConnected(settings, c) : Boolean(c?.status === 'configured');
+            const statusHtml = active
+              ? `<span class='partner-status-pill is-ok'>Đã kết nối</span>`
+              : `<span class='partner-status-pill'>Chưa kết nối</span>`;
+            const actionHtml = active
+              ? ''
+              : `<button class='btn btn-secondary btn-sm' type='button' data-action='partner-connect' data-partner-name='${esc(item.name)}'>Kết nối</button>`;
+            return `<div class='settings-partner-row'>
+              <div class='settings-partner-info'>
+                <span class='settings-partner-badge'>${esc(item.code)}</span>
+                <strong>${esc(item.name)}</strong>
+              </div>
+              <div class='settings-partner-actions'>${statusHtml}${actionHtml}</div>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>`).join('')}
+    </div>`;
+  }
+
+  function renderIntegrationSettingsSection({ data, loading, error, canEdit } = {}) {
     const settings = data?.settings || {};
-    const webhookUrls = data?.webhookUrls || {};
     const connectors = Array.isArray(data?.connectors) ? data.connectors : [];
     const banks = getBanksApi()?.VN_BANKS || [];
-    const disabled = canEdit ? '' : 'disabled';
-    const caps = escposCaps || root.SlinkEscPosPrinter?.capabilities?.() || { serialSupported: false, connected: false };
+    const formReady = !loading && Boolean(data);
+    const disabled = (canEdit && formReady) ? '' : 'disabled';
 
     const bankOptions = `<option value=''>— Chọn ngân hàng —</option>` + banks.map((b) =>
       `<option value='${esc(b.bin)}' ${settings.bankBin === b.bin ? 'selected' : ''}>${esc(b.shortName)} (${esc(b.code)})</option>`
     ).join('');
 
-    const webhookOptions = [
-      ['none', 'Xác nhận thủ công'],
-      ['sepay', 'SePay'],
-      ['casso', 'Casso'],
-      ['payos', 'PayOS'],
-    ].map(([v, label]) => `<option value='${esc(v)}' ${(settings.bankWebhookProvider || 'none') === v ? 'selected' : ''}>${esc(label)}</option>`).join('');
+    const partnerGroups = [
+      {
+        title: 'Đơn vị vận chuyển',
+        items: [
+          { id: 'shipping', code: 'GHN', name: 'Giao Hàng Nhanh (GHN)', isConnected: (s, c) => Boolean(c?.providers?.ghn && s.shippingProvider === 'ghn') },
+          { id: 'shipping', code: 'GHTK', name: 'Giao Hàng Tiết Kiệm', isConnected: (s, c) => Boolean(c?.providers?.ghtk && s.shippingProvider === 'ghtk') },
+          { id: 'shipping', code: 'VTP', name: 'Viettel Post', isConnected: (s, c) => Boolean(c?.providers?.viettelpost && s.shippingProvider === 'viettelpost') },
+        ],
+      },
+      {
+        title: 'Thanh toán & Đối soát',
+        items: [
+          { id: 'bank_webhook', code: 'CK', name: 'Đối soát biến động ngân hàng', isConnected: (s, c) => Boolean(c?.status === 'configured' && s.bankWebhookProvider && s.bankWebhookProvider !== 'none') },
+          { id: 'ewallets', code: 'MM', name: 'Ví MoMo', isConnected: (s, c) => Boolean(c?.providers?.momo || s.momoConfigured) },
+          { id: 'ewallets', code: 'VN', name: 'VNPAY', isConnected: (s, c) => Boolean(c?.providers?.vnpay || s.vnpayConfigured) },
+        ],
+      },
+      {
+        title: 'Hóa đơn & Sàn thương mại',
+        items: [
+          { id: 'einvoice', code: 'HĐ', name: 'Hóa đơn điện tử', isConnected: (s, c) => Boolean(c?.status === 'configured' && s.einvoiceProvider && s.einvoiceProvider !== 'none') },
+          { id: 'marketplaces', code: 'SÀN', name: 'Shopee / TikTok Shop', isConnected: (_s, c) => Boolean(c?.status === 'configured' && (c?.providers?.shopee || c?.providers?.tiktok)) },
+        ],
+      },
+    ];
 
-    const einvoiceOptions = [
-      ['none', 'Chưa sử dụng'],
-      ['misa', 'MISA meInvoice'],
-      ['viettel', 'Viettel S-Invoice'],
-      ['vnpt', 'VNPT Invoice'],
-    ].map(([v, label]) => `<option value='${esc(v)}' ${(settings.einvoiceProvider || 'none') === v ? 'selected' : ''}>${esc(label)}</option>`).join('');
-
-    const shippingOptions = [
-      ['none', 'Tự giao'],
-      ['ghn', 'Giao Hàng Nhanh (GHN)'],
-      ['ghtk', 'Giao Hàng Tiết Kiệm (GHTK)'],
-      ['viettelpost', 'Viettel Post'],
-    ].map(([v, label]) => `<option value='${esc(v)}' ${(settings.shippingProvider || 'none') === v ? 'selected' : ''}>${esc(label)}</option>`).join('');
-
-    const previewQr = settings.bankBin && settings.bankAccountNumber
-      ? renderVietQrCard({
-        bankBin: settings.bankBin,
-        bankAccountNumber: settings.bankAccountNumber,
-        bankAccountName: settings.bankAccountName,
-        bankName: settings.bankName,
-        amountVnd: '100000',
-        note: 'SLINK TEST',
-      })
-      : '';
-
-    const printerSupported = Boolean(caps.serialSupported || caps.btSupported);
-    const printerTitle = caps.btSupported ? 'Máy in nhiệt Bluetooth (58mm / 80mm)' : 'Máy in nhiệt USB / COM';
-    const printerSubtitle = caps.btSupported
-      ? (caps.btDeviceName ? `Đã chọn: ${caps.btDeviceName}` : 'Ghép đôi máy in trong Cài đặt điện thoại rồi chọn tại đây')
-      : (caps.connected ? 'Đã kết nối' : 'Máy in 58mm / 80mm');
-    const serialHardwareHtml = (includeHardware && printerSupported)
-      ? `<div class='integration-hardware-bar' style='margin-top:12px'>
-          <div>
-            <strong>${esc(printerTitle)}</strong>
-            <small>${esc(printerSubtitle)}</small>
-          </div>
-          <div class='integration-hardware-actions'>
-            <button class='btn btn-secondary' type='button' data-action='escpos-connect'>${caps.connected ? 'Đổi máy in' : 'Chọn máy in'}</button>
-            <button class='btn btn-secondary' type='button' data-action='escpos-test-print'>In thử</button>
-            <button class='btn btn-secondary' type='button' data-action='escpos-kick-drawer'>Mở két</button>
-          </div>
-        </div>`
-      : '';
-
-    return `<section class='panel settings-panel integrations-panel' id='integrations-panel'>
-      <div class='panel-header'>
-        <div>
-          <h2>Tài khoản ngân hàng</h2>
-        </div>
-      </div>
+    return `<section class='panel settings-panel settings-card integrations-panel' id='integrations-panel'>
+      <div class='settings-card-head'><h2>Tài khoản ngân hàng nhận tiền</h2></div>
       ${loading ? `<div class='install-hint' role='status'>Đang tải…</div>` : ''}
       ${error ? `<div class='auth-message error' role='alert'>${esc(error)}</div>` : ''}
       <form id='integration-settings-form' data-form='integration-settings'>
-        <div class='form-grid'>
+        <div class='settings-bank-grid'>
           <div class='form-field'>
             <label class='input-label' for='int-bank-bin'>Ngân hàng</label>
             <div class='select-wrap'><select class='input' id='int-bank-bin' name='bankBin' ${disabled}>${bankOptions}</select></div>
@@ -178,14 +183,17 @@
             <label class='input-label' for='int-bank-account'>Số tài khoản</label>
             <input class='input' id='int-bank-account' name='bankAccountNumber' value='${esc(settings.bankAccountNumber || '')}' maxlength='32' autocomplete='off' placeholder='Nhập số tài khoản' ${disabled}/>
           </div>
-          <div class='form-field full'>
+          <div class='form-field'>
             <label class='input-label' for='int-bank-owner'>Chủ tài khoản</label>
             <input class='input' id='int-bank-owner' name='bankAccountName' value='${esc(settings.bankAccountName || '')}' maxlength='120' placeholder='VD: NGUYEN VAN A' ${disabled}/>
           </div>
         </div>
-        ${canEdit ? `<div class='modal-footer settings-form-footer'><button class='btn btn-primary' type='submit'>Lưu</button></div>` : ''}
+        ${canEdit ? `<div class='modal-footer settings-form-footer'><button class='btn btn-primary' type='submit' ${formReady ? '' : 'disabled'}>Lưu tài khoản</button></div>` : ''}
       </form>
-      ${serialHardwareHtml}
+    </section>
+    <section class='panel settings-panel settings-card'>
+      <div class='settings-card-head'><h2>Kết nối đối tác</h2></div>
+      ${renderPartnerRowsHtml(partnerGroups, settings, connectors)}
     </section>`;
   }
 

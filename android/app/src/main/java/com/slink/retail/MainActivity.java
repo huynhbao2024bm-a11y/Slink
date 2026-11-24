@@ -61,7 +61,7 @@ public class MainActivity extends Activity {
             "offline-conflict-ui.js", "supplier-returns-ui.js", "barcode-tools.js",
             "banks-vn.js", "vietqr-tools.js", "escpos-printer.js", "integrations-ui.js",
             "finance-vouchers-ui.js", "legal-content.js", "sync-bus.js", "pos-hardware.js",
-            "receipt-image.js", "client/core.js", "client/charts.js", "client/shell.js",
+            "receipt-image.js", "client/core.js", "client/charts.js", "client/landing.js", "client/shell.js",
             "client/dashboard.js", "client/pos.js", "client/products.js", "client/orders.js",
             "client/inventory.js", "client/customers.js", "client/finance.js", "client/reports.js",
             "client/staff.js", "client/settings.js", "client/actions.js",

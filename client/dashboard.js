@@ -175,23 +175,26 @@
       ? `<div style='margin-top:6px'>${S.charts.renderDeltaBadge(prevDelta, 'so với 7 ngày trước')}</div>`
       : '';
 
+    const isLoadingInitial = S.state.dashboardState.loading && !S.state.dashboardState.data;
+    const restrictedText = isLoadingInitial ? '…' : '—';
+
     const cardRevenue = `<article class='real-num-card real-num-hero' data-tour-target='dashboard-revenue'>
       <span class='real-num-label'>Doanh thu thuần hôm nay</span>
-      <strong class='real-num-value'>${canViewRevenue ? S.fn.esc(S.fn.moneyVndText(todayRevenueVnd)) : '—'}</strong>
-      <small class='real-num-sub'>${canViewRevenue ? `${S.fn.number(d.todayOrderCount || 0)} đơn` : 'Bị hạn chế'}</small>
+      <strong class='real-num-value'>${canViewRevenue ? S.fn.esc(S.fn.moneyVndText(todayRevenueVnd)) : restrictedText}</strong>
+      <small class='real-num-sub'>${canViewRevenue ? `${S.fn.number(d.todayOrderCount || 0)} đơn` : restrictedText}</small>
       ${deltaHtml}
     </article>`;
 
     const cardFunds = `<article class='real-num-card'>
       <span class='real-num-label'>Tiền thực trong quỹ</span>
-      <strong class='real-num-value'>${canViewFunds ? S.fn.esc(S.fn.moneyVndText(d.totalFundVnd)) : 'Bị hạn chế'}</strong>
-      <small class='real-num-sub'>${canViewFunds ? `Tiền mặt ${S.fn.esc(S.fn.moneyVndText(cashBalanceVnd))} · Ngân hàng ${S.fn.esc(S.fn.moneyVndText(bankBalanceVnd))}` : 'Bị hạn chế'}</small>
+      <strong class='real-num-value'>${canViewFunds ? S.fn.esc(S.fn.moneyVndText(d.totalFundVnd)) : restrictedText}</strong>
+      <small class='real-num-sub'>${canViewFunds ? `Tiền mặt ${S.fn.esc(S.fn.moneyVndText(cashBalanceVnd))} · Ngân hàng ${S.fn.esc(S.fn.moneyVndText(bankBalanceVnd))}` : restrictedText}</small>
     </article>`;
 
     const cardProfit = `<article class='real-num-card'>
       <span class='real-num-label'>Lãi ròng thật hôm nay</span>
-      <strong class='real-num-value'>${canViewProfit ? S.fn.esc(S.fn.moneyVndText(d.todayNetProfitVnd)) : 'Bị hạn chế'}</strong>
-      ${canViewProfit ? '' : `<small class='real-num-sub'>Không có quyền xem</small>`}
+      <strong class='real-num-value'>${canViewProfit ? S.fn.esc(S.fn.moneyVndText(d.todayNetProfitVnd)) : restrictedText}</strong>
+      ${canViewProfit || isLoadingInitial ? '' : `<small class='real-num-sub'>Không có quyền xem</small>`}
     </article>`;
 
     const act = d.actionItems || d.actions || {};

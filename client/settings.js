@@ -54,6 +54,9 @@
 
   S.fn.saveIntegrationSettings = async function saveIntegrationSettings(form) {
     if (!S.fn.hasPerm('manageSettings')) return;
+    if (S.state.integrationState.loading || !S.state.integrationState.data) {
+      return S.fn.toast('Đang tải dữ liệu cửa hàng', 'Vui lòng chờ giây lát rồi bấm Lưu tài khoản.', 'error');
+    }
     const data = new FormData(form);
     const submit = form.querySelector('[type="submit"]');
     const credentials = {};
@@ -63,16 +66,17 @@
         if (trimmed) credentials[key.slice(5)] = trimmed;
       }
     }
+    const current = S.state.integrationState.data.settings || {};
     const payload = {
       bankBin: String(data.get('bankBin') || '').trim(),
       bankAccountNumber: String(data.get('bankAccountNumber') || '').trim(),
       bankAccountName: String(data.get('bankAccountName') || '').trim(),
-      bankWebhookProvider: String(data.get('bankWebhookProvider') || 'none').trim(),
-      einvoiceProvider: String(data.get('einvoiceProvider') || 'none').trim(),
-      taxCode: String(data.get('taxCode') || '').trim(),
-      einvoiceTemplateCode: String(data.get('einvoiceTemplateCode') || '').trim(),
-      einvoiceSerial: String(data.get('einvoiceSerial') || '').trim(),
-      shippingProvider: String(data.get('shippingProvider') || 'none').trim(),
+      bankWebhookProvider: String(data.has('bankWebhookProvider') ? data.get('bankWebhookProvider') : (current.bankWebhookProvider || 'none')).trim(),
+      einvoiceProvider: String(data.has('einvoiceProvider') ? data.get('einvoiceProvider') : (current.einvoiceProvider || 'none')).trim(),
+      taxCode: String(data.has('taxCode') ? data.get('taxCode') : (current.taxCode || '')).trim(),
+      einvoiceTemplateCode: String(data.has('einvoiceTemplateCode') ? data.get('einvoiceTemplateCode') : (current.einvoiceTemplateCode || '')).trim(),
+      einvoiceSerial: String(data.has('einvoiceSerial') ? data.get('einvoiceSerial') : (current.einvoiceSerial || '')).trim(),
+      shippingProvider: String(data.has('shippingProvider') ? data.get('shippingProvider') : (current.shippingProvider || 'none')).trim(),
       credentials,
     };
     if (submit) submit.disabled = true;
@@ -87,10 +91,10 @@
         ghnShopId: result.ghnShopId,
       };
       await S.fn.loadIntegrationStatus(true);
-      S.fn.toast('Đã lưu cấu hình tích hợp', result.settings.bankAccountNumber ? `${result.settings.bankName || result.settings.bankBin} · ${result.settings.bankAccountNumber}` : 'Đã cập nhật');
+      S.fn.toast('Đã lưu tài khoản ngân hàng', result.settings.bankAccountNumber ? `${result.settings.bankName || result.settings.bankBin} · ${result.settings.bankAccountNumber}` : 'Đã cập nhật');
     } catch (error) {
       if (error.status === 401) S.fn.showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
-      else S.fn.toast('Chưa lưu được tích hợp', error.message, 'error');
+      else S.fn.toast('Chưa lưu được tài khoản', error.message, 'error');
       if (submit?.isConnected) submit.disabled = false;
     }
   }
@@ -111,6 +115,17 @@
       else S.fn.toast('Chưa xóa được khóa', error.message, 'error');
       if (button?.isConnected) button.disabled = false;
     }
+  }
+
+
+  S.fn.showPartnerUnconnectedNotice = function showPartnerUnconnectedNotice(partnerName) {
+    const label = partnerName ? ` <strong>${S.fn.esc(partnerName)}</strong>` : '';
+    S.fn.showModal(
+      'Chưa kết nối',
+      '',
+      `<div class='partner-apology-box'><span class='partner-status-pill'>Chưa kết nối</span><p>Xin lỗi, dịch vụ${label} hiện chưa được kết nối với nhà cung cấp.</p></div>`,
+      `<button class='btn btn-primary' type='button' data-action='close-modal'>Đã hiểu</button>`
+    );
   }
 
 
@@ -153,7 +168,7 @@
           return;
         }
         await printer.connectSerialPrinter(9600);
-        S.fn.toast('Đã kết nối máy in bill', 'Sẵn sàng in ESC/POS trực tiếp.');
+        S.fn.toast('Đã kết nối máy in hóa đơn', 'Sẵn sàng in trực tiếp.');
         if (S.state.page === 'settings') S.fn.render();
       } else if (action === 'escpos-kick-drawer') {
         await printer.openCashDrawer();
@@ -165,14 +180,14 @@
           phone: S.state.store.settings.phone || '',
           orderNumber: 'SLINK-TEST',
           createdAt: S.fn.humanDate(new Date().toISOString(), true),
-          items: [{ name: 'Thu may in nhiet ESC/POS', quantity: 1, unitPriceVnd: '100000', lineTotalVnd: '100000' }],
+          items: [{ name: 'In thu hoa don', quantity: 1, unitPriceVnd: '100000', lineTotalVnd: '100000' }],
           subtotalVnd: '100000',
           discountVnd: '0',
           totalVnd: '100000',
           paidVnd: '100000',
           footer: S.state.store.settings.receiptFooter || 'Cam on quy khach!',
         });
-        S.fn.toast('Đã in bill thử nghiệm');
+        S.fn.toast('Đã in hóa đơn thử nghiệm');
       } else if (action === 'escpos-print-order' && orderId) {
         const o = S.state.store.orders.find(item => item.id === orderId);
         if (!o) return;
@@ -196,7 +211,7 @@
           paidVnd: o.paidVndText ?? String(o.paid || 0),
           footer: S.state.store.settings.receiptFooter || 'Cam on quy khach!',
         });
-        S.fn.toast('Đã in bill ESC/POS', o.number);
+        S.fn.toast('Đã in hóa đơn', o.number);
       }
     } catch (error) {
       S.fn.toast('Thao tác máy in chưa hoàn tất', error.message, 'error');
@@ -272,7 +287,33 @@
 
   S.fn.renderPosPrefsSettings = function renderPosPrefsSettings() {
     const voiceEnabled = S.state.posPrefs.voiceAnnounce !== false;
-    return `<section class='panel settings-panel'><h2>POS &amp; Hóa đơn</h2><form data-form='pos-prefs'><div class='form-grid'><div class='form-field'><label class='input-label' for='pos-pref-paper'>Khổ giấy in mặc định</label><div class='select-wrap'><select class='input' id='pos-pref-paper' name='paperWidth'><option value='80mm' ${S.state.posPrefs.paperWidth === '80mm' ? 'selected' : ''}>Khổ nhiệt 80mm (phổ biến)</option><option value='58mm' ${S.state.posPrefs.paperWidth === '58mm' ? 'selected' : ''}>Khổ nhiệt 58mm (mini)</option><option value='a4' ${S.state.posPrefs.paperWidth === 'a4' ? 'selected' : ''}>Khổ giấy A4 / A5</option></select></div></div><div class='form-field' style='display:grid;gap:10px;align-content:end;padding-bottom:4px'><label style='display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:13px'><input type='checkbox' name='autoPrint' ${S.state.posPrefs.autoPrint ? 'checked' : ''}/><span>Tự động in hóa đơn</span></label><label style='display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:13px'><input type='checkbox' name='requireFullPayment' ${S.state.posPrefs.requireFullPayment ? 'checked' : ''}/><span>Bắt buộc thanh toán đủ</span></label><label style='display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:13px'><input type='checkbox' name='voiceAnnounce' ${voiceEnabled ? 'checked' : ''}/><span>Loa đọc tiền khi thu</span></label></div></div><div class='modal-footer' style='padding:14px 0 0;margin-top:8px;display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap'><button class='btn btn-secondary' type='button' data-action='test-pos-voice'>Thử loa</button><button class='btn btn-primary' type='submit'>Lưu</button></div></form></section>`;
+    return `<section class='panel settings-panel settings-card'>
+      <div class='settings-card-head'><h2>Thiết lập bán hàng &amp; Hóa đơn</h2></div>
+      <form data-form='pos-prefs'>
+        <div class='form-field settings-paper-field'>
+          <label class='input-label' for='pos-pref-paper'>Khổ giấy in mặc định</label>
+          <div class='select-wrap'><select class='input' id='pos-pref-paper' name='paperWidth'><option value='80mm' ${S.state.posPrefs.paperWidth === '80mm' ? 'selected' : ''}>Khổ nhiệt 80mm</option><option value='58mm' ${S.state.posPrefs.paperWidth === '58mm' ? 'selected' : ''}>Khổ nhiệt 58mm</option><option value='a4' ${S.state.posPrefs.paperWidth === 'a4' ? 'selected' : ''}>Khổ giấy A4 / A5</option></select></div>
+        </div>
+        <div class='settings-toggle-list'>
+          <label class='settings-toggle-row'>
+            <span class='settings-toggle-copy'><strong>Tự động in hóa đơn</strong><small>Mở lệnh in ngay sau khi hoàn tất đơn</small></span>
+            <span class='ui-switch'><input type='checkbox' name='autoPrint' ${S.state.posPrefs.autoPrint ? 'checked' : ''}/><span class='ui-switch-track' aria-hidden='true'></span></span>
+          </label>
+          <label class='settings-toggle-row'>
+            <span class='settings-toggle-copy'><strong>Chỉ thu đủ khi bán hàng</strong><small>Ẩn tùy chọn ghi nợ trên màn hình thu ngân</small></span>
+            <span class='ui-switch'><input type='checkbox' name='requireFullPayment' ${S.state.posPrefs.requireFullPayment ? 'checked' : ''}/><span class='ui-switch-track' aria-hidden='true'></span></span>
+          </label>
+          <label class='settings-toggle-row'>
+            <span class='settings-toggle-copy'><strong>Loa đọc số tiền</strong><small>Phát âm thanh tổng tiền vừa nhận tại quầy</small></span>
+            <span class='ui-switch'><input type='checkbox' name='voiceAnnounce' ${voiceEnabled ? 'checked' : ''}/><span class='ui-switch-track' aria-hidden='true'></span></span>
+          </label>
+        </div>
+        <div class='modal-footer settings-form-footer'>
+          <button class='btn btn-secondary' type='button' data-action='test-pos-voice'>Thử loa</button>
+          <button class='btn btn-primary' type='submit'>Lưu thiết lập</button>
+        </div>
+      </form>
+    </section>`;
   }
 
 
@@ -283,17 +324,17 @@
     if (S.state.store.role === 'affiliate' || (!canEdit && !S.fn.hasPerm('manageInventory') && !S.fn.hasPerm('viewReports') && !S.fn.hasPerm('recordCashbook'))) {
       return S.fn.pageHeading('Cài đặt', '', '') +
         (S.fn.hasPerm('posSell') ? `<section class='settings-panel settings-group' data-label='Bán hàng & Thiết bị'>${S.fn.renderPosPrefsSettings()}${printerBlock}</section>` : '') +
-        `<section class='settings-panel settings-group' data-label='Tài khoản & Ứng dụng'>${S.fn.renderAccountSummary()}${S.fn.renderChangePasswordForm()}${S.fn.renderAccountSecurity()}${S.fn.renderDeviceSettings()}</section>`;
+        `<section class='settings-panel settings-group' data-label='Tài khoản & Hệ thống'>${S.fn.renderAccountSummary()}${S.fn.renderChangePasswordForm()}${S.fn.renderAccountSecurity()}${S.fn.renderDeviceSettings()}</section>`;
     }
-    const storeInfoBlock = `<section class='panel settings-panel'><h2>Thông tin cửa hàng</h2><form id='entity-form' data-form='settings' data-version='${S.state.store.settings.version || 1}'><div class='form-grid'><div class='form-field full'><label class='input-label' for='setting-store-name'>Tên cửa hàng *</label><input class='input' id='setting-store-name' name='storeName' value='${S.fn.esc(S.state.store.settings.storeName)}' required minlength='2' maxlength='160' ${disabled}/></div><div class='form-field'><label class='input-label' for='setting-phone'>Số điện thoại</label><input class='input' id='setting-phone' name='phone' value='${S.fn.esc(S.state.store.settings.phone)}' inputmode='tel' maxlength='40' ${disabled}/></div><div class='form-field full'><label class='input-label' for='setting-address'>Địa chỉ</label><input class='input' id='setting-address' name='address' value='${S.fn.esc(S.state.store.settings.address)}' maxlength='300' ${disabled}/></div><div class='form-field full'><label class='input-label' for='setting-footer'>Lời chào biên nhận</label><input class='input' id='setting-footer' name='receiptFooter' value='${S.fn.esc(S.state.store.settings.receiptFooter)}' maxlength='240' placeholder='Cảm ơn quý khách' ${disabled}/></div></div>${canEdit ? `<div class='modal-footer' style='padding:17px 0 0;margin-top:12px'><button class='btn btn-primary' type='submit'>Lưu thay đổi</button></div>` : ''}</form></section>`;
+    const storeInfoBlock = `<section class='panel settings-panel settings-card'><div class='settings-card-head'><h2>Thông tin cửa hàng</h2></div><form id='entity-form' data-form='settings' data-version='${S.state.store.settings.version || 1}'><div class='form-grid'><div class='form-field'><label class='input-label' for='setting-store-name'>Tên cửa hàng *</label><input class='input' id='setting-store-name' name='storeName' value='${S.fn.esc(S.state.store.settings.storeName)}' required minlength='2' maxlength='160' ${disabled}/></div><div class='form-field'><label class='input-label' for='setting-phone'>Số điện thoại</label><input class='input' id='setting-phone' name='phone' value='${S.fn.esc(S.state.store.settings.phone)}' inputmode='tel' maxlength='40' ${disabled}/></div><div class='form-field full'><label class='input-label' for='setting-address'>Địa chỉ</label><input class='input' id='setting-address' name='address' value='${S.fn.esc(S.state.store.settings.address)}' maxlength='300' ${disabled}/></div><div class='form-field full'><label class='input-label' for='setting-footer'>Lời chào hóa đơn</label><input class='input' id='setting-footer' name='receiptFooter' value='${S.fn.esc(S.state.store.settings.receiptFooter)}' maxlength='240' placeholder='Cảm ơn quý khách' ${disabled}/></div></div>${canEdit ? `<div class='modal-footer settings-form-footer'><button class='btn btn-primary' type='submit'>Lưu thay đổi</button></div>` : ''}</form></section>`;
     const integrationsBlock = canEdit && window.SlinkIntegrationsUI
-      ? window.SlinkIntegrationsUI.renderIntegrationSettingsSection({ data: S.state.integrationState.data, loading: S.state.integrationState.loading, error: S.state.integrationState.error, canEdit, includeHardware: false })
+      ? window.SlinkIntegrationsUI.renderIntegrationSettingsSection({ data: S.state.integrationState.data, loading: S.state.integrationState.loading, error: S.state.integrationState.error, canEdit })
       : '';
     return S.fn.pageHeading('Cài đặt', '', '') +
       `<section class='settings-panel settings-group' data-label='Cửa hàng'>${storeInfoBlock}${S.fn.renderBusinessProfileSettings(canEdit)}</section>` +
       `<section class='settings-panel settings-group' data-label='Bán hàng & Thiết bị'>${S.fn.renderPosPrefsSettings()}${printerBlock}</section>` +
-      (integrationsBlock ? `<section class='settings-panel settings-group' data-label='Ngân hàng'>${integrationsBlock}</section>` : '') +
-      `<section class='settings-panel settings-group' data-label='Tài khoản & Ứng dụng'>${S.fn.renderAccountSummary()}${S.fn.renderChangePasswordForm()}${S.fn.renderAccountSecurity()}${S.fn.renderDeviceSettings()}</section>`;
+      (integrationsBlock ? `<section class='settings-panel settings-group' data-label='Ngân hàng & Đối tác'>${integrationsBlock}</section>` : '') +
+      `<section class='settings-panel settings-group' data-label='Tài khoản & Hệ thống'>${S.fn.renderAccountSummary()}${S.fn.renderChangePasswordForm()}${S.fn.renderAccountSecurity()}${S.fn.renderDeviceSettings()}</section>`;
   }
 
 
