@@ -177,9 +177,11 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
   await app.register(cookie);
   await app.register(rateLimit, {
     global: true,
-    keyGenerator: (request) => request.ip,
+    // Loading the frontend pulls dozens of assets. Keep those reads separate from the API limit.
+    keyGenerator: (request) => ASSETS.has(request.url.split('?')[0]) ? request.ip + ':frontend' : request.ip,
     max: (request) => {
       if (env.NODE_ENV === 'test') return 2000;
+      if (ASSETS.has(request.url.split('?')[0])) return 1200;
       return request.url.startsWith('/api/stores/') ? 600 : 120;
     },
     timeWindow: '1 minute',
