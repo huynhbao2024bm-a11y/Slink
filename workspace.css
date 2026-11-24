@@ -5,10 +5,13 @@
 
 /* ---- 1. Authentication Screen & Flagship Web Landing ---- */
 .auth-screen {
+  width: 100%;
   min-height: var(--app-height);
-  display: grid;
-  place-items: center;
-  padding: 24px 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 4%;
   background: radial-gradient(circle at 12% 8%, rgba(167, 243, 208, 0.42) 0%, transparent 46%),
     radial-gradient(circle at 88% 18%, rgba(226, 232, 240, 0.55) 0%, transparent 48%),
     var(--bg);
@@ -16,18 +19,31 @@
 
 .auth-screen.is-web-landing {
   display: block;
-  padding: 16px 20px 44px;
+  padding: 0;
 }
 
 .auth-screen.is-android-welcome {
-  display: grid;
-  place-items: center;
-  padding: 20px 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  min-height: var(--app-height);
+  padding: 4%;
   background: #eef2f6;
 }
 
 .auth-card.android-auth-card {
-  padding: clamp(16px, 5vw, 26px);
+  width: 100%;
+  max-width: 26.5rem;
+  margin-inline: auto;
+  padding: 6% 5.5%;
+}
+
+@media (max-width: 540px) {
+  .android-auth-card .auth-form-row-2 {
+    grid-template-columns: 100%;
+  }
 }
 
 .android-auth-card :is(.input, .auth-submit, .auth-mode-tab) {
@@ -45,9 +61,10 @@
 }
 
 .auth-card {
-  width: min(440px, 100%);
-  margin: 0 auto;
-  padding: 26px;
+  width: 100%;
+  max-width: 27.5rem;
+  margin-inline: auto;
+  padding: clamp(1.125rem, 5%, 1.625rem);
   border: 1px solid rgba(15, 23, 42, 0.09);
   border-radius: 22px;
   background: var(--surface);
@@ -184,15 +201,21 @@
 
 /* ---- 2. Backoffice App Shell & Grouped Sidebar ---- */
 .app-shell {
+  width: 100%;
+  max-width: 100%;
   min-height: var(--app-height);
+  display: grid;
+  grid-template-columns: clamp(12.5rem, 20.5%, 15.75rem) minmax(0, 1fr);
+  align-items: stretch;
   background: var(--bg);
 }
 
 .sidebar {
-  position: fixed;
-  inset: 0 auto 0 0;
+  position: sticky;
+  top: 0;
+  height: var(--app-height);
   z-index: 30;
-  width: 248px;
+  width: 100%;
   padding: 18px 14px 14px;
   background: #FFFFFF;
   border-right: 1px solid var(--border);
@@ -448,8 +471,10 @@
 
 /* Main Panel & Frosted Topbar */
 .main-panel {
+  width: 100%;
+  max-width: 100%;
   min-height: var(--app-height);
-  margin-left: 248px;
+  margin-left: 0;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -459,8 +484,10 @@
   position: sticky;
   top: 0;
   z-index: 20;
-  height: 60px;
-  padding: 0 24px;
+  width: 100%;
+  min-height: 3.625rem;
+  height: auto;
+  padding: 0.5rem 3%;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -516,9 +543,9 @@
 
 .view {
   width: 100%;
-  max-width: 1400px;
-  margin: 0 auto;
-  padding: 22px 24px 36px;
+  max-width: 88rem;
+  margin-inline: auto;
+  padding: clamp(1rem, 2.2%, 1.5rem) 3.2% 2.25rem;
   min-width: 0;
 }
 
@@ -527,6 +554,10 @@
 }
 
 /* ---- 3. Fullscreen Hybrid POS Mode ---- */
+body.pos-fullscreen .app-shell {
+  display: block;
+}
+
 body.pos-fullscreen .sidebar,
 body.pos-fullscreen .topbar {
   display: none !important;
@@ -654,13 +685,14 @@ body.pos-fullscreen .view {
 
 .pos-workspace-body {
   flex: 1;
-  padding: 16px 18px 24px;
+  width: 100%;
+  padding: 1rem 2.5% 1.5rem;
   min-width: 0;
 }
 
 .pos-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(350px, 430px);
+  grid-template-columns: minmax(0, 62%) minmax(18.5rem, 38%);
   gap: 16px;
   align-items: start;
 }
@@ -1508,7 +1540,7 @@ body.pos-fullscreen .view {
 
 .payment-donut-layout {
   display: grid;
-  grid-template-columns: 170px minmax(0, 1fr);
+  grid-template-columns: minmax(8.5rem, 34%) minmax(0, 66%);
   gap: 16px;
   align-items: center;
 }
@@ -1545,7 +1577,13 @@ body.pos-fullscreen .view {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
   padding-bottom: 12px;
   margin-bottom: 14px;
   border-bottom: 1px solid var(--border);
@@ -1561,6 +1599,7 @@ body.pos-fullscreen .view {
   font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
+  flex: none;
 }
 
 .detail-tabs button.active {
@@ -1570,7 +1609,7 @@ body.pos-fullscreen .view {
 
 .detail-kv-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 10.625rem), 1fr));
   gap: 10px;
   margin-bottom: 14px;
 }
@@ -1600,7 +1639,13 @@ body.pos-fullscreen .view {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
   margin-bottom: 14px;
   padding-bottom: 10px;
   border-bottom: 1px solid var(--border);
@@ -1617,6 +1662,7 @@ body.pos-fullscreen .view {
   font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
+  flex: none;
 }
 
 .inventory-subtab.active,
@@ -1724,7 +1770,7 @@ body.pos-fullscreen .view {
 
 .finance-debt-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
+  grid-template-columns: minmax(0, 64%) minmax(17rem, 36%);
   gap: 16px;
   align-items: start;
 }
@@ -1844,7 +1890,7 @@ body.pos-fullscreen .view {
 
 .staff-perm-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
   gap: 8px 12px;
 }
 
@@ -1906,19 +1952,25 @@ body.pos-fullscreen .view {
 
 /* ---- 8. Responsive Breakpoints ---- */
 @media (max-width: 960px) {
+  .app-shell {
+    display: block;
+    width: 100%;
+  }
   .sidebar {
     display: none;
   }
   .main-panel {
     margin-left: 0;
-    padding-bottom: calc(74px + env(safe-area-inset-bottom));
+    width: 100%;
+    padding-bottom: calc(var(--mobile-nav-h, 4.25rem) + 0.85rem + env(safe-area-inset-bottom));
   }
   body.pos-fullscreen .main-panel {
-    padding-bottom: calc(136px + env(safe-area-inset-bottom));
+    padding-bottom: calc(var(--mobile-nav-h, 4.25rem) + var(--pos-cart-bar-h, 4.25rem) + 0.85rem + env(safe-area-inset-bottom));
   }
   .topbar {
-    padding: 0 12px;
-    gap: 8px;
+    width: 100%;
+    padding: 0.45rem 3.5%;
+    gap: 0.45rem;
   }
   .topbar-left {
     display: none;
@@ -1942,7 +1994,7 @@ body.pos-fullscreen .view {
     align-items: center;
     min-width: 0;
     flex: 0 1 auto;
-    max-width: 120px;
+    max-width: 34%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1961,18 +2013,20 @@ body.pos-fullscreen .view {
     display: none;
   }
   .view {
-    padding: 16px 14px 28px;
+    width: 100%;
+    padding: 3.5% 3.5% 1.75rem;
   }
 
   /* Frosted 5-Tab Mobile Bottom Nav */
   .mobile-nav {
     position: fixed;
     inset: auto 0 0 0;
+    width: 100%;
     z-index: 40;
     display: grid;
     grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 2px;
-    padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+    padding: 0.375rem 2% calc(0.375rem + env(safe-area-inset-bottom));
     min-height: 64px;
     border-top: 1px solid var(--border);
     background: rgba(255, 255, 255, 0.96);
@@ -2020,10 +2074,11 @@ body.pos-fullscreen .view {
     z-index: 35;
     left: 0;
     right: 0;
-    bottom: calc(64px + env(safe-area-inset-bottom));
+    width: 100%;
+    bottom: var(--mobile-nav-h, calc(4rem + env(safe-area-inset-bottom)));
     display: flex;
     gap: 10px;
-    padding: 10px 14px;
+    padding: 0.625rem 3.5%;
     background: rgba(255, 255, 255, 0.96);
     backdrop-filter: blur(12px);
     border-top: 1px solid var(--border);
@@ -2454,7 +2509,7 @@ body.pos-fullscreen .view {
     justify-content: center;
   }
   .pos-workspace-body {
-    padding: 12px;
+    padding: 3.2%;
   }
   .more-drawer-items {
     grid-template-columns: minmax(0, 1fr);
@@ -2660,16 +2715,17 @@ body.pos-fullscreen .view {
 .stock-count-qty { display: inline-flex; align-items: center; gap: 6px; }
 .stock-count-qty input { width: 76px; min-height: 40px; text-align: center; }
 
-.customer-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.customer-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 8.75rem), 1fr)); gap: 10px; margin-bottom: 14px; }
 .customer-stat { padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-soft); }
-.customer-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+.customer-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 10.625rem), 1fr)); gap: 10px; }
 .customer-tag-list, .order-tags-list { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .customer-tag-chip, .order-tag-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px; background: var(--primary-soft); border: 1px solid var(--primary-border); color: var(--primary-hover); font-size: 12px; font-weight: 600; }
 
 .catalog-more { position: relative; }
 .catalog-more summary { list-style: none; cursor: pointer; }
 .catalog-more summary::-webkit-details-marker { display: none; }
-.catalog-more[open] > div { position: absolute; right: 0; top: calc(100% + 6px); z-index: 25; width: 260px; max-width: calc(100vw - 32px); display: grid; gap: 6px; padding: 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-md); }
+.catalog-more:not([open]) > div { display: none !important; }
+.catalog-more[open] > div { position: absolute; right: 0; top: calc(100% + 0.375rem); z-index: 25; width: min(16.25rem, 86vw); max-width: 90vw; display: grid; gap: 6px; padding: 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-md); }
 .catalog-more > div .btn { justify-content: flex-start; text-align: left; }
 
 .warehouse-transfer-card { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); margin-bottom: 10px; }
@@ -4614,16 +4670,16 @@ body.pos-fullscreen .view {
 
 .slink-tab-glider {
   position: absolute;
-  top: 0;
-  left: 0;
-  width: var(--glider-w, 0px);
-  height: var(--glider-h, 0px);
-  transform: translate3d(var(--glider-x, 0px), var(--glider-y, 0px), 0);
+  left: var(--glider-left, 0%);
+  top: var(--glider-top, 0%);
+  width: var(--glider-width, 0%);
+  height: var(--glider-height, 0%);
+  transform: none;
   pointer-events: none;
   z-index: 0;
   opacity: 0;
   border-radius: 9999px;
-  will-change: transform, width;
+  will-change: left, width;
 }
 
 .slink-tab-glider.is-visible {
@@ -4632,9 +4688,10 @@ body.pos-fullscreen .view {
 
 .slink-tab-glider.is-ready {
   transition:
-    transform 340ms cubic-bezier(0.22, 1, 0.36, 1),
-    width 340ms cubic-bezier(0.22, 1, 0.36, 1),
-    height 260ms ease,
+    left 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    top 240ms cubic-bezier(0.22, 1, 0.36, 1),
+    width 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    height 240ms ease,
     opacity 180ms ease;
 }
 
@@ -4683,8 +4740,15 @@ body.pos-fullscreen .view {
 
 .workspace-tabs > .slink-tab-glider,
 .inventory-stock-filters > .slink-tab-glider,
+.inventory-subtabs > .slink-tab-glider,
 .settings-areas > .slink-tab-glider {
   border-radius: 10px;
+  background: var(--primary);
+  box-shadow: 0 4px 10px -2px rgba(15, 107, 78, 0.28);
+}
+
+.detail-tabs > .slink-tab-glider {
+  border-radius: 999px;
   background: var(--primary);
   box-shadow: 0 4px 10px -2px rgba(15, 107, 78, 0.28);
 }
@@ -4694,6 +4758,8 @@ body.pos-fullscreen .view {
 .workspace-tabs.has-glider button.active,
 .inventory-stock-filters.has-glider button[aria-pressed='true'],
 .inventory-stock-filters.has-glider button.active,
+.inventory-subtabs.has-glider .inventory-subtab.active,
+.detail-tabs.has-glider button.active,
 .settings-areas.has-glider button.active,
 .settings-areas.has-glider button[aria-selected='true'] {
   background: transparent;

@@ -492,50 +492,104 @@
   let publicListenersBound = false;
   let scrollSpyFrame = 0;
   let revealObserver = null;
+  let gliderResizeObserver = null;
+  let chromeResizeObserver = null;
+  let fontsSyncBound = false;
 
   function reducedMotionEnabled() {
     return Boolean(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   }
 
+  function syncAppChromeMetrics() {
+    const docStyle = document.documentElement.style;
+    const topbar = document.querySelector('.topbar');
+    const mobileNav = document.getElementById('mobile-nav');
+    const posCart = document.querySelector('.pos-mobile-cart');
+    if (topbar && topbar.offsetHeight > 0) docStyle.setProperty('--topbar-h', topbar.offsetHeight + 'px');
+    else docStyle.removeProperty('--topbar-h');
+    if (mobileNav && mobileNav.offsetHeight > 0) docStyle.setProperty('--mobile-nav-h', mobileNav.offsetHeight + 'px');
+    else docStyle.removeProperty('--mobile-nav-h');
+    if (posCart && posCart.offsetHeight > 0) docStyle.setProperty('--pos-cart-bar-h', posCart.offsetHeight + 'px');
+    else docStyle.removeProperty('--pos-cart-bar-h');
+    if (typeof window.ResizeObserver === 'function') {
+      if (!chromeResizeObserver) {
+        chromeResizeObserver = new window.ResizeObserver(function () {
+          syncAppChromeMetrics();
+        });
+      }
+      [topbar, mobileNav, posCart].forEach(function (el) {
+        if (el && el.dataset.chromeObserved !== '1') {
+          el.dataset.chromeObserved = '1';
+          chromeResizeObserver.observe(el);
+        }
+      });
+    }
+  }
+
+  function applyGliderPercentages(host) {
+    if (!host || !host.isConnected) return;
+    host.classList.add('has-glider');
+    let glider = Array.from(host.children).find(function (node) { return node.classList?.contains('slink-tab-glider'); });
+    if (!glider) {
+      glider = document.createElement('span');
+      glider.className = 'slink-tab-glider';
+      glider.setAttribute('aria-hidden', 'true');
+      host.prepend(glider);
+    }
+    const active = Array.from(host.children).find(function (node) {
+      return node !== glider && node.tagName === 'BUTTON' && (
+        node.classList.contains('active') ||
+        node.getAttribute('aria-selected') === 'true' ||
+        node.getAttribute('aria-current') === 'page' ||
+        node.getAttribute('aria-pressed') === 'true'
+      );
+    });
+    if (!active || active.offsetWidth <= 0 || host.clientWidth <= 0) {
+      glider.classList.remove('is-visible');
+      return;
+    }
+    const hostW = Math.max(host.clientWidth, 1);
+    const hostH = Math.max(host.clientHeight, 1);
+    glider.style.setProperty('--glider-left', ((active.offsetLeft / hostW) * 100).toFixed(4) + '%');
+    glider.style.setProperty('--glider-top', ((active.offsetTop / hostH) * 100).toFixed(4) + '%');
+    glider.style.setProperty('--glider-width', ((active.offsetWidth / hostW) * 100).toFixed(4) + '%');
+    glider.style.setProperty('--glider-height', ((active.offsetHeight / hostH) * 100).toFixed(4) + '%');
+    glider.classList.add('is-visible');
+    if (!glider.classList.contains('is-ready')) {
+      window.requestAnimationFrame(function () {
+        if (glider.isConnected) glider.classList.add('is-ready');
+      });
+    }
+  }
+
   S.fn.syncTabGliders = function syncTabGliders(root = document) {
+    syncAppChromeMetrics();
     const scope = root || document;
-    const selector = '[data-tab-glider-host], .workspace-tabs, .inventory-stock-filters, .settings-areas, .auth-mode-tabs';
+    const selector = '[data-tab-glider-host], .workspace-tabs, .inventory-stock-filters, .inventory-subtabs, .detail-tabs, .settings-areas, .auth-mode-tabs';
     const hosts = [];
     if (scope.matches && scope.matches(selector)) hosts.push(scope);
     if (scope.querySelectorAll) hosts.push(...scope.querySelectorAll(selector));
 
-    hosts.forEach(function (host) {
-      if (!host.isConnected) return;
-      host.classList.add('has-glider');
-      let glider = Array.from(host.children).find(function (node) { return node.classList?.contains('slink-tab-glider'); });
-      if (!glider) {
-        glider = document.createElement('span');
-        glider.className = 'slink-tab-glider';
-        glider.setAttribute('aria-hidden', 'true');
-        host.prepend(glider);
-      }
-      const active = Array.from(host.children).find(function (node) {
-        return node !== glider && node.tagName === 'BUTTON' && (
-          node.classList.contains('active') ||
-          node.getAttribute('aria-selected') === 'true' ||
-          node.getAttribute('aria-current') === 'page' ||
-          node.getAttribute('aria-pressed') === 'true'
-        );
+    if (!fontsSyncBound && document.fonts && document.fonts.ready) {
+      fontsSyncBound = true;
+      document.fonts.ready.then(function () {
+        syncAppChromeMetrics();
+        document.querySelectorAll(selector).forEach(applyGliderPercentages);
+      }).catch(function () {});
+    }
+
+    if (typeof window.ResizeObserver === 'function' && !gliderResizeObserver) {
+      gliderResizeObserver = new window.ResizeObserver(function (entries) {
+        entries.forEach(function (entry) { applyGliderPercentages(entry.target); });
       });
-      if (!active || active.offsetWidth <= 0) {
-        glider.classList.remove('is-visible');
-        return;
+    }
+
+    hosts.forEach(function (host) {
+      if (gliderResizeObserver && host.dataset.gliderObserved !== '1') {
+        host.dataset.gliderObserved = '1';
+        gliderResizeObserver.observe(host);
       }
-      glider.style.setProperty('--glider-x', active.offsetLeft + 'px');
-      glider.style.setProperty('--glider-y', active.offsetTop + 'px');
-      glider.style.setProperty('--glider-w', active.offsetWidth + 'px');
-      glider.style.setProperty('--glider-h', active.offsetHeight + 'px');
-      glider.classList.add('is-visible');
-      if (!glider.classList.contains('is-ready')) {
-        window.requestAnimationFrame(function () {
-          if (glider.isConnected) glider.classList.add('is-ready');
-        });
-      }
+      applyGliderPercentages(host);
     });
   };
 

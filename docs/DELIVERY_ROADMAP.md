@@ -4,6 +4,12 @@
 
 Status labels: **Not started**, **In progress**, **Blocked by external dependency**, **Evidence passed**. “Evidence passed” applies only to the named milestone, never to the whole product by implication.
 
+## 2026-11-24 · Slink 0.9.1.4 — Bố cục app theo tỉ lệ phần trăm, Căn giữa đối xứng & Chuẩn insets Android
+
+- Gỡ giới hạn `min-width: 320px` trên `html`/`body`, thay bố cục thanh bên/topbar/view/pos/cửa sổ hộp thoại (`modal`, `toast-stack`) và màn hình tài khoản Android sang hệ lưới/padding theo tỉ lệ phần trăm (`%`) và `clamp(...)`, giúp căn giữa đối xứng ngay cả khi điện thoại phóng to hiển thị (`306px`) hoặc màn hình hẹp.
+- Chuyển bộ tính tọa độ `.slink-tab-glider` sang phần trăm (`--glider-left`, `--glider-top`, `--glider-width`, `--glider-height`) kèm `ResizeObserver` theo dõi `#mobile-nav`, `.topbar`, `.pos-mobile-cart` và tái đồng bộ sau `document.fonts.ready` để thanh POS di động không bao giờ đè lên thanh điều hướng đáy.
+- Chuẩn hóa `MainActivity.java` (`setDecorFitsSystemWindows(false)`, trả về `WindowInsets.CONSUMED`, bật `setUseWideViewPort(true)` và `setLoadWithOverviewMode(true)`) tránh nhân đôi inset trên Android 10–14 và cập nhật mặc định Android lên `0.9.1.4` (`versionCode: 3031`).
+
 ## 2026-11-24 · Slink 0.9.1.3 — Cổng đăng nhập 2 cột sinh động, Thanh tab trượt & Chuyển động uyển chuyển
 
 - Loại bỏ hoàn toàn nhãn `"Ảnh chụp giao diện thực tế"` cạnh thanh tab Hero; sửa xung đột CSS để `.lp-header-wrap` ghim dính (`position: sticky`) theo cuộn trang kèm scroll-spy tự trượt vạch chọn mục.

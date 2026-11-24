@@ -67,8 +67,10 @@
 }
 
 html {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   min-height: 100%;
-  min-width: 320px;
   background: var(--bg);
   scroll-behavior: smooth;
   -webkit-text-size-adjust: 100%;
@@ -76,8 +78,10 @@ html {
 
 body {
   margin: 0;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   min-height: var(--app-height);
-  min-width: 320px;
   background: var(--bg);
   color: var(--ink);
   font-family: var(--font);
@@ -709,7 +713,7 @@ select.input,
 
 .stat-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
   gap: 14px;
   margin-bottom: 18px;
 }
@@ -835,7 +839,7 @@ select.input,
 
 .segmented-mode {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 8.75rem), 1fr));
   gap: 4px;
   padding: 4px;
   background: var(--surface-subtle);
@@ -1083,11 +1087,14 @@ select.input,
 
 .modal {
   position: fixed;
-  inset: 50% auto auto 50%;
-  transform: translate(-50%, -50%);
+  inset: 0;
+  margin: auto;
+  transform: none;
   z-index: 90;
-  width: min(640px, calc(100vw - 24px));
-  max-height: calc(var(--app-height) - 32px);
+  width: 92%;
+  max-width: 40rem;
+  height: fit-content;
+  max-height: 90%;
   display: flex;
   flex-direction: column;
   background: var(--surface);
@@ -1099,7 +1106,8 @@ select.input,
 
 .modal.wide,
 .modal.modal-wide {
-  width: min(880px, calc(100vw - 24px));
+  width: 94%;
+  max-width: 55rem;
 }
 
 .modal-head {
@@ -1171,12 +1179,15 @@ select.input,
 }
 
 @media (max-width: 700px) {
-  .modal {
+  .modal,
+  .modal.wide,
+  .modal.modal-wide {
     inset: auto 0 0 0;
+    margin: 0;
     transform: none;
     width: 100%;
     max-width: 100%;
-    max-height: 92dvh;
+    max-height: 92%;
     border-radius: 22px 22px 0 0;
     border-bottom: 0;
     padding-bottom: env(safe-area-inset-bottom);
@@ -1199,12 +1210,13 @@ select.input,
 /* Compact Dismissible Toasts (never block viewport) */
 .toast-stack {
   position: fixed;
-  top: 16px;
-  right: 16px;
+  top: 1rem;
+  right: 2%;
   z-index: 980;
   display: grid;
   gap: 8px;
-  width: min(360px, calc(100vw - 24px));
+  width: 92%;
+  max-width: 22.5rem;
   pointer-events: none;
 }
 
@@ -1259,11 +1271,13 @@ select.input,
 
 @media (max-width: 640px) {
   .toast-stack {
-    top: 64px;
-    left: 50%;
-    right: auto;
-    transform: translateX(-50%);
-    width: min(360px, calc(100vw - 20px));
+    top: calc(var(--topbar-h, 3.65rem) + 0.5rem);
+    left: 4%;
+    right: 4%;
+    transform: none;
+    margin-inline: auto;
+    width: 92%;
+    max-width: 24rem;
   }
 }
 
@@ -1572,7 +1586,7 @@ select.input,
 .integration-hardware-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .integration-webhook-box { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-soft); }
 .integration-webhook-box code { display: block; font-size: 11.5px; color: var(--ink); word-break: break-all; }
-.integration-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; margin-top: 16px; }
+.integration-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); gap: 10px; margin-top: 16px; }
 .integration-connector-card { display: grid; gap: 6px; padding: 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
 .integration-connector-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
 .integration-ready-note { color: var(--success); font-size: 11.5px; }
@@ -1628,7 +1642,7 @@ select.input,
 
 .warranty-card, .warranty-lookup-card { display: grid; gap: 8px; padding: 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); overflow-wrap: anywhere; }
 .warranty-card-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
-.warranty-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px 12px; font-size: 13px; }
+.warranty-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr)); gap: 8px 12px; font-size: 13px; }
 
 /* Scanner, Tour, Conflicts, Receipts */
 .scan-camera-panel { display: grid; gap: 10px; }
@@ -1650,7 +1664,7 @@ select.input,
 
 .guided-tour-layer { position: fixed; inset: 0; z-index: 1000; pointer-events: none; }
 .guided-tour-spotlight { position: fixed; z-index: 1; border: 2px solid #FFFFFF; border-radius: 14px; box-shadow: 0 0 0 9999px rgba(15, 23, 42, 0.68); pointer-events: none; transition: top 180ms ease, left 180ms ease, width 180ms ease, height 180ms ease; }
-.guided-tour-card { position: fixed; z-index: 2; max-width: calc(100vw - 24px); max-height: calc(100dvh - 24px); overflow: auto; padding: 18px; border: 1px solid var(--border); border-radius: 16px; background: #FFFFFF; color: var(--ink); box-shadow: var(--shadow-modal); pointer-events: auto; }
+.guided-tour-card { position: fixed; z-index: 2; max-width: 92%; max-height: 92%; overflow: auto; padding: 18px; border: 1px solid var(--border); border-radius: 16px; background: #FFFFFF; color: var(--ink); box-shadow: var(--shadow-modal); pointer-events: auto; }
 .guided-tour-progress { margin-bottom: 8px; color: var(--primary); font-size: 12px; font-weight: 700; }
 .guided-tour-card h2 { margin: 0 0 6px; font-size: 18px; }
 .guided-tour-card p { margin: 0; color: var(--muted); font-size: 14px; }
@@ -1672,7 +1686,7 @@ select.input,
 
 .help-section { display: grid; gap: 10px; margin-bottom: 16px; }
 .help-section h3 { margin: 0; font-size: 14px; font-weight: 700; }
-.help-shortcut-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; }
+.help-shortcut-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr)); gap: 8px; }
 .help-shortcut-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-soft); font-size: 13px; }
 .help-shortcut-item kbd { padding: 2px 7px; border-radius: 6px; background: #FFFFFF; border: 1px solid var(--border-strong); font-family: var(--mono); font-size: 12px; font-weight: 700; }
 
