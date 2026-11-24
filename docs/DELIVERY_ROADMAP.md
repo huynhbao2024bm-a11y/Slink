@@ -4,6 +4,12 @@
 
 Status labels: **Not started**, **In progress**, **Blocked by external dependency**, **Evidence passed**. “Evidence passed” applies only to the named milestone, never to the whole product by implication.
 
+## 2026-11-24 · Slink 0.9.1.2 — Hoàn thiện Trang chủ, Tải APK mới nhất, SEO, Nén tĩnh & Bảo mật
+
+- Trang giới thiệu web tinh gọn nhãn trạng thái `Ảnh chụp giao diện thực tế` không viền ở Hero, bổ sung nút tải Android `.apk`, rút gọn mật độ chữ ở khối tính năng/ngành hàng cùng khoảng thở rộng hơn, và mở rộng chân trang 4 cột kèm khối cam kết bảo mật dữ liệu.
+- Máy chủ bổ sung `/robots.txt`, `/sitemap.xml`, thẻ Open Graph (`/assets/slink-og-cover.png`), `/favicon.ico`, nén Brotli/Gzip kèm `ETag`/`304` cho tệp tĩnh, tiêu đề không cache `no-store` + alias `/download/slink-latest.apk` chuyển hướng tới bản phát hành GitHub mới nhất, cùng các tiêu đề bảo mật (`Permissions-Policy`, `Referrer-Policy`, `X-Robots-Tag`) và ẩn thêm trường nhạy cảm trong log.
+- Bản Android cập nhật mặc định lên `0.9.1.2` (`versionCode: 3029`), giữ nguyên luồng mở thẳng màn hình tài khoản trên app Android và kiểm tra tự động qua `pnpm test` và `node --test server/test/android-release.test.js`.
+
 ## 2026-11-24 · Trang giới thiệu web có ảnh giao diện thật
 
 - Trang công khai hiển thị ảnh Slink trên máy tính và điện thoại, cho phép đổi giữa Bán hàng và Tổng quan. Tên cửa hàng nhập ở trang giới thiệu điền sẵn vào biểu mẫu tạo cửa hàng.

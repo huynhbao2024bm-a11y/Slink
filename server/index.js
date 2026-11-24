@@ -6,6 +6,7 @@ const rateLimit = require('@fastify/rate-limit');
 const staticFiles = require('@fastify/static');
 const { existsSync, readFileSync } = require('node:fs');
 const { createHash } = require('node:crypto');
+const { brotliCompressSync, constants: zlibConstants, gzipSync } = require('node:zlib');
 const path = require('node:path');
 const { ApiError, emailVerificationDisabled, registerAuthRoutes } = require('./auth');
 const { createPool } = require('./db');
@@ -51,6 +52,8 @@ const ASSETS = new Map([
   ['/assets/slink-showcase-web-pos.webp', 'assets/slink-showcase-web-pos.webp'],
   ['/assets/slink-showcase-web-dashboard.webp', 'assets/slink-showcase-web-dashboard.webp'],
   ['/assets/slink-showcase-mobile-pos.webp', 'assets/slink-showcase-mobile-pos.webp'],
+  ['/assets/slink-og-cover.png', 'assets/slink-og-cover.png'],
+  ['/favicon.ico', 'assets/slink-icon-192.png'],
   ['/styles.css', 'styles.css'],
   ['/workspace.css', 'workspace.css'],
   ['/assets/vendor/gsap.min.js', 'assets/vendor/gsap.min.js'],
@@ -98,6 +101,84 @@ const ASSETS = new Map([
 ]);
 
 const APP_ASSET_VERSION = createHash('sha256').update(Array.from(new Set(ASSETS.values())).map(file => readFileSync(path.join(APP_ROOT, file))).map(content => createHash('sha256').update(content).digest('hex')).join('|')).digest('hex').slice(0, 20);
+
+const LONG_LIVED_ASSETS = new Set([
+  '/favicon.ico',
+  '/assets/slink-icon.svg',
+  '/assets/slink-icon-180.png',
+  '/assets/slink-icon-192.png',
+  '/assets/slink-icon-512.png',
+  '/assets/slink-icon-maskable-512.png',
+  '/assets/slink-showcase-web-pos.webp',
+  '/assets/slink-showcase-web-dashboard.webp',
+  '/assets/slink-showcase-mobile-pos.webp',
+  '/assets/slink-og-cover.png',
+  '/assets/vendor/gsap.min.js',
+]);
+
+const TEXT_CONTENT_TYPES = new Map([
+  ['.html', 'text/html; charset=utf-8'],
+  ['.css', 'text/css; charset=utf-8'],
+  ['.js', 'application/javascript; charset=utf-8'],
+  ['.svg', 'image/svg+xml; charset=utf-8'],
+  ['.webmanifest', 'application/manifest+json; charset=utf-8'],
+]);
+
+const STATIC_TEXT_CACHE = new Map();
+for (const fileName of new Set(ASSETS.values())) {
+  if (fileName === 'sw.js') continue;
+  const contentType = TEXT_CONTENT_TYPES.get(path.extname(fileName));
+  if (!contentType) continue;
+  const raw = readFileSync(path.join(APP_ROOT, fileName));
+  const etag = `W/"${createHash('sha256').update(raw).digest('hex').slice(0, 16)}"`;
+  STATIC_TEXT_CACHE.set(fileName, {
+    contentType,
+    etag,
+    raw,
+    gzip: gzipSync(raw, { level: 6 }),
+    br: brotliCompressSync(raw, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 6 } }),
+  });
+}
+
+function isFrontendPath(pathName) {
+  return ASSETS.has(pathName) || pathName === '/robots.txt' || pathName === '/sitemap.xml' || pathName.startsWith('/legal/');
+}
+
+function resolvePublicOrigin(request, env) {
+  if (env.PUBLIC_ORIGIN) {
+    try {
+      return new URL(env.PUBLIC_ORIGIN).origin;
+    } catch {
+      // Fallback to request host when running locally with invalid or unset PUBLIC_ORIGIN.
+    }
+  }
+  const host = typeof request.headers.host === 'string' && /^[a-z0-9.:-]+$/i.test(request.headers.host)
+    ? request.headers.host
+    : 'slink-xny3.onrender.com';
+  return `${request.protocol === 'https' ? 'https' : 'http'}://${host}`;
+}
+
+function sendLatestAndroidApkRedirect(reply) {
+  reply.header('cache-control', 'no-store, no-cache, must-revalidate, max-age=0');
+  reply.header('pragma', 'no-cache');
+  reply.header('x-robots-tag', 'noindex, nofollow');
+  return reply.redirect('https://github.com/huynhbao2024bm-a11y/Slink/releases/latest/download/Slink.apk');
+}
+
+function serveCachedTextAsset(request, reply, entry) {
+  if (request.headers['if-none-match'] === entry.etag) {
+    return reply.code(304).header('etag', entry.etag).send();
+  }
+  const accept = typeof request.headers['accept-encoding'] === 'string' ? request.headers['accept-encoding'] : '';
+  reply.header('etag', entry.etag).header('vary', 'accept-encoding').type(entry.contentType);
+  if (/\bbr\b/i.test(accept)) {
+    return reply.header('content-encoding', 'br').send(entry.br);
+  }
+  if (/\bgzip\b/i.test(accept)) {
+    return reply.header('content-encoding', 'gzip').send(entry.gzip);
+  }
+  return reply.send(entry.raw);
+}
 
 function trustedProxies(addressesValue, hopsValue) {
   const addresses = (addressesValue || '').split(',').map((item) => item.trim()).filter(Boolean);
@@ -151,7 +232,7 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
     logger: logger ? {
       level: env.LOG_LEVEL || 'info',
       redact: {
-        paths: ['req.headers.cookie', 'req.headers.authorization', 'req.headers["x-csrf-token"]', 'req.headers["secure-token"]', 'req.headers["x-webhook-token"]', 'req.body.password', 'req.body.token', 'req.body.signature'],
+        paths: ['req.headers.cookie', 'req.headers.authorization', 'req.headers["x-csrf-token"]', 'req.headers["secure-token"]', 'req.headers["x-webhook-token"]', 'req.headers["x-api-key"]', 'req.body.password', 'req.body.currentPassword', 'req.body.newPassword', 'req.body.pin', 'req.body.secret', 'req.body.code', 'req.body.token', 'req.body.signature'],
         censor: '[REDACTED]',
       },
     } : false,
@@ -162,6 +243,8 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
   app.decorate('slinkEmailVerificationDisabled', emailVerificationDisabled(env));
 
   await app.register(helmet, {
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+    crossOriginOpenerPolicy: { policy: 'same-origin' },
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
@@ -181,10 +264,10 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
   await app.register(rateLimit, {
     global: true,
     // Loading the frontend pulls dozens of assets. Keep those reads separate from the API limit.
-    keyGenerator: (request) => ASSETS.has(request.url.split('?')[0]) ? request.ip + ':frontend' : request.ip,
+    keyGenerator: (request) => isFrontendPath(request.url.split('?')[0]) ? request.ip + ':frontend' : request.ip,
     max: (request) => {
       if (env.NODE_ENV === 'test') return 2000;
-      if (ASSETS.has(request.url.split('?')[0])) return 1200;
+      if (isFrontendPath(request.url.split('?')[0])) return 1200;
       return request.url.startsWith('/api/stores/') ? 600 : 120;
     },
     timeWindow: '1 minute',
@@ -196,11 +279,15 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
   await app.register(staticFiles, { root: APP_ROOT, prefix: '/', serve: false });
 
   app.addHook('onSend', async (request, reply, payload) => {
-    if (ASSETS.has(request.url.split('?')[0])) {
-      const pathName = request.url.split('?')[0];
-      reply.header('cache-control', pathName === '/sw.js' ? 'no-store' : ['/assets/slink-icon.svg', '/assets/slink-icon-180.png', '/assets/slink-icon-192.png', '/assets/slink-icon-512.png', '/assets/slink-icon-maskable-512.png'].includes(pathName)
-        ? 'public, max-age=86400'
-        : 'no-cache');
+    const pathName = request.url.split('?')[0];
+    reply.header('permissions-policy', 'camera=(self), microphone=(), geolocation=(), payment=()');
+    if (pathName.startsWith('/api/') || pathName === '/verify' || pathName === '/invite' || pathName.startsWith('/download/')) {
+      reply.header('x-robots-tag', 'noindex, nofollow');
+    }
+    if (ASSETS.has(pathName)) {
+      reply.header('cache-control', pathName === '/sw.js'
+        ? 'no-store'
+        : LONG_LIVED_ASSETS.has(pathName) ? 'public, max-age=86400' : 'no-cache');
     }
     return payload;
   });
@@ -215,8 +302,25 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
     }, 'API request completed');
   });
 
-  app.get('/download/android', async (_request, reply) =>
-    reply.redirect('https://github.com/huynhbao2024bm-a11y/Slink/releases/latest/download/Slink.apk'));
+  app.get('/download/android', async (_request, reply) => sendLatestAndroidApkRedirect(reply));
+  app.get('/download/slink-latest.apk', async (_request, reply) => sendLatestAndroidApkRedirect(reply));
+  app.get('/robots.txt', async (request, reply) => {
+    const origin = resolvePublicOrigin(request, env);
+    return reply
+      .header('cache-control', 'public, max-age=3600')
+      .type('text/plain; charset=utf-8')
+      .send(`User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /verify\nDisallow: /invite\nDisallow: /download/\nSitemap: ${origin}/sitemap.xml\n`);
+  });
+  app.get('/sitemap.xml', async (request, reply) => {
+    const origin = resolvePublicOrigin(request, env);
+    const urls = ['/', '/legal/privacy', '/legal/terms']
+      .map((item) => `  <url><loc>${origin}${item}</loc><changefreq>${item === '/' ? 'weekly' : 'monthly'}</changefreq></url>`)
+      .join('\n');
+    return reply
+      .header('cache-control', 'public, max-age=3600')
+      .type('application/xml; charset=utf-8')
+      .send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>\n`);
+  });
   app.get('/api/health', async () => ({ status: 'ok' }));
   app.get('/legal/terms', async (_request, reply) => reply.type('text/html; charset=utf-8').send(legalContent.renderStandaloneLegalPage('terms')));
   app.get('/legal/privacy', async (_request, reply) => reply.type('text/html; charset=utf-8').send(legalContent.renderStandaloneLegalPage('privacy')));
@@ -266,6 +370,9 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
   for (const [route, fileName] of ASSETS) {
     if (route === '/sw.js') {
       app.get(route, async (_request, reply) => reply.header('cache-control', 'no-store').type('application/javascript; charset=utf-8').send(readFileSync(path.join(APP_ROOT, fileName), 'utf8').replace('__SLINK_ASSET_VERSION__', APP_ASSET_VERSION)));
+    } else if (STATIC_TEXT_CACHE.has(fileName)) {
+      const entry = STATIC_TEXT_CACHE.get(fileName);
+      app.get(route, async (request, reply) => serveCachedTextAsset(request, reply, entry));
     } else app.get(route, async (_request, reply) => reply.sendFile(fileName));
   }
 
