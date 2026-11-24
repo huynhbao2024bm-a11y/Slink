@@ -23,16 +23,25 @@
   display: grid;
   place-items: center;
   padding: 20px 16px;
+  background: #eef2f6;
 }
 
-.auth-android-shell {
-  width: min(430px, 100%);
-  animation: slink-spring-in 420ms var(--ease-apple) both;
+.auth-card.android-auth-card {
+  padding: clamp(16px, 5vw, 26px);
 }
 
-@keyframes slink-spring-in {
-  from { opacity: 0; transform: translateY(10px) scale(0.985); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
+.android-auth-card :is(.input, .auth-submit, .auth-mode-tab) {
+  min-height: 46px;
+}
+
+.android-auth-card .input { font-size: 16px; }
+
+.android-auth-label {
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--surface-subtle);
+  color: var(--ink);
+  font-size: 13px;
 }
 
 .auth-card {
