@@ -1070,7 +1070,7 @@
     }
     else if (action === 'reload-integrations') S.fn.loadIntegrationStatus(true);
     else if (action === 'partner-connect') S.fn.showPartnerUnconnectedNotice?.(button.dataset.partnerName || '');
-    else if (action === 'landing-demo-tab' || action === 'landing-demo-add' || action === 'landing-focus-auth') S.fn.handleLandingAction?.(action, button);
+    else if (['lp-stage-view', 'lp-industry', 'lp-scroll'].includes(action)) S.fn.handleLandingAction(action, button);
     else if (action === 'verify-ghn-token') S.fn.verifyGhnIntegrationToken(button);
     else if (action === 'clear-integration-cred') S.fn.clearIntegrationCredential(button.dataset.credKey, button);
     else if (action === 'copy-integration-url') {
@@ -2002,6 +2002,16 @@
   });
 
   document.addEventListener('submit', function (event) {
+    if (event.target.matches('[data-landing-start]')) {
+      event.preventDefault();
+      const name = new FormData(event.target).get('quickStoreName').trim();
+      S.state.authMode = 'register';
+      S.fn.renderAuth();
+      const storeName = document.getElementById('auth-store');
+      storeName.value = name;
+      document.getElementById('auth-name').focus();
+      return;
+    }
     const authForm = event.target.closest('form[data-auth-form]');
     if (authForm) {
       event.preventDefault();

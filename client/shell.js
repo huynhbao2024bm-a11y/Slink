@@ -74,6 +74,15 @@
   S.fn.authCard = function authCard(title, subtitle, body, message, tone) {
     document.body.classList.remove('pos-fullscreen');
     const mode = S.state.authMode;
+    const isApp = S.fn.isAndroidApp();
+    if (!isApp && mode === 'landing') {
+      S.dom.authRoot.className = 'auth-screen is-web-landing';
+      S.dom.authRoot.innerHTML = S.fn.renderWebAuthLanding();
+      S.dom.appShell.hidden = true;
+      S.dom.authRoot.hidden = false;
+      S.fn.setupLandingInteractions();
+      return;
+    }
     const showModeTabs = mode === 'login' || mode === 'register';
     const modeTabs = showModeTabs
       ? `<div class='auth-mode-tabs' role='tablist' aria-label='Tài khoản'>
@@ -81,7 +90,6 @@
           <button type='button' role='tab' aria-selected='${mode === 'register'}' class='auth-mode-tab ${mode === 'register' ? 'active' : ''}' data-action='auth-mode' data-mode='register'>Tạo cửa hàng</button>
         </div>`
       : '';
-    const isApp = S.fn.isAndroidApp();
     const cardHtml = `<section class='auth-card${isApp ? ' android-auth-card' : ''}'>
       <div class='auth-brand'>
         <span class='brand-mark' aria-hidden='true'><svg viewBox='0 0 32 32'><path d='M8 8.5h16v5H13v2h11v8H8v-5h11v-2H8z' fill='currentColor'/><circle cx='24.5' cy='7.5' r='2.5' fill='#c8f36c'/></svg></span>
@@ -98,13 +106,12 @@
     if (isApp) {
       S.dom.authRoot.className = 'auth-screen is-android-welcome';
       S.dom.authRoot.innerHTML = cardHtml;
-    } else if (!isApp && showModeTabs && typeof S.fn.renderWebAuthLanding === 'function') {
-      S.dom.authRoot.className = 'auth-screen is-web-landing';
-      S.dom.authRoot.innerHTML = S.fn.renderWebAuthLanding(cardHtml);
-      S.fn.setupLandingInteractions?.();
     } else {
       S.dom.authRoot.className = 'auth-screen';
-      S.dom.authRoot.innerHTML = cardHtml;
+      S.dom.authRoot.innerHTML = `<div>
+        <div class='auth-home-link'><button type='button' class='link-button' data-action='auth-mode' data-mode='landing'>← Trang giới thiệu</button></div>
+        ${cardHtml}
+      </div>`;
     }
     S.dom.appShell.hidden = true;
     S.dom.authRoot.hidden = false;
@@ -613,7 +620,7 @@
     S.state.posCatalogStale = false;
     if (window.SlinkSyncBus) window.SlinkSyncBus.setContext({ storeId: '', userId: '' });
     S.state.page = 'products';
-    S.state.authMode = 'login';
+    S.state.authMode = S.fn.isAndroidApp() || message ? 'login' : 'landing';
     S.state.pendingCompatibilityStoreId = '';
     S.state.pendingCompatibilitySaveBlocked = false;
     if (S.dom.pendingCompatibilityWarning) S.dom.pendingCompatibilityWarning.hidden = true;
