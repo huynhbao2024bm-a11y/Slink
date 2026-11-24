@@ -31,17 +31,17 @@
       shortTab: 'Thời trang',
       storeSample: 'Linh Chi Boutique',
       headline: 'Quản lý shop thời trang chuẩn từng màu sắc, kích cỡ.',
-      description: 'Tạo nhanh hàng trăm biến thể Màu/Size (S, M, L, XL), kiểm tra tồn kho từng chi nhánh ngay tại quầy thu ngân và theo dõi mẫu bán chạy theo ngày.',
+      description: 'Quản lý hàng trăm biến thể Màu/Size, tra cứu tồn kho chi nhánh tại quầy và theo dõi mẫu bán chạy theo ngày.',
       points: [
-        'Quản lý nhóm sản phẩm nhiều màu, nhiều size không rối mã hàng.',
-        'Tra cứu tồn kho chi nhánh tức thì khi khách hỏi đổi size.',
-        'Lưu lịch sử mua sắm và gắn thẻ khách VIP để chăm sóc lại.',
-        'Lịch sử thay đổi giá bán minh bạch theo từng đợt khuyến mãi.',
+        'Quản lý nhóm sản phẩm nhiều màu, nhiều size gọn gàng.',
+        'Tra cứu tồn kho chi nhánh tức thì khi khách đổi size.',
+        'Lưu lịch sử mua sắm và gắn thẻ khách VIP chăm sóc lại.',
+        'Theo dõi lịch sử điều chỉnh giá bán theo từng đợt khuyến mãi.',
       ],
       metrics: [
         { title: 'Quản lý biến thể Màu / Size', sub: 'Tạo đồng loạt SKU con chỉ trong 1 thao tác', badge: 'Chuẩn thời trang' },
         { title: 'Đối soát tồn kho quầy & kho phụ', sub: 'Phiếu điều chuyển rõ số lượng xuất – thực nhận', badge: 'Chống thất thoát' },
-        { title: 'Lưu bộ lọc nhóm khách hàng', sub: 'Lọc theo công nợ, mức chi tiêu và gắn thẻ phân loại', badge: 'Chăm sóc khách quen' },
+        { title: 'Lưu bộ lọc nhóm khách hàng', sub: 'Lọc theo công nợ, chi tiêu và thẻ phân loại', badge: 'Chăm sóc khách quen' },
       ],
     },
     cosmetics: {
@@ -49,17 +49,17 @@
       shortTab: 'Mỹ phẩm',
       storeSample: 'Aura Beauty Room',
       headline: 'Kiểm soát hàng chính hãng, dung tích và tệp khách thân thiết.',
-      description: 'Quản lý chặt chẽ hàng trăm mã serum, kem chống nắng theo dung tích/phân loại, ghi chú tình trạng da khách hàng và bảo vệ biên lợi nhuận gộp.',
+      description: 'Theo dõi sản phẩm theo dung tích/phân loại, cảnh báo chạm định mức tồn tối thiểu và giữ biên lợi nhuận gộp.',
       points: [
         'Phân loại rõ ràng theo thương hiệu, dung tích (30ml, 50ml, Fullsize).',
-        'Cảnh báo sớm mặt hàng sắp chạm định mức tồn tối thiểu để đặt hàng NCC.',
-        'Theo dõi giá vốn mặt hàng và lưu lịch sử điều chỉnh giá bán minh bạch.',
-        'Ghi chú chi tiết nhu cầu từng khách hàng ngay trên hồ sơ & đơn bán.',
+        'Cảnh báo sớm mặt hàng chạm định mức tối thiểu để đặt thêm.',
+        'Theo dõi giá vốn và lưu lịch sử điều chỉnh giá bán minh bạch.',
+        'Ghi chú nhu cầu từng khách hàng ngay trên hồ sơ & đơn bán.',
       ],
       metrics: [
         { title: 'Cảnh báo tồn kho tối thiểu', sub: 'Chủ động nhập bổ sung các mã bán chạy', badge: 'Không đứt hàng' },
         { title: 'Lãi gộp thực tế theo ngày', sub: 'Tự động tính sau giá vốn và hàng trả lại', badge: 'Rõ lợi nhuận' },
-        { title: 'Quản lý đơn đặt hàng NCC (PO)', sub: 'Nhận hàng từng phần và theo dõi công nợ phải trả', badge: 'Chuẩn quy trình' },
+        { title: 'Quản lý đơn đặt hàng NCC (PO)', sub: 'Nhận hàng từng phần, theo dõi công nợ phải trả', badge: 'Chuẩn quy trình' },
       ],
     },
     grocery: {
@@ -67,15 +67,15 @@
       shortTab: 'Tạp hóa',
       storeSample: 'Siêu thị Mini An Phú',
       headline: 'Tính tiền nhanh tại quầy, sổ quỹ và công nợ rõ ràng cuối ca.',
-      description: 'Tìm kiếm hàng hóa tức thì theo tên hoặc mã vạch/SKU, kết hợp nhiều phương thức thanh toán trên cùng một đơn và khóa sổ ca thu ngân minh bạch.',
+      description: 'Tìm hàng hóa tức thì theo tên hoặc mã SKU, gộp nhiều phương thức thanh toán và chốt ca tiền mặt minh bạch.',
       points: [
-        'Tốc độ tìm mặt hàng và cộng giỏ hàng tức thì, thao tác gọn trên cảm ứng.',
-        'Hỗ trợ khách trả một phần, ghi nợ phần còn lại gắn trực tiếp vào hồ sơ khách.',
-        'Mở ca – đóng ca tiền mặt đối soát chênh lệch chính xác đến từng đồng.',
-        'Kiểm kê hàng loạt bằng tệp hoặc đếm nhanh ngay trên điện thoại.',
+        'Tìm mặt hàng và cộng giỏ hàng tức thì, thao tác gọn trên cảm ứng.',
+        'Khách trả một phần, ghi nợ phần còn lại vào thẳng hồ sơ khách.',
+        'Mở ca – đóng ca tiền mặt đối soát chênh lệch rõ ràng.',
+        'Kiểm kê hàng loạt bằng tệp hoặc đếm nhanh trên điện thoại.',
       ],
       metrics: [
-        { title: 'Sổ ca tiền mặt chuyên nghiệp', sub: 'Theo dõi tiền đầu ca, thu chi mặt và kiểm đếm cuối ca', badge: 'Khớp két tiền' },
+        { title: 'Sổ ca tiền mặt chuyên nghiệp', sub: 'Theo dõi tiền đầu ca, thu chi và kiểm đếm cuối ca', badge: 'Khớp két tiền' },
         { title: 'Quản lý công nợ khách & NCC', sub: 'Thu nợ từng đợt, lưu biên nhận rõ ràng', badge: 'Không quên nợ' },
         { title: 'Nhập danh mục siêu tốc từ CSV', sub: 'Đưa hàng trăm mặt hàng lên quầy trong vài phút', badge: 'Dễ chuyển đổi' },
       ],
@@ -85,17 +85,17 @@
       shortTab: 'Đa kênh',
       storeSample: 'Hệ thống Kho Minh Khang',
       headline: 'Đồng nhất tồn kho nhiều chi nhánh và quản lý đơn kênh bán.',
-      description: 'Ghi nhận tập trung đơn bán tại quầy cùng đơn nhập thủ công từ kênh bán ngoài, phân quyền nhân sự theo kho phụ trách và lưu nhật ký kiểm toán.',
+      description: 'Gom đơn bán tại quầy cùng đơn kênh bán ngoài trên một hệ thống, giới hạn quyền nhân sự theo đúng kho phụ trách.',
       points: [
-        'Khai báo kênh bán, ánh xạ mã SKU thủ công và giữ tồn kho khi tạo đơn kênh bán.',
-        'Phân quyền nhân viên chi tiết: Chủ shop, Quản lý, Thu ngân, Thủ kho, Kế toán.',
-        'Giới hạn phạm vi kho làm việc cho từng nhân sự ở từng chi nhánh.',
-        'Nhật ký kiểm toán (Audit Log) ghi lại mọi thao tác nhạy cảm trên hệ thống.',
+        'Khai báo kênh bán, ánh xạ mã SKU và giữ tồn khi tạo đơn.',
+        'Phân quyền chi tiết: Chủ shop, Quản lý, Thu ngân, Thủ kho, Kế toán.',
+        'Giới hạn phạm vi kho làm việc cho từng nhân sự theo chi nhánh.',
+        'Nhật ký kiểm toán (Audit Log) lưu mọi thao tác nhạy cảm.',
       ],
       metrics: [
         { title: 'Phân quyền nhân sự theo kho', sub: 'Nhân viên chi nhánh nào chỉ thao tác kho được giao', badge: 'Bảo mật đa kho' },
-        { title: 'Quản lý đơn hàng kênh bán', sub: 'Lưu thông tin người nhận, địa chỉ và tiến độ giao', badge: 'Gom đơn gọn' },
-        { title: 'Nhật ký hoạt động toàn diện', sub: 'Tra cứu ai đã sửa giá, hủy đơn hoặc chỉnh tồn', badge: 'Minh bạch 100%' },
+        { title: 'Quản lý đơn hàng kênh bán', sub: 'Lưu người nhận, địa chỉ và tiến độ giao đơn', badge: 'Gom đơn gọn' },
+        { title: 'Nhật ký hoạt động toàn diện', sub: 'Tra cứu lịch sử sửa giá, hủy đơn hoặc chỉnh tồn', badge: 'Minh bạch 100%' },
       ],
     },
   };
@@ -148,7 +148,7 @@
               </form>
               <div class='lp-hero-subactions'>
                 <button type='button' class='lp-inline-link' data-action='auth-mode' data-mode='login'>Đã có tài khoản cửa hàng? <strong>Đăng nhập ngay →</strong></button>
-
+                <a class='lp-btn lp-btn-glass lp-apk-hero-btn' href='/download/android'>${icon('download', 16)}<span>Tải bản Android (.apk)</span></a>
               </div>
               <ul class='lp-trust-checks'>
                 <li><span class='lp-check-badge' aria-hidden='true'>✓</span>Dữ liệu riêng theo cửa hàng</li>
@@ -163,7 +163,7 @@
                   <button type='button' class='lp-stage-tab ${landingStageView === 'pos' ? 'active' : ''}' data-action='lp-stage-view' data-view='pos'>Màn hình Bán hàng POS</button>
                   <button type='button' class='lp-stage-tab ${landingStageView === 'dashboard' ? 'active' : ''}' data-action='lp-stage-view' data-view='dashboard'>Tổng quan &amp; Doanh thu</button>
                 </div>
-                <span class='lp-stage-pill-info'>● Ảnh chụp giao diện thật Slink</span>
+                <span class='lp-stage-caption'>Ảnh chụp giao diện thực tế</span>
               </div>
               <div class='lp-3d-stage'>
                 <div class='lp-3d-desktop'>
@@ -206,22 +206,22 @@
             <article class='lp-strip-item lp-solid-card'>
               <span>Chuẩn kế toán bán lẻ</span>
               <strong>Số nguyên VND minh bạch</strong>
-              <p>Đơn bán, trả hàng, sổ quỹ và công nợ được ghi nhận đồng bộ trong một giao dịch khép kín.</p>
+              <p>Đơn bán, trả hàng và sổ quỹ đồng bộ trong một giao dịch khép kín.</p>
             </article>
             <article class='lp-strip-item lp-solid-card'>
               <span>Quầy thu ngân linh hoạt</span>
               <strong>Thanh toán gộp đa phương thức</strong>
-              <p>Kết hợp Tiền mặt, Chuyển khoản, QR hoặc ghi nhận trả một phần ngay trên cùng một hóa đơn.</p>
+              <p>Gộp Tiền mặt, Chuyển khoản, QR hoặc trả một phần trên cùng một đơn.</p>
             </article>
             <article class='lp-strip-item lp-solid-card'>
               <span>Kiểm soát kho chặt chẽ</span>
               <strong>Đa chi nhánh &amp; Chống âm kho</strong>
-              <p>Theo dõi tồn thực tế từng kho, đặt hàng nhà cung cấp, điều chuyển nội bộ và kiểm kê nhanh.</p>
+              <p>Theo dõi tồn từng kho, nhập NCC, điều chuyển và kiểm kê nhanh.</p>
             </article>
             <article class='lp-strip-item lp-solid-card'>
               <span>Vận hành đội ngũ</span>
               <strong>Phân quyền 5 vai trò độc lập</strong>
-              <p>Tách biệt rõ Chủ cửa hàng, Quản lý, Thu ngân, Thủ kho và Kế toán kèm nhật ký kiểm toán.</p>
+              <p>Phân quyền rõ Chủ shop, Quản lý, Thu ngân, Thủ kho và Kế toán.</p>
             </article>
           </div>
         </section>
@@ -230,13 +230,13 @@
           <div class='lp-section-head'>
             <div class='lp-eyebrow'><i class='lp-eyebrow-dot' aria-hidden='true'></i>Hệ sinh thái tính năng</div>
             <h2 id='lp-features-title'>Mọi nghiệp vụ cửa hàng hội tụ trên một nền tảng tinh gọn</h2>
-            <p>Không cần ghép nối rời rạc nhiều bảng tính. Slink kết nối liền mạch từ lúc nhập hàng, lên đơn tại quầy đến khi khóa sổ cuối ngày.</p>
+            <p>Kết nối liền mạch từ lúc nhập hàng, lên đơn tại quầy đến khi khóa sổ cuối ngày trên một giao diện thống nhất.</p>
           </div>
           <div class='lp-bento-grid'>
             <article class='lp-bento-card span-7 lp-glass lp-sheen-host'>
               <span class='lp-bento-icon' aria-hidden='true'>${icon('cart', 22)}</span>
               <h3>Bán hàng tại quầy (POS) nhanh &amp; chuẩn xác</h3>
-              <p>Tìm nhanh theo tên, mã SKU hoặc danh mục; áp dụng mã khuyến mãi, chọn khách hàng, tách thanh toán nhiều hình thức và in biên nhận rõ ràng ngay lập tức.</p>
+              <p>Tìm nhanh theo tên hoặc SKU, áp dụng khuyến mãi, tách thanh toán nhiều hình thức và in biên nhận rõ ràng.</p>
               <div class='lp-bento-preview lp-solid-card'>
                 <div class='lp-preview-row'><span>Đơn #HD-1048 · Khách lẻ</span><span class='lp-pill-tag ok'>Hoàn tất</span></div>
                 <div class='lp-preview-row'><span>Thu tiền mặt + Chuyển khoản QR</span><strong>1.240.000 ₫</strong></div>
@@ -246,7 +246,7 @@
             <article class='lp-bento-card span-5 lp-glass lp-sheen-host'>
               <span class='lp-bento-icon' aria-hidden='true'>${icon('box', 22)}</span>
               <h3>Hàng hóa, Biến thể &amp; Lịch sử giá</h3>
-              <p>Quản lý mặt hàng đơn lẻ hoặc nhóm nhiều màu sắc, kích cỡ. Lưu vết mọi lần điều chỉnh giá bán, giá vốn và hỗ trợ nhập/xuất CSV hàng loạt.</p>
+              <p>Quản lý mặt hàng đơn hoặc nhiều Màu/Size, lưu vết điều chỉnh giá và hỗ trợ nhập/xuất CSV.</p>
               <div class='lp-bento-preview lp-solid-card'>
                 <div class='lp-preview-row'><span>Áo Polo Basic (Trắng / Đen · S, M, L)</span><span class='lp-pill-tag'>6 biến thể</span></div>
                 <div class='lp-preview-row'><span>Cập nhật giá bán gần nhất</span><strong>295.000 ₫</strong></div>
@@ -256,7 +256,7 @@
             <article class='lp-bento-card span-5 lp-glass lp-sheen-host'>
               <span class='lp-bento-icon' aria-hidden='true'>${icon('layers', 22)}</span>
               <h3>Đa kho, Nhập hàng NCC &amp; Điều chuyển</h3>
-              <p>Tạo đơn đặt hàng nhà cung cấp (PO), nhận hàng từng đợt, chuyển hàng giữa các kho xuất – kho nhận và kiểm kê tồn kho thực tế không gián đoạn bán hàng.</p>
+              <p>Tạo đơn nhập NCC (PO), nhận hàng từng đợt, điều chuyển giữa các kho và kiểm kê liên tục.</p>
               <div class='lp-bento-preview lp-solid-card'>
                 <div class='lp-preview-row'><span>Điều chuyển: Kho Tổng → Quầy Q1</span><span class='lp-pill-tag ok'>Đã nhận đủ</span></div>
                 <div class='lp-preview-row'><span>Đơn nhập PO-029 · Nhà cung cấp</span><strong>18.500.000 ₫</strong></div>
@@ -266,7 +266,7 @@
             <article class='lp-bento-card span-7 lp-glass lp-sheen-host'>
               <span class='lp-bento-icon' aria-hidden='true'>${icon('wallet', 22)}</span>
               <h3>Sổ quỹ, Ca thu ngân &amp; Quản lý công nợ</h3>
-              <p>Theo dõi tách biệt tiền mặt trong két và tiền vào qua ngân hàng/QR. Kiểm soát chặt các khoản phải thu từ khách mua chịu và công nợ phải trả nhà cung cấp.</p>
+              <p>Tách biệt tiền mặt trong két và tiền ngân hàng/QR; kiểm soát công nợ khách và phải trả NCC.</p>
               <div class='lp-bento-preview lp-solid-card'>
                 <div class='lp-preview-row'><span>Ca sáng · Thu ngân bàn giao két</span><span class='lp-pill-tag ok'>Chênh lệch: 0 ₫</span></div>
                 <div class='lp-preview-row'><span>Báo cáo lãi gộp sau giá vốn &amp; trả hàng</span><strong>+4.680.000 ₫</strong></div>
@@ -276,19 +276,19 @@
             <article class='lp-bento-card lp-glass lp-sheen-host'>
               <span class='lp-bento-icon' aria-hidden='true'>${icon('users', 22)}</span>
               <h3>Chăm sóc &amp; Phân nhóm khách hàng</h3>
-              <p>Lưu lịch sử giao dịch, công nợ từng khách, gắn nhãn phân loại và lưu bộ lọc tệp khách hàng theo tổng mức chi tiêu.</p>
+              <p>Lưu lịch sử mua, công nợ từng khách và bộ lọc theo mức chi tiêu.</p>
             </article>
 
             <article class='lp-bento-card lp-glass lp-sheen-host'>
               <span class='lp-bento-icon' aria-hidden='true'>${icon('shop', 22)}</span>
               <h3>Ghi nhận đơn Kênh bán ngoài</h3>
-              <p>Khai báo gian hàng, ánh xạ mã SKU thủ công với kho nội bộ để giữ hàng, xuất kho và theo dõi trạng thái giao đơn.</p>
+              <p>Ánh xạ SKU thủ công với kho nội bộ để giữ hàng và theo dõi giao đơn.</p>
             </article>
 
             <article id='lp-trust' class='lp-bento-card lp-glass lp-sheen-host'>
               <span class='lp-bento-icon' aria-hidden='true'>${icon('receipt', 22)}</span>
               <h3>Bảo mật cửa hàng &amp; Nhật ký kiểm toán</h3>
-              <p>Cô lập dữ liệu tuyệt đối giữa các cửa hàng, quản lý phiên đăng nhập thiết bị và ghi nhận đầy đủ lịch sử thao tác quan trọng.</p>
+              <p>Cô lập dữ liệu từng cửa hàng, kiểm soát phiên thiết bị và nhật ký thao tác.</p>
             </article>
           </div>
         </section>
@@ -297,7 +297,7 @@
           <div class='lp-section-head'>
             <div class='lp-eyebrow'><i class='lp-eyebrow-dot' aria-hidden='true'></i>Tối ưu theo mô hình kinh doanh</div>
             <h2 id='lp-industries-title'>Thiết kế sát thực tế cho từng ngành hàng tại Việt Nam</h2>
-            <p>Dù bạn vận hành một cửa hàng nhỏ tinh gọn hay chuỗi nhiều kho hàng, Slink tự động sắp xếp giao diện đúng với quy trình của bạn.</p>
+            <p>Tự động sắp xếp thanh điều hướng phù hợp từ cửa hàng nhỏ đến chuỗi nhiều kho.</p>
           </div>
           <div class='lp-industry-tabs' role='tablist' aria-label='Ngành hàng'>${industryTabs}</div>
           <div class='lp-industry-panel lp-glass lp-sheen-host'>
@@ -316,23 +316,23 @@
           <div class='lp-section-head'>
             <div class='lp-eyebrow'><i class='lp-eyebrow-dot' aria-hidden='true'></i>Bắt đầu dễ dàng</div>
             <h2 id='lp-workflow-title'>Sẵn sàng bán hàng chỉ sau 3 bước đơn giản</h2>
-            <p>Không cần cài đặt phần mềm phức tạp hay đào tạo dài ngày. Nhân viên mới có thể thao tác thành thạo ngay trong ca đầu tiên.</p>
+            <p>Không cần cài đặt phức tạp. Nhân viên mới thao tác thành thạo ngay trong ca đầu tiên.</p>
           </div>
           <div class='lp-steps-grid'>
             <article class='lp-step-card lp-glass'>
               <span class='lp-step-num'>1</span>
               <h3>Đăng ký cửa hàng riêng</h3>
-              <p>Nhập tên cửa hàng và chọn mô hình kinh doanh. Hệ thống tự động cấu hình thanh điều hướng gọn gàng nhất cho bạn.</p>
+              <p>Nhập tên cửa hàng và chọn ngành hàng để hệ thống cấu hình quy trình gọn gàng.</p>
             </article>
             <article class='lp-step-card lp-glass'>
               <span class='lp-step-num'>2</span>
               <h3>Đưa sản phẩm lên kệ</h3>
-              <p>Thêm nhanh mặt hàng kèm tồn kho ban đầu chỉ trong vài giây, hoặc tải lên danh sách hàng loạt bằng tệp mẫu CSV.</p>
+              <p>Thêm nhanh sản phẩm kèm tồn đầu hoặc nhập hàng loạt bằng tệp mẫu CSV.</p>
             </article>
             <article class='lp-step-card lp-glass'>
               <span class='lp-step-num'>3</span>
               <h3>Bán hàng &amp; Xem báo cáo thực</h3>
-              <p>Lên đơn trên máy tính hoặc điện thoại, quản lý ca tiền mặt và nắm bắt doanh thu, lãi gộp mọi lúc mọi nơi.</p>
+              <p>Lên đơn trên web hoặc điện thoại, chốt ca tiền mặt và theo dõi lãi gộp mọi lúc.</p>
             </article>
           </div>
         </section>
@@ -368,16 +368,61 @@
           </div>
         </section>
 
-        <footer class='lp-footer'>
-          <div class='lp-footer-inner'>
-            <div class='lp-brand'>${slinkBrandLogoHtml()}</div>
-            <div class='lp-footer-links'>
-              <button type='button' data-action='auth-mode' data-mode='login'>Đăng nhập</button>
-              <button type='button' data-action='auth-mode' data-mode='register'>Đăng ký cửa hàng</button>
-              <a href='/download/android'>Tải ứng dụng Android (.apk)</a>
-              <a href='/legal/privacy'>Chính sách quyền riêng tư</a>
-              <a href='/legal/terms'>Điều khoản sử dụng</a>
+        <footer class='lp-footer' aria-label='Thông tin bảo mật, hỗ trợ và pháp lý Slink'>
+          <div class='lp-footer-trust-strip lp-glass'>
+            <div class='lp-footer-trust-card lp-solid-card'>
+              <strong>Cô lập dữ liệu theo cửa hàng</strong>
+              <p>Mỗi cửa hàng dùng không gian dữ liệu và phân quyền kho tách biệt hoàn toàn.</p>
             </div>
+            <div class='lp-footer-trust-card lp-solid-card'>
+              <strong>Bảo vệ phiên &amp; Tài khoản</strong>
+              <p>Mật khẩu băm scrypt, phiên đăng nhập bảo vệ CSRF và nhật ký kiểm toán thao tác.</p>
+            </div>
+            <div class='lp-footer-trust-card lp-solid-card'>
+              <strong>Lưu trữ an toàn &amp; Đồng bộ</strong>
+              <p>Giao dịch số nguyên VND trên máy chủ, giữ hàng đợi đơn ngay cả khi rớt mạng.</p>
+            </div>
+          </div>
+          <div class='lp-footer-grid'>
+            <div class='lp-footer-brand'>
+              <div class='lp-brand'>${slinkBrandLogoHtml()}</div>
+              <p>Phần mềm quản lý bán hàng tinh gọn cho cửa hàng, shop thời trang, mỹ phẩm và mô hình nhiều kho tại Việt Nam.</p>
+              <div class='lp-footer-platforms'>
+                <span class='lp-pill-tag'>Web Desktop</span>
+                <span class='lp-pill-tag'>Mobile PWA</span>
+                <span class='lp-pill-tag ok'>Android 10+</span>
+              </div>
+            </div>
+            <div class='lp-footer-col'>
+              <h3>Sản phẩm</h3>
+              <div class='lp-footer-links'>
+                <button type='button' data-action='lp-scroll' data-target='lp-features'>Tính năng nổi bật</button>
+                <button type='button' data-action='lp-scroll' data-target='lp-industries'>Ngành hàng tối ưu</button>
+                <button type='button' data-action='lp-scroll' data-target='lp-workflow'>Quy trình 3 bước</button>
+                <button type='button' data-action='lp-scroll' data-target='lp-download'>Ứng dụng Android</button>
+              </div>
+            </div>
+            <div class='lp-footer-col'>
+              <h3>Tài khoản &amp; Tải app</h3>
+              <div class='lp-footer-links'>
+                <button type='button' data-action='auth-mode' data-mode='login'>Đăng nhập cửa hàng</button>
+                <button type='button' data-action='auth-mode' data-mode='register'>Tạo cửa hàng miễn phí</button>
+                <a href='/download/android'>Tải file Slink Android (.apk)</a>
+                <a href='/download/slink-latest.apk'>Liên kết tải trực tiếp mới nhất</a>
+              </div>
+            </div>
+            <div class='lp-footer-col'>
+              <h3>Bảo mật &amp; Pháp lý</h3>
+              <div class='lp-footer-links'>
+                <a href='/legal/privacy'>Chính sách quyền riêng tư</a>
+                <a href='/legal/terms'>Điều khoản sử dụng</a>
+                <button type='button' data-action='lp-scroll' data-target='lp-trust'>Kiến trúc bảo mật cửa hàng</button>
+              </div>
+            </div>
+          </div>
+          <div class='lp-footer-bottom'>
+            <span>© Slink · Quản lý bán hàng số nguyên VND &amp; tồn kho thời gian thực</span>
+            <span>Không chèn dữ liệu mẫu vào cửa hàng thật</span>
           </div>
         </footer>
       </div>

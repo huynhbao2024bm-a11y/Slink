@@ -23,7 +23,7 @@ self.addEventListener('fetch', function (event) {
     }).catch(async function () { return await caches.match(event.request) || new Response('', { status: 503 }); }));
     return;
   }
-  if (event.request.method !== 'GET' || requestUrl.origin !== self.location.origin || requestUrl.pathname.startsWith('/api/') || requestUrl.pathname === '/verify' || requestUrl.searchParams.has('token')) return;
+  if (event.request.method !== 'GET' || requestUrl.origin !== self.location.origin || requestUrl.pathname.startsWith('/api/') || requestUrl.pathname.startsWith('/download/') || requestUrl.pathname.startsWith('/legal/') || requestUrl.pathname === '/verify' || requestUrl.pathname === '/robots.txt' || requestUrl.pathname === '/sitemap.xml' || requestUrl.searchParams.has('token')) return;
   const shellFile = APP_SHELL.some(function (file) { return new URL(file, self.location.href).href === requestUrl.href; });
   event.respondWith(caches.match(event.request).then(function (cached) {
     // One worker serves one complete application bundle, even if a deploy or
