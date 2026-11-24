@@ -24,11 +24,16 @@
   }
 
   S.fn.isAndroidApp = function isAndroidApp() {
-    if (window.SlinkAndroid) return true;
+    const params = new URLSearchParams(window.location.search);
+    const detected = Boolean(window.SlinkAndroid)
+      || /\bSlinkAndroid\//i.test(navigator.userAgent)
+      || params.get('platform') === 'android'
+      || /^\d+$/.test(params.get('appVersion') || '');
     try {
-      return new URLSearchParams(window.location.search).get('platform') === 'android';
-    } catch (_error) {
-      return false;
+      if (detected) window.sessionStorage.setItem('slink_android_app', '1');
+      return detected || window.sessionStorage.getItem('slink_android_app') === '1';
+    } catch {
+      return detected;
     }
   };
 
@@ -159,10 +164,6 @@
         </div>
       </footer>
     </div>`;
-  };
-
-  S.fn.renderAndroidAuthWelcome = function renderAndroidAuthWelcome(authCardHtml) {
-    return `<div class='auth-android-shell'>${authCardHtml}</div>`;
   };
 
   S.fn.setupLandingInteractions = function setupLandingInteractions() {

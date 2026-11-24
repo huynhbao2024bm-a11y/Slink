@@ -655,7 +655,11 @@
     }
     else if (action === 'business-profile-later') { if (!S.state.activeWrites) S.fn.requestCloseModal(); }
     else if (action === 'leave-invitation') { if (!S.state.activeWrites) { S.fn.clearInvitation(); S.state.authMode = 'login'; S.fn.boot(); } }
-    else if (action === 'auth-mode') { S.state.authMode = button.dataset.mode || 'login'; S.fn.renderAuth(); }
+    else if (action === 'auth-mode') {
+      const mode = button.dataset.mode || 'login';
+      S.state.authMode = mode === 'landing' && S.fn.isAndroidApp() ? 'login' : mode;
+      S.fn.renderAuth();
+    }
     else if (action === 'logout') { S.fn.closeModal(); S.fn.signOut(); }
     else if (action === 'account-menu') S.fn.showAccountMenu();
     else if (action === 'account-settings') { S.fn.closeModal(); S.state.activeSettingsArea = 0; S.fn.routeTo('settings'); }

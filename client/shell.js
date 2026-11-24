@@ -81,10 +81,12 @@
           <button type='button' role='tab' aria-selected='${mode === 'register'}' class='auth-mode-tab ${mode === 'register' ? 'active' : ''}' data-action='auth-mode' data-mode='register'>Tạo cửa hàng</button>
         </div>`
       : '';
-    const cardHtml = `<section class='auth-card'>
+    const isApp = S.fn.isAndroidApp();
+    const cardHtml = `<section class='auth-card${isApp ? ' android-auth-card' : ''}'>
       <div class='auth-brand'>
         <span class='brand-mark' aria-hidden='true'><svg viewBox='0 0 32 32'><path d='M8 8.5h16v5H13v2h11v8H8v-5h11v-2H8z' fill='currentColor'/><circle cx='24.5' cy='7.5' r='2.5' fill='#c8f36c'/></svg></span>
         <span class='brand-name'>slink<span class='brand-period'>.</span></span>
+        ${isApp ? "<span class='android-auth-label'>Android</span>" : ''}
       </div>
       ${modeTabs}
       <h1>${S.fn.esc(title)}</h1>
@@ -93,10 +95,9 @@
       ${body}
       <div class='auth-footnote'><button type='button' class='link-button' data-action='open-legal' data-kind='terms'>Điều khoản</button> · <button type='button' class='link-button' data-action='open-legal' data-kind='privacy'>Bảo mật</button></div>
     </section>`;
-    const isApp = typeof S.fn.isAndroidApp === 'function' && S.fn.isAndroidApp();
-    if (isApp && typeof S.fn.renderAndroidAuthWelcome === 'function') {
+    if (isApp) {
       S.dom.authRoot.className = 'auth-screen is-android-welcome';
-      S.dom.authRoot.innerHTML = S.fn.renderAndroidAuthWelcome(cardHtml);
+      S.dom.authRoot.innerHTML = cardHtml;
     } else if (!isApp && showModeTabs && typeof S.fn.renderWebAuthLanding === 'function') {
       S.dom.authRoot.className = 'auth-screen is-web-landing';
       S.dom.authRoot.innerHTML = S.fn.renderWebAuthLanding(cardHtml);

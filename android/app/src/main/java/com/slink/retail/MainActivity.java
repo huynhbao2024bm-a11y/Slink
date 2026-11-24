@@ -106,6 +106,7 @@ public class MainActivity extends Activity {
         setContentView(frame);
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
         WebSettings settings = web.getSettings();
+        settings.setUserAgentString(settings.getUserAgentString() + " SlinkAndroid/" + BuildConfig.VERSION_NAME);
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setAllowFileAccess(false);
@@ -194,7 +195,10 @@ public class MainActivity extends Activity {
         updater.check(false);
         Uri incoming = getIntent().getData();
         Uri initial = incoming != null && isAppOrigin(incoming) ? incoming : Uri.parse(BuildConfig.APP_ORIGIN + "/");
-        web.loadUrl(initial.buildUpon().appendQueryParameter("appVersion", String.valueOf(BuildConfig.VERSION_CODE)).build().toString());
+        web.loadUrl(initial.buildUpon()
+                .appendQueryParameter("platform", "android")
+                .appendQueryParameter("appVersion", String.valueOf(BuildConfig.VERSION_CODE))
+                .build().toString());
     }
 
     private void launchFileChooser() {

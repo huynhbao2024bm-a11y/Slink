@@ -4,6 +4,12 @@
 
 Status labels: **Not started**, **In progress**, **Blocked by external dependency**, **Evidence passed**. “Evidence passed” applies only to the named milestone, never to the whole product by implication.
 
+## 2026-11-24 · Màn hình tài khoản Android 0.9.1.1
+
+- Android hiển thị thẻ đăng nhập hoặc tạo cửa hàng riêng. Web tiếp tục có trang giới thiệu. Màn hình tài khoản dùng các biểu mẫu hiện hành và mở điều khoản, quyền riêng tư ngay trong ứng dụng.
+- WebView nhận diện Android qua cầu nối, User-Agent hoặc tham số khởi chạy. Phiên hiện tại giữ chế độ Android khi tải lại hoặc thay đổi địa chỉ.
+- Điều kiện phát hành gồm kiểm tra trên trình duyệt ở kích thước điện thoại và máy tính bảng, kiểm tra chữ ký APK với bản đã phát hành, và kiểm tra dịch vụ Render sau khi cập nhật `main`.
+
 ## Cập nhật Slink 0.8.0.1 — Tinh gọn Toàn diện Giao diện Android/Mobile & Loại bỏ Giải thích Thừa (2026-11-22)
 
 - **Hoàn thiện kiểu dáng & bố cục trên màn hình nhỏ (`workspace.css`, `styles.css`):**
