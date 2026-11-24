@@ -73,7 +73,38 @@
 
   S.fn.authCard = function authCard(title, subtitle, body, message, tone) {
     document.body.classList.remove('pos-fullscreen');
-    S.dom.authRoot.innerHTML = `<section class='auth-card'><div class='auth-brand'><span class='brand-mark' aria-hidden='true'><svg viewBox='0 0 32 32'><path d='M8 8.5h16v5H13v2h11v8H8v-5h11v-2H8z' fill='currentColor'/><circle cx='24.5' cy='7.5' r='2.5' fill='#c8f36c'/></svg></span><span class='brand-name'>slink<span class='brand-period'>.</span></span></div><h1>${S.fn.esc(title)}</h1><p>${S.fn.esc(subtitle)}</p>${message ? `<div class='auth-message ${tone === 'error' ? 'error' : ''}'>${message}</div>` : ''}${body}<div class='auth-footnote'>Dữ liệu chỉ dành cho người được cấp quyền. · <button type='button' class='link-button' data-action='open-legal' data-kind='terms'>Điều khoản</button> · <button type='button' class='link-button' data-action='open-legal' data-kind='privacy'>Bảo mật</button></div></section>`;
+    const mode = S.state.authMode;
+    const showModeTabs = mode === 'login' || mode === 'register';
+    const modeTabs = showModeTabs
+      ? `<div class='auth-mode-tabs' role='tablist' aria-label='Tài khoản'>
+          <button type='button' role='tab' aria-selected='${mode === 'login'}' class='auth-mode-tab ${mode === 'login' ? 'active' : ''}' data-action='auth-mode' data-mode='login'>Đăng nhập</button>
+          <button type='button' role='tab' aria-selected='${mode === 'register'}' class='auth-mode-tab ${mode === 'register' ? 'active' : ''}' data-action='auth-mode' data-mode='register'>Tạo cửa hàng</button>
+        </div>`
+      : '';
+    const cardHtml = `<section class='auth-card'>
+      <div class='auth-brand'>
+        <span class='brand-mark' aria-hidden='true'><svg viewBox='0 0 32 32'><path d='M8 8.5h16v5H13v2h11v8H8v-5h11v-2H8z' fill='currentColor'/><circle cx='24.5' cy='7.5' r='2.5' fill='#c8f36c'/></svg></span>
+        <span class='brand-name'>slink<span class='brand-period'>.</span></span>
+      </div>
+      ${modeTabs}
+      <h1>${S.fn.esc(title)}</h1>
+      ${subtitle ? `<p>${S.fn.esc(subtitle)}</p>` : ''}
+      ${message ? `<div class='auth-message ${tone === 'error' ? 'error' : ''}'>${message}</div>` : ''}
+      ${body}
+      <div class='auth-footnote'><button type='button' class='link-button' data-action='open-legal' data-kind='terms'>Điều khoản</button> · <button type='button' class='link-button' data-action='open-legal' data-kind='privacy'>Bảo mật</button></div>
+    </section>`;
+    const isApp = typeof S.fn.isAndroidApp === 'function' && S.fn.isAndroidApp();
+    if (isApp && typeof S.fn.renderAndroidAuthWelcome === 'function') {
+      S.dom.authRoot.className = 'auth-screen is-android-welcome';
+      S.dom.authRoot.innerHTML = S.fn.renderAndroidAuthWelcome(cardHtml);
+    } else if (!isApp && showModeTabs && typeof S.fn.renderWebAuthLanding === 'function') {
+      S.dom.authRoot.className = 'auth-screen is-web-landing';
+      S.dom.authRoot.innerHTML = S.fn.renderWebAuthLanding(cardHtml);
+      S.fn.setupLandingInteractions?.();
+    } else {
+      S.dom.authRoot.className = 'auth-screen';
+      S.dom.authRoot.innerHTML = cardHtml;
+    }
     S.dom.appShell.hidden = true;
     S.dom.authRoot.hidden = false;
   }
@@ -312,7 +343,7 @@
     if (S.fn.hasPerm('recordCashbook') || S.fn.hasPerm('viewReports')) {
       add('finance', 'finance-income', 'Thu chi & công nợ', 'Ghi phiếu thu chi, mở ca tiền mặt và theo dõi công nợ khách hàng / nhà cung cấp.');
     }
-    steps.push({ route: S.state.page, target: 'settings-gear', title: 'Cài đặt cửa hàng', detail: 'Thiết lập thông tin cửa hàng, máy in/loa đọc tiền, tài khoản VietQR và sao lưu dữ liệu.' });
+    steps.push({ route: S.state.page, target: 'settings-gear', title: 'Cài đặt cửa hàng', detail: 'Thiết lập thông tin cửa hàng, máy in, loa đọc tiền và tài khoản ngân hàng.' });
     return S.state.cart.length ? steps.filter(step => step.route === S.state.page) : steps;
   }
 
@@ -492,8 +523,8 @@
 
 
   S.fn.renderAuth = function renderAuth(message, tone, verificationUrl) {
-    let title = 'Đăng nhập Slink';
-    let subtitle = 'Quản lý cửa hàng của bạn trên mọi thiết bị.';
+    let title = 'Đăng nhập';
+    let subtitle = '';
     let body = '';
     if (S.state.authMode === 'invite-confirm' && S.state.invitationInfo) {
       title = 'Xác nhận tham gia cửa hàng';
@@ -501,30 +532,30 @@
       body = `<form class='auth-form' data-auth-form='invite-accept'><p class='muted'>Lời mời dành cho ${S.fn.esc(S.state.invitationInfo.email)}.</p><button class='btn btn-primary auth-submit' type='submit'>Tham gia cửa hàng</button></form><button class='auth-switch' type='button' data-action='leave-invitation'>Để sau</button>`;
     } else if (S.state.authMode === 'invite-register') {
       title = 'Tham gia cửa hàng';
-      subtitle = S.state.invitationInfo ? `Bạn được mời tham gia ${S.state.invitationInfo.storeName} với vai trò ${S.fn.staffRoleName(S.state.invitationInfo.role)}.` : 'Hoàn tất đăng ký từ lời mời của cửa hàng.';
+      subtitle = S.state.invitationInfo ? `${S.state.invitationInfo.storeName} · ${S.fn.staffRoleName(S.state.invitationInfo.role)}` : '';
       body = `<form class='auth-form' data-auth-form='invite-register'><div class='form-field'><label class='input-label' for='auth-name'>Tên của bạn</label><input class='input' id='auth-name' name='displayName' autocomplete='name' required minlength='2' maxlength='120'/></div><div class='form-field'><label class='input-label' for='auth-email'>Email được mời</label><input class='input' id='auth-email' name='email' type='email' value='${S.fn.esc(S.state.invitationInfo ? S.state.invitationInfo.email : '')}' readonly/></div>${S.fn.authPasswordField('auth-password', 'password', 'Mật khẩu (tối thiểu 12 ký tự)', 'new-password')}${S.fn.authPasswordField('auth-password-confirm', 'passwordConfirm', 'Nhập lại mật khẩu', 'new-password', 'auth-password')}<button class='btn btn-primary auth-submit' type='submit'>Tạo tài khoản và tham gia</button></form><button class='auth-switch' type='button' data-action='auth-mode' data-mode='invite-login'>Đã có tài khoản? Đăng nhập</button>`;
     } else if (S.state.authMode === 'register') {
-      title = 'Bắt đầu với Slink';
-      subtitle = 'Thông tin của bạn và cửa hàng.';
-      body = `<form class='auth-form' data-auth-form='register'><input type='hidden' name='workspaceMode' value='shop'/><div class='form-field'><label class='input-label' for='auth-name'>Tên của bạn</label><input class='input' id='auth-name' name='displayName' autocomplete='name' required minlength='2' maxlength='120'/></div><div class='form-field' data-shop-registration><label class='input-label' for='auth-store'>Tên cửa hàng</label><input class='input' id='auth-store' name='storeName' autocomplete='organization' required minlength='2' maxlength='160'/></div><div class='form-field'><label class='input-label' for='auth-email'>Email</label><input class='input' id='auth-email' name='email' type='email' autocomplete='email' required maxlength='254'/></div>${S.fn.authPasswordField('auth-password', 'password', 'Mật khẩu (tối thiểu 12 ký tự)', 'new-password')}${S.fn.authPasswordField('auth-password-confirm', 'passwordConfirm', 'Nhập lại mật khẩu', 'new-password', 'auth-password')}<button class='btn btn-primary auth-submit' type='submit'>Tạo tài khoản</button></form><button class='auth-switch' type='button' data-action='auth-mode' data-mode='login'>Đã có tài khoản? Đăng nhập</button>`;
+      title = 'Tạo cửa hàng';
+      subtitle = '';
+      body = `<form class='auth-form' data-auth-form='register'><input type='hidden' name='workspaceMode' value='shop'/><div class='form-field'><label class='input-label' for='auth-name'>Tên của bạn</label><input class='input' id='auth-name' name='displayName' autocomplete='name' required minlength='2' maxlength='120'/></div><div class='form-field' data-shop-registration><label class='input-label' for='auth-store'>Tên cửa hàng</label><input class='input' id='auth-store' name='storeName' autocomplete='organization' required minlength='2' maxlength='160'/></div><div class='form-field'><label class='input-label' for='auth-email'>Email</label><input class='input' id='auth-email' name='email' type='email' autocomplete='email' required maxlength='254'/></div>${S.fn.authPasswordField('auth-password', 'password', 'Mật khẩu (tối thiểu 12 ký tự)', 'new-password')}${S.fn.authPasswordField('auth-password-confirm', 'passwordConfirm', 'Nhập lại mật khẩu', 'new-password', 'auth-password')}<button class='btn btn-primary auth-submit' type='submit'>Tạo tài khoản</button></form>`;
     } else if (S.state.authMode === 'resend') {
       title = 'Gửi lại email xác nhận';
-      subtitle = 'Nhập email đã dùng khi đăng ký Slink.';
+      subtitle = 'Nhập email đã đăng ký Slink.';
       body = `<form class='auth-form' data-auth-form='resend'><div class='form-field'><label class='input-label' for='auth-email'>Email</label><input class='input' id='auth-email' name='email' type='email' autocomplete='email' required maxlength='254'/></div><button class='btn btn-primary auth-submit' type='submit'>Gửi liên kết mới</button></form><button class='auth-switch' type='button' data-action='auth-mode' data-mode='login'>Quay lại đăng nhập</button>`;
     } else if (S.state.authMode === 'reset') {
       title = 'Đặt lại mật khẩu';
-      subtitle = 'Nhập email đã đăng ký để nhận liên kết bảo mật.';
+      subtitle = 'Nhập email đã đăng ký để nhận liên kết đặt lại.';
       body = `<form class='auth-form' data-auth-form='reset'><div class='form-field'><label class='input-label' for='auth-email'>Email</label><input class='input' id='auth-email' name='email' type='email' autocomplete='email' required maxlength='254'/></div><button class='btn btn-primary auth-submit' type='submit'>Gửi liên kết đặt lại</button></form><button class='auth-switch' type='button' data-action='auth-mode' data-mode='login'>Quay lại đăng nhập</button>`;
     } else if (S.state.authMode === 'reset-complete') {
       title = 'Tạo mật khẩu mới';
-      subtitle = 'Liên kết có hiệu lực trong một giờ và chỉ dùng một lần.';
+      subtitle = '';
       const resetToken = new URLSearchParams(window.location.hash.slice(1)).get('reset') || '';
       body = resetToken ? `<form class='auth-form' data-auth-form='reset-complete'><input type='hidden' name='token' value='${S.fn.esc(resetToken)}'/>${S.fn.authPasswordField('auth-password', 'password', 'Mật khẩu mới (tối thiểu 12 ký tự)', 'new-password')}${S.fn.authPasswordField('auth-password-confirm', 'passwordConfirm', 'Nhập lại mật khẩu', 'new-password', 'auth-password')}<button class='btn btn-primary auth-submit' type='submit'>Cập nhật mật khẩu</button></form>` : `<div class='auth-message error'>Liên kết đặt lại mật khẩu không hợp lệ hoặc đã hết hạn.</div>`;
       body += `<button class='auth-switch' type='button' data-action='auth-mode' data-mode='login'>Quay lại đăng nhập</button>`;
     } else {
       const invited = S.state.authMode === 'invite-login' && S.state.invitationInfo;
-      if (invited) { title = 'Đăng nhập để tham gia'; subtitle = `Lời mời vào ${S.state.invitationInfo.storeName} · ${S.fn.staffRoleName(S.state.invitationInfo.role)}.`; }
-      body = `<form class='auth-form' data-auth-form='login'><div class='form-field'><label class='input-label' for='auth-email'>Email</label><input class='input' id='auth-email' name='email' type='email' autocomplete='username' value='${S.fn.esc(invited ? S.state.invitationInfo.email : '')}' required maxlength='254'/></div>${S.fn.authPasswordField('auth-password', 'password', 'Mật khẩu', 'current-password')}<button class='btn btn-primary auth-submit' type='submit'>${invited ? 'Đăng nhập và tham gia' : 'Đăng nhập'}</button></form>${invited ? `<button class='auth-switch' type='button' data-action='auth-mode' data-mode='invite-register'>Tạo tài khoản mới bằng lời mời</button><button class='auth-switch' type='button' data-action='auth-mode' data-mode='resend'>Gửi lại email xác nhận</button>` : `<button class='auth-switch' type='button' data-action='auth-mode' data-mode='reset'>Quên mật khẩu?</button><button class='auth-switch' type='button' data-action='auth-mode' data-mode='register'>Tạo tài khoản</button><button class='auth-switch' type='button' data-action='auth-mode' data-mode='resend'>Gửi lại email xác nhận</button>`}`;
+      if (invited) { title = 'Đăng nhập để tham gia'; subtitle = `${S.state.invitationInfo.storeName} · ${S.fn.staffRoleName(S.state.invitationInfo.role)}`; }
+      body = `<form class='auth-form' data-auth-form='login'><div class='form-field'><label class='input-label' for='auth-email'>Email</label><input class='input' id='auth-email' name='email' type='email' autocomplete='username' value='${S.fn.esc(invited ? S.state.invitationInfo.email : '')}' required maxlength='254'/></div>${S.fn.authPasswordField('auth-password', 'password', 'Mật khẩu', 'current-password')}<button class='btn btn-primary auth-submit' type='submit'>${invited ? 'Đăng nhập và tham gia' : 'Đăng nhập'}</button></form><div class='auth-secondary-links'>${invited ? `<button class='link-button' type='button' data-action='auth-mode' data-mode='invite-register'>Tạo tài khoản mới</button><button class='link-button' type='button' data-action='auth-mode' data-mode='resend'>Gửi lại xác nhận</button>` : `<button class='link-button' type='button' data-action='auth-mode' data-mode='reset'>Quên mật khẩu?</button><button class='link-button' type='button' data-action='auth-mode' data-mode='resend'>Gửi lại xác nhận</button>`}</div>`;
     }
     let htmlMessage = message ? S.fn.esc(message) : '';
     if (verificationUrl) htmlMessage += `<br/><a href='${S.fn.esc(verificationUrl)}'>${S.state.authMode === 'reset' ? 'Mở liên kết đặt lại mật khẩu' : 'Xác nhận email và kích hoạt cửa hàng'}</a>`;
@@ -638,7 +669,7 @@
       "<section class='affiliate-links' role='list' aria-label='Link của tôi'>" + (cards || "<div class='empty-state' role='listitem'><strong>Link của bạn ở đây</strong><span>Đã có link từ TikTok Shop hoặc Shopee? Dán vào là lưu được.</span><button class='btn btn-primary' data-action='new-affiliate-link'>Lưu link đầu tiên</button></div>") + "</section>" +
       (S.state.affiliateState.loading ? "<p role='status'>Đang tải link…</p>" : '') +
       (S.state.affiliateState.nextOffset !== null ? "<button class='btn btn-secondary' data-action='more-affiliate-links'>Xem thêm</button>" : '') +
-      "<details class='work-details'><summary>Đơn hàng và hoa hồng</summary><div class='affiliate-connection-note'><strong>Chưa kết nối dữ liệu tài khoản sàn</strong><p>Lưu link không tự tạo quyền nhận hoa hồng. Cần dùng link tiếp thị do sàn cấp; số đơn và hoa hồng phải được sàn xác nhận.</p><p>TikTok Shop và Shopee sẽ dùng chung cách theo dõi, nhưng kết nối và quyền truy cập của mỗi sàn được xử lý riêng.</p></div></details>";
+      "<details class='work-details'><summary>Trạng thái kết nối</summary><div class='affiliate-connection-note'><strong>Chưa kết nối</strong><p>Xin lỗi, dịch vụ này hiện chưa được kết nối với nhà cung cấp.</p></div></details>";
   }
 
 
@@ -1074,7 +1105,7 @@
           actions.append(menu);
         }
         extras.forEach(function (node) { menu.querySelector('div').append(node); });
-        menu.querySelector('summary').textContent = 'Thêm';
+        menu.querySelector('summary').textContent = 'Khác';
       }
     }
     if (S.state.page === 'customers') {
@@ -1210,7 +1241,7 @@
 
 
   S.fn.renderWorkspaceLinks = function renderWorkspaceLinks(groups) {
-    const descriptions = { promotions: 'Mã giảm giá & ưu đãi', pos: 'Bán hàng tại quầy', dashboard: 'Tổng quan hôm nay', finance: 'Sổ quỹ, thu chi & công nợ', orders: 'Hóa đơn & trả hàng', inventory: 'Tồn kho theo cửa hàng', 'inventory-count': 'Kiểm kho & cân bằng', 'inventory-transfer': 'Chuyển hàng giữa các kho', 'inventory-receive': 'Nhập hàng nhà cung cấp', products: 'Danh mục sản phẩm & giá', customers: 'Khách hàng & điểm thưởng', suppliers: 'Nhà cung cấp & công nợ NCC', channels: 'Đồng bộ kênh bán online', staff: 'Tài khoản & phân quyền', reports: 'Báo cáo doanh thu & lãi lỗ', settings: 'Cửa hàng, VietQR & thiết bị', audit: 'Lịch sử thao tác' };
+    const descriptions = { promotions: 'Mã giảm giá & ưu đãi', pos: 'Bán hàng tại quầy', dashboard: 'Tổng quan hôm nay', finance: 'Sổ quỹ, thu chi & công nợ', orders: 'Hóa đơn & trả hàng', inventory: 'Tồn kho theo cửa hàng', 'inventory-count': 'Kiểm kho & cân bằng', 'inventory-transfer': 'Chuyển hàng giữa các kho', 'inventory-receive': 'Nhập hàng nhà cung cấp', products: 'Danh mục sản phẩm & giá', customers: 'Khách hàng & điểm thưởng', suppliers: 'Nhà cung cấp & công nợ NCC', channels: 'Đồng bộ kênh bán online', staff: 'Tài khoản & phân quyền', reports: 'Báo cáo doanh thu & lãi lỗ', settings: 'Cửa hàng, ngân hàng & thiết bị', audit: 'Lịch sử thao tác' };
     return "<div class='workspace-directory'>" + groups.map(function (group) {
       const items = group.routes.filter(S.fn.canAccessRoute).map(function (id) { return S.state.navItems.find(function (item) { return item.id === id; }); }).filter(Boolean);
       return items.length ? (group.folded ? "<details class='directory-group directory-fold'><summary>" + S.fn.esc(group.title) + '</summary>' : "<section class='directory-group'>" + (group.title ? "<h2>" + S.fn.esc(group.title) + "</h2>" : '')) + items.map(function (item) { return "<button class='directory-link' type='button' data-route='" + item.id + "'>" + S.fn.icon(item.icon, 21) + "<span><strong>" + S.fn.esc(item.label) + "</strong><small>" + S.fn.esc(descriptions[item.id] || '') + "</small></span><span aria-hidden='true'>→</span></button>"; }).join('') + (group.folded ? '</details>' : '</section>') : '';
@@ -1227,7 +1258,7 @@
     const body = `<div class='account-summary'><span class='account-avatar' aria-hidden='true'>${avatar}</span><div class='account-summary-copy'><strong>${displayName}</strong><span>${email}</span></div></div><div class='account-store'><span class='account-store-label'>Cửa hàng</span><strong>${storeName}</strong></div>`;
     const switchButton = S.state.store.id && S.state.authSession.stores.length > 1 ? `<button class='btn btn-secondary' data-action='store-picker'>Đổi cửa hàng</button>` : '';
     const footer = `${switchButton}<button class='btn btn-secondary' data-action='account-settings'>Cài đặt tài khoản</button><button class='btn btn-danger' data-action='logout'>Đăng xuất</button>`;
-    S.fn.showModal('Tài khoản', 'Quản lý phiên đăng nhập và thông tin cửa hàng.', body, footer);
+    S.fn.showModal('Tài khoản', '', body, footer);
   }
 
 
@@ -1238,7 +1269,7 @@
       const current = item.id === S.state.store.id;
       return `<button class='store-option' type='button' data-action='switch-store' data-id='${S.fn.esc(item.id)}' ${current ? 'disabled aria-current="true"' : ''}><span><strong>${S.fn.esc(item.name)}</strong><small>${S.fn.esc(S.fn.staffRoleName(item.role))}</small></span><span>${current ? 'Đang mở' : 'Mở →'}</span></button>`;
     }).join('');
-    S.fn.showModal('Đổi cửa hàng', 'Chọn cửa hàng bạn muốn làm việc. Giỏ nháp và chứng từ chờ được giữ riêng cho từng nơi.', `<div class='store-options'>${rows}</div><p class='auth-message error' data-store-switch-error role='alert' hidden></p>`, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button>`);
+    S.fn.showModal('Đổi cửa hàng', '', `<div class='store-options'>${rows}</div><p class='auth-message error' data-store-switch-error role='alert' hidden></p>`, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button>`);
   }
 
 
@@ -1278,14 +1309,14 @@
     const body = `<div class='help-section'>
         <h3>Quy trình vận hành chính</h3>
         <div class='notice-list'>
-          <div class='notice-item'><span>${S.fn.icon('cart', 18)}</span><span><strong>Bán hàng &amp; QR Ngân hàng</strong><small>Chạm mặt hàng hoặc quét mã vạch, bấm <strong>Thanh toán</strong>, chọn Tiền mặt / VietQR / Ghi nợ. Bật loa đọc tiền tự động trong Cài đặt → Bán hàng &amp; Thiết bị.</small></span></div>
-          <div class='notice-item'><span>${S.fn.icon('users', 18)}</span><span><strong>Nhân sự &amp; Chấm công tự động</strong><small>Cấp tài khoản đăng nhập trực tiếp tại quầy, hệ thống tự tính ngày công, hoa hồng thực thu (đã trừ hàng trả), tạm ứng và cảnh báo lệch két.</small></span></div>
-          <div class='notice-item'><span>${S.fn.icon('receipt', 18)}</span><span><strong>Khách hàng, Đổi trả &amp; Bảo hành</strong><small>Tích điểm tự động theo số điện thoại, tra cứu Serial / IMEI còn hạn bảo hành và hoàn trả hàng trừ trực tiếp doanh số thực thu.</small></span></div>
-          <div class='notice-item'><span>${S.fn.icon('layers', 18)}</span><span><strong>Kho, Nhập hàng &amp; Đồng bộ Offline</strong><small>Kiểm kê nhanh theo quét mã, nhập hàng từ nhà cung cấp và tự động xếp hàng gửi lại đơn khi mất mạng tạm thời.</small></span></div>
+          <div class='notice-item'><span>${S.fn.icon('cart', 18)}</span><span><strong>Bán hàng &amp; Chuyển khoản</strong><small>Chạm mặt hàng hoặc quét mã vạch, bấm <strong>Thanh toán</strong>, chọn Tiền mặt / Chuyển khoản / Ghi nợ.</small></span></div>
+          <div class='notice-item'><span>${S.fn.icon('users', 18)}</span><span><strong>Nhân sự &amp; Chấm công</strong><small>Tự tính ngày công, hoa hồng thực thu và tạm ứng theo ca.</small></span></div>
+          <div class='notice-item'><span>${S.fn.icon('receipt', 18)}</span><span><strong>Khách hàng, Đổi trả &amp; Bảo hành</strong><small>Tích điểm theo số điện thoại và tra cứu Serial / IMEI.</small></span></div>
+          <div class='notice-item'><span>${S.fn.icon('layers', 18)}</span><span><strong>Kho &amp; Kiểm kê</strong><small>Kiểm kê quét mã và tự giữ đơn an toàn khi mất mạng.</small></span></div>
         </div>
       </div>
       <div class='help-section'>
-        <h3>Phím tắt bán hàng nhanh (PC / Laptop tại quầy)</h3>
+        <h3>Phím tắt bán hàng nhanh</h3>
         <div class='help-shortcut-grid'>
           <div class='help-shortcut-item'><kbd>F1</kbd><span>Thêm đơn chờ mới</span></div>
           <div class='help-shortcut-item'><kbd>F2</kbd><span>Tìm / quét sản phẩm</span></div>
@@ -1295,7 +1326,7 @@
           <div class='help-shortcut-item'><kbd>F9</kbd><span>Thanh toán ngay</span></div>
         </div>
       </div>`;
-    S.fn.showModal('Hướng dẫn sử dụng', 'Thao tác nhanh tại quầy và phím tắt.', body, `<button class='btn btn-secondary' type='button' data-action='change-task-focus'>Đổi màn hình mở đầu</button><button class='btn btn-primary' type='button' data-action='close-modal'>Đóng</button>`, true);
+    S.fn.showModal('Hướng dẫn sử dụng', '', body, `<button class='btn btn-secondary' type='button' data-action='change-task-focus'>Đổi màn hình mở đầu</button><button class='btn btn-primary' type='button' data-action='close-modal'>Đóng</button>`, true);
   }
 
 

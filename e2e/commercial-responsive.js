@@ -828,7 +828,7 @@ async function runViewportAudit(browser, origin, viewport, label) {
     await assertNoHorizontalOverflow(page, `${label}:staff-radar`);
 
     const assetsOk = await page.evaluate(async () => {
-      const urls = ['/offline-conflict-ui.js', '/supplier-returns-ui.js', '/barcode-tools.js', '/banks-vn.js', '/vietqr-tools.js', '/escpos-printer.js', '/integrations-ui.js', '/finance-vouchers-ui.js', '/sync-bus.js', '/pos-hardware.js', '/receipt-image.js', '/client/core.js', '/client/charts.js', '/client/shell.js', '/client/pos.js', '/client/products.js', '/client/dashboard.js', '/client/reports.js'];
+      const urls = ['/offline-conflict-ui.js', '/supplier-returns-ui.js', '/barcode-tools.js', '/banks-vn.js', '/vietqr-tools.js', '/escpos-printer.js', '/integrations-ui.js', '/finance-vouchers-ui.js', '/sync-bus.js', '/pos-hardware.js', '/receipt-image.js', '/client/core.js', '/client/charts.js', '/client/landing.js', '/client/shell.js', '/client/pos.js', '/client/products.js', '/client/dashboard.js', '/client/reports.js'];
       const responses = await Promise.all(urls.map((u) => fetch(u, { credentials: 'same-origin' })));
       return responses.every((r) => r.ok) && Boolean(window.Slink && window.Slink.charts) && Boolean(window.SlinkBarcodeTools) && Boolean(window.SlinkOfflineConflictUI) && Boolean(window.SlinkReturnsExchangeUI) && Boolean(window.SlinkIntegrationsUI) && Boolean(window.SlinkVietQrTools) && Boolean(window.SlinkFinanceUI) && Boolean(window.SlinkSyncBus) && Boolean(window.SlinkPosHardware) && Boolean(window.SlinkReceiptImage);
     });
