@@ -425,6 +425,7 @@
     S.state.activeSettingsArea = index >= 0 && index < sections.length ? index : 0;
     sections.forEach(function (section, i) { section.hidden = i !== S.state.activeSettingsArea; });
     S.dom.root.querySelectorAll('[data-action="settings-area"]').forEach(function (button, i) { button.setAttribute('aria-selected', String(i === S.state.activeSettingsArea)); button.tabIndex = i === S.state.activeSettingsArea ? 0 : -1; });
+    S.fn.syncTabGliders?.(S.dom.root);
   }
 
 

@@ -24,6 +24,53 @@
   function slinkBrandLogoHtml() {
     return `<span class='lp-brand-mark' aria-hidden='true'><svg viewBox='0 0 32 32'><path d='M8 8.5h16v5H13v2h11v8H8v-5h11v-2H8z' fill='currentColor'/><circle cx='24.5' cy='7.5' r='2.5' fill='#c8f36c'/></svg></span><span class='lp-brand-text'>slink<span class='lp-brand-dot'>.</span></span>`;
   }
+  S.fn.slinkBrandLogoHtml = slinkBrandLogoHtml;
+
+  S.fn.renderAuthPortalAside = function renderAuthPortalAside(mode) {
+    const isRegisterFlow = mode === 'register' || mode === 'invite-register';
+    const badge = isRegisterFlow ? '✦ Khởi tạo nhanh trong 1 phút' : '● Vận hành đồng bộ thời gian thực';
+    const heading = isRegisterFlow
+      ? 'Thiết lập không gian vận hành riêng cho cửa hàng.'
+      : 'Chào mừng trở lại quầy quản lý cửa hàng Slink.';
+    const lead = isRegisterFlow
+      ? 'Dữ liệu độc lập theo từng cửa hàng, sẵn sàng cho bán hàng tại quầy, kiểm kho, sổ quỹ và phân quyền nhân sự.'
+      : 'Tiếp tục lên đơn tại quầy, tra cứu tồn kho chi nhánh, đối soát ca tiền mặt và theo dõi lãi gộp hôm nay.';
+    const previewImg = isRegisterFlow ? './assets/slink-showcase-web-dashboard.webp' : './assets/slink-showcase-web-pos.webp';
+    const previewTitle = isRegisterFlow ? 'Slink · Tổng quan cửa hàng' : 'Slink · Quầy bán hàng POS';
+    const highlights = isRegisterFlow
+      ? [
+          ['1', 'Không trộn dữ liệu mẫu', 'Cửa hàng mới sạch sẽ, chỉ lưu giao dịch thực tế của bạn.'],
+          ['2', 'Tối ưu theo ngành hàng', 'Thời trang, mỹ phẩm, tạp hóa và mô hình nhiều kho.'],
+          ['3', 'Bảo mật tiêu chuẩn cao', 'Mật khẩu tối thiểu 12 ký tự, kiểm soát phiên từng thiết bị.'],
+        ]
+      : [
+          ['✓', 'Bán hàng & thu ngân mượt mà', 'Tính tiền nhanh, tách phương thức thanh toán và in hóa đơn.'],
+          ['✓', 'Phân quyền 5 vai trò theo kho', 'Tự động mở đúng phạm vi cho Chủ shop, Quản lý, Thu ngân, Thủ kho.'],
+          ['✓', 'An toàn dữ liệu tuyệt đối', 'Băm mật khẩu scrypt, chống CSRF và lưu nhật ký kiểm toán.'],
+        ];
+    const itemsHtml = highlights.map(function (item) {
+      return `<div class='auth-aside-item'><span class='lp-check-badge' aria-hidden='true'>${item[0]}</span><div><strong>${esc(item[1])}</strong><small>${esc(item[2])}</small></div></div>`;
+    }).join('');
+
+    return `<aside class='auth-portal-aside'>
+      <div class='auth-aside-top'>
+        <span class='auth-aside-badge'>${badge}</span>
+        <h2>${esc(heading)}</h2>
+        <p>${esc(lead)}</p>
+      </div>
+      <div class='auth-aside-showcase' aria-hidden='true'>
+        <div class='auth-aside-frame'>
+          <div class='lp-3d-desktop-bar'><i></i><i></i><i></i><span>${previewTitle}</span></div>
+          <img class='auth-aside-showcase-img' src='${previewImg}' alt='' width='1440' height='900' loading='eager' decoding='async'/>
+          <div class='lp-3d-glare'></div>
+        </div>
+        <span class='auth-aside-chip auth-aside-chip-top'><i aria-hidden='true'></i>Số nguyên VND</span>
+        <span class='auth-aside-chip auth-aside-chip-bottom'><i aria-hidden='true'></i>Đồng bộ kho tức thì</span>
+      </div>
+      <div class='auth-aside-highlights'>${itemsHtml}</div>
+      <div class='auth-aside-apk'><a class='lp-inline-link' href='/download/android'>${icon('download', 15)}<span>Tải ứng dụng Android (.apk) mới nhất</span><em class='lp-pill-tag ok'>Android 10+</em></a></div>
+    </aside>`;
+  };
 
   const landingIndustryBlueprints = {
     fashion: {
@@ -122,7 +169,7 @@
       <div class='lp-header-wrap'>
         <header class='lp-header lp-glass'>
           <button type='button' class='lp-brand' data-action='lp-scroll' data-target='lp-top' aria-label='Trang chủ Slink'>${slinkBrandLogoHtml()}</button>
-          <nav class='lp-nav' aria-label='Khám phá Slink'>
+          <nav class='lp-nav' data-tab-glider-host aria-label='Khám phá Slink'>
             <button type='button' class='lp-nav-link' data-action='lp-scroll' data-target='lp-features'>Tính năng</button>
             <button type='button' class='lp-nav-link' data-action='lp-scroll' data-target='lp-industries'>Ngành hàng</button>
             <button type='button' class='lp-nav-link' data-action='lp-scroll' data-target='lp-workflow'>Quy trình 3 bước</button>
@@ -159,11 +206,10 @@
 
             <div class='lp-stage-wrap'>
               <div class='lp-stage-controls'>
-                <div class='lp-stage-tabs' role='tablist' aria-label='Xem màn hình thực tế của Slink'>
+                <div class='lp-stage-tabs' data-tab-glider-host role='tablist' aria-label='Xem màn hình thực tế của Slink'>
                   <button type='button' class='lp-stage-tab ${landingStageView === 'pos' ? 'active' : ''}' data-action='lp-stage-view' data-view='pos'>Màn hình Bán hàng POS</button>
                   <button type='button' class='lp-stage-tab ${landingStageView === 'dashboard' ? 'active' : ''}' data-action='lp-stage-view' data-view='dashboard'>Tổng quan &amp; Doanh thu</button>
                 </div>
-                <span class='lp-stage-caption'>Ảnh chụp giao diện thực tế</span>
               </div>
               <div class='lp-3d-stage'>
                 <div class='lp-3d-desktop'>
@@ -203,22 +249,22 @@
 
         <section class='lp-strip-section' aria-label='Nền tảng vận hành cốt lõi'>
           <div class='lp-strip-grid lp-glass'>
-            <article class='lp-strip-item lp-solid-card'>
+            <article class='lp-strip-item lp-solid-card' data-reveal>
               <span>Chuẩn kế toán bán lẻ</span>
               <strong>Số nguyên VND minh bạch</strong>
               <p>Đơn bán, trả hàng và sổ quỹ đồng bộ trong một giao dịch khép kín.</p>
             </article>
-            <article class='lp-strip-item lp-solid-card'>
+            <article class='lp-strip-item lp-solid-card' data-reveal>
               <span>Quầy thu ngân linh hoạt</span>
               <strong>Thanh toán gộp đa phương thức</strong>
               <p>Gộp Tiền mặt, Chuyển khoản, QR hoặc trả một phần trên cùng một đơn.</p>
             </article>
-            <article class='lp-strip-item lp-solid-card'>
+            <article class='lp-strip-item lp-solid-card' data-reveal>
               <span>Kiểm soát kho chặt chẽ</span>
               <strong>Đa chi nhánh &amp; Chống âm kho</strong>
               <p>Theo dõi tồn từng kho, nhập NCC, điều chuyển và kiểm kê nhanh.</p>
             </article>
-            <article class='lp-strip-item lp-solid-card'>
+            <article class='lp-strip-item lp-solid-card' data-reveal>
               <span>Vận hành đội ngũ</span>
               <strong>Phân quyền 5 vai trò độc lập</strong>
               <p>Phân quyền rõ Chủ shop, Quản lý, Thu ngân, Thủ kho và Kế toán.</p>
@@ -233,7 +279,7 @@
             <p>Kết nối liền mạch từ lúc nhập hàng, lên đơn tại quầy đến khi khóa sổ cuối ngày trên một giao diện thống nhất.</p>
           </div>
           <div class='lp-bento-grid'>
-            <article class='lp-bento-card span-7 lp-glass lp-sheen-host'>
+            <article class='lp-bento-card span-7 lp-glass lp-sheen-host' data-reveal>
               <span class='lp-bento-icon' aria-hidden='true'>${icon('cart', 22)}</span>
               <h3>Bán hàng tại quầy (POS) nhanh &amp; chuẩn xác</h3>
               <p>Tìm nhanh theo tên hoặc SKU, áp dụng khuyến mãi, tách thanh toán nhiều hình thức và in biên nhận rõ ràng.</p>
@@ -243,7 +289,7 @@
               </div>
             </article>
 
-            <article class='lp-bento-card span-5 lp-glass lp-sheen-host'>
+            <article class='lp-bento-card span-5 lp-glass lp-sheen-host' data-reveal>
               <span class='lp-bento-icon' aria-hidden='true'>${icon('box', 22)}</span>
               <h3>Hàng hóa, Biến thể &amp; Lịch sử giá</h3>
               <p>Quản lý mặt hàng đơn hoặc nhiều Màu/Size, lưu vết điều chỉnh giá và hỗ trợ nhập/xuất CSV.</p>
@@ -253,7 +299,7 @@
               </div>
             </article>
 
-            <article class='lp-bento-card span-5 lp-glass lp-sheen-host'>
+            <article class='lp-bento-card span-5 lp-glass lp-sheen-host' data-reveal>
               <span class='lp-bento-icon' aria-hidden='true'>${icon('layers', 22)}</span>
               <h3>Đa kho, Nhập hàng NCC &amp; Điều chuyển</h3>
               <p>Tạo đơn nhập NCC (PO), nhận hàng từng đợt, điều chuyển giữa các kho và kiểm kê liên tục.</p>
@@ -263,7 +309,7 @@
               </div>
             </article>
 
-            <article class='lp-bento-card span-7 lp-glass lp-sheen-host'>
+            <article class='lp-bento-card span-7 lp-glass lp-sheen-host' data-reveal>
               <span class='lp-bento-icon' aria-hidden='true'>${icon('wallet', 22)}</span>
               <h3>Sổ quỹ, Ca thu ngân &amp; Quản lý công nợ</h3>
               <p>Tách biệt tiền mặt trong két và tiền ngân hàng/QR; kiểm soát công nợ khách và phải trả NCC.</p>
@@ -273,19 +319,19 @@
               </div>
             </article>
 
-            <article class='lp-bento-card lp-glass lp-sheen-host'>
+            <article class='lp-bento-card lp-glass lp-sheen-host' data-reveal>
               <span class='lp-bento-icon' aria-hidden='true'>${icon('users', 22)}</span>
               <h3>Chăm sóc &amp; Phân nhóm khách hàng</h3>
               <p>Lưu lịch sử mua, công nợ từng khách và bộ lọc theo mức chi tiêu.</p>
             </article>
 
-            <article class='lp-bento-card lp-glass lp-sheen-host'>
+            <article class='lp-bento-card lp-glass lp-sheen-host' data-reveal>
               <span class='lp-bento-icon' aria-hidden='true'>${icon('shop', 22)}</span>
               <h3>Ghi nhận đơn Kênh bán ngoài</h3>
               <p>Ánh xạ SKU thủ công với kho nội bộ để giữ hàng và theo dõi giao đơn.</p>
             </article>
 
-            <article id='lp-trust' class='lp-bento-card lp-glass lp-sheen-host'>
+            <article id='lp-trust' class='lp-bento-card lp-glass lp-sheen-host' data-reveal>
               <span class='lp-bento-icon' aria-hidden='true'>${icon('receipt', 22)}</span>
               <h3>Bảo mật cửa hàng &amp; Nhật ký kiểm toán</h3>
               <p>Cô lập dữ liệu từng cửa hàng, kiểm soát phiên thiết bị và nhật ký thao tác.</p>
@@ -299,8 +345,8 @@
             <h2 id='lp-industries-title'>Thiết kế sát thực tế cho từng ngành hàng tại Việt Nam</h2>
             <p>Tự động sắp xếp thanh điều hướng phù hợp từ cửa hàng nhỏ đến chuỗi nhiều kho.</p>
           </div>
-          <div class='lp-industry-tabs' role='tablist' aria-label='Ngành hàng'>${industryTabs}</div>
-          <div class='lp-industry-panel lp-glass lp-sheen-host'>
+          <div class='lp-industry-tabs' data-tab-glider-host role='tablist' aria-label='Ngành hàng'>${industryTabs}</div>
+          <div class='lp-industry-panel lp-glass lp-sheen-host' data-reveal>
             <div class='lp-industry-copy'>
               <span class='lp-pill-tag'>Giải pháp chuyên biệt · ${esc(current.tab)}</span>
               <h3>${esc(current.headline)}</h3>
@@ -319,17 +365,17 @@
             <p>Không cần cài đặt phức tạp. Nhân viên mới thao tác thành thạo ngay trong ca đầu tiên.</p>
           </div>
           <div class='lp-steps-grid'>
-            <article class='lp-step-card lp-glass'>
+            <article class='lp-step-card lp-glass' data-reveal>
               <span class='lp-step-num'>1</span>
               <h3>Đăng ký cửa hàng riêng</h3>
               <p>Nhập tên cửa hàng và chọn ngành hàng để hệ thống cấu hình quy trình gọn gàng.</p>
             </article>
-            <article class='lp-step-card lp-glass'>
+            <article class='lp-step-card lp-glass' data-reveal>
               <span class='lp-step-num'>2</span>
               <h3>Đưa sản phẩm lên kệ</h3>
               <p>Thêm nhanh sản phẩm kèm tồn đầu hoặc nhập hàng loạt bằng tệp mẫu CSV.</p>
             </article>
-            <article class='lp-step-card lp-glass'>
+            <article class='lp-step-card lp-glass' data-reveal>
               <span class='lp-step-num'>3</span>
               <h3>Bán hàng &amp; Xem báo cáo thực</h3>
               <p>Lên đơn trên web hoặc điện thoại, chốt ca tiền mặt và theo dõi lãi gộp mọi lúc.</p>
@@ -338,7 +384,7 @@
         </section>
 
         <section id='lp-download' class='lp-section lp-download-section' aria-labelledby='lp-download-title'>
-          <div class='lp-download-card lp-glass lp-sheen-host'>
+          <div class='lp-download-card lp-glass lp-sheen-host' data-reveal>
             <div class='lp-download-copy'>
               <div class='lp-eyebrow'><i class='lp-eyebrow-dot' aria-hidden='true'></i>Ứng dụng Android chính thức</div>
               <h2 id='lp-download-title'>Tải Slink cho điện thoại Android — luôn nhận bản mới nhất.</h2>
@@ -358,7 +404,7 @@
           </div>
         </section>
 
-        <section class='lp-cta-banner lp-glass lp-sheen-host' aria-labelledby='lp-cta-heading'>
+        <section class='lp-cta-banner lp-glass lp-sheen-host' data-reveal aria-labelledby='lp-cta-heading'>
           <span class='lp-eyebrow'><i class='lp-eyebrow-dot' aria-hidden='true'></i>Sẵn sàng đồng hành cùng cửa hàng bạn</span>
           <h2 id='lp-cta-heading'>Trải nghiệm không gian quản lý bán hàng sáng rõ, chuẩn xác ngay hôm nay.</h2>
           <p>Tạo tài khoản cửa hàng mới hoàn toàn miễn phí hoặc đăng nhập vào cửa hàng hiện có của bạn.</p>
@@ -431,36 +477,386 @@
 
   };
 
-  S.fn.setupLandingInteractions = function setupLandingInteractions() {
-    const canvas = S.dom.authRoot.querySelector('.lp-ambient-canvas');
-    if (!canvas || !canvas.offsetWidth) return;
-    const width = canvas.width = canvas.offsetWidth;
-    const height = canvas.height = canvas.offsetHeight;
+  const ambientState = {
+    raf: 0,
+    active: false,
+    width: 0,
+    height: 0,
+    dpr: 1,
+    pointerX: 0,
+    pointerY: 0,
+    targetX: 0,
+    targetY: 0,
+    canvas: null,
+  };
+  let publicListenersBound = false;
+  let scrollSpyFrame = 0;
+  let revealObserver = null;
+
+  function reducedMotionEnabled() {
+    return Boolean(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  }
+
+  S.fn.syncTabGliders = function syncTabGliders(root = document) {
+    const scope = root || document;
+    const selector = '[data-tab-glider-host], .workspace-tabs, .inventory-stock-filters, .settings-areas, .auth-mode-tabs';
+    const hosts = [];
+    if (scope.matches && scope.matches(selector)) hosts.push(scope);
+    if (scope.querySelectorAll) hosts.push(...scope.querySelectorAll(selector));
+
+    hosts.forEach(function (host) {
+      if (!host.isConnected) return;
+      host.classList.add('has-glider');
+      let glider = Array.from(host.children).find(function (node) { return node.classList?.contains('slink-tab-glider'); });
+      if (!glider) {
+        glider = document.createElement('span');
+        glider.className = 'slink-tab-glider';
+        glider.setAttribute('aria-hidden', 'true');
+        host.prepend(glider);
+      }
+      const active = Array.from(host.children).find(function (node) {
+        return node !== glider && node.tagName === 'BUTTON' && (
+          node.classList.contains('active') ||
+          node.getAttribute('aria-selected') === 'true' ||
+          node.getAttribute('aria-current') === 'page' ||
+          node.getAttribute('aria-pressed') === 'true'
+        );
+      });
+      if (!active || active.offsetWidth <= 0) {
+        glider.classList.remove('is-visible');
+        return;
+      }
+      glider.style.setProperty('--glider-x', active.offsetLeft + 'px');
+      glider.style.setProperty('--glider-y', active.offsetTop + 'px');
+      glider.style.setProperty('--glider-w', active.offsetWidth + 'px');
+      glider.style.setProperty('--glider-h', active.offsetHeight + 'px');
+      glider.classList.add('is-visible');
+      if (!glider.classList.contains('is-ready')) {
+        window.requestAnimationFrame(function () {
+          if (glider.isConnected) glider.classList.add('is-ready');
+        });
+      }
+    });
+  };
+
+  function syncAmbientCanvasSize() {
+    const canvas = S.dom.authRoot?.querySelector('.lp-ambient-canvas');
+    if (!canvas) {
+      ambientState.canvas = null;
+      return false;
+    }
+    ambientState.canvas = canvas;
+    const width = Math.max(window.innerWidth || canvas.offsetWidth || 0, 1);
+    const height = Math.max(window.innerHeight || canvas.offsetHeight || 0, 1);
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    ambientState.width = width;
+    ambientState.height = height;
+    ambientState.dpr = dpr;
+    if (!ambientState.targetX && !ambientState.targetY) {
+      ambientState.pointerX = ambientState.targetX = width * 0.55;
+      ambientState.pointerY = ambientState.targetY = height * 0.35;
+    }
+    if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
+      canvas.width = Math.round(width * dpr);
+      canvas.height = Math.round(height * dpr);
+    }
+    return true;
+  }
+
+  function renderAmbientFrame(timestamp) {
+    const canvas = ambientState.canvas;
+    if (!ambientState.active || !canvas || !canvas.isConnected || !S.dom.authRoot || S.dom.authRoot.hidden || document.hidden || window.innerWidth <= 820 || S.fn.isAndroidApp()) {
+      ambientState.raf = 0;
+      return;
+    }
     const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    for (let wave = 0; wave < 3; wave += 1) {
+    if (!ctx) {
+      ambientState.raf = 0;
+      return;
+    }
+    if (!ambientState.width) syncAmbientCanvasSize();
+    const w = ambientState.width;
+    const h = ambientState.height;
+    const t = timestamp * 0.00042;
+
+    ambientState.pointerX += (ambientState.targetX - ambientState.pointerX) * 0.085;
+    ambientState.pointerY += (ambientState.targetY - ambientState.pointerY) * 0.085;
+
+    ctx.save();
+    ctx.setTransform(ambientState.dpr, 0, 0, ambientState.dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+
+    const orbs = [
+      { x: w * (0.18 + Math.sin(t * 0.9) * 0.06), y: h * (0.22 + Math.cos(t * 0.7) * 0.06), r: Math.max(w, h) * 0.38, color: 'rgba(134, 208, 182, 0.36)' },
+      { x: w * (0.82 + Math.cos(t * 0.8) * 0.05), y: h * (0.28 + Math.sin(t * 0.65) * 0.07), r: Math.max(w, h) * 0.36, color: 'rgba(156, 198, 242, 0.34)' },
+      { x: w * (0.52 + Math.sin(t * 0.6) * 0.07), y: h * (0.78 + Math.cos(t * 0.85) * 0.05), r: Math.max(w, h) * 0.40, color: 'rgba(176, 214, 224, 0.32)' },
+    ];
+    for (let i = 0; i < orbs.length; i += 1) {
+      const orb = orbs[i];
+      const grad = ctx.createRadialGradient(orb.x, orb.y, 0, orb.x, orb.y, orb.r);
+      grad.addColorStop(0, orb.color);
+      grad.addColorStop(1, 'rgba(229, 236, 245, 0)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, w, h);
+    }
+
+    for (let r = 0; r < 3; r += 1) {
+      const baseY = h * (0.24 + r * 0.26);
+      const amp = 32 + r * 12;
       ctx.beginPath();
-      for (let x = 0; x <= width + 16; x += 16) {
-        const y = height * (.24 + wave * .26) + Math.sin(x * .0032 + wave * 1.7) * (34 + wave * 12) + Math.cos(x * .0016) * 18;
+      for (let x = 0; x <= w; x += 28) {
+        const y = baseY + Math.sin(x * 0.0032 + t * (1.3 + r * 0.35) + r * 1.7) * amp + Math.cos(x * 0.0016 - t * 0.9) * 18;
         if (x === 0) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
       }
-      ctx.strokeStyle = wave === 1 ? '#0e5e4621' : '#749ac431';
-      ctx.lineWidth = 44 - wave * 8;
+      ctx.strokeStyle = r === 1 ? 'rgba(14, 94, 70, 0.12)' : 'rgba(116, 154, 196, 0.18)';
+      ctx.lineWidth = 44 - r * 8;
+      ctx.lineCap = 'round';
       ctx.stroke();
-      ctx.strokeStyle = '#ffffffdd';
-      ctx.lineWidth = 2;
+
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.86)';
+      ctx.lineWidth = 1.8;
       ctx.stroke();
     }
+
+    const spacing = 54;
+    const radiusSq = 180 * 180;
+    ctx.fillStyle = 'rgba(71, 98, 136, 0.24)';
+    for (let gx = 32; gx < w; gx += spacing) {
+      for (let gy = 32; gy < h; gy += spacing) {
+        const dx = gx - ambientState.pointerX;
+        const dy = gy - ambientState.pointerY;
+        const distSq = dx * dx + dy * dy;
+        let px = gx;
+        let py = gy;
+        if (distSq < radiusSq && distSq > 1) {
+          const dist = Math.sqrt(distSq);
+          const push = (1 - dist / 180) * 11;
+          px += (dx / dist) * push;
+          py += (dy / dist) * push;
+        }
+        ctx.beginPath();
+        ctx.arc(px, py, 1.25, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    ctx.restore();
+    ambientState.raf = window.requestAnimationFrame(renderAmbientFrame);
+  }
+
+  function resumeAmbientLoop() {
+    if (!ambientState.active || ambientState.raf || document.hidden || reducedMotionEnabled() || window.innerWidth <= 820 || S.fn.isAndroidApp()) return;
+    if (!S.dom.authRoot || S.dom.authRoot.hidden || !syncAmbientCanvasSize()) return;
+    ambientState.raf = window.requestAnimationFrame(renderAmbientFrame);
+  }
+
+  function syncLandingScrollState() {
+    const headerWrap = S.dom.authRoot?.querySelector('.lp-header-wrap');
+    if (!headerWrap) return;
+    const scrollY = window.scrollY || window.pageYOffset || 0;
+    headerWrap.classList.toggle('is-scrolled', scrollY > 18);
+
+    const nav = headerWrap.querySelector('.lp-nav');
+    if (!nav) return;
+    const links = Array.from(nav.querySelectorAll('.lp-nav-link[data-target]'));
+    const headerBottom = headerWrap.getBoundingClientRect().bottom + 36;
+    let activeTarget = '';
+    const firstSection = document.getElementById(links[0]?.dataset.target || '');
+    if (firstSection && scrollY > 80 && firstSection.getBoundingClientRect().top <= headerBottom + 160) {
+      for (let i = 0; i < links.length; i += 1) {
+        const section = document.getElementById(links[i].dataset.target);
+        if (section && section.getBoundingClientRect().top <= headerBottom + 160) {
+          activeTarget = links[i].dataset.target;
+        }
+      }
+    }
+    let changed = false;
+    links.forEach(function (link) {
+      const shouldBeActive = Boolean(activeTarget) && link.dataset.target === activeTarget;
+      if (link.classList.contains('active') !== shouldBeActive) {
+        link.classList.toggle('active', shouldBeActive);
+        changed = true;
+      }
+    });
+    if (changed) S.fn.syncTabGliders(nav);
+  }
+
+  function setupScrollReveals() {
+    if (!S.dom.authRoot) return;
+    const targets = Array.from(S.dom.authRoot.querySelectorAll('[data-reveal]'));
+    if (!targets.length) return;
+    targets.forEach(function (node, index) {
+      node.style.setProperty('--reveal-delay', ((index % 4) * 55) + 'ms');
+    });
+    if (reducedMotionEnabled() || typeof window.IntersectionObserver !== 'function') {
+      targets.forEach(function (node) { node.classList.add('is-revealed'); });
+      return;
+    }
+    if (revealObserver) revealObserver.disconnect();
+    revealObserver = new window.IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (!entry.isIntersecting) return;
+        entry.target.classList.add('is-revealed');
+        revealObserver.unobserve(entry.target);
+      });
+    }, { threshold: 0.08, rootMargin: '0px 0px -24px 0px' });
+    targets.forEach(function (node) { revealObserver.observe(node); });
+  }
+
+  function bindPublicListeners() {
+    if (publicListenersBound || !S.dom.authRoot) return;
+    publicListenersBound = true;
+
+    S.dom.authRoot.addEventListener('pointermove', function (event) {
+      if (event.pointerType === 'touch') return;
+      ambientState.targetX = event.clientX;
+      ambientState.targetY = event.clientY;
+      const card = event.target.closest('.lp-sheen-host');
+      if (card) {
+        const rect = card.getBoundingClientRect();
+        card.style.setProperty('--sheen-x', Math.round(event.clientX - rect.left) + 'px');
+        card.style.setProperty('--sheen-y', Math.round(event.clientY - rect.top) + 'px');
+      }
+      const stageWrap = event.target.closest('.lp-stage-wrap');
+      const stage = stageWrap?.querySelector('.lp-3d-stage');
+      if (stage && !reducedMotionEnabled()) {
+        const rect = stage.getBoundingClientRect();
+        const nx = Math.max(-1, Math.min(1, ((event.clientX - rect.left) / Math.max(rect.width, 1) - 0.5) * 2));
+        const ny = Math.max(-1, Math.min(1, ((event.clientY - rect.top) / Math.max(rect.height, 1) - 0.5) * 2));
+        stage.style.setProperty('--stage-ry', (nx * 4.5).toFixed(2) + 'deg');
+        stage.style.setProperty('--stage-rx', (-ny * 3.2).toFixed(2) + 'deg');
+        stage.style.setProperty('--phone-shift-x', (nx * 6).toFixed(1) + 'px');
+        stage.style.setProperty('--phone-shift-y', (ny * 5).toFixed(1) + 'px');
+      }
+    }, { passive: true });
+
+    S.dom.authRoot.addEventListener('pointerout', function (event) {
+      const stageWrap = event.target.closest?.('.lp-stage-wrap');
+      if (!stageWrap || (event.relatedTarget && stageWrap.contains(event.relatedTarget))) return;
+      const stage = stageWrap.querySelector('.lp-3d-stage');
+      if (!stage) return;
+      stage.style.removeProperty('--stage-ry');
+      stage.style.removeProperty('--stage-rx');
+      stage.style.removeProperty('--phone-shift-x');
+      stage.style.removeProperty('--phone-shift-y');
+    });
+
+    window.addEventListener('scroll', function () {
+      if (S.dom.authRoot?.hidden || scrollSpyFrame) return;
+      scrollSpyFrame = window.requestAnimationFrame(function () {
+        scrollSpyFrame = 0;
+        syncLandingScrollState();
+      });
+    }, { passive: true });
+
+    window.addEventListener('resize', function () {
+      if (S.dom.authRoot?.hidden) return;
+      syncAmbientCanvasSize();
+      resumeAmbientLoop();
+      S.fn.syncTabGliders(S.dom.authRoot);
+    }, { passive: true });
+
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden) resumeAmbientLoop();
+    });
+  }
+
+  S.fn.setupLandingInteractions = function setupLandingInteractions() {
+    bindPublicListeners();
+    const shouldAnimateCanvas = !S.fn.isAndroidApp() && !reducedMotionEnabled() && Boolean(S.dom.authRoot && !S.dom.authRoot.hidden && S.dom.authRoot.querySelector('.lp-ambient-canvas'));
+    ambientState.active = shouldAnimateCanvas;
+    if (shouldAnimateCanvas) {
+      syncAmbientCanvasSize();
+      resumeAmbientLoop();
+    } else if (ambientState.raf) {
+      window.cancelAnimationFrame(ambientState.raf);
+      ambientState.raf = 0;
+    }
+    setupScrollReveals();
+    syncLandingScrollState();
+    S.fn.syncTabGliders(S.dom.authRoot);
   };
+  S.fn.setupPublicSurfaceInteractions = S.fn.setupLandingInteractions;
+
+  function triggerMorph(element) {
+    if (!element || reducedMotionEnabled()) return;
+    element.classList.remove('is-morphing');
+    void element.offsetWidth;
+    element.classList.add('is-morphing');
+  }
 
   S.fn.handleLandingAction = function handleLandingAction(action, button) {
     if (action === 'lp-scroll') {
-      document.getElementById(button.dataset.target)?.scrollIntoView({ block: 'start' });
+      const target = document.getElementById(button.dataset.target);
+      target?.scrollIntoView({ behavior: reducedMotionEnabled() ? 'auto' : 'smooth', block: 'start' });
+      const nav = button.closest('.lp-nav');
+      if (nav) {
+        nav.querySelectorAll('.lp-nav-link').forEach(function (link) { link.classList.toggle('active', link === button); });
+        S.fn.syncTabGliders(nav);
+      }
       return;
     }
-    if (action === 'lp-stage-view') landingStageView = button.dataset.view === 'dashboard' ? 'dashboard' : 'pos';
-    else if (Object.hasOwn(landingIndustryBlueprints, button.dataset.industry)) landingIndustry = button.dataset.industry;
+
+    if (action === 'lp-stage-view') {
+      landingStageView = button.dataset.view === 'dashboard' ? 'dashboard' : 'pos';
+      const tabsWrap = button.closest('.lp-stage-tabs');
+      if (tabsWrap) {
+        tabsWrap.querySelectorAll('.lp-stage-tab').forEach(function (tab) {
+          const isCurrent = tab.dataset.view === landingStageView;
+          tab.classList.toggle('active', isCurrent);
+          tab.setAttribute('aria-selected', String(isCurrent));
+        });
+        S.fn.syncTabGliders(tabsWrap);
+      }
+      const img = S.dom.authRoot?.querySelector('.lp-3d-desktop-img');
+      const barTitle = S.dom.authRoot?.querySelector('.lp-3d-desktop-bar span');
+      const desktopScreen = S.dom.authRoot?.querySelector('.lp-3d-desktop-screen');
+      if (img && barTitle) {
+        const isDash = landingStageView === 'dashboard';
+        img.src = isDash ? './assets/slink-showcase-web-dashboard.webp' : './assets/slink-showcase-web-pos.webp';
+        img.alt = isDash ? 'Giao diện Tổng quan hôm nay thực tế của Slink trên máy tính' : 'Giao diện Bán hàng POS thực tế của Slink trên máy tính';
+        barTitle.textContent = isDash ? 'Slink · Tổng quan hôm nay' : 'Slink · Quầy bán hàng POS';
+        triggerMorph(desktopScreen || img);
+        return;
+      }
+    }
+
+    if (action === 'lp-industry' && Object.hasOwn(landingIndustryBlueprints, button.dataset.industry)) {
+      landingIndustry = button.dataset.industry;
+      const current = landingIndustryBlueprints[landingIndustry];
+      const tabsWrap = button.closest('.lp-industry-tabs');
+      if (tabsWrap) {
+        tabsWrap.querySelectorAll('.lp-industry-tab').forEach(function (tab) {
+          const isCurrent = tab.dataset.industry === landingIndustry;
+          tab.classList.toggle('active', isCurrent);
+          tab.setAttribute('aria-selected', String(isCurrent));
+        });
+        S.fn.syncTabGliders(tabsWrap);
+      }
+      const quickInput = document.querySelector("[data-landing-start] input[name='quickStoreName']");
+      if (quickInput) quickInput.placeholder = `Tên cửa hàng (VD: ${current.storeSample})…`;
+      const panel = S.dom.authRoot?.querySelector('.lp-industry-panel');
+      if (panel) {
+        const industryPoints = current.points.map(function (pt) {
+          return `<li><span class='lp-check-badge' aria-hidden='true'>✓</span><span>${esc(pt)}</span></li>`;
+        }).join('');
+        const industryCards = current.metrics.map(function (m) {
+          return `<div class='lp-industry-metric-card lp-solid-card'><div><strong>${esc(m.title)}</strong><small>${esc(m.sub)}</small></div><span class='lp-pill-tag'>${esc(m.badge)}</span></div>`;
+        }).join('');
+        panel.innerHTML = `<div class='lp-industry-copy'>
+          <span class='lp-pill-tag'>Giải pháp chuyên biệt · ${esc(current.tab)}</span>
+          <h3>${esc(current.headline)}</h3>
+          <p>${esc(current.description)}</p>
+          <ul class='lp-industry-points'>${industryPoints}</ul>
+          <button type='button' class='lp-btn lp-btn-primary lp-btn-lg' data-action='auth-mode' data-mode='register'>Khởi tạo cửa hàng ${esc(current.shortTab)} →</button>
+        </div>
+        <div class='lp-industry-cards'>${industryCards}</div>`;
+        triggerMorph(panel);
+        return;
+      }
+    }
+
     const name = document.querySelector('[data-landing-start] input');
     if (name) quickStoreName = name.value;
     S.fn.renderAuth();
