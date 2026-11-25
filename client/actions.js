@@ -500,6 +500,11 @@
         return;
       }
       let session;
+      if (!S.fn.csrfCookie?.()) {
+        S.state.authMode = 'invite-login';
+        S.fn.renderAuth();
+        return;
+      }
       try { session = await S.fn.apiRequest('/api/auth/me'); }
       catch (error) {
         if (error.status === 401) { S.state.authMode = 'invite-login'; S.fn.renderAuth(); return; }
@@ -511,6 +516,10 @@
     }
     try {
       if (await S.fn.restoreSavedWorkspace()) return;
+      if (!S.fn.csrfCookie?.()) {
+        S.fn.showSignedOut();
+        return;
+      }
       const session = await S.fn.apiRequest('/api/auth/me');
       await S.fn.enterStore(session);
     } catch (error) {

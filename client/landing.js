@@ -776,7 +776,8 @@
     targets.forEach(function (node, index) {
       node.style.setProperty('--reveal-delay', ((index % 4) * 55) + 'ms');
     });
-    if (reducedMotionEnabled() || typeof window.IntersectionObserver !== 'function') {
+    const isSearchCrawler = /googlebot|google-inspectiontool|bingbot|slurp|duckduckbot|baiduspider|yandex|chrome-lighthouse|pagespeed|\bbot\b|crawl|spider/i.test(navigator.userAgent || '');
+    if (reducedMotionEnabled() || isSearchCrawler || typeof window.IntersectionObserver !== 'function') {
       targets.forEach(function (node) { node.classList.add('is-revealed'); });
       return;
     }
