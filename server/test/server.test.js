@@ -57,6 +57,7 @@ test('server exposes the app shell and health routes without exposing source fil
   assert.equal(privacy.statusCode, 200);
   assert.match(privacy.body, /<meta name="robots" content="index,follow" \/>/);
   assert.match(privacy.body, /<link rel="canonical" href="http:\/\/slink-xny3\.onrender\.com\/legal\/privacy" \/>/);
+  assert.match(privacy.body, /"@type":"WebPage"/);
 
   const builtInVerify = await app.inject({ method: 'GET', url: '/google02950e16d4d7ed98.html' });
   assert.equal(builtInVerify.statusCode, 200);

@@ -102,6 +102,16 @@
   ${canonicalUrl ? `<meta property="og:url" content="${esc(canonicalUrl)}" />\n  <link rel="canonical" href="${esc(canonicalUrl)}" />` : ''}
   <link rel="icon" href="/favicon.ico" sizes="any" />
   <title>${esc(title)}</title>
+  ${canonicalUrl ? `<script type="application/ld+json">${JSON.stringify({
+    '@context': 'https://schema.org',
+    '@type': 'WebPage',
+    name: title,
+    description,
+    url: canonicalUrl,
+    inLanguage: 'vi',
+    dateModified: LAST_UPDATED_ISO,
+    isPartOf: { '@type': 'WebSite', name: 'Slink', url: `${rawOrigin}/` },
+  }).replace(/</g, '\\u003c')}</script>` : ''}
   <style>
     body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#f7f8f6;color:#1b2621;line-height:1.6}
     main{max-width:760px;margin:32px auto;padding:28px 24px;background:#fff;border:1px solid #e2e8e4;border-radius:14px}
