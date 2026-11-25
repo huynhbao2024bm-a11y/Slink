@@ -49,6 +49,7 @@ const ASSETS = new Map([
   ['/index.html', 'index.html'],
   ['/verify', 'index.html'],
   ['/invite', 'index.html'],
+  ['/google02950e16d4d7ed98.html', 'google02950e16d4d7ed98.html'],
   ['/assets/slink-showcase-web-pos.webp', 'assets/slink-showcase-web-pos.webp'],
   ['/assets/slink-showcase-web-dashboard.webp', 'assets/slink-showcase-web-dashboard.webp'],
   ['/assets/slink-showcase-mobile-pos.webp', 'assets/slink-showcase-mobile-pos.webp'],
@@ -125,23 +126,96 @@ const TEXT_CONTENT_TYPES = new Map([
 ]);
 
 const STATIC_TEXT_CACHE = new Map();
-for (const fileName of new Set(ASSETS.values())) {
-  if (fileName === 'sw.js') continue;
-  const contentType = TEXT_CONTENT_TYPES.get(path.extname(fileName));
-  if (!contentType) continue;
-  const raw = readFileSync(path.join(APP_ROOT, fileName));
+function buildStaticTextEntry(rawInput, contentType) {
+  const raw = Buffer.isBuffer(rawInput) ? rawInput : Buffer.from(rawInput, 'utf8');
   const etag = `W/"${createHash('sha256').update(raw).digest('hex').slice(0, 16)}"`;
-  STATIC_TEXT_CACHE.set(fileName, {
+  return {
     contentType,
     etag,
     raw,
     gzip: gzipSync(raw, { level: 6 }),
     br: brotliCompressSync(raw, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 6 } }),
-  });
+  };
 }
 
-function isFrontendPath(pathName) {
-  return ASSETS.has(pathName) || pathName === '/robots.txt' || pathName === '/sitemap.xml' || pathName.startsWith('/legal/');
+for (const fileName of new Set(ASSETS.values())) {
+  if (fileName === 'sw.js') continue;
+  const contentType = TEXT_CONTENT_TYPES.get(path.extname(fileName));
+  if (!contentType) continue;
+  STATIC_TEXT_CACHE.set(fileName, buildStaticTextEntry(readFileSync(path.join(APP_ROOT, fileName)), contentType));
+}
+
+const DEFAULT_PUBLIC_ORIGIN = 'https://slink-xny3.onrender.com';
+const SITEMAP_HOME_LASTMOD = '2026-11-25';
+
+function parseGoogleSiteVerification(env = {}) {
+  const metaTokens = new Set();
+  const fileNames = new Set();
+  const inputs = [env.GOOGLE_SITE_VERIFICATION, env.GOOGLE_SITE_VERIFICATION_FILE]
+    .filter((value) => typeof value === 'string' && value.trim())
+    .join('\n');
+  if (!inputs) return { metaTokens: [], fileNames: [] };
+
+  let remainder = inputs.replace(/<meta\b[^>]*>/gi, (tag) => {
+    const contentMatch = tag.match(/\bcontent\s*=\s*["']([^"']+)["']/i);
+    if (contentMatch && /^[A-Za-z0-9_-]{8,128}$/.test(contentMatch[1].trim())) {
+      metaTokens.add(contentMatch[1].trim());
+    }
+    return ' ';
+  });
+  remainder = remainder.replace(/\bgoogle-site-verification\s*:\s*(google[A-Za-z0-9_-]{8,64}\.html)\b/gi, (_, file) => {
+    fileNames.add(file);
+    return ' ';
+  });
+  for (const part of remainder.split(/[\s,;]+/)) {
+    const item = part.trim();
+    if (!item) continue;
+    if (/^google[A-Za-z0-9_-]{8,64}\.html$/i.test(item)) {
+      fileNames.add(item);
+    } else if (/^[A-Za-z0-9_-]{8,128}$/.test(item)) {
+      metaTokens.add(item);
+    }
+  }
+  return {
+    metaTokens: Array.from(metaTokens),
+    fileNames: Array.from(fileNames),
+  };
+}
+
+function prepareIndexEntry(env = {}, metaTokens = []) {
+  const baseEntry = STATIC_TEXT_CACHE.get('index.html');
+  let html = baseEntry.raw.toString('utf8');
+  let originOverride = '';
+  if (env.PUBLIC_ORIGIN) {
+    try {
+      const parsed = new URL(env.PUBLIC_ORIGIN);
+      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+        originOverride = parsed.origin;
+      }
+    } catch {
+      // Fallback to default canonical origin when PUBLIC_ORIGIN is unset or invalid.
+    }
+  }
+  if (originOverride && originOverride !== DEFAULT_PUBLIC_ORIGIN) {
+    html = html.split(DEFAULT_PUBLIC_ORIGIN).join(originOverride);
+  }
+  if (metaTokens.length > 0) {
+    const tags = metaTokens
+      .map((token) => `    <meta name="google-site-verification" content="${token}" />`)
+      .join('\n');
+    html = html.replace('  </head>', `${tags}\n  </head>`);
+  }
+  return html === baseEntry.raw.toString('utf8')
+    ? baseEntry
+    : buildStaticTextEntry(html, baseEntry.contentType);
+}
+
+function isFrontendPath(pathName, verificationFiles = null) {
+  return ASSETS.has(pathName)
+    || pathName === '/robots.txt'
+    || pathName === '/sitemap.xml'
+    || pathName.startsWith('/legal/')
+    || Boolean(verificationFiles && pathName.length > 1 && verificationFiles.has(pathName.slice(1)));
 }
 
 function resolvePublicOrigin(request, env) {
@@ -261,13 +335,17 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
     },
   });
   await app.register(cookie);
+  const googleVerification = parseGoogleSiteVerification(env);
+  const verificationFiles = new Set(googleVerification.fileNames);
+  const indexEntry = prepareIndexEntry(env, googleVerification.metaTokens);
+
   await app.register(rateLimit, {
     global: true,
     // Loading the frontend pulls dozens of assets. Keep those reads separate from the API limit.
-    keyGenerator: (request) => isFrontendPath(request.url.split('?')[0]) ? request.ip + ':frontend' : request.ip,
+    keyGenerator: (request) => isFrontendPath(request.url.split('?')[0], verificationFiles) ? request.ip + ':frontend' : request.ip,
     max: (request) => {
       if (env.NODE_ENV === 'test') return 2000;
-      if (isFrontendPath(request.url.split('?')[0])) return 1200;
+      if (isFrontendPath(request.url.split('?')[0], verificationFiles)) return 1200;
       return request.url.startsWith('/api/stores/') ? 600 : 120;
     },
     timeWindow: '1 minute',
@@ -313,17 +391,35 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
   });
   app.get('/sitemap.xml', async (request, reply) => {
     const origin = resolvePublicOrigin(request, env);
-    const urls = ['/', '/legal/privacy', '/legal/terms']
-      .map((item) => `  <url><loc>${origin}${item}</loc><changefreq>${item === '/' ? 'weekly' : 'monthly'}</changefreq></url>`)
-      .join('\n');
+    const legalLastMod = legalContent.LAST_UPDATED_ISO || SITEMAP_HOME_LASTMOD;
+    const homeImages = [
+      { loc: `${origin}/assets/slink-og-cover.png`, title: 'Slink — Phần mềm quản lý bán hàng POS và đa kho' },
+      { loc: `${origin}/assets/slink-showcase-web-pos.webp`, title: 'Màn hình bán hàng tại quầy (POS) Slink trên máy tính' },
+      { loc: `${origin}/assets/slink-showcase-web-dashboard.webp`, title: 'Tổng quan doanh thu, lãi gộp và tồn kho Slink' },
+      { loc: `${origin}/assets/slink-showcase-mobile-pos.webp`, title: 'Ứng dụng bán hàng Slink trên điện thoại Android' },
+    ]
+      .map((img) => `\n    <image:image><image:loc>${img.loc}</image:loc><image:title>${img.title}</image:title></image:image>`)
+      .join('');
+    const entries = [
+      `  <url>\n    <loc>${origin}/</loc>\n    <lastmod>${SITEMAP_HOME_LASTMOD}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>1.0</priority>${homeImages}\n  </url>`,
+      `  <url>\n    <loc>${origin}/legal/privacy</loc>\n    <lastmod>${legalLastMod}</lastmod>\n    <changefreq>monthly</changefreq>\n    <priority>0.5</priority>\n  </url>`,
+      `  <url>\n    <loc>${origin}/legal/terms</loc>\n    <lastmod>${legalLastMod}</lastmod>\n    <changefreq>monthly</changefreq>\n    <priority>0.5</priority>\n  </url>`,
+    ].join('\n');
     return reply
       .header('cache-control', 'public, max-age=3600')
       .type('application/xml; charset=utf-8')
-      .send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>\n`);
+      .send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">\n${entries}\n</urlset>\n`);
   });
+  for (const fileName of googleVerification.fileNames) {
+    if (ASSETS.has(`/${fileName}`)) continue;
+    app.get(`/${fileName}`, async (_request, reply) => reply
+      .header('cache-control', 'no-store')
+      .type('text/html; charset=utf-8')
+      .send(`google-site-verification: ${fileName}\n`));
+  }
   app.get('/api/health', async () => ({ status: 'ok' }));
-  app.get('/legal/terms', async (_request, reply) => reply.type('text/html; charset=utf-8').send(legalContent.renderStandaloneLegalPage('terms')));
-  app.get('/legal/privacy', async (_request, reply) => reply.type('text/html; charset=utf-8').send(legalContent.renderStandaloneLegalPage('privacy')));
+  app.get('/legal/terms', async (request, reply) => reply.type('text/html; charset=utf-8').send(legalContent.renderStandaloneLegalPage('terms', { origin: resolvePublicOrigin(request, env) })));
+  app.get('/legal/privacy', async (request, reply) => reply.type('text/html; charset=utf-8').send(legalContent.renderStandaloneLegalPage('privacy', { origin: resolvePublicOrigin(request, env) })));
   app.get('/api/ready', async (_request, reply) => {
     if (!pool) return reply.code(503).send({ status: 'unavailable' });
     try {
@@ -370,6 +466,8 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
   for (const [route, fileName] of ASSETS) {
     if (route === '/sw.js') {
       app.get(route, async (_request, reply) => reply.header('cache-control', 'no-store').type('application/javascript; charset=utf-8').send(readFileSync(path.join(APP_ROOT, fileName), 'utf8').replace('__SLINK_ASSET_VERSION__', APP_ASSET_VERSION)));
+    } else if (fileName === 'index.html') {
+      app.get(route, async (request, reply) => serveCachedTextAsset(request, reply, indexEntry));
     } else if (STATIC_TEXT_CACHE.has(fileName)) {
       const entry = STATIC_TEXT_CACHE.get(fileName);
       app.get(route, async (request, reply) => serveCachedTextAsset(request, reply, entry));

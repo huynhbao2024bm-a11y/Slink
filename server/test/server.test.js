@@ -42,7 +42,26 @@ test('server exposes the app shell and health routes without exposing source fil
   const sitemap = await app.inject({ method: 'GET', url: '/sitemap.xml' });
   assert.equal(sitemap.statusCode, 200);
   assert.match(sitemap.headers['content-type'], /application\/xml/);
+  assert.match(sitemap.body, /xmlns:image="http:\/\/www\.google\.com\/schemas\/sitemap-image\/1\.1"/);
+  assert.match(sitemap.body, /<lastmod>2026-11-/);
+  assert.match(sitemap.body, /<priority>1\.0<\/priority>/);
+  assert.match(sitemap.body, /\/assets\/slink-og-cover\.png/);
   assert.match(sitemap.body, /\/legal\/privacy/);
+
+  assert.match(html.body, /application\/ld\+json/);
+  assert.match(html.body, /SoftwareApplication/);
+  assert.match(html.body, /hreflang="vi-VN"/);
+  assert.match(html.body, /<noscript>/);
+
+  const privacy = await app.inject({ method: 'GET', url: '/legal/privacy', headers: { host: 'slink-xny3.onrender.com' } });
+  assert.equal(privacy.statusCode, 200);
+  assert.match(privacy.body, /<meta name="robots" content="index,follow" \/>/);
+  assert.match(privacy.body, /<link rel="canonical" href="http:\/\/slink-xny3\.onrender\.com\/legal\/privacy" \/>/);
+
+  const builtInVerify = await app.inject({ method: 'GET', url: '/google02950e16d4d7ed98.html' });
+  assert.equal(builtInVerify.statusCode, 200);
+  assert.match(builtInVerify.headers['content-type'], /text\/html/);
+  assert.equal(builtInVerify.body.trim(), 'google-site-verification: google02950e16d4d7ed98.html');
 
   for (const apkRoute of ['/download/android', '/download/slink-latest.apk']) {
     const download = await app.inject({ method: 'GET', url: apkRoute });
@@ -78,4 +97,32 @@ test('readiness fails closed if the database is not reachable', async (t) => {
   const response = await app.inject({ method: 'GET', url: '/api/ready' });
   assert.equal(response.statusCode, 503);
   assert.deepEqual(response.json(), { status: 'unavailable' });
+});
+
+test('supports Google Search Console verification via env meta token and HTML file while rejecting unsafe values', async (t) => {
+  const pool = { query: async () => ({ rows: [{ '?column?': 1 }] }), end: async () => {} };
+  const app = await buildServer({
+    pool,
+    logger: false,
+    env: {
+      PUBLIC_ORIGIN: 'https://pos.slink.vn',
+      GOOGLE_SITE_VERIFICATION: '<meta name="google-site-verification" content="gsc_MetaToken_12345" />, google1a2b3c4d5e6f7a8b.html, "injected<script>',
+    },
+  });
+  t.after(() => app.close());
+
+  const home = await app.inject({ method: 'GET', url: '/' });
+  assert.equal(home.statusCode, 200);
+  assert.match(home.body, /<meta name="google-site-verification" content="gsc_MetaToken_12345" \/>/);
+  assert.match(home.body, /<link rel="canonical" href="https:\/\/pos\.slink\.vn\/" \/>/);
+  assert.doesNotMatch(home.body, /injected<script>/);
+
+  const fileVerify = await app.inject({ method: 'GET', url: '/google1a2b3c4d5e6f7a8b.html' });
+  assert.equal(fileVerify.statusCode, 200);
+  assert.match(fileVerify.headers['content-type'], /text\/html/);
+  assert.equal(fileVerify.headers['cache-control'], 'no-store');
+  assert.equal(fileVerify.body.trim(), 'google-site-verification: google1a2b3c4d5e6f7a8b.html');
+
+  const unconfiguredVerify = await app.inject({ method: 'GET', url: '/googleffffffffffffffff.html' });
+  assert.equal(unconfiguredVerify.statusCode, 404);
 });

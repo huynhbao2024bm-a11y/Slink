@@ -25,6 +25,8 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Slink" />
     <link rel="canonical" href="https://slink-xny3.onrender.com/" />
+    <link rel="alternate" hreflang="vi-VN" href="https://slink-xny3.onrender.com/" />
+    <link rel="alternate" hreflang="x-default" href="https://slink-xny3.onrender.com/" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" />
@@ -36,6 +38,57 @@
     <link rel="stylesheet" href="./styles.css" />
     <link rel="stylesheet" href="./workspace.css" />
     <title>Slink — Quản lý bán hàng</title>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Organization",
+            "@id": "https://slink-xny3.onrender.com/#organization",
+            "name": "Slink",
+            "url": "https://slink-xny3.onrender.com/",
+            "logo": "https://slink-xny3.onrender.com/assets/slink-icon-512.png"
+          },
+          {
+            "@type": "WebSite",
+            "@id": "https://slink-xny3.onrender.com/#website",
+            "name": "Slink — Quản lý bán hàng",
+            "url": "https://slink-xny3.onrender.com/",
+            "inLanguage": "vi",
+            "publisher": { "@id": "https://slink-xny3.onrender.com/#organization" }
+          },
+          {
+            "@type": "SoftwareApplication",
+            "name": "Slink",
+            "applicationCategory": "BusinessApplication",
+            "operatingSystem": "Web, Android 10+",
+            "inLanguage": "vi",
+            "url": "https://slink-xny3.onrender.com/",
+            "downloadUrl": "https://slink-xny3.onrender.com/download/android",
+            "image": "https://slink-xny3.onrender.com/assets/slink-og-cover.png",
+            "screenshot": [
+              "https://slink-xny3.onrender.com/assets/slink-showcase-web-pos.webp",
+              "https://slink-xny3.onrender.com/assets/slink-showcase-web-dashboard.webp",
+              "https://slink-xny3.onrender.com/assets/slink-showcase-mobile-pos.webp"
+            ],
+            "description": "Phần mềm quản lý bán hàng POS, tồn kho đa chi nhánh, biến thể màu/size, công nợ khách hàng và sổ quỹ số nguyên VND cho cửa hàng tại Việt Nam.",
+            "featureList": [
+              "Bán hàng tại quầy (POS) và in nhiệt Bluetooth 58mm/80mm",
+              "Quản lý biến thể Màu/Size, mã vạch và Serial/IMEI",
+              "Tồn kho đa chi nhánh, điều chuyển kho và đặt hàng NCC",
+              "Sổ quỹ tiền mặt/ngân hàng số nguyên VND và công nợ khách hàng",
+              "Cô lập dữ liệu theo cửa hàng và phân quyền 5 vai trò"
+            ],
+            "offers": {
+              "@type": "Offer",
+              "price": "0",
+              "priceCurrency": "VND"
+            },
+            "publisher": { "@id": "https://slink-xny3.onrender.com/#organization" }
+          }
+        ]
+      }
+    </script>
   </head>
   <body>
     <main id="auth-screen" class="auth-screen" hidden></main>
@@ -75,6 +128,24 @@
     <div class="modal-backdrop" id="modal-backdrop" hidden></div>
     <section class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-describedby="modal-description" hidden></section>
     <div class="toast-stack" id="toast-stack" aria-live="polite" aria-atomic="true"></div>
+    <noscript>
+      <div style="max-width:780px;margin:32px auto;padding:24px;font-family:system-ui,-apple-system,sans-serif;line-height:1.6;color:#1b2621;background:#f6f8f5;border:1px solid #d5e0d9;border-radius:14px">
+        <h1>Slink — Phần mềm quản lý bán hàng POS, tồn kho đa chi nhánh và sổ quỹ số nguyên VND</h1>
+        <p>Slink giúp cửa hàng thời trang, mỹ phẩm, tạp hóa và bán lẻ đa kênh tính tiền tại quầy (POS), quản lý biến thể màu/size, theo dõi tồn kho nhiều chi nhánh, công nợ khách hàng/nhà cung cấp và chốt ca thu ngân chính xác từng đồng trên Web và Android 10+.</p>
+        <ul>
+          <li>Bán hàng tại quầy (POS), gộp phương thức thanh toán, tạo mã VietQR và in bill nhiệt Bluetooth 58mm/80mm.</li>
+          <li>Quản lý hàng hóa, biến thể Màu/Size, mã vạch, Serial/IMEI và cảnh báo định mức tồn kho.</li>
+          <li>Sổ quỹ tiền mặt/ngân hàng số nguyên VND, công nợ khách hàng, đặt hàng nhà cung cấp (PO) và điều chuyển đa kho.</li>
+          <li>Cô lập dữ liệu từng cửa hàng, phân quyền 5 vai trò và nhật ký kiểm toán thao tác.</li>
+        </ul>
+        <p>
+          <a href="/download/android">Tải ứng dụng Slink Android (.apk)</a> ·
+          <a href="/legal/privacy">Chính sách bảo mật</a> ·
+          <a href="/legal/terms">Điều khoản sử dụng</a>
+        </p>
+        <p><em>Vui lòng bật JavaScript trên trình duyệt để sử dụng đầy đủ giao diện quản lý cửa hàng Slink.</em></p>
+      </div>
+    </noscript>
     <script src="./purchase-units.js" defer></script>
     <script src="./money-inputs.js" defer></script>
     <script src="./offline-ledger.js" defer></script>
