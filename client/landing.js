@@ -28,25 +28,25 @@
 
   S.fn.renderAuthPortalAside = function renderAuthPortalAside(mode) {
     const isRegisterFlow = mode === 'register' || mode === 'invite-register';
-    const badge = isRegisterFlow ? '✦ Khởi tạo nhanh trong 1 phút' : '● Vận hành đồng bộ thời gian thực';
+    const badge = isRegisterFlow ? '✦ Khởi tạo nhanh' : '● Đồng bộ thời gian thực';
     const heading = isRegisterFlow
-      ? 'Thiết lập không gian vận hành riêng cho cửa hàng.'
-      : 'Chào mừng trở lại quầy quản lý cửa hàng Slink.';
+      ? 'Không gian riêng cho cửa hàng của bạn.'
+      : 'Quầy quản lý bán hàng Slink.';
     const lead = isRegisterFlow
-      ? 'Dữ liệu độc lập theo từng cửa hàng, sẵn sàng cho bán hàng tại quầy, kiểm kho, sổ quỹ và phân quyền nhân sự.'
-      : 'Tiếp tục lên đơn tại quầy, tra cứu tồn kho chi nhánh, đối soát ca tiền mặt và theo dõi lãi gộp hôm nay.';
+      ? 'Dữ liệu tách biệt theo từng cửa hàng, sẵn sàng bán ngay.'
+      : 'Lên đơn, tra tồn kho và đối soát ca tiền mặt trong một nơi.';
     const previewImg = isRegisterFlow ? './assets/slink-showcase-web-dashboard.webp' : './assets/slink-showcase-web-pos.webp';
     const previewTitle = isRegisterFlow ? 'Slink · Tổng quan cửa hàng' : 'Slink · Quầy bán hàng POS';
     const highlights = isRegisterFlow
       ? [
-          ['1', 'Không trộn dữ liệu mẫu', 'Cửa hàng mới sạch sẽ, chỉ lưu giao dịch thực tế của bạn.'],
-          ['2', 'Tối ưu theo ngành hàng', 'Thời trang, mỹ phẩm, tạp hóa và mô hình nhiều kho.'],
-          ['3', 'Bảo mật tiêu chuẩn cao', 'Mật khẩu tối thiểu 12 ký tự, kiểm soát phiên từng thiết bị.'],
+          ['1', 'Không chèn dữ liệu mẫu', 'Cửa hàng mới hoàn toàn sạch sẽ.'],
+          ['2', 'Đủ nghiệp vụ bán lẻ', 'POS, đa kho, biến thể và sổ quỹ.'],
+          ['3', 'Bảo mật chuẩn mực', 'Mật khẩu ≥ 12 ký tự, tách phiên thiết bị.'],
         ]
       : [
-          ['✓', 'Bán hàng & thu ngân mượt mà', 'Tính tiền nhanh, tách phương thức thanh toán và in hóa đơn.'],
-          ['✓', 'Phân quyền 5 vai trò theo kho', 'Tự động mở đúng phạm vi cho Chủ shop, Quản lý, Thu ngân, Thủ kho.'],
-          ['✓', 'An toàn dữ liệu tuyệt đối', 'Băm mật khẩu scrypt, chống CSRF và lưu nhật ký kiểm toán.'],
+          ['✓', 'Thu ngân nhanh gọn', 'Tách phương thức thanh toán và in hóa đơn.'],
+          ['✓', 'Phân quyền theo kho', '5 vai trò với phạm vi kho rõ ràng.'],
+          ['✓', 'Kiểm soát an toàn', 'Phiên bảo vệ CSRF và nhật ký kiểm toán.'],
         ];
     const itemsHtml = highlights.map(function (item) {
       return `<div class='auth-aside-item'><span class='lp-check-badge' aria-hidden='true'>${item[0]}</span><div><strong>${esc(item[1])}</strong><small>${esc(item[2])}</small></div></div>`;
@@ -77,72 +77,68 @@
       tab: 'Thời trang & Phụ kiện',
       shortTab: 'Thời trang',
       storeSample: 'Linh Chi Boutique',
-      headline: 'Quản lý shop thời trang chuẩn từng màu sắc, kích cỡ.',
-      description: 'Quản lý hàng trăm biến thể Màu/Size, tra cứu tồn kho chi nhánh tại quầy và theo dõi mẫu bán chạy theo ngày.',
+      headline: 'Quản lý chuẩn từng màu sắc, kích cỡ.',
+      description: 'Quản lý biến thể Màu/Size và tra cứu tồn chi nhánh ngay tại quầy.',
       points: [
-        'Quản lý nhóm sản phẩm nhiều màu, nhiều size gọn gàng.',
-        'Tra cứu tồn kho chi nhánh tức thì khi khách đổi size.',
-        'Lưu lịch sử mua sắm và gắn thẻ khách VIP chăm sóc lại.',
-        'Theo dõi lịch sử điều chỉnh giá bán theo từng đợt khuyến mãi.',
+        'Tạo nhóm sản phẩm nhiều màu, nhiều size.',
+        'Kiểm tra tồn từng kho khi khách đổi size.',
+        'Lưu lịch sử điều chỉnh giá bán và thẻ khách VIP.',
       ],
       metrics: [
-        { title: 'Quản lý biến thể Màu / Size', sub: 'Tạo đồng loạt SKU con chỉ trong 1 thao tác', badge: 'Chuẩn thời trang' },
-        { title: 'Đối soát tồn kho quầy & kho phụ', sub: 'Phiếu điều chuyển rõ số lượng xuất – thực nhận', badge: 'Chống thất thoát' },
-        { title: 'Lưu bộ lọc nhóm khách hàng', sub: 'Lọc theo công nợ, chi tiêu và thẻ phân loại', badge: 'Chăm sóc khách quen' },
+        { title: 'Biến thể Màu / Size', sub: 'Tạo đồng loạt SKU con chỉ 1 lần', badge: 'Thời trang' },
+        { title: 'Đối soát đa kho', sub: 'Điều chuyển rõ số xuất – thực nhận', badge: 'Chống thất thoát' },
+        { title: 'Bộ lọc khách hàng', sub: 'Lọc công nợ, chi tiêu và thẻ phân loại', badge: 'Chăm sóc khách' },
       ],
     },
     cosmetics: {
       tab: 'Mỹ phẩm & Làm đẹp',
       shortTab: 'Mỹ phẩm',
       storeSample: 'Aura Beauty Room',
-      headline: 'Kiểm soát hàng chính hãng, dung tích và tệp khách thân thiết.',
-      description: 'Theo dõi sản phẩm theo dung tích/phân loại, cảnh báo chạm định mức tồn tối thiểu và giữ biên lợi nhuận gộp.',
+      headline: 'Kiểm soát dung tích, giá vốn và khách quen.',
+      description: 'Phân loại theo dung tích, cảnh báo sắp hết hàng và giữ rõ lãi gộp.',
       points: [
-        'Phân loại rõ ràng theo thương hiệu, dung tích (30ml, 50ml, Fullsize).',
-        'Cảnh báo sớm mặt hàng chạm định mức tối thiểu để đặt thêm.',
-        'Theo dõi giá vốn và lưu lịch sử điều chỉnh giá bán minh bạch.',
-        'Ghi chú nhu cầu từng khách hàng ngay trên hồ sơ & đơn bán.',
+        'Phân nhóm theo thương hiệu, dung tích (30ml, 50ml…).',
+        'Cảnh báo mặt hàng chạm mức tồn tối thiểu.',
+        'Theo dõi giá vốn và đơn đặt hàng NCC (PO).',
       ],
       metrics: [
-        { title: 'Cảnh báo tồn kho tối thiểu', sub: 'Chủ động nhập bổ sung các mã bán chạy', badge: 'Không đứt hàng' },
-        { title: 'Lãi gộp thực tế theo ngày', sub: 'Tự động tính sau giá vốn và hàng trả lại', badge: 'Rõ lợi nhuận' },
-        { title: 'Quản lý đơn đặt hàng NCC (PO)', sub: 'Nhận hàng từng phần, theo dõi công nợ phải trả', badge: 'Chuẩn quy trình' },
+        { title: 'Cảnh báo định mức tồn', sub: 'Chủ động nhập bổ sung mã bán chạy', badge: 'Không đứt hàng' },
+        { title: 'Lãi gộp thực tế', sub: 'Tính sau giá vốn và hàng trả lại', badge: 'Rõ lợi nhuận' },
+        { title: 'Đặt hàng NCC (PO)', sub: 'Nhận từng phần và theo dõi công nợ', badge: 'Chuẩn quy trình' },
       ],
     },
     grocery: {
       tab: 'Tạp hóa & Bán lẻ',
       shortTab: 'Tạp hóa',
       storeSample: 'Siêu thị Mini An Phú',
-      headline: 'Tính tiền nhanh tại quầy, sổ quỹ và công nợ rõ ràng cuối ca.',
-      description: 'Tìm hàng hóa tức thì theo tên hoặc mã SKU, gộp nhiều phương thức thanh toán và chốt ca tiền mặt minh bạch.',
+      headline: 'Tính tiền nhanh, rõ sổ quỹ và công nợ.',
+      description: 'Quét mã tìm hàng, gộp thanh toán và đối soát két tiền cuối ca.',
       points: [
-        'Tìm mặt hàng và cộng giỏ hàng tức thì, thao tác gọn trên cảm ứng.',
-        'Khách trả một phần, ghi nợ phần còn lại vào thẳng hồ sơ khách.',
-        'Mở ca – đóng ca tiền mặt đối soát chênh lệch rõ ràng.',
-        'Kiểm kê hàng loạt bằng tệp hoặc đếm nhanh trên điện thoại.',
+        'Tìm mặt hàng, quét mã vạch và cộng giỏ tức thì.',
+        'Khách trả một phần, ghi nợ thẳng vào hồ sơ.',
+        'Mở ca – chốt ca tiền mặt khớp két rõ ràng.',
       ],
       metrics: [
-        { title: 'Sổ ca tiền mặt chuyên nghiệp', sub: 'Theo dõi tiền đầu ca, thu chi và kiểm đếm cuối ca', badge: 'Khớp két tiền' },
-        { title: 'Quản lý công nợ khách & NCC', sub: 'Thu nợ từng đợt, lưu biên nhận rõ ràng', badge: 'Không quên nợ' },
-        { title: 'Nhập danh mục siêu tốc từ CSV', sub: 'Đưa hàng trăm mặt hàng lên quầy trong vài phút', badge: 'Dễ chuyển đổi' },
+        { title: 'Quản lý ca tiền mặt', sub: 'Theo dõi đầu ca, thu chi và kiểm đếm', badge: 'Khớp két' },
+        { title: 'Công nợ khách & NCC', sub: 'Thu trả từng đợt kèm biên nhận', badge: 'Minh bạch' },
+        { title: 'Nhập danh mục CSV', sub: 'Đưa hàng trăm mặt hàng lên quầy nhanh', badge: 'Dễ bắt đầu' },
       ],
     },
     omnichannel: {
       tab: 'Online & Chuỗi nhiều kho',
       shortTab: 'Đa kênh',
       storeSample: 'Hệ thống Kho Minh Khang',
-      headline: 'Đồng nhất tồn kho nhiều chi nhánh và quản lý đơn kênh bán.',
-      description: 'Gom đơn bán tại quầy cùng đơn kênh bán ngoài trên một hệ thống, giới hạn quyền nhân sự theo đúng kho phụ trách.',
+      headline: 'Đồng nhất tồn đa kho và đơn kênh bán.',
+      description: 'Gom đơn quầy và đơn kênh ngoài trên một hệ thống phân quyền theo kho.',
       points: [
-        'Khai báo kênh bán, ánh xạ mã SKU và giữ tồn khi tạo đơn.',
-        'Phân quyền chi tiết: Chủ shop, Quản lý, Thu ngân, Thủ kho, Kế toán.',
-        'Giới hạn phạm vi kho làm việc cho từng nhân sự theo chi nhánh.',
-        'Nhật ký kiểm toán (Audit Log) lưu mọi thao tác nhạy cảm.',
+        'Ánh xạ SKU kênh bán với kho nội bộ để giữ tồn.',
+        'Phân 5 vai trò: Chủ shop, Quản lý, Thu ngân, Thủ kho, Kế toán.',
+        'Nhật ký kiểm toán lưu vết mọi thay đổi nhạy cảm.',
       ],
       metrics: [
-        { title: 'Phân quyền nhân sự theo kho', sub: 'Nhân viên chi nhánh nào chỉ thao tác kho được giao', badge: 'Bảo mật đa kho' },
-        { title: 'Quản lý đơn hàng kênh bán', sub: 'Lưu người nhận, địa chỉ và tiến độ giao đơn', badge: 'Gom đơn gọn' },
-        { title: 'Nhật ký hoạt động toàn diện', sub: 'Tra cứu lịch sử sửa giá, hủy đơn hoặc chỉnh tồn', badge: 'Minh bạch 100%' },
+        { title: 'Phân quyền theo kho', sub: 'Nhân viên chỉ thao tác đúng kho được giao', badge: 'Đa chi nhánh' },
+        { title: 'Đơn kênh bán ngoài', sub: 'Lưu người nhận và tiến độ giao đơn', badge: 'Gom đơn gọn' },
+        { title: 'Nhật ký kiểm toán', sub: 'Tra lịch sử sửa giá, hủy đơn, chỉnh tồn', badge: 'Minh bạch' },
       ],
     },
   };
@@ -186,9 +182,9 @@
         <section class='lp-hero' aria-labelledby='lp-hero-heading'>
           <div class='lp-hero-grid'>
             <div class='lp-hero-copy'>
-              <div class='lp-eyebrow'><i class='lp-eyebrow-dot' aria-hidden='true'></i>Nền tảng quản lý bán hàng &amp; vận hành cửa hàng</div>
+              <div class='lp-eyebrow'><i class='lp-eyebrow-dot' aria-hidden='true'></i>Nền tảng vận hành bán lẻ</div>
               <h1 id='lp-hero-heading' class='lp-hero-title'>Bán hàng nhanh gọn,<br/><span>chính xác từng đồng.</span></h1>
-              <p class='lp-hero-lead'>Giải pháp quản lý toàn diện từ tính tiền tại quầy (POS), biến thể màu sắc/kích cỡ, tồn kho đa chi nhánh đến sổ quỹ và công nợ khách hàng — thiết kế sáng rõ, mượt mà trên cả máy tính và điện thoại.</p>
+              <p class='lp-hero-lead'>POS tính tiền, biến thể màu/size, tồn đa kho, công nợ và sổ quỹ số nguyên VND — đồng bộ web và Android.</p>
               <form class='lp-quickstart-form' data-landing-start>
                 <input class='lp-quickstart-input' type='text' name='quickStoreName' maxlength='160' value='${esc(quickStoreName)}' placeholder='Tên cửa hàng (VD: ${esc(current.storeSample)})…' aria-label='Tên cửa hàng muốn tạo'/>
                 <button class='lp-btn lp-btn-primary lp-btn-lg' type='submit'>Tạo cửa hàng miễn phí →</button>
@@ -240,7 +236,7 @@
                 </div>
               </div>
               <div class='lp-stage-note'>
-                <span><strong>Dữ liệu lưu tập trung trên máy chủ:</strong> Lên đơn, trừ tồn kho và đối soát ca tiền mặt nhất quán giữa máy tính và điện thoại.</span>
+                <span><strong>Đồng bộ máy chủ:</strong> Lên đơn, trừ kho và chốt ca nhất quán trên web lẫn điện thoại.</span>
                 <span class='lp-pill-tag ok'>Sẵn sàng bán ngay</span>
               </div>
             </div>
@@ -250,24 +246,24 @@
         <section class='lp-strip-section' aria-label='Nền tảng vận hành cốt lõi'>
           <div class='lp-strip-grid lp-glass'>
             <article class='lp-strip-item lp-solid-card' data-reveal>
-              <span>Chuẩn kế toán bán lẻ</span>
-              <strong>Số nguyên VND minh bạch</strong>
-              <p>Đơn bán, trả hàng và sổ quỹ đồng bộ trong một giao dịch khép kín.</p>
+              <span>Chuẩn kế toán</span>
+              <strong>Số nguyên VND</strong>
+              <p>Đơn bán, trả hàng và sổ quỹ khép kín.</p>
             </article>
             <article class='lp-strip-item lp-solid-card' data-reveal>
-              <span>Quầy thu ngân linh hoạt</span>
-              <strong>Thanh toán gộp đa phương thức</strong>
-              <p>Gộp Tiền mặt, Chuyển khoản, QR hoặc trả một phần trên cùng một đơn.</p>
+              <span>Quầy thu ngân</span>
+              <strong>Thanh toán linh hoạt</strong>
+              <p>Gộp tiền mặt, chuyển khoản, QR hoặc ghi nợ.</p>
             </article>
             <article class='lp-strip-item lp-solid-card' data-reveal>
-              <span>Kiểm soát kho chặt chẽ</span>
-              <strong>Đa chi nhánh &amp; Chống âm kho</strong>
-              <p>Theo dõi tồn từng kho, nhập NCC, điều chuyển và kiểm kê nhanh.</p>
+              <span>Kiểm soát kho</span>
+              <strong>Đa kho &amp; Chống âm</strong>
+              <p>Theo dõi tồn, nhập NCC và điều chuyển.</p>
             </article>
             <article class='lp-strip-item lp-solid-card' data-reveal>
-              <span>Vận hành đội ngũ</span>
-              <strong>Phân quyền 5 vai trò độc lập</strong>
-              <p>Phân quyền rõ Chủ shop, Quản lý, Thu ngân, Thủ kho và Kế toán.</p>
+              <span>Đội ngũ</span>
+              <strong>5 vai trò phân quyền</strong>
+              <p>Chủ shop, Quản lý, Thu ngân, Thủ kho, Kế toán.</p>
             </article>
           </div>
         </section>
@@ -275,14 +271,14 @@
         <section id='lp-features' class='lp-section' aria-labelledby='lp-features-title'>
           <div class='lp-section-head'>
             <div class='lp-eyebrow'><i class='lp-eyebrow-dot' aria-hidden='true'></i>Hệ sinh thái tính năng</div>
-            <h2 id='lp-features-title'>Mọi nghiệp vụ cửa hàng hội tụ trên một nền tảng tinh gọn</h2>
-            <p>Kết nối liền mạch từ lúc nhập hàng, lên đơn tại quầy đến khi khóa sổ cuối ngày trên một giao diện thống nhất.</p>
+            <h2 id='lp-features-title'>Trọn bộ nghiệp vụ cửa hàng trên một màn hình</h2>
+            <p>Liên thông nhập hàng, bán tại quầy và khóa sổ cuối ngày.</p>
           </div>
           <div class='lp-bento-grid'>
             <article class='lp-bento-card span-7 lp-glass lp-sheen-host' data-reveal>
               <span class='lp-bento-icon' aria-hidden='true'>${icon('cart', 22)}</span>
-              <h3>Bán hàng tại quầy (POS) nhanh &amp; chuẩn xác</h3>
-              <p>Tìm nhanh theo tên hoặc SKU, áp dụng khuyến mãi, tách thanh toán nhiều hình thức và in biên nhận rõ ràng.</p>
+              <h3>Bán hàng tại quầy (POS)</h3>
+              <p>Tìm nhanh theo tên/SKU, áp khuyến mãi, gộp thanh toán và in bill.</p>
               <div class='lp-bento-preview lp-solid-card'>
                 <div class='lp-preview-row'><span>Đơn #HD-1048 · Khách lẻ</span><span class='lp-pill-tag ok'>Hoàn tất</span></div>
                 <div class='lp-preview-row'><span>Thu tiền mặt + Chuyển khoản QR</span><strong>1.240.000 ₫</strong></div>
@@ -291,68 +287,67 @@
 
             <article class='lp-bento-card span-5 lp-glass lp-sheen-host' data-reveal>
               <span class='lp-bento-icon' aria-hidden='true'>${icon('box', 22)}</span>
-              <h3>Hàng hóa, Biến thể &amp; Lịch sử giá</h3>
-              <p>Quản lý mặt hàng đơn hoặc nhiều Màu/Size, lưu vết điều chỉnh giá và hỗ trợ nhập/xuất CSV.</p>
+              <h3>Hàng hóa &amp; Biến thể</h3>
+              <p>Hỗ trợ Màu/Size, lưu lịch sử đổi giá và nhập xuất CSV.</p>
               <div class='lp-bento-preview lp-solid-card'>
                 <div class='lp-preview-row'><span>Áo Polo Basic (Trắng / Đen · S, M, L)</span><span class='lp-pill-tag'>6 biến thể</span></div>
-                <div class='lp-preview-row'><span>Cập nhật giá bán gần nhất</span><strong>295.000 ₫</strong></div>
+                <div class='lp-preview-row'><span>Giá bán hiện tại</span><strong>295.000 ₫</strong></div>
               </div>
             </article>
 
             <article class='lp-bento-card span-5 lp-glass lp-sheen-host' data-reveal>
               <span class='lp-bento-icon' aria-hidden='true'>${icon('layers', 22)}</span>
-              <h3>Đa kho, Nhập hàng NCC &amp; Điều chuyển</h3>
-              <p>Tạo đơn nhập NCC (PO), nhận hàng từng đợt, điều chuyển giữa các kho và kiểm kê liên tục.</p>
+              <h3>Đa kho &amp; Điều chuyển</h3>
+              <p>Đặt hàng NCC (PO), nhận nhiều đợt, chuyển kho và kiểm kê.</p>
               <div class='lp-bento-preview lp-solid-card'>
-                <div class='lp-preview-row'><span>Điều chuyển: Kho Tổng → Quầy Q1</span><span class='lp-pill-tag ok'>Đã nhận đủ</span></div>
-                <div class='lp-preview-row'><span>Đơn nhập PO-029 · Nhà cung cấp</span><strong>18.500.000 ₫</strong></div>
+                <div class='lp-preview-row'><span>Kho Tổng → Quầy Q1</span><span class='lp-pill-tag ok'>Đã nhận đủ</span></div>
+                <div class='lp-preview-row'><span>Đơn nhập PO-029 · NCC</span><strong>18.500.000 ₫</strong></div>
               </div>
             </article>
 
             <article class='lp-bento-card span-7 lp-glass lp-sheen-host' data-reveal>
               <span class='lp-bento-icon' aria-hidden='true'>${icon('wallet', 22)}</span>
-              <h3>Sổ quỹ, Ca thu ngân &amp; Quản lý công nợ</h3>
-              <p>Tách biệt tiền mặt trong két và tiền ngân hàng/QR; kiểm soát công nợ khách và phải trả NCC.</p>
+              <h3>Sổ quỹ, Ca thu ngân &amp; Công nợ</h3>
+              <p>Tách quỹ tiền mặt – ngân hàng, chốt ca và công nợ khách / NCC.</p>
               <div class='lp-bento-preview lp-solid-card'>
-                <div class='lp-preview-row'><span>Ca sáng · Thu ngân bàn giao két</span><span class='lp-pill-tag ok'>Chênh lệch: 0 ₫</span></div>
-                <div class='lp-preview-row'><span>Báo cáo lãi gộp sau giá vốn &amp; trả hàng</span><strong>+4.680.000 ₫</strong></div>
+                <div class='lp-preview-row'><span>Ca sáng · Bàn giao két</span><span class='lp-pill-tag ok'>Chênh lệch: 0 ₫</span></div>
+                <div class='lp-preview-row'><span>Lãi gộp sau trả hàng</span><strong>+4.680.000 ₫</strong></div>
               </div>
             </article>
 
             <article class='lp-bento-card lp-glass lp-sheen-host' data-reveal>
               <span class='lp-bento-icon' aria-hidden='true'>${icon('users', 22)}</span>
-              <h3>Chăm sóc &amp; Phân nhóm khách hàng</h3>
-              <p>Lưu lịch sử mua, công nợ từng khách và bộ lọc theo mức chi tiêu.</p>
+              <h3>Khách hàng &amp; Bộ lọc</h3>
+              <p>Lịch sử mua, công nợ và phân nhóm theo chi tiêu.</p>
             </article>
 
             <article class='lp-bento-card lp-glass lp-sheen-host' data-reveal>
               <span class='lp-bento-icon' aria-hidden='true'>${icon('shop', 22)}</span>
-              <h3>Ghi nhận đơn Kênh bán ngoài</h3>
-              <p>Ánh xạ SKU thủ công với kho nội bộ để giữ hàng và theo dõi giao đơn.</p>
+              <h3>Đơn kênh bán ngoài</h3>
+              <p>Ánh xạ SKU với kho nội bộ để giữ tồn và theo dõi giao.</p>
             </article>
 
-            <article id='lp-trust' class='lp-bento-card lp-glass lp-sheen-host' data-reveal>
+            <article class='lp-bento-card lp-glass lp-sheen-host' data-reveal>
               <span class='lp-bento-icon' aria-hidden='true'>${icon('receipt', 22)}</span>
-              <h3>Bảo mật cửa hàng &amp; Nhật ký kiểm toán</h3>
-              <p>Cô lập dữ liệu từng cửa hàng, kiểm soát phiên thiết bị và nhật ký thao tác.</p>
+              <h3>Bảo mật &amp; Nhật ký kiểm toán</h3>
+              <p>Cô lập dữ liệu cửa hàng, kiểm soát phiên và nhật ký thao tác.</p>
             </article>
           </div>
         </section>
 
         <section id='lp-industries' class='lp-section' aria-labelledby='lp-industries-title'>
           <div class='lp-section-head'>
-            <div class='lp-eyebrow'><i class='lp-eyebrow-dot' aria-hidden='true'></i>Tối ưu theo mô hình kinh doanh</div>
-            <h2 id='lp-industries-title'>Thiết kế sát thực tế cho từng ngành hàng tại Việt Nam</h2>
-            <p>Tự động sắp xếp thanh điều hướng phù hợp từ cửa hàng nhỏ đến chuỗi nhiều kho.</p>
+            <div class='lp-eyebrow'><i class='lp-eyebrow-dot' aria-hidden='true'></i>Theo mô hình kinh doanh</div>
+            <h2 id='lp-industries-title'>Linh hoạt cho từng ngành hàng</h2>
           </div>
           <div class='lp-industry-tabs' data-tab-glider-host role='tablist' aria-label='Ngành hàng'>${industryTabs}</div>
           <div class='lp-industry-panel lp-glass lp-sheen-host' data-reveal>
             <div class='lp-industry-copy'>
-              <span class='lp-pill-tag'>Giải pháp chuyên biệt · ${esc(current.tab)}</span>
+              <span class='lp-pill-tag'>${esc(current.tab)}</span>
               <h3>${esc(current.headline)}</h3>
               <p>${esc(current.description)}</p>
               <ul class='lp-industry-points'>${industryPoints}</ul>
-              <button type='button' class='lp-btn lp-btn-primary lp-btn-lg' data-action='auth-mode' data-mode='register'>Khởi tạo cửa hàng ${esc(current.shortTab)} →</button>
+              <button type='button' class='lp-btn lp-btn-primary lp-btn-lg' data-action='auth-mode' data-mode='register'>Tạo cửa hàng ${esc(current.shortTab)} →</button>
             </div>
             <div class='lp-industry-cards'>${industryCards}</div>
           </div>
@@ -360,25 +355,24 @@
 
         <section id='lp-workflow' class='lp-section' aria-labelledby='lp-workflow-title'>
           <div class='lp-section-head'>
-            <div class='lp-eyebrow'><i class='lp-eyebrow-dot' aria-hidden='true'></i>Bắt đầu dễ dàng</div>
-            <h2 id='lp-workflow-title'>Sẵn sàng bán hàng chỉ sau 3 bước đơn giản</h2>
-            <p>Không cần cài đặt phức tạp. Nhân viên mới thao tác thành thạo ngay trong ca đầu tiên.</p>
+            <div class='lp-eyebrow'><i class='lp-eyebrow-dot' aria-hidden='true'></i>Bắt đầu nhanh</div>
+            <h2 id='lp-workflow-title'>Bán hàng chỉ sau 3 bước</h2>
           </div>
           <div class='lp-steps-grid'>
             <article class='lp-step-card lp-glass' data-reveal>
               <span class='lp-step-num'>1</span>
-              <h3>Đăng ký cửa hàng riêng</h3>
-              <p>Nhập tên cửa hàng và chọn ngành hàng để hệ thống cấu hình quy trình gọn gàng.</p>
+              <h3>Tạo cửa hàng</h3>
+              <p>Đăng ký không gian dữ liệu riêng theo mô hình kinh doanh.</p>
             </article>
             <article class='lp-step-card lp-glass' data-reveal>
               <span class='lp-step-num'>2</span>
-              <h3>Đưa sản phẩm lên kệ</h3>
-              <p>Thêm nhanh sản phẩm kèm tồn đầu hoặc nhập hàng loạt bằng tệp mẫu CSV.</p>
+              <h3>Thêm sản phẩm</h3>
+              <p>Nhập từng mặt hàng hoặc tải lên hàng loạt từ tệp CSV.</p>
             </article>
             <article class='lp-step-card lp-glass' data-reveal>
               <span class='lp-step-num'>3</span>
-              <h3>Bán hàng &amp; Xem báo cáo thực</h3>
-              <p>Lên đơn trên web hoặc điện thoại, chốt ca tiền mặt và theo dõi lãi gộp mọi lúc.</p>
+              <h3>Bán hàng &amp; Chốt ca</h3>
+              <p>Lên đơn web/Android, chốt két tiền mặt và xem lãi gộp.</p>
             </article>
           </div>
         </section>
@@ -386,53 +380,59 @@
         <section id='lp-download' class='lp-section lp-download-section' aria-labelledby='lp-download-title'>
           <div class='lp-download-card lp-glass lp-sheen-host' data-reveal>
             <div class='lp-download-copy'>
-              <div class='lp-eyebrow'><i class='lp-eyebrow-dot' aria-hidden='true'></i>Ứng dụng Android chính thức</div>
-              <h2 id='lp-download-title'>Tải Slink cho điện thoại Android — luôn nhận bản mới nhất.</h2>
-              <p>Đóng gói tối ưu cho Android 10+, mở thẳng vào màn hình đăng nhập cửa hàng, kết nối máy in hóa đơn nhiệt Bluetooth và tự động kiểm tra bản cập nhật mới ngay trong ứng dụng.</p>
+              <div class='lp-eyebrow'><i class='lp-eyebrow-dot' aria-hidden='true'></i>Ứng dụng Android</div>
+              <h2 id='lp-download-title'>Tải Slink cho Android — luôn là bản mới nhất.</h2>
+              <p>Mở thẳng vào màn hình cửa hàng, hỗ trợ máy in nhiệt Bluetooth 58mm/80mm và tự kiểm tra cập nhật.</p>
               <div class='lp-download-points'>
-                <span><i class='lp-check-badge' aria-hidden='true'>✓</i>Giao diện vận hành tinh gọn</span>
+                <span><i class='lp-check-badge' aria-hidden='true'>✓</i>Gọn nhẹ cho Android 10+</span>
                 <span><i class='lp-check-badge' aria-hidden='true'>✓</i>In nhiệt Bluetooth 58mm / 80mm</span>
-                <span><i class='lp-check-badge' aria-hidden='true'>✓</i>Tự kiểm tra bản cập nhật mới</span>
+                <span><i class='lp-check-badge' aria-hidden='true'>✓</i>Tự kiểm tra cập nhật mới</span>
               </div>
             </div>
             <div class='lp-download-cta-box lp-solid-card'>
               <span class='lp-pill-tag ok' data-apk-version-badge>Android 10+</span>
-              <strong>Gói cài đặt Slink.apk</strong>
+              <strong>Slink.apk</strong>
               <p class='lp-apk-meta' data-apk-meta-text>Android 10 trở lên</p>
-              <a class='lp-btn lp-btn-primary lp-btn-lg lp-apk-download-cta' href='/download/android'>${icon('download', 18)}<span>Tải xuống Slink Android (.apk)</span></a>
+              <a class='lp-btn lp-btn-primary lp-btn-lg lp-apk-download-cta' href='/download/android'>${icon('download', 18)}<span>Tải Slink Android (.apk)</span></a>
+            </div>
+          </div>
+        </section>
+
+        <section id='lp-trust' class='lp-section lp-trust-section' aria-labelledby='lp-trust-title'>
+          <div class='lp-section-head'>
+            <div class='lp-eyebrow'><i class='lp-eyebrow-dot' aria-hidden='true'></i>Bảo mật &amp; An toàn dữ liệu</div>
+            <h2 id='lp-trust-title'>Cô lập dữ liệu và kiểm soát chặt theo cửa hàng</h2>
+          </div>
+          <div class='lp-footer-trust-strip lp-glass' data-reveal>
+            <div class='lp-footer-trust-card lp-solid-card'>
+              <strong>Cô lập từng cửa hàng</strong>
+              <p>Dữ liệu và phân quyền kho tách biệt hoàn toàn.</p>
+            </div>
+            <div class='lp-footer-trust-card lp-solid-card'>
+              <strong>Bảo vệ phiên đăng nhập</strong>
+              <p>Mật khẩu scrypt, chống CSRF và nhật ký kiểm toán.</p>
+            </div>
+            <div class='lp-footer-trust-card lp-solid-card'>
+              <strong>Số nguyên VND &amp; Offline</strong>
+              <p>Giao dịch máy chủ chuẩn đồng, giữ hàng đợi khi mất mạng.</p>
             </div>
           </div>
         </section>
 
         <section class='lp-cta-banner lp-glass lp-sheen-host' data-reveal aria-labelledby='lp-cta-heading'>
-          <span class='lp-eyebrow'><i class='lp-eyebrow-dot' aria-hidden='true'></i>Sẵn sàng đồng hành cùng cửa hàng bạn</span>
-          <h2 id='lp-cta-heading'>Trải nghiệm không gian quản lý bán hàng sáng rõ, chuẩn xác ngay hôm nay.</h2>
-          <p>Tạo tài khoản cửa hàng mới hoàn toàn miễn phí hoặc đăng nhập vào cửa hàng hiện có của bạn.</p>
+          <span class='lp-eyebrow'><i class='lp-eyebrow-dot' aria-hidden='true'></i>Bắt đầu miễn phí</span>
+          <h2 id='lp-cta-heading'>Quản lý cửa hàng sáng rõ, chuẩn xác từng đồng.</h2>
           <div class='lp-cta-actions'>
             <button type='button' class='lp-btn lp-btn-primary lp-btn-lg' data-action='auth-mode' data-mode='register'>Tạo tài khoản cửa hàng →</button>
-            <button type='button' class='lp-btn lp-btn-glass lp-btn-lg' data-action='auth-mode' data-mode='login'>Đăng nhập tài khoản có sẵn</button>
+            <button type='button' class='lp-btn lp-btn-glass lp-btn-lg' data-action='auth-mode' data-mode='login'>Đăng nhập</button>
           </div>
         </section>
 
         <footer class='lp-footer' aria-label='Thông tin bảo mật, hỗ trợ và pháp lý Slink'>
-          <div class='lp-footer-trust-strip lp-glass'>
-            <div class='lp-footer-trust-card lp-solid-card'>
-              <strong>Cô lập dữ liệu theo cửa hàng</strong>
-              <p>Mỗi cửa hàng dùng không gian dữ liệu và phân quyền kho tách biệt hoàn toàn.</p>
-            </div>
-            <div class='lp-footer-trust-card lp-solid-card'>
-              <strong>Bảo vệ phiên &amp; Tài khoản</strong>
-              <p>Mật khẩu băm scrypt, phiên đăng nhập bảo vệ CSRF và nhật ký kiểm toán thao tác.</p>
-            </div>
-            <div class='lp-footer-trust-card lp-solid-card'>
-              <strong>Lưu trữ an toàn &amp; Đồng bộ</strong>
-              <p>Giao dịch số nguyên VND trên máy chủ, giữ hàng đợi đơn ngay cả khi rớt mạng.</p>
-            </div>
-          </div>
           <div class='lp-footer-grid'>
             <div class='lp-footer-brand'>
               <div class='lp-brand'>${slinkBrandLogoHtml()}</div>
-              <p>Phần mềm quản lý bán hàng tinh gọn cho cửa hàng, shop thời trang, mỹ phẩm và mô hình nhiều kho tại Việt Nam.</p>
+              <p>Quản lý bán hàng, đa kho và sổ quỹ cho cửa hàng tại Việt Nam.</p>
               <div class='lp-footer-platforms'>
                 <span class='lp-pill-tag'>Web Desktop</span>
                 <span class='lp-pill-tag'>Mobile PWA</span>
@@ -495,6 +495,7 @@
   let gliderResizeObserver = null;
   let chromeResizeObserver = null;
   let fontsSyncBound = false;
+  let lpScrollLock = { targetId: '', until: 0 };
 
   function reducedMotionEnabled() {
     return Boolean(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -505,19 +506,22 @@
     const topbar = document.querySelector('.topbar');
     const mobileNav = document.getElementById('mobile-nav');
     const posCart = document.querySelector('.pos-mobile-cart');
+    const lpHeaderWrap = document.querySelector('.lp-header-wrap');
     if (topbar && topbar.offsetHeight > 0) docStyle.setProperty('--topbar-h', topbar.offsetHeight + 'px');
     else docStyle.removeProperty('--topbar-h');
     if (mobileNav && mobileNav.offsetHeight > 0) docStyle.setProperty('--mobile-nav-h', mobileNav.offsetHeight + 'px');
     else docStyle.removeProperty('--mobile-nav-h');
     if (posCart && posCart.offsetHeight > 0) docStyle.setProperty('--pos-cart-bar-h', posCart.offsetHeight + 'px');
     else docStyle.removeProperty('--pos-cart-bar-h');
+    if (lpHeaderWrap && lpHeaderWrap.offsetHeight > 0) docStyle.setProperty('--lp-header-h', Math.ceil(lpHeaderWrap.getBoundingClientRect().bottom) + 'px');
+    else docStyle.removeProperty('--lp-header-h');
     if (typeof window.ResizeObserver === 'function') {
       if (!chromeResizeObserver) {
         chromeResizeObserver = new window.ResizeObserver(function () {
           syncAppChromeMetrics();
         });
       }
-      [topbar, mobileNav, posCart].forEach(function (el) {
+      [topbar, mobileNav, posCart, lpHeaderWrap].forEach(function (el) {
         if (el && el.dataset.chromeObserved !== '1') {
           el.dataset.chromeObserved = '1';
           chromeResizeObserver.observe(el);
@@ -550,11 +554,24 @@
     }
     const hostW = Math.max(host.clientWidth, 1);
     const hostH = Math.max(host.clientHeight, 1);
-    glider.style.setProperty('--glider-left', ((active.offsetLeft / hostW) * 100).toFixed(4) + '%');
-    glider.style.setProperty('--glider-top', ((active.offsetTop / hostH) * 100).toFixed(4) + '%');
-    glider.style.setProperty('--glider-width', ((active.offsetWidth / hostW) * 100).toFixed(4) + '%');
-    glider.style.setProperty('--glider-height', ((active.offsetHeight / hostH) * 100).toFixed(4) + '%');
+    const hostRect = host.getBoundingClientRect();
+    const activeRect = active.getBoundingClientRect();
+    const relLeft = (activeRect.left - hostRect.left) - host.clientLeft + host.scrollLeft;
+    const relTop = (activeRect.top - hostRect.top) - host.clientTop + host.scrollTop;
+    const relW = activeRect.width || active.offsetWidth;
+    const relH = activeRect.height || active.offsetHeight;
+    glider.style.setProperty('--glider-left', ((relLeft / hostW) * 100).toFixed(4) + '%');
+    glider.style.setProperty('--glider-top', ((relTop / hostH) * 100).toFixed(4) + '%');
+    glider.style.setProperty('--glider-width', ((relW / hostW) * 100).toFixed(4) + '%');
+    glider.style.setProperty('--glider-height', ((relH / hostH) * 100).toFixed(4) + '%');
     glider.classList.add('is-visible');
+    if (host.scrollWidth > host.clientWidth + 2) {
+      const pad = 12;
+      if (relLeft < host.scrollLeft + pad) host.scrollLeft = Math.max(0, relLeft - pad);
+      else if (relLeft + relW > host.scrollLeft + host.clientWidth - pad) {
+        host.scrollLeft = Math.min(host.scrollWidth - host.clientWidth, relLeft + relW - host.clientWidth + pad);
+      }
+    }
     if (!glider.classList.contains('is-ready')) {
       window.requestAnimationFrame(function () {
         if (glider.isConnected) glider.classList.add('is-ready');
@@ -714,17 +731,33 @@
     const nav = headerWrap.querySelector('.lp-nav');
     if (!nav) return;
     const links = Array.from(nav.querySelectorAll('.lp-nav-link[data-target]'));
-    const headerBottom = headerWrap.getBoundingClientRect().bottom + 36;
+    const headerBottom = Math.ceil(headerWrap.getBoundingClientRect().bottom);
+    const threshold = headerBottom + 72;
     let activeTarget = '';
-    const firstSection = document.getElementById(links[0]?.dataset.target || '');
-    if (firstSection && scrollY > 80 && firstSection.getBoundingClientRect().top <= headerBottom + 160) {
-      for (let i = 0; i < links.length; i += 1) {
-        const section = document.getElementById(links[i].dataset.target);
-        if (section && section.getBoundingClientRect().top <= headerBottom + 160) {
-          activeTarget = links[i].dataset.target;
+
+    if (lpScrollLock.targetId && Date.now() < lpScrollLock.until) {
+      activeTarget = lpScrollLock.targetId;
+      const lockedEl = document.getElementById(activeTarget);
+      if (lockedEl && Math.abs(lockedEl.getBoundingClientRect().top - (headerBottom + 18)) <= 8) {
+        lpScrollLock = { targetId: '', until: 0 };
+      }
+    } else {
+      lpScrollLock = { targetId: '', until: 0 };
+      const sections = links.map(function (link) {
+        const el = document.getElementById(link.dataset.target || '');
+        return el ? { id: link.dataset.target, el, top: el.getBoundingClientRect().top } : null;
+      }).filter(Boolean).sort(function (a, b) { return a.top - b.top; });
+
+      const atBottom = (scrollY + (window.innerHeight || 0)) >= (document.documentElement.scrollHeight - 28);
+      if (atBottom && sections.length) {
+        activeTarget = sections[sections.length - 1].id;
+      } else if (scrollY > 40 && sections.length && sections[0].top <= threshold) {
+        for (let i = 0; i < sections.length; i += 1) {
+          if (sections[i].top <= threshold) activeTarget = sections[i].id;
         }
       }
     }
+
     let changed = false;
     links.forEach(function (link) {
       const shouldBeActive = Boolean(activeTarget) && link.dataset.target === activeTarget;
@@ -796,6 +829,10 @@
       stage.style.removeProperty('--phone-shift-y');
     });
 
+    const clearLock = function () { lpScrollLock = { targetId: '', until: 0 }; };
+    window.addEventListener('wheel', clearLock, { passive: true });
+    window.addEventListener('touchstart', clearLock, { passive: true });
+
     window.addEventListener('scroll', function () {
       if (S.dom.authRoot?.hidden || scrollSpyFrame) return;
       scrollSpyFrame = window.requestAnimationFrame(function () {
@@ -842,11 +879,20 @@
 
   S.fn.handleLandingAction = function handleLandingAction(action, button) {
     if (action === 'lp-scroll') {
-      const target = document.getElementById(button.dataset.target);
-      target?.scrollIntoView({ behavior: reducedMotionEnabled() ? 'auto' : 'smooth', block: 'start' });
-      const nav = button.closest('.lp-nav');
+      const targetId = button.dataset.target || '';
+      const target = document.getElementById(targetId);
+      const headerWrap = S.dom.authRoot?.querySelector('.lp-header-wrap');
+      const headerClearance = headerWrap ? Math.ceil(headerWrap.getBoundingClientRect().bottom) + 18 : 104;
+      if (target) {
+        const destY = Math.max(0, Math.round(target.getBoundingClientRect().top + (window.scrollY || window.pageYOffset || 0) - headerClearance));
+        lpScrollLock = target.closest?.('.lp-nav') || button.closest('.lp-nav')
+          ? { targetId, until: Date.now() + 900 }
+          : { targetId: '', until: 0 };
+        window.scrollTo({ top: destY, behavior: reducedMotionEnabled() ? 'auto' : 'smooth' });
+      }
+      const nav = button.closest('.lp-nav') || S.dom.authRoot?.querySelector('.lp-nav');
       if (nav) {
-        nav.querySelectorAll('.lp-nav-link').forEach(function (link) { link.classList.toggle('active', link === button); });
+        nav.querySelectorAll('.lp-nav-link').forEach(function (link) { link.classList.toggle('active', link.dataset.target === targetId); });
         S.fn.syncTabGliders(nav);
       }
       return;

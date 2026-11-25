@@ -1858,6 +1858,7 @@
     S.dom.modal.innerHTML = `<div class='modal-head'><div><h2 id='modal-title'>${S.fn.esc(title)}</h2><p id='modal-description' ${subtitle ? '' : 'hidden'}>${S.fn.esc(subtitle || '')}</p></div>${headerActions}</div><div class='modal-body'>${body || ''}</div>${footer ? `<div class='modal-footer'>${footer}</div>` : ''}`;
     S.dom.modal.hidden = false; S.dom.backdrop.hidden = false; document.body.style.overflow = 'hidden';
     window.SlinkMoneyFields.enhance(S.dom.modal);
+    S.fn.syncTabGliders?.(S.dom.modal);
     S.fn.updateProductHints(S.dom.modal.querySelector('[data-form="product"],[data-form="quick-product"]'));
     const first = S.dom.modal.querySelector('input:not([type=hidden]),select,button');
     if (first) window.requestAnimationFrame(function () {

@@ -2465,8 +2465,8 @@
         <article class='stat-card'><div class='stat-top'><span class='stat-label'>Thời hạn bảo hành</span></div><div class='stat-value'>${p.warrantyMonths > 0 ? `${S.fn.number(p.warrantyMonths)} tháng` : 'Không BH'}</div></article>
       </div>
       ${p.serialTracked
-        ? `<div class='modal-note'>Sản phẩm này quản lý theo từng số Serial / IMEI riêng biệt. Bấm nút bên dưới để xem, thêm hoặc tra cứu từng mã cụ thể.</div><button type='button' class='btn btn-secondary' data-action='view-product-serials' data-id='${S.fn.esc(p.id)}'>Mở danh sách Serial / IMEI →</button>`
-        : `<div class='modal-note'>Sản phẩm này bán theo số lượng thông thường, không bật quản lý mã Serial / IMEI riêng lẻ.</div>`}`;
+        ? `<button type='button' class='btn btn-secondary' data-action='view-product-serials' data-id='${S.fn.esc(p.id)}'>Mở danh sách Serial / IMEI →</button>`
+        : `<div class='modal-note'>Không bật quản lý Serial / IMEI riêng.</div>`}`;
     }
     return `${tabBar}<div data-product-detail-panel>${content}</div>`;
   }
