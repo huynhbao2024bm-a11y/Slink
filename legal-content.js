@@ -5,6 +5,7 @@
   'use strict';
 
   const LAST_UPDATED = '19/11/2026';
+  const LAST_UPDATED_ISO = '2026-11-19';
 
   const TERMS_SECTIONS = [
     {
@@ -73,10 +74,16 @@
     </div>`;
   }
 
-  function renderStandaloneLegalPage(kind) {
+  function renderStandaloneLegalPage(kind, options) {
     const isPrivacy = kind === 'privacy';
+    const pathSegment = isPrivacy ? '/legal/privacy' : '/legal/terms';
     const title = isPrivacy ? 'Chính sách bảo mật — Slink' : 'Điều khoản sử dụng — Slink';
     const heading = isPrivacy ? 'Chính sách bảo mật & Dữ liệu cá nhân' : 'Điều khoản sử dụng Slink';
+    const description = isPrivacy
+      ? 'Chính sách bảo mật, cô lập dữ liệu cửa hàng và quyền xuất/xóa dữ liệu cá nhân của Slink theo Nghị định 13/2023/NĐ-CP.'
+      : 'Điều khoản sử dụng phần mềm quản lý bán hàng POS, tồn kho, sổ quỹ số nguyên VND và phân quyền cửa hàng Slink.';
+    const rawOrigin = options && typeof options.origin === 'string' ? options.origin.replace(/\/+$/, '') : '';
+    const canonicalUrl = rawOrigin ? `${rawOrigin}${pathSegment}` : '';
     const otherHref = isPrivacy ? '/legal/terms' : '/legal/privacy';
     const otherLabel = isPrivacy ? 'Xem Điều khoản sử dụng' : 'Xem Chính sách bảo mật';
     return `<!doctype html>
@@ -84,6 +91,16 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0F6B4E" />
+  <meta name="description" content="${esc(description)}" />
+  <meta name="robots" content="index,follow" />
+  <meta property="og:type" content="article" />
+  <meta property="og:locale" content="vi_VN" />
+  <meta property="og:site_name" content="Slink" />
+  <meta property="og:title" content="${esc(title)}" />
+  <meta property="og:description" content="${esc(description)}" />
+  ${canonicalUrl ? `<meta property="og:url" content="${esc(canonicalUrl)}" />\n  <link rel="canonical" href="${esc(canonicalUrl)}" />` : ''}
+  <link rel="icon" href="/favicon.ico" sizes="any" />
   <title>${esc(title)}</title>
   <style>
     body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#f7f8f6;color:#1b2621;line-height:1.6}
@@ -112,6 +129,7 @@
 
   return {
     LAST_UPDATED,
+    LAST_UPDATED_ISO,
     TERMS_SECTIONS,
     PRIVACY_SECTIONS,
     renderLegalSectionsHtml,
