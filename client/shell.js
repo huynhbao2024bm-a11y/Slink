@@ -119,7 +119,7 @@
       ${subtitle ? `<p class='auth-portal-subtitle'>${S.fn.esc(subtitle)}</p>` : ''}
       ${message ? `<div class='auth-message ${tone === 'error' ? 'error' : ''}'>${message}</div>` : ''}
       ${body}
-      <div class='auth-footnote'>Chỉ thành viên được cửa hàng cấp quyền mới truy cập được số liệu.</div>
+      <div class='auth-footnote'>Dữ liệu tách biệt theo từng cửa hàng.</div>
       <nav class='legal-links' aria-label='Thông tin pháp lý'><a href='/legal/privacy'>Chính sách quyền riêng tư</a><a href='/legal/terms'>Điều khoản sử dụng</a></nav>`;
 
     document.title = `${title} — Slink`;
@@ -589,26 +589,26 @@
       body = `<form class='auth-form' data-auth-form='invite-register'><div class='auth-form-row-2'><div class='form-field'><label class='input-label' for='auth-name'>Tên của bạn</label><input class='input' id='auth-name' name='displayName' autocomplete='name' required minlength='2' maxlength='120'/></div><div class='form-field'><label class='input-label' for='auth-email'>Email được mời</label><input class='input' id='auth-email' name='email' type='email' value='${S.fn.esc(S.state.invitationInfo ? S.state.invitationInfo.email : '')}' readonly/></div></div><div class='auth-form-row-2'>${S.fn.authPasswordField('auth-password', 'password', 'Mật khẩu (≥ 12 ký tự)', 'new-password')}${S.fn.authPasswordField('auth-password-confirm', 'passwordConfirm', 'Nhập lại mật khẩu', 'new-password', 'auth-password')}</div>${passwordMeterHtml}<button class='btn btn-primary auth-submit' type='submit'>Tạo tài khoản và tham gia</button></form><button class='auth-switch' type='button' data-action='auth-mode' data-mode='invite-login'>Đã có tài khoản? Đăng nhập</button>`;
     } else if (S.state.authMode === 'register') {
       title = 'Tạo cửa hàng mới';
-      subtitle = 'Khởi tạo không gian dữ liệu riêng — sạch sẽ, chuẩn số nguyên VND.';
+      subtitle = 'Không gian riêng theo từng cửa hàng, chuẩn VND.';
       body = `<form class='auth-form' data-auth-form='register'><input type='hidden' name='workspaceMode' value='shop'/><div class='auth-form-row-2'><div class='form-field'><label class='input-label' for='auth-name'>Tên của bạn</label><input class='input' id='auth-name' name='displayName' autocomplete='name' required minlength='2' maxlength='120'/></div><div class='form-field' data-shop-registration><label class='input-label' for='auth-store'>Tên cửa hàng</label><input class='input' id='auth-store' name='storeName' autocomplete='organization' required minlength='2' maxlength='160'/></div></div><div class='form-field'><label class='input-label' for='auth-email'>Email quản trị</label><input class='input' id='auth-email' name='email' type='email' autocomplete='email' required maxlength='254'/></div><div class='auth-form-row-2'>${S.fn.authPasswordField('auth-password', 'password', 'Mật khẩu (≥ 12 ký tự)', 'new-password')}${S.fn.authPasswordField('auth-password-confirm', 'passwordConfirm', 'Nhập lại mật khẩu', 'new-password', 'auth-password')}</div>${passwordMeterHtml}<button class='btn btn-primary auth-submit' type='submit'>Tạo cửa hàng miễn phí →</button></form>`;
     } else if (S.state.authMode === 'resend') {
       title = 'Gửi lại email xác nhận';
-      subtitle = 'Nhập email đã đăng ký Slink.';
+      subtitle = '';
       body = `<form class='auth-form' data-auth-form='resend'><div class='form-field'><label class='input-label' for='auth-email'>Email</label><input class='input' id='auth-email' name='email' type='email' autocomplete='email' required maxlength='254'/></div><button class='btn btn-primary auth-submit' type='submit'>Gửi liên kết mới</button></form><button class='auth-switch' type='button' data-action='auth-mode' data-mode='login'>← Quay lại đăng nhập</button>`;
     } else if (S.state.authMode === 'reset') {
       title = 'Đặt lại mật khẩu';
-      subtitle = 'Nhập email đã đăng ký để nhận liên kết đặt lại.';
+      subtitle = '';
       body = `<form class='auth-form' data-auth-form='reset'><div class='form-field'><label class='input-label' for='auth-email'>Email</label><input class='input' id='auth-email' name='email' type='email' autocomplete='email' required maxlength='254'/></div><button class='btn btn-primary auth-submit' type='submit'>Gửi liên kết đặt lại</button></form><button class='auth-switch' type='button' data-action='auth-mode' data-mode='login'>← Quay lại đăng nhập</button>`;
     } else if (S.state.authMode === 'reset-complete') {
       title = 'Tạo mật khẩu mới';
-      subtitle = 'Nhập mật khẩu mới an toàn cho tài khoản của bạn.';
+      subtitle = '';
       const resetToken = new URLSearchParams(window.location.hash.slice(1)).get('reset') || '';
       body = resetToken ? `<form class='auth-form' data-auth-form='reset-complete'><input type='hidden' name='token' value='${S.fn.esc(resetToken)}'/><div class='auth-form-row-2'>${S.fn.authPasswordField('auth-password', 'password', 'Mật khẩu mới (≥ 12 ký tự)', 'new-password')}${S.fn.authPasswordField('auth-password-confirm', 'passwordConfirm', 'Nhập lại mật khẩu', 'new-password', 'auth-password')}</div>${passwordMeterHtml}<button class='btn btn-primary auth-submit' type='submit'>Cập nhật mật khẩu</button></form>` : `<div class='auth-message error'>Liên kết đặt lại mật khẩu không hợp lệ hoặc đã hết hạn.</div>`;
       body += `<button class='auth-switch' type='button' data-action='auth-mode' data-mode='login'>← Quay lại đăng nhập</button>`;
     } else {
       const invited = S.state.authMode === 'invite-login' && S.state.invitationInfo;
       if (invited) { title = 'Đăng nhập để tham gia'; subtitle = `${S.state.invitationInfo.storeName} · ${S.fn.staffRoleName(S.state.invitationInfo.role)}`; }
-      else { subtitle = 'Đăng nhập để mở quầy bán hàng, tồn kho và sổ quỹ cửa hàng của bạn.'; }
+      else { subtitle = 'Mở quầy bán hàng, kho và sổ quỹ.'; }
       body = `<form class='auth-form' data-auth-form='login'><div class='form-field'><label class='input-label' for='auth-email'>Email đăng nhập</label><input class='input' id='auth-email' name='email' type='email' autocomplete='username' value='${S.fn.esc(invited ? S.state.invitationInfo.email : '')}' required maxlength='254'/></div>${S.fn.authPasswordField('auth-password', 'password', 'Mật khẩu', 'current-password')}<button class='btn btn-primary auth-submit' type='submit'>${invited ? 'Đăng nhập và tham gia' : 'Đăng nhập vào cửa hàng →'}</button></form><div class='auth-secondary-links'>${invited ? `<button class='link-button' type='button' data-action='auth-mode' data-mode='invite-register'>Tạo tài khoản mới</button><button class='link-button' type='button' data-action='auth-mode' data-mode='resend'>Gửi lại xác nhận</button>` : `<button class='link-button' type='button' data-action='auth-mode' data-mode='reset'>Quên mật khẩu?</button><button class='link-button' type='button' data-action='auth-mode' data-mode='resend'>Gửi lại xác nhận</button>`}</div>`;
     }
     let htmlMessage = message ? S.fn.esc(message) : '';
@@ -1364,10 +1364,10 @@
     const body = `<div class='help-section'>
         <h3>Quy trình vận hành chính</h3>
         <div class='notice-list'>
-          <div class='notice-item'><span>${S.fn.icon('cart', 18)}</span><span><strong>Bán hàng &amp; Chuyển khoản</strong><small>Chạm mặt hàng hoặc quét mã vạch, bấm <strong>Thanh toán</strong>, chọn Tiền mặt / Chuyển khoản / Ghi nợ.</small></span></div>
-          <div class='notice-item'><span>${S.fn.icon('users', 18)}</span><span><strong>Nhân sự &amp; Chấm công</strong><small>Tự tính ngày công, hoa hồng thực thu và tạm ứng theo ca.</small></span></div>
-          <div class='notice-item'><span>${S.fn.icon('receipt', 18)}</span><span><strong>Khách hàng, Đổi trả &amp; Bảo hành</strong><small>Tích điểm theo số điện thoại và tra cứu Serial / IMEI.</small></span></div>
-          <div class='notice-item'><span>${S.fn.icon('layers', 18)}</span><span><strong>Kho &amp; Kiểm kê</strong><small>Kiểm kê quét mã và tự giữ đơn an toàn khi mất mạng.</small></span></div>
+          <div class='notice-item'><span>${S.fn.icon('cart', 18)}</span><span><strong>Bán hàng &amp; Thu tiền</strong><small>Chọn hoặc quét mã, hỗ trợ Tiền mặt, Chuyển khoản, Ghi nợ.</small></span></div>
+          <div class='notice-item'><span>${S.fn.icon('users', 18)}</span><span><strong>Nhân sự &amp; Chấm công</strong><small>Tính ngày công, hoa hồng thực thu và tạm ứng.</small></span></div>
+          <div class='notice-item'><span>${S.fn.icon('receipt', 18)}</span><span><strong>Khách hàng &amp; Bảo hành</strong><small>Tích điểm theo SĐT, đổi trả và tra Serial / IMEI.</small></span></div>
+          <div class='notice-item'><span>${S.fn.icon('layers', 18)}</span><span><strong>Kho &amp; Offline</strong><small>Kiểm kê quét mã và giữ hàng đợi đơn khi mất mạng.</small></span></div>
         </div>
       </div>
       <div class='help-section'>

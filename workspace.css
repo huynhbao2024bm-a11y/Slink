@@ -3280,7 +3280,7 @@ body.pos-fullscreen .view {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: clamp(8px, 1.4vw, 16px);
   transition: background-color 240ms ease, box-shadow 240ms var(--lp-spring-snappy), border-color 240ms ease, transform 240ms var(--lp-spring-snappy);
 }
 
@@ -3297,7 +3297,9 @@ body.pos-fullscreen .view {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 
 .lp-nav-link {
@@ -3306,10 +3308,12 @@ body.pos-fullscreen .view {
   border: 0;
   background: transparent;
   color: var(--lp-ink-secondary);
-  font-size: 14px;
+  font-size: clamp(13px, 1.02vw, 14px);
   font-weight: 500;
-  padding: 9px 15px;
+  padding: 8px clamp(9px, 1vw, 15px);
   border-radius: 9999px;
+  white-space: nowrap;
+  flex: none;
   cursor: pointer;
   transition: background-color 180ms ease, color 180ms ease, transform 200ms var(--lp-spring-snappy);
 }
@@ -3726,6 +3730,10 @@ body.pos-fullscreen .view {
   background: #FFFFFF;
   color: var(--lp-ink);
   transform: translateY(-1px);
+}
+
+.lp-industry-tab.active:hover {
+  transform: none;
 }
 
 .lp-industry-tab.active {
@@ -4650,7 +4658,7 @@ body.pos-fullscreen .view {
   position: relative;
   z-index: 1;
 }
-.lp-page [id] { scroll-margin-top: 100px; }
+.lp-page [id] { scroll-margin-top: calc(var(--lp-header-h, 88px) + 18px); }
 .auth-home-link { text-align: center; margin: 0 0 12px; }
 @media (max-width: 420px) {
   .lp-page .lp-header-actions .lp-btn { white-space: normal; }

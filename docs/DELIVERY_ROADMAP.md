@@ -4,6 +4,13 @@
 
 Status labels: **Not started**, **In progress**, **Blocked by external dependency**, **Evidence passed**. “Evidence passed” applies only to the named milestone, never to the whole product by implication.
 
+## 2026-11-25 · Slink 0.9.1.5 — Tinh gọn mật độ chữ, Sửa scroll-spy & Glider thanh tab
+
+- Rút gọn mật độ chữ và câu giải thích dư trên [landing.js](client/landing.js), [shell.js](client/shell.js), [staff.js](client/staff.js), [actions.js](client/actions.js), [inventory.js](client/inventory.js) và [products.js](client/products.js).
+- Di chuyển `#lp-trust` khỏi thẻ Bento bên trong `#lp-features` xuống thành `<section id="lp-trust">` chuyên biệt ở vị trí thứ 5 sau `#lp-download`; thêm khóa mượt tạm thời `lpScrollLock`, đo `--lp-header-h` và giữ `.lp-nav-link` trên 1 hàng ngang giúp bấm từng tab cuộn đúng vị trí và giữ đúng trạng thái sáng.
+- Tính tọa độ sub-pixel bằng `getBoundingClientRect()` cho `.slink-tab-glider` trên các thanh tab cuộn ngang/lưới, gọi `syncTabGliders` trong `showModal`, đồng thời lưu nhật ký kiểm thử E2E đầy đủ tại [SLINK_E2E_BOT_REPORT_20261125.md](SLINK_E2E_BOT_REPORT_20261125.md); nâng mặc định Android lên `0.9.1.5` (`versionCode: 3032`).
+- **Evidence passed** (cú pháp JS, kiểm thử máy chủ và Playwright `repro_tabs.js` tại `1015×914` và `360×800`).
+
 ## 2026-11-24 · Slink 0.9.1.4 — Bố cục app theo tỉ lệ phần trăm, Căn giữa đối xứng & Chuẩn insets Android
 
 - Gỡ giới hạn `min-width: 320px` trên `html`/`body`, thay bố cục thanh bên/topbar/view/pos/cửa sổ hộp thoại (`modal`, `toast-stack`) và màn hình tài khoản Android sang hệ lưới/padding theo tỉ lệ phần trăm (`%`) và `clamp(...)`, giúp căn giữa đối xứng ngay cả khi điện thoại phóng to hiển thị (`306px`) hoặc màn hình hẹp.
