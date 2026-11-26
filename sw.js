@@ -24,11 +24,21 @@ self.addEventListener('fetch', function (event) {
     return;
   }
   if (event.request.method !== 'GET' || requestUrl.origin !== self.location.origin || requestUrl.pathname.startsWith('/api/') || requestUrl.pathname.startsWith('/download/') || requestUrl.pathname.startsWith('/legal/') || requestUrl.pathname === '/verify' || requestUrl.pathname === '/robots.txt' || requestUrl.pathname === '/sitemap.xml' || /^\/google[A-Za-z0-9_-]{8,64}\.html$/i.test(requestUrl.pathname) || requestUrl.searchParams.has('token')) return;
-  const shellFile = APP_SHELL.some(function (file) { return new URL(file, self.location.href).href === requestUrl.href; });
+  const cleanPathname = requestUrl.pathname;
+  const shellFile = APP_SHELL.some(function (file) { return new URL(file, self.location.href).pathname === cleanPathname; });
+  if (shellFile) {
+    event.respondWith(fetch(event.request).then(function (response) {
+      if (response && response.ok) {
+        const copy = response.clone();
+        caches.open(CACHE_NAME).then(function (cache) { cache.put(event.request, copy); });
+      }
+      return response;
+    }).catch(async function () {
+      return (await caches.match(event.request)) || (await caches.match(cleanPathname, { ignoreSearch: true })) || Response.error();
+    }));
+    return;
+  }
   event.respondWith(caches.match(event.request).then(function (cached) {
-    // One worker serves one complete application bundle, even if a deploy or
-    // connection failure happens between the HTML and JavaScript requests.
-    if (shellFile && cached) return cached;
     const fresh = fetch(event.request).then(function (response) {
       if (response && response.ok) {
         const copy = response.clone();

@@ -1159,8 +1159,10 @@
       if (value) navigator.clipboard?.writeText(value).then(() => S.fn.toast('Đã sao chép liên kết', value)).catch(() => S.fn.toast('Sao chép thủ công', value));
     }
     else if (['escpos-connect', 'escpos-test-print', 'escpos-kick-drawer', 'escpos-print-order'].includes(action)) S.fn.handleEscPosAction(action, id);
+    else if (action === 'open-order-vietqr') S.fn.openOrderVietQrModal(id);
     else if (['issue-order-einvoice', 'create-order-shipping', 'preview-order-shipping', 'create-order-momo', 'create-order-vnpay'].includes(action)) S.fn.handleOrderIntegrationAction(action, id, button);
     else if (['receipt-share', 'receipt-copy', 'receipt-download', 'receipt-share-png', 'receipt-download-png'].includes(action)) S.fn.useDigitalReceipt(action, button);
+    else if (action === 'download-accounting-tt152') S.fn.downloadAccountingTt152();
     else if (action === 'download-reports-csv') S.fn.downloadReportsCsv();
     else if (action === 'print-reports-pdf') S.fn.printReportsPdf();
     else if (action === 'add-cart') S.fn.addToCart(id);
@@ -1254,6 +1256,9 @@
     else if (action === 'standard-pay') S.fn.standardPaySale(button);
     else if (action === 'pos-show-vietqr') S.fn.openPosVietQrModal();
     else if (action === 'pos-confirm-vietqr') { S.state.posStandardMethod = 'bank_transfer'; S.fn.closeModal(); S.fn.standardPaySale(button); }
+    else if (action === 'pos-ai-voice') S.fn.startPosAiVoice(button);
+    else if (action === 'pos-ai-submit') S.fn.submitPosAiCommand(document.getElementById('pos-ai-input')?.value || '', button);
+    else if (action === 'receive-ai-invoice') document.getElementById('receive-ai-invoice-input')?.click();
     else if (action === 'pos-bill-switch') S.fn.switchPosBill(button.dataset.billId);
     else if (action === 'pos-bill-add') S.fn.addPosBill();
     else if (action === 'pos-bill-close') S.fn.closePosBill(button.dataset.billId);
@@ -1720,6 +1725,13 @@
     if (event.target.closest('.product-editor-form')) S.fn.updateProductHints(event.target.form);
     if (event.target.id === 'register-workspace') { const field = event.target.form.querySelector('[data-shop-registration]'); const shop = event.target.value === 'shop'; field.hidden = !shop; field.querySelector('input').required = shop; field.querySelector('input').disabled = !shop; return; }
     if (event.target.matches('[data-product-photo-input]')) { S.fn.selectProductPhoto(event.target); return; }
+    if (event.target.id === 'receive-ai-invoice-input') {
+      const file = event.target.files?.[0];
+      const form = event.target.closest('[data-form="receive"]') || S.dom.modal?.querySelector('[data-form="receive"]');
+      event.target.value = '';
+      if (file && form) S.fn.handleReceiveAiInvoiceFile(file, form);
+      return;
+    }
     if (event.target.name === 'businessProfile' && event.target.closest('#business-profile-onboarding')) {
       const form = event.target.closest('#business-profile-onboarding');
       const choices = form.querySelector('.task-focus-choices');
@@ -2267,6 +2279,11 @@
         search.select?.();
         return;
       }
+    }
+    if (event.key === 'Enter' && event.target.id === 'pos-ai-input') {
+      event.preventDefault();
+      S.fn.submitPosAiCommand(event.target.value);
+      return;
     }
     if (event.key === 'Enter' && event.target.id === 'pos-search') {
       const code = event.target.value.trim();

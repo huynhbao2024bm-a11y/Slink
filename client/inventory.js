@@ -1039,7 +1039,7 @@
     const paid = pending?.payload.amountPaidVnd || 0;
     const form = `<form id='entity-form' data-form='receive' class='receive-receipt'>${S.state.warehouses.length > 1 ? `<div class='form-grid'>${warehouseField}</div>` : warehouseField}
       <section class='receive-section' aria-labelledby='receive-items-heading'><h3 id='receive-items-heading'>Hàng vừa nhận</h3>
-        ${pending ? '' : `<div class='receive-scan-bar'><div class='receive-scan-row'><label class='input-label' for='receive-barcode-scan'>Quét nhanh bằng mã vạch / SKU</label><button class='btn btn-secondary' type='button' data-action='toggle-receive-camera'>${S.fn.icon('scan', 16)} Quét camera</button></div><input class='input' id='receive-barcode-scan' type='search' placeholder='Quét máy tít hoặc nhập mã rồi bấm Enter để thêm hoặc +1 SL' autocomplete='off'/><section class='editor-barcode-camera' data-scan-surface data-scan-mode='receive-cart' data-scan-target='receive-barcode-scan' hidden><div class='scan-camera-stage'><video id='scan-camera-video' playsinline muted hidden aria-label='Camera quét nhanh nhập kho'></video><div class='scan-feedback-pill' data-scan-pill hidden></div></div><p id='scan-camera-status' role='status' aria-live='polite'></p><div class='scan-camera-actions'><label class='scan-continuous-toggle'><input type='checkbox' data-scan-continuous checked/><span>Quét liên tiếp</span></label><button class='btn btn-secondary' type='button' data-action='stop-receive-camera'>Đóng camera</button></div></section></div>`}
+        ${pending ? '' : `<div class='receive-ai-toolbar'><button class='btn btn-secondary' type='button' data-action='receive-ai-invoice'>📷 Quét ảnh hóa đơn (AI)</button><input type='file' id='receive-ai-invoice-input' accept='image/*' capture='environment' hidden/><div id='receive-ai-status' class='receive-ai-status' role='status' hidden></div></div><div class='receive-scan-bar'><div class='receive-scan-row'><label class='input-label' for='receive-barcode-scan'>Quét nhanh bằng mã vạch / SKU</label><button class='btn btn-secondary' type='button' data-action='toggle-receive-camera'>${S.fn.icon('scan', 16)} Quét camera</button></div><input class='input' id='receive-barcode-scan' type='search' placeholder='Quét máy tít hoặc nhập mã rồi bấm Enter để thêm hoặc +1 SL' autocomplete='off'/><section class='editor-barcode-camera' data-scan-surface data-scan-mode='receive-cart' data-scan-target='receive-barcode-scan' hidden><div class='scan-camera-stage'><video id='scan-camera-video' playsinline muted hidden aria-label='Camera quét nhanh nhập kho'></video><div class='scan-feedback-pill' data-scan-pill hidden></div></div><p id='scan-camera-status' role='status' aria-live='polite'></p><div class='scan-camera-actions'><label class='scan-continuous-toggle'><input type='checkbox' data-scan-continuous checked/><span>Quét liên tiếp</span></label><button class='btn btn-secondary' type='button' data-action='stop-receive-camera'>Đóng camera</button></div></section></div>`}
         <div id='purchase-lines'>${S.fn.renderReceivePurchaseLines(initialItems, disabled)}</div>
         ${pending ? '' : `<button class='btn btn-secondary' type='button' data-action='add-purchase-line'>＋ Thêm mặt hàng</button>`}</section>
       <section class='receive-section' aria-labelledby='receive-payment-heading'><h3 id='receive-payment-heading'>Thanh toán và nhà cung cấp</h3>
@@ -1898,6 +1898,89 @@
       }
       S.fn.toast('Chưa hoàn tất được phiếu nhập', error.message, 'error');
       if (submitButton && !S.dom.modal.hidden) submitButton.disabled = false;
+    }
+  }
+
+  S.fn.resizeInvoiceImageToBase64 = function resizeInvoiceImageToBase64(file) {
+    return new Promise(function (resolve, reject) {
+      const reader = new FileReader();
+      reader.onerror = function () { reject(new Error('Không đọc được tệp ảnh đã chọn.')); };
+      reader.onload = function () {
+        const img = new Image();
+        img.onerror = function () { reject(new Error('Tệp không phải ảnh hợp lệ.')); };
+        img.onload = function () {
+          const maxDim = 1600;
+          const scale = Math.min(1, maxDim / Math.max(img.width || 1, img.height || 1));
+          const w = Math.max(1, Math.round((img.width || 1) * scale));
+          const h = Math.max(1, Math.round((img.height || 1) * scale));
+          const canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, w, h);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.84);
+          const parts = dataUrl.split(',');
+          resolve({ mimeType: 'image/jpeg', imageBase64: parts[1] || '' });
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  S.fn.handleReceiveAiInvoiceFile = async function handleReceiveAiInvoiceFile(file, form) {
+    if (!file || !form || !S.state.store?.id) return;
+    const statusEl = form.querySelector('#receive-ai-status');
+    const triggerBtn = form.querySelector('[data-action="receive-ai-invoice"]');
+    const setStatus = function (text, isError) {
+      if (!statusEl) return;
+      statusEl.textContent = text;
+      statusEl.classList.toggle('is-error', Boolean(isError));
+      statusEl.hidden = !text;
+    };
+    setStatus('Đang đọc ảnh hóa đơn bằng Gemini AI…', false);
+    if (triggerBtn) triggerBtn.disabled = true;
+    try {
+      const encoded = await S.fn.resizeInvoiceImageToBase64(file);
+      const parsed = await S.fn.apiRequest(`/api/stores/${encodeURIComponent(S.state.store.id)}/ai/parse-invoice`, {
+        method: 'POST',
+        body: encoded,
+      });
+      if (parsed.supplierName && form.elements.supplierName) {
+        form.elements.supplierName.value = parsed.supplierName;
+        form.elements.supplierName.setCustomValidity('');
+        form.receiveSupplier = {
+          id: parsed.supplierId ? String(parsed.supplierId) : '',
+          name: String(parsed.supplierName),
+        };
+      }
+      const matchedItems = Array.isArray(parsed.items) ? parsed.items.filter(function (x) { return x && x.productId; }) : [];
+      if (matchedItems.length) {
+        const mapped = matchedItems.map(function (item) {
+          const product = S.fn.productById(item.productId);
+          const qty = Math.max(0.001, Number(item.quantity) || 1);
+          const cost = item.unitCostVnd ? String(item.unitCostVnd) : (product?.cost != null ? String(product.cost) : '');
+          return {
+            productId: String(item.productId),
+            quantity: String(qty),
+            unitCostVnd: cost,
+          };
+        });
+        S.fn.redrawReceivePurchaseLines(form, mapped);
+      }
+      const unmatched = Array.isArray(parsed.unmatched) ? parsed.unmatched : [];
+      const summaryParts = [];
+      if (matchedItems.length) summaryParts.push(`Đã điền ${matchedItems.length} mặt hàng vào phiếu`);
+      if (parsed.supplierName) summaryParts.push(`NCC: ${parsed.supplierName}`);
+      if (unmatched.length) summaryParts.push(`Chưa khớp ${unmatched.length} dòng (${unmatched.slice(0, 3).map(function (u) { return u.name || 'món lạ'; }).join(', ')})`);
+      const message = summaryParts.length ? `${summaryParts.join(' · ')}. Hãy kiểm tra lại trước khi Lưu.` : 'AI chưa nhận diện được dòng hàng khớp danh mục. Hãy nhập thủ công.';
+      setStatus(message, !matchedItems.length);
+      if (matchedItems.length) S.fn.toast('Đã đọc hóa đơn nhập kho', `${matchedItems.length} mặt hàng đã điền sẵn.`);
+    } catch (error) {
+      setStatus(error.message || 'Không phân tích được ảnh hóa đơn.', true);
+      S.fn.toast('Quét hóa đơn AI chưa thành công', error.message || 'Thử chụp lại rõ nét hơn.', 'error');
+    } finally {
+      if (triggerBtn && triggerBtn.isConnected) triggerBtn.disabled = false;
     }
   }
 

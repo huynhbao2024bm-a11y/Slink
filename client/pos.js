@@ -870,7 +870,7 @@
     const catalogContainer = S.state.posViewMode === 'list'
       ? `<div class='pos-fast-scan-table-wrap' id='pos-products'>${S.fn.renderPosCatalogMarkup(products, emptyProductState)}</div>`
       : `<div class='pos-product-grid' id='pos-products'>${S.fn.renderPosCatalogMarkup(products, emptyProductState)}</div>`;
-    return `<div class='pos-shell'>${topbar}<div class='pos-workspace-body'>${S.fn.renderLastSale()}${posModesBar}<div class='pos-layout'><div><div class='category-scroll'>${categories.map(function (category) { return `<button class='pos-category ${S.state.categoryFilter === category ? 'active' : ''}' data-action='category' data-category='${S.fn.esc(category)}'>${S.fn.esc(category)}</button>`; }).join('')}</div>${catalogContainer}</div>${S.fn.cartPanel(totals, true)}</div></div><div class='pos-mobile-cart'><button class='btn pos-mobile-cart-edit' data-action='open-cart' aria-controls='drawer-cart' aria-expanded='false'><span class='mobile-cart-count'>${S.fn.number(totals.count)}</span><span>Giỏ</span></button><button class='btn btn-primary pos-mobile-checkout' data-action='${mobileCheckoutAction}' ${S.state.posMode === 'fast' && !S.state.checkoutPendingPayload ? "data-method='cash'" : ''} data-tour-target='pos-cart-mobile' ${S.state.cart.length || S.state.checkoutPendingPayload ? '' : 'disabled'}><span>${mobileCheckoutLabel}</span><strong>${S.fn.money(S.state.checkoutPendingPayload ? S.state.checkoutPendingPayload.totalVnd : totals.total)} →</strong></button></div><div class='drawer-cart' id='drawer-cart' role='dialog' aria-modal='true' aria-label='Giỏ hàng' aria-hidden='true' inert>${S.fn.cartPanel(totals, false)}</div></div>`;
+    return `<div class='pos-shell'>${topbar}<div class='pos-workspace-body'>${S.fn.renderLastSale()}${posModesBar}${S.fn.renderAiQuickOrderBar()}<div class='pos-layout'><div><div class='category-scroll'>${categories.map(function (category) { return `<button class='pos-category ${S.state.categoryFilter === category ? 'active' : ''}' data-action='category' data-category='${S.fn.esc(category)}'>${S.fn.esc(category)}</button>`; }).join('')}</div>${catalogContainer}</div>${S.fn.cartPanel(totals, true)}</div></div><div class='pos-mobile-cart'><button class='btn pos-mobile-cart-edit' data-action='open-cart' aria-controls='drawer-cart' aria-expanded='false'><span class='mobile-cart-count'>${S.fn.number(totals.count)}</span><span>Giỏ</span></button><button class='btn btn-primary pos-mobile-checkout' data-action='${mobileCheckoutAction}' ${S.state.posMode === 'fast' && !S.state.checkoutPendingPayload ? "data-method='cash'" : ''} data-tour-target='pos-cart-mobile' ${S.state.cart.length || S.state.checkoutPendingPayload ? '' : 'disabled'}><span>${mobileCheckoutLabel}</span><strong>${S.fn.money(S.state.checkoutPendingPayload ? S.state.checkoutPendingPayload.totalVnd : totals.total)} →</strong></button></div><div class='drawer-cart' id='drawer-cart' role='dialog' aria-modal='true' aria-label='Giỏ hàng' aria-hidden='true' inert>${S.fn.cartPanel(totals, false)}</div></div>`;
   }
 
 
@@ -2090,8 +2090,8 @@
       amountVnd: String(collectTotal),
       note: `${S.state.store.settings.storeName || 'SLINK'} ${collectTotal}`.slice(0, 45),
     });
-    const fullscreenBody = `<div class='vietqr-fullscreen-body'><div class='vietqr-fullscreen-amount'>${S.fn.money(collectTotal)}</div>${eff.bundledDebtVnd > 0 ? `<p class='muted' style='text-align:center;margin:4px 0 8px'>Đã gộp đơn mới (${S.fn.money(eff.orderNetVnd)}) + nợ cũ (${S.fn.money(eff.bundledDebtVnd)})</p>` : ''}${qrHtml}</div>`;
-    const fullscreenFooter = `<div class='vietqr-fullscreen-actions'><button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button><button class='btn btn-primary' type='button' data-action='pos-confirm-vietqr'>Đã nhận tiền · Hoàn tất (${S.fn.money(collectTotal)})</button></div>`;
+    const fullscreenBody = `<div class='vietqr-fullscreen-body'><div class='vietqr-fullscreen-amount'>${S.fn.money(collectTotal)}</div>${eff.bundledDebtVnd > 0 ? `<p class='muted' style='text-align:center;margin:4px 0 8px'>Đã gộp đơn mới (${S.fn.money(eff.orderNetVnd)}) + nợ cũ (${S.fn.money(eff.bundledDebtVnd)})</p>` : ''}${qrHtml}<p class='vietqr-fullscreen-note'>Thu ngân kiểm tra tiền đã vào tài khoản ngân hàng, sau đó bấm nút bên dưới để xác nhận thủ công và xuất bill.</p></div>`;
+    const fullscreenFooter = `<div class='vietqr-fullscreen-actions'><button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button><button class='btn btn-primary' type='button' data-action='pos-confirm-vietqr'>Đã nhận tiền · Xuất bill (${S.fn.money(collectTotal)})</button></div>`;
     S.fn.showModal('Quét VietQR thanh toán', '', fullscreenBody, fullscreenFooter, true);
     S.dom.modal.classList.add('modal-vietqr-fullscreen');
     S.state.vietqrBrightnessActive = true;
@@ -2531,6 +2531,192 @@
       @page{size:auto;margin:6mm}*{box-sizing:border-box}body{font:13px Arial,sans-serif;width:100%;max-width:${paperMaxW};margin:0 auto;padding:5mm 3mm;color:#222}h1{font-size:17px;margin:0 0 4px}p{font-size:11px;margin:3px 0;color:#555}.center{text-align:center}.rule{border:0;border-top:1px dashed #999;margin:8px 0}.item-line,.summary-line{display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-bottom:1px dashed #ddd;font-size:12px}.item-copy{display:grid;gap:2px}.grand-total{font-size:15px;font-weight:700;border-bottom:0;padding-top:8px}
     </style></head><body><header class='center'><h1>${S.fn.esc(S.state.store.settings.storeName || 'Slink')}</h1>${S.state.store.settings.phone ? `<p>${S.fn.esc(S.state.store.settings.phone)}</p>` : ''}<hr class='rule'><strong>PHIẾU TẠM TÍNH</strong><p>${S.fn.humanDate(new Date().toISOString(), true)}</p><p>Khách: ${S.fn.esc(customer?.name || 'Khách lẻ')}</p></header><hr class='rule'><main>${itemsHtml}<div class='summary-line'><span>Tạm tính</span><strong>${S.fn.money(totals.subtotal)}</strong></div>${totals.manualDiscountTotal ? `<div class='summary-line'><span>Giảm giá</span><strong>−${S.fn.money(totals.manualDiscountTotal)}</strong></div>` : ''}<div class='summary-line grand-total'><span>Cần thanh toán</span><strong>${S.fn.money(totals.total)}</strong></div></main><footer class='center' style='margin-top:14px'><p>Phiếu tạm tính · Chưa ghi nhận thanh toán</p></footer></body></html>`;
     await S.fn.printHtmlDocument(html, 'Phieu tam tinh');
+  }
+
+  S.fn.renderAiQuickOrderBar = function renderAiQuickOrderBar() {
+    const val = S.state.posAiDraftText || '';
+    const busy = Boolean(S.state.posAiBusy);
+    const listening = Boolean(S.state.posAiListening);
+    const statusText = S.state.posAiStatus || '';
+    const statusErr = Boolean(S.state.posAiStatusError);
+    return `<div class='pos-ai-bar' role='region' aria-label='Lên đơn nhanh bằng giọng nói hoặc AI'>
+      <div class='pos-ai-input-wrap'>
+        <button type='button' class='btn btn-secondary pos-ai-mic-btn ${listening ? 'is-listening' : ''}' data-action='pos-ai-voice' ${busy ? 'disabled' : ''} title='Nói câu lệnh lên đơn (tiếng Việt)'>${listening ? 'Đang nghe…' : '🎤 Nói lên đơn AI'}</button>
+        <input class='input' id='pos-ai-input' type='search' maxlength='500' autocomplete='off' value='${S.fn.esc(val)}' placeholder='VD: "Bán 2 ly trà sữa cho chị Hoa ghi nợ"' aria-label='Câu lệnh lên đơn AI'/>
+        <button type='button' class='btn btn-primary' data-action='pos-ai-submit' ${busy ? 'disabled' : ''}>${busy ? 'Đang xử lý…' : 'Lên đơn'}</button>
+      </div>
+      <div id='pos-ai-status' class='pos-ai-status ${statusErr ? 'is-error' : ''}' role='status' ${statusText ? '' : 'hidden'}>${S.fn.esc(statusText)}</div>
+    </div>`;
+  }
+
+  S.fn.setPosAiStatus = function setPosAiStatus(text, isError) {
+    S.state.posAiStatus = text || '';
+    S.state.posAiStatusError = Boolean(isError);
+    const el = document.getElementById('pos-ai-status');
+    if (!el) return;
+    el.textContent = S.state.posAiStatus;
+    el.classList.toggle('is-error', S.state.posAiStatusError);
+    el.hidden = !S.state.posAiStatus;
+  }
+
+  S.fn.startPosAiVoice = async function startPosAiVoice(button) {
+    if (S.state.posAiBusy) return;
+    if (window.SlinkAndroid && typeof S.fn.nativeAction === 'function') {
+      S.state.posAiListening = true;
+      if (button) { button.classList.add('is-listening'); button.textContent = 'Đang nghe…'; }
+      S.fn.setPosAiStatus('Hãy nói đơn hàng (ví dụ: 2 cà phê sữa đá cho anh Nam)…', false);
+      try {
+        const res = await S.fn.nativeAction({ type: 'speech', action: 'recognize' });
+        S.state.posAiListening = false;
+        if (button && button.isConnected) { button.classList.remove('is-listening'); button.textContent = '🎤 Nói lên đơn AI'; }
+        const spoken = String(res?.transcript || '').trim();
+        if (spoken) {
+          const input = document.getElementById('pos-ai-input');
+          if (input) input.value = spoken;
+          S.state.posAiDraftText = spoken;
+          await S.fn.submitPosAiCommand(spoken);
+        } else {
+          S.fn.setPosAiStatus('Chưa nhận được giọng nói. Bạn có thể gõ câu lệnh và bấm Lên đơn.', true);
+        }
+      } catch (error) {
+        S.state.posAiListening = false;
+        if (button && button.isConnected) { button.classList.remove('is-listening'); button.textContent = '🎤 Nói lên đơn AI'; }
+        S.fn.setPosAiStatus(error?.message || 'Không mở được micro thiết bị. Hãy gõ câu lệnh vào ô bên cạnh.', true);
+      }
+      return;
+    }
+
+    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRec) {
+      S.fn.setPosAiStatus('Trình duyệt chưa hỗ trợ thu âm trực tiếp — hãy gõ câu lệnh vào ô và bấm Lên đơn.', true);
+      document.getElementById('pos-ai-input')?.focus();
+      return;
+    }
+    if (S.state.posAiListening && S.state.posAiRec) {
+      try { S.state.posAiRec.stop(); } catch (_) { /* ignore */ }
+      return;
+    }
+    const rec = new SpeechRec();
+    rec.lang = 'vi-VN';
+    rec.interimResults = false;
+    rec.maxAlternatives = 1;
+    S.state.posAiRec = rec;
+    S.state.posAiListening = true;
+    if (button) { button.classList.add('is-listening'); button.textContent = 'Đang nghe…'; }
+    S.fn.setPosAiStatus('Đang nghe tiếng Việt… hãy nói tên món, số lượng và tên khách nếu có.', false);
+    rec.onresult = function (event) {
+      const spoken = String(event.results?.[0]?.[0]?.transcript || '').trim();
+      if (spoken) {
+        const input = document.getElementById('pos-ai-input');
+        if (input) input.value = spoken;
+        S.state.posAiDraftText = spoken;
+        S.fn.submitPosAiCommand(spoken);
+      }
+    };
+    rec.onerror = function (event) {
+      S.fn.setPosAiStatus(`Không thu được giọng nói (${event.error || 'mic'}). Hãy gõ câu lệnh trực tiếp.`, true);
+    };
+    rec.onend = function () {
+      S.state.posAiListening = false;
+      S.state.posAiRec = null;
+      const btn = document.querySelector('[data-action="pos-ai-voice"]');
+      if (btn) { btn.classList.remove('is-listening'); btn.textContent = '🎤 Nói lên đơn AI'; }
+    };
+    try { rec.start(); } catch (error) {
+      S.state.posAiListening = false;
+      if (button) { button.classList.remove('is-listening'); button.textContent = '🎤 Nói lên đơn AI'; }
+      S.fn.setPosAiStatus(error.message || 'Không khởi động được micro.', true);
+    }
+  }
+
+  S.fn.applyAiOrderResult = function applyAiOrderResult(parsed) {
+    if (S.state.checkoutPendingPayload) {
+      S.fn.toast('Đang có đơn chờ xác nhận', 'Hãy hoàn tất hoặc xóa đơn chờ trước khi thêm món bằng AI.', 'error');
+      return;
+    }
+    const items = Array.isArray(parsed?.items) ? parsed.items : [];
+    const added = [];
+    const skipped = [];
+    items.forEach(function (entry) {
+      const product = S.fn.productById(entry.productId);
+      const reqQty = Math.round(Number(entry.quantity || 1) * 1000) / 1000;
+      if (!product || !(reqQty > 0)) {
+        skipped.push(entry.name || 'Sản phẩm không rõ');
+        return;
+      }
+      if (product.serialTracked) {
+        skipped.push(`${product.name} (cần quét Serial/IMEI)`);
+        return;
+      }
+      const inOtherBills = product.inventoryTracked ? S.fn.qtyReservedInOtherPosBills(product.id) : 0;
+      const current = S.state.cart.find(function (line) { return line.id === product.id; });
+      const remaining = Math.round((S.fn.availableForSale(product) - inOtherBills - (current ? current.qty : 0)) * 1000) / 1000;
+      const take = Math.min(reqQty, Math.max(0, remaining));
+      if (!(take > 0)) {
+        skipped.push(`${product.name} (hết tồn bán)`);
+        return;
+      }
+      if (current) current.qty = Math.round((current.qty + take) * 1000) / 1000;
+      else S.state.cart.push({ id: product.id, qty: take, unitPriceVnd: product.price });
+      added.push(`${product.name} × ${take}`);
+    });
+    if (parsed?.customerId) {
+      const cust = S.fn.customerById(parsed.customerId);
+      if (cust) {
+        S.state.cartCustomerId = cust.id;
+        S.state.posCustomerInlineText = cust.name;
+      }
+    } else if (parsed?.customerName) {
+      S.state.cartCustomerId = '';
+      S.state.posCustomerInlineText = String(parsed.customerName).slice(0, 140);
+    }
+    if (parsed?.isDebt && !S.state.posPrefs?.requireFullPayment) {
+      S.state.posMode = 'standard';
+      S.state.posStandardMethod = 'debt';
+    }
+    if (parsed?.note) {
+      S.state.posStandardNote = String(parsed.note).slice(0, 240);
+    }
+    S.fn.refreshCartPanels();
+    const unmatched = Array.isArray(parsed?.unmatched) ? parsed.unmatched : [];
+    const notes = [];
+    if (added.length) notes.push(`Đã thêm: ${added.join(', ')}`);
+    if (parsed?.customerId || parsed?.customerName) notes.push(`Khách: ${parsed.customerName}`);
+    if (parsed?.isDebt && !S.state.posPrefs?.requireFullPayment) notes.push('Chế độ: Ghi nợ');
+    if (skipped.length || unmatched.length) {
+      const missing = skipped.concat(unmatched.map(function (u) { return u.name || 'món chưa khớp'; }));
+      notes.push(`Chưa khớp: ${missing.join(', ')}`);
+    }
+    const statusLine = notes.length ? `${notes.join(' · ')}. Kiểm tra giỏ trước khi bấm Thu.` : 'Chưa tìm thấy sản phẩm khớp danh mục cửa hàng.';
+    S.fn.setPosAiStatus(statusLine, !added.length);
+    if (added.length) S.fn.toast('AI đã điền giỏ hàng', added.join(', '));
+  }
+
+  S.fn.submitPosAiCommand = async function submitPosAiCommand(rawText, triggerBtn) {
+    const transcript = String(rawText || '').trim();
+    if (!transcript) {
+      S.fn.setPosAiStatus('Nhập hoặc nói câu lệnh lên đơn trước (VD: "2 trà sữa cho chị Hoa ghi nợ").', true);
+      return;
+    }
+    if (!S.state.store?.id || S.state.posAiBusy) return;
+    S.state.posAiDraftText = transcript;
+    S.state.posAiBusy = true;
+    if (triggerBtn) triggerBtn.disabled = true;
+    S.fn.setPosAiStatus('Gemini AI đang phân tích câu lệnh…', false);
+    try {
+      const parsed = await S.fn.apiRequest(`/api/stores/${encodeURIComponent(S.state.store.id)}/ai/parse-order`, {
+        method: 'POST',
+        body: { transcript },
+      });
+      S.fn.applyAiOrderResult(parsed);
+    } catch (error) {
+      S.fn.setPosAiStatus(error.message || 'Chưa phân tích được câu lệnh AI.', true);
+      S.fn.toast('Lên đơn AI chưa thành công', error.message || 'Thử diễn đạt ngắn gọn hơn.', 'error');
+    } finally {
+      S.state.posAiBusy = false;
+      const btn = triggerBtn || document.querySelector('[data-action="pos-ai-submit"]');
+      if (btn && btn.isConnected) btn.disabled = false;
+    }
   }
 
 })(window.Slink = window.Slink || { dom: {}, c: {}, state: {}, fn: {}, charts: {} });

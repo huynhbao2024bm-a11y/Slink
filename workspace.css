@@ -5394,3 +5394,104 @@ body.pos-fullscreen .view {
     transform: none !important;
   }
 }
+
+/* ---- VietQR Fullscreen, AI Quick-Order & OCR ---- */
+.settings-vietqr-preview {
+  margin-top: 14px;
+}
+
+.modal-vietqr-fullscreen .modal-card {
+  max-width: 480px;
+}
+
+.modal-vietqr-fullscreen .vietqr-svg {
+  width: min(260px, 70vw);
+  height: auto;
+}
+
+.vietqr-fullscreen-body {
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  text-align: center;
+}
+
+.vietqr-fullscreen-amount {
+  font-size: clamp(24px, 5vw, 32px);
+  font-weight: 800;
+  color: var(--primary-hover, #0d5c46);
+  letter-spacing: -0.02em;
+}
+
+.vietqr-fullscreen-note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+  max-width: 360px;
+}
+
+.vietqr-fullscreen-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+  width: 100%;
+}
+
+.pos-ai-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.pos-ai-input-wrap {
+  display: flex;
+  flex: 1 1 260px;
+  align-items: center;
+  gap: 8px;
+}
+
+.pos-ai-input-wrap .input {
+  flex: 1 1 auto;
+  min-width: 160px;
+}
+
+.pos-ai-mic-btn.is-listening {
+  border-color: #d93025;
+  color: #b3261e;
+  background: rgba(217, 48, 37, 0.08);
+}
+
+.pos-ai-status {
+  width: 100%;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.pos-ai-status.is-error {
+  color: #b3261e;
+}
+
+.receive-ai-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 12px;
+}
+
+.receive-ai-status {
+  width: 100%;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.receive-ai-status.is-error {
+  color: #b3261e;
+}

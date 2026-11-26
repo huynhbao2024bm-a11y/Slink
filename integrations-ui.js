@@ -134,7 +134,6 @@
 
   function renderIntegrationSettingsSection({ data, loading, error, canEdit } = {}) {
     const settings = data?.settings || {};
-    const connectors = Array.isArray(data?.connectors) ? data.connectors : [];
     const banks = getBanksApi()?.VN_BANKS || [];
     const formReady = !loading && Boolean(data);
     const disabled = (canEdit && formReady) ? '' : 'disabled';
@@ -143,34 +142,20 @@
       `<option value='${esc(b.bin)}' ${settings.bankBin === b.bin ? 'selected' : ''}>${esc(b.shortName)} (${esc(b.code)})</option>`
     ).join('');
 
-    const partnerGroups = [
-      {
-        title: 'Đơn vị vận chuyển',
-        items: [
-          { id: 'shipping', code: 'GHN', name: 'Giao Hàng Nhanh (GHN)', isConnected: (s, c) => Boolean(c?.providers?.ghn && s.shippingProvider === 'ghn') },
-          { id: 'shipping', code: 'GHTK', name: 'Giao Hàng Tiết Kiệm', isConnected: (s, c) => Boolean(c?.providers?.ghtk && s.shippingProvider === 'ghtk') },
-          { id: 'shipping', code: 'VTP', name: 'Viettel Post', isConnected: (s, c) => Boolean(c?.providers?.viettelpost && s.shippingProvider === 'viettelpost') },
-        ],
-      },
-      {
-        title: 'Thanh toán & Đối soát',
-        items: [
-          { id: 'bank_webhook', code: 'CK', name: 'Đối soát biến động ngân hàng', isConnected: (s, c) => Boolean(c?.status === 'configured' && s.bankWebhookProvider && s.bankWebhookProvider !== 'none') },
-          { id: 'ewallets', code: 'MM', name: 'Ví MoMo', isConnected: (s, c) => Boolean(c?.providers?.momo || s.momoConfigured) },
-          { id: 'ewallets', code: 'VN', name: 'VNPAY', isConnected: (s, c) => Boolean(c?.providers?.vnpay || s.vnpayConfigured) },
-        ],
-      },
-      {
-        title: 'Hóa đơn & Sàn thương mại',
-        items: [
-          { id: 'einvoice', code: 'HĐ', name: 'Hóa đơn điện tử', isConnected: (s, c) => Boolean(c?.status === 'configured' && s.einvoiceProvider && s.einvoiceProvider !== 'none') },
-          { id: 'marketplaces', code: 'SÀN', name: 'Shopee / TikTok Shop', isConnected: (_s, c) => Boolean(c?.status === 'configured' && (c?.providers?.shopee || c?.providers?.tiktok)) },
-        ],
-      },
-    ];
+    const previewHtml = settings.bankBin && settings.bankAccountNumber
+      ? renderVietQrCard({
+        bankBin: settings.bankBin,
+        bankAccountNumber: settings.bankAccountNumber,
+        bankAccountName: settings.bankAccountName,
+        bankName: settings.bankName,
+        amountVnd: '50000',
+        note: 'SLINK THU CHUYEN KHOAN',
+      })
+      : `<div class='empty-state'><strong>Chưa có tài khoản nhận VietQR</strong><span>Điền ngân hàng và số tài khoản để xem trước mã VietQR.</span></div>`;
 
     return `<section class='panel settings-panel settings-card integrations-panel' id='integrations-panel'>
-      <div class='settings-card-head'><h2>Tài khoản ngân hàng nhận tiền</h2></div>
+      <div class='settings-card-head'><h2>Tài khoản ngân hàng &amp; Mã số thuế</h2></div>
+      <p class='muted' style='margin:0 0 12px'>Mã VietQR được tạo trực tiếp theo chuẩn NAPAS / EMVCo (không kết nối bên thứ ba). Thu ngân tự kiểm tra tiền về tài khoản và bấm xác nhận thủ công khi thu tiền.</p>
       ${loading ? `<div class='install-hint' role='status'>Đang tải…</div>` : ''}
       ${error ? `<div class='auth-message error' role='alert'>${esc(error)}</div>` : ''}
       <form id='integration-settings-form' data-form='integration-settings'>
@@ -187,48 +172,26 @@
             <label class='input-label' for='int-bank-owner'>Chủ tài khoản</label>
             <input class='input' id='int-bank-owner' name='bankAccountName' value='${esc(settings.bankAccountName || '')}' maxlength='120' placeholder='VD: NGUYEN VAN A' ${disabled}/>
           </div>
+          <div class='form-field'>
+            <label class='input-label' for='int-tax-code'>Mã số thuế (Hộ kinh doanh — Sổ TT 152/2025)</label>
+            <input class='input' id='int-tax-code' name='taxCode' value='${esc(settings.taxCode || '')}' maxlength='32' autocomplete='off' placeholder='VD: 0123456789' ${disabled}/>
+          </div>
         </div>
+        <div id='int-vietqr-preview' class='settings-vietqr-preview'>${previewHtml}</div>
         ${canEdit ? `<div class='modal-footer settings-form-footer'><button class='btn btn-primary' type='submit' ${formReady ? '' : 'disabled'}>Lưu tài khoản</button></div>` : ''}
       </form>
-    </section>
-    <section class='panel settings-panel settings-card'>
-      <div class='settings-card-head'><h2>Kết nối đối tác</h2></div>
-      ${renderPartnerRowsHtml(partnerGroups, settings, connectors)}
     </section>`;
   }
 
-  function renderOrderIntegrationSection({ order, settings, role, canOperate: canOperateOpt, canShipping: canShippingOpt } = {}) {
+  function renderOrderIntegrationSection({ order, settings, role, canOperate: canOperateOpt } = {}) {
     if (!order) return '';
     const canOperate = canOperateOpt !== undefined
       ? Boolean(canOperateOpt)
       : ['owner', 'manager', 'cashier', 'accountant'].includes(role);
-    const canShipping = canShippingOpt !== undefined
-      ? Boolean(canShippingOpt)
-      : (canOperate || role === 'stockkeeper');
-    const qrHtml = '';
 
-    const hasEinvoice = Boolean(settings?.einvoiceProvider && settings.einvoiceProvider !== 'none');
-    const einvoiceStatus = order.einvoiceStatus === 'issued'
-      ? `<span class='badge badge-success'><i class='badge-dot'></i>HĐĐT ${esc(order.einvoiceNumber || 'Đã phát hành')}${order.einvoiceLookupCode ? ` · ${esc(order.einvoiceLookupCode)}` : ''}</span>`
-      : (hasEinvoice && canOperate && order.rawStatus !== 'voided'
-        ? `<button class='btn btn-secondary' type='button' data-action='issue-order-einvoice' data-id='${esc(order.id)}'>Xuất HĐĐT</button>`
-        : '');
-
-    const hasShipping = Boolean(settings?.shippingProvider && settings.shippingProvider !== 'none');
-    const shippingStatus = order.shippingTrackingCode
-      ? `<span class='badge badge-info'><i class='badge-dot'></i>Vận đơn ${esc((order.shippingProvider || '').toUpperCase())}: ${esc(order.shippingTrackingCode)}</span>`
-      : (hasShipping && canShipping && order.rawStatus !== 'voided'
-        ? `<button class='btn btn-secondary' type='button' data-action='create-order-shipping' data-id='${esc(order.id)}'>Tạo vận đơn</button>`
-        : '');
-
-    const hasMomo = Boolean(settings?.momoConfigured);
-    const momoBtn = (hasMomo && canOperate && order.due > 0 && order.rawStatus !== 'voided')
-      ? `<button class='btn btn-secondary' type='button' data-action='create-order-momo' data-id='${esc(order.id)}'>MoMo</button>`
-      : '';
-
-    const hasVnpay = Boolean(settings?.vnpayConfigured);
-    const vnpayBtn = (hasVnpay && canOperate && order.due > 0 && order.rawStatus !== 'voided')
-      ? `<button class='btn btn-secondary' type='button' data-action='create-order-vnpay' data-id='${esc(order.id)}'>VNPAY</button>`
+    const hasBank = Boolean(settings?.bankBin && settings?.bankAccountNumber);
+    const vietqrBtn = (hasBank && canOperate && order.due > 0 && order.rawStatus !== 'voided')
+      ? `<button class='btn btn-secondary' type='button' data-action='open-order-vietqr' data-id='${esc(order.id)}'>Mã VietQR (${esc(formatMoneyVnd(order.due))})</button>`
       : '';
 
     const caps = root.SlinkEscPosPrinter?.capabilities?.() || {};
@@ -237,9 +200,9 @@
       ? `<button class='btn btn-secondary' type='button' data-action='escpos-print-order' data-id='${esc(order.id)}'>In bill nhiệt</button>`
       : '';
 
-    if (!qrHtml && !einvoiceStatus && !shippingStatus && !escposBtn && !momoBtn && !vnpayBtn) return '';
+    if (!vietqrBtn && !escposBtn) return '';
 
-    return `${qrHtml}${escposBtn || momoBtn || vnpayBtn || einvoiceStatus || shippingStatus ? `<div class='order-integration-bar'>${escposBtn}${momoBtn}${vnpayBtn}${einvoiceStatus}${shippingStatus}</div>` : ''}`;
+    return `<div class='order-integration-bar'>${vietqrBtn}${escposBtn}</div>`;
   }
 
   return {
