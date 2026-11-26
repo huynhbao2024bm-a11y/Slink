@@ -464,6 +464,41 @@
       window.SlinkSyncBus.setContext({ origin: window.location.origin });
       S.fn.initSyncBus();
     }
+    const searchParams = new URLSearchParams(window.location.search);
+    const fbMode = searchParams.get('mode') || '';
+    const fbOobCode = searchParams.get('oobCode') || '';
+    if (fbMode === 'verifyEmail' && fbOobCode) {
+      S.state.authMode = 'verify-email';
+      S.fn.authCard('Đang xác nhận email', 'Đang kích hoạt cửa hàng của bạn.', '', 'Đang kiểm tra mã xác nhận từ Firebase…');
+      try {
+        const cfg = await window.SlinkFirebaseAuth?.loadConfig();
+        const applied = await window.SlinkFirebaseAuth?.applyVerificationCode(fbOobCode, { config: cfg });
+        window.history.replaceState({}, '', '/');
+        if (applied?.idToken) {
+          await S.fn.completeFirebaseLogin(applied.idToken);
+          return;
+        }
+        S.state.authMode = 'login';
+        S.fn.renderAuth('Email đã được xác nhận thành công. Hãy đăng nhập để vào cửa hàng.', 'success');
+      } catch (error) {
+        window.history.replaceState({}, '', '/');
+        S.fn.renderAuth(error.message, 'error');
+      }
+      return;
+    }
+    if (fbMode === 'resetPassword' && fbOobCode) {
+      S.state.pendingResetOobCode = fbOobCode;
+      S.state.authMode = 'reset-complete';
+      S.fn.renderAuth('Đã nhận mã đặt lại mật khẩu từ email. Hãy đặt mật khẩu mới bên dưới.');
+      return;
+    }
+    if (window.location.pathname === '/verify' && searchParams.get('email')) {
+      S.state.pendingVerifyEmail = searchParams.get('email');
+      window.history.replaceState({}, '', '/');
+      S.state.authMode = 'verify-email';
+      S.fn.renderAuth('Nếu bạn vừa bấm liên kết xác nhận trong email, hãy nhấn nút kiểm tra hoặc dán mã xác nhận bên dưới.');
+      return;
+    }
     const resetToken = new URLSearchParams(window.location.hash.slice(1)).get('reset');
     if (resetToken) {
       S.state.authMode = 'reset-complete';
@@ -695,6 +730,9 @@
       S.fn.renderAuth();
     }
     else if (action === 'firebase-google') { S.fn.handleFirebaseGoogleSignIn(button); }
+    else if (action === 'refresh-captcha') { S.fn.loadAuthCaptcha?.(true); }
+    else if (action === 'firebase-check-verified') { S.fn.handleCheckFirebaseVerified?.(button); }
+    else if (action === 'request-password-change-email') { S.fn.requestPasswordChangeEmail?.(button); }
     else if (action === 'firebase-cancel-onboarding') {
       S.state.firebasePendingIdToken = '';
       S.state.firebasePendingProfile = null;
@@ -2071,6 +2109,7 @@
     if (type === 'business-profile') { S.fn.saveBusinessProfile(String(new FormData(form).get('businessProfile') || ''), form); return; }
     if (type === 'task-focus') { S.fn.saveTaskFocusSelection(form); return; }
     if (type === 'change-password') { S.fn.saveAccountPassword(form); return; }
+    if (type === 'confirm-email-password-change') { S.fn.confirmEmailPasswordChange(form); return; }
     if (type === 'channel-filter') {
       S.state.channelState.query = String(new FormData(form).get('q') || '').trim().slice(0, 120);
       S.fn.loadChannelCatalog(0);

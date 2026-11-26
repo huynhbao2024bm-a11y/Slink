@@ -145,6 +145,24 @@ test('SSRF URLs are rejected on integration settings and API routes emit Cache-C
 });
 
 test('GHN webhook fails closed in production without GHN_WEBHOOK_SECRET and enforces strict ShopID matching', async (t) => {
+  const { randomUUID } = require('node:crypto');
+  async function seedOwnerStore(db, email, storeName) {
+    const userId = randomUUID();
+    const storeId = randomUUID();
+    await db.query(
+      `INSERT INTO users (id, email, email_normalized, display_name, password_hash, status, email_verified_at)
+       VALUES ($1, $2, $3, 'Owner', 'scrypt$16384$8$1$00$00', 'active', now())`,
+      [userId, email, email.toLowerCase()]
+    );
+    await db.query('INSERT INTO stores (id, name) VALUES ($1, $2)', [storeId, storeName]);
+    await db.query(
+      `INSERT INTO memberships (store_id, user_id, role, status, joined_at)
+       VALUES ($1, $2, 'owner', 'active', now())`,
+      [storeId, userId]
+    );
+    return storeId;
+  }
+
   const appProdMissingSecret = await createHardeningApp(t, {
     NODE_ENV: 'production',
     PUBLIC_ORIGIN: 'https://slink-xny3.onrender.com',
@@ -153,19 +171,7 @@ test('GHN webhook fails closed in production without GHN_WEBHOOK_SECRET and enfo
     GHN_TOKEN: 'ghn-tok-1234',
     GHN_SHOP_ID: '6790898',
   });
-  const reg = await appProdMissingSecret.inject({
-    method: 'POST',
-    url: '/api/auth/register',
-    headers: { origin: 'https://slink-xny3.onrender.com' },
-    payload: {
-      displayName: 'Owner',
-      storeName: 'Store One',
-      email: 'ghnsec@slink.test',
-      password: 'VeryStrongPassword#2026',
-    },
-  });
-  assert.equal(reg.statusCode, 201);
-  const storeId = reg.json().stores[0].id;
+  const storeId = await seedOwnerStore(appProdMissingSecret.testDb, 'ghnsec@slink.test', 'Store One');
 
   const missingSecretRes = await appProdMissingSecret.inject({
     method: 'POST',
@@ -183,18 +189,7 @@ test('GHN webhook fails closed in production without GHN_WEBHOOK_SECRET and enfo
     GHN_SHOP_ID: '6790898',
     GHN_WEBHOOK_SECRET: 'ghn_super_secret_key_2026',
   });
-  const reg2 = await appProdWithSecret.inject({
-    method: 'POST',
-    url: '/api/auth/register',
-    headers: { origin: 'https://slink-xny3.onrender.com' },
-    payload: {
-      displayName: 'Owner 2',
-      storeName: 'Store Two',
-      email: 'ghnsec2@slink.test',
-      password: 'VeryStrongPassword#2026',
-    },
-  });
-  const storeId2 = reg2.json().stores[0].id;
+  const storeId2 = await seedOwnerStore(appProdWithSecret.testDb, 'ghnsec2@slink.test', 'Store Two');
 
   const omittedShopRes = await appProdWithSecret.inject({
     method: 'POST',

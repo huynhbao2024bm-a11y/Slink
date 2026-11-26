@@ -10,7 +10,14 @@ const {
 const { promisify } = require('node:util');
 const { listStores, withUser } = require('./db');
 const { recordSecurityEvent } = require('./security-events');
-const { createFirebaseVerifier, getPublicFirebaseConfig } = require('./firebase-auth');
+const { createFirebaseVerifier, getPublicFirebaseConfig, isFirebaseFullyConfigured } = require('./firebase-auth');
+const {
+  createCaptchaChallenge,
+  createRegistrationTicket,
+  isCaptchaRequired,
+  verifyCaptchaChallenge,
+  verifyRegistrationTicket,
+} = require('./captcha');
 const { assertSafeOutboundUrl } = require('./providers/safe-url');
 
 const scrypt = promisify(scryptCallback);
@@ -39,7 +46,14 @@ function newToken() {
 }
 
 function emailVerificationDisabled(env) {
-  return env.DEMO_DISABLE_EMAIL_VERIFICATION === 'true';
+  return env.NODE_ENV !== 'production' && env.DEMO_DISABLE_EMAIL_VERIFICATION === 'true';
+}
+
+function requireCaptchaIfEnabled(env, body) {
+  if (!isCaptchaRequired(env)) return;
+  if (!verifyCaptchaChallenge(env, body?.captchaToken, body?.captchaAnswer)) {
+    throw new ApiError(400, 'captcha_invalid', 'Mã xác nhận CAPTCHA không đúng hoặc đã hết hạn. Vui lòng nhập lại.');
+  }
 }
 
 async function hashPassword(password) {
@@ -246,6 +260,23 @@ async function createUserSession(pool, userId, reply, env, { activatePendingOwne
 function registerAuthRoutes(app, { pool, env, firebaseVerifier = null }) {
   const verifier = createFirebaseVerifier(env, firebaseVerifier);
 
+  app.get('/api/auth/policy', async (_request, reply) => {
+    reply.header('cache-control', 'no-store');
+    return {
+      emailVerificationRequired: !emailVerificationDisabled(env),
+      captchaRequired: isCaptchaRequired(env),
+      firebaseEnabled: isFirebaseFullyConfigured(env, verifier.configured),
+      passwordChangeRequiresEmail: Boolean(verifier.configured || env.NODE_ENV === 'production'),
+    };
+  });
+
+  app.get('/api/auth/captcha', {
+    config: { rateLimit: { max: 40, timeWindow: '15 minutes' } },
+  }, async (_request, reply) => {
+    reply.header('cache-control', 'no-store');
+    return createCaptchaChallenge(env);
+  });
+
   app.get('/api/auth/firebase/config', async (_request, reply) => {
     reply.header('cache-control', 'no-store');
     return getPublicFirebaseConfig(env, verifier.configured);
@@ -314,6 +345,9 @@ function registerAuthRoutes(app, { pool, env, firebaseVerifier = null }) {
            WHERE id = $1`,
           [existing.id, firebaseUid, shouldActivate, provider]
         );
+        if (!existing.email_verified_at) {
+          await recordSecurityEvent(client, existing.id, 'email_verified');
+        }
       });
       return createUserSession(pool, existing.id, reply, env, { activatePendingOwner: true });
     }
@@ -383,6 +417,31 @@ function registerAuthRoutes(app, { pool, env, firebaseVerifier = null }) {
     };
   });
 
+  app.post('/api/auth/register/prepare', {
+    config: { rateLimit: { max: 10, timeWindow: '1 hour' } },
+  }, async (request) => {
+    assertSameOrigin(request, env);
+    const body = request.body || {};
+    const email = typeof body.email === 'string' ? body.email.trim() : '';
+    const emailNormalized = email.toLowerCase();
+    const displayName = typeof body.displayName === 'string' ? body.displayName.trim() : '';
+    const workspaceMode = body.workspaceMode === undefined ? 'shop' : body.workspaceMode;
+    if (!['shop', 'affiliate'].includes(workspaceMode)) throw new ApiError(400, 'validation_error', 'Chọn Chủ shop hoặc Affiliate.');
+    const storeName = typeof body.storeName === 'string' ? body.storeName.trim() : '';
+    if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || displayName.length < 2 || displayName.length > 120 || (workspaceMode === 'shop' && (storeName.length < 2 || storeName.length > 160))) {
+      throw new ApiError(400, 'validation_error', 'Hãy kiểm tra email, tên và tên cửa hàng.');
+    }
+    requireCaptchaIfEnabled(env, body);
+    const exists = await pool.query('SELECT 1 FROM users WHERE email_normalized = $1 LIMIT 1', [emailNormalized]);
+    if (exists.rowCount) {
+      throw new ApiError(409, 'account_exists', 'Email này đã được sử dụng.');
+    }
+    return {
+      ok: true,
+      registrationTicket: createRegistrationTicket(env, { emailNormalized }),
+    };
+  });
+
   app.post('/api/auth/register', {
     config: { rateLimit: { max: 5, timeWindow: '1 hour' } },
   }, async (request, reply) => {
@@ -394,13 +453,75 @@ function registerAuthRoutes(app, { pool, env, firebaseVerifier = null }) {
     const workspaceMode = body.workspaceMode === undefined ? 'shop' : body.workspaceMode;
     if (!['shop', 'affiliate'].includes(workspaceMode)) throw new ApiError(400, 'validation_error', 'Chọn Chủ shop hoặc Affiliate.');
     const storeName = typeof body.storeName === 'string' ? body.storeName.trim() : '';
+    const firebaseIdToken = typeof body.firebaseIdToken === 'string' ? body.firebaseIdToken.trim() : '';
     const password = typeof body.password === 'string' ? body.password : '';
-    if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || displayName.length < 2 || displayName.length > 120 || (workspaceMode === 'shop' && (storeName.length < 2 || storeName.length > 160)) || password.length < 12 || password.length > 128) {
-      throw new ApiError(400, 'validation_error', 'Hãy kiểm tra email, tên, tên cửa hàng và mật khẩu (tối thiểu 12 ký tự).');
+    if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || displayName.length < 2 || displayName.length > 120 || (workspaceMode === 'shop' && (storeName.length < 2 || storeName.length > 160))) {
+      throw new ApiError(400, 'validation_error', 'Hãy kiểm tra email, tên và tên cửa hàng.');
     }
+
+    const usedTicket = verifyRegistrationTicket(env, body.registrationTicket, emailNormalized);
+    if (!usedTicket) {
+      requireCaptchaIfEnabled(env, body);
+    }
+
     const { randomUUID } = require('node:crypto');
     const userId = randomUUID();
     const storeId = randomUUID();
+
+    if (firebaseIdToken) {
+      if (!verifier.configured) {
+        throw new ApiError(503, 'firebase_auth_unavailable', 'Xác thực Firebase chưa được cấu hình.');
+      }
+      if (firebaseIdToken.length < 20 || firebaseIdToken.length > 8192) {
+        throw new ApiError(400, 'validation_error', 'Mã xác thực Firebase không hợp lệ.');
+      }
+      let decoded;
+      try {
+        decoded = await verifier.verifyIdToken(firebaseIdToken);
+      } catch {
+        throw new ApiError(401, 'invalid_firebase_token', 'Phiên xác thực Firebase không hợp lệ.');
+      }
+      const firebaseUid = typeof decoded?.uid === 'string' ? decoded.uid.trim() : '';
+      const provider = String(decoded?.firebase?.sign_in_provider || '').trim();
+      const tokenEmail = typeof decoded?.email === 'string' ? decoded.email.trim().toLowerCase() : '';
+      if (!firebaseUid || provider !== 'password' || tokenEmail !== emailNormalized) {
+        throw new ApiError(400, 'invalid_firebase_token', 'Tài khoản Firebase không khớp với email đăng ký.');
+      }
+      const passwordHash = await hashPassword(randomBytes(32).toString('hex'));
+      try {
+        await withUser(pool, userId, async (client) => {
+          await client.query("SELECT set_config('app.store_id', $1, true)", [storeId]);
+          await client.query(
+            `INSERT INTO users (id, email, email_normalized, display_name, password_hash, status, workspace_mode, firebase_uid, auth_provider)
+             VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, 'password')`,
+            [userId, email, emailNormalized, displayName, passwordHash, workspaceMode, firebaseUid]
+          );
+          if (workspaceMode === 'shop') {
+            await client.query('INSERT INTO stores (id, name) VALUES ($1, $2)', [storeId, storeName]);
+            await client.query(
+              `INSERT INTO memberships (store_id, user_id, role, status, joined_at)
+               VALUES ($1, $2, 'owner', 'active', now())`,
+              [storeId, userId]
+            );
+            await client.query('INSERT INTO store_sequences (store_id) VALUES ($1)', [storeId]);
+          }
+        });
+      } catch (error) {
+        if (error.code === '23505') throw new ApiError(409, 'account_exists', 'Email này đã được sử dụng.');
+        throw error;
+      }
+      reply.code(201);
+      return {
+        status: 'verification_required',
+        provider: 'firebase',
+        email,
+        message: 'Tài khoản đã được tạo. Slink đã gửi email xác nhận qua Firebase — hãy bấm liên kết hoặc dán mã xác nhận trong email để kích hoạt cửa hàng.',
+      };
+    }
+
+    if (password.length < 12 || password.length > 128) {
+      throw new ApiError(400, 'validation_error', 'Hãy kiểm tra email, tên, tên cửa hàng và mật khẩu (tối thiểu 12 ký tự).');
+    }
     const passwordHash = await hashPassword(password);
     const demoBypass = emailVerificationDisabled(env);
     let verificationToken;
@@ -433,7 +554,7 @@ function registerAuthRoutes(app, { pool, env, firebaseVerifier = null }) {
       return {
         ...session,
         status: 'created_without_email_verification',
-        message: 'Đã tạo tài khoản và đăng nhập. Chế độ dùng thử hiện không yêu cầu xác minh email.',
+        message: 'Đã tạo tài khoản và đăng nhập.',
       };
     }
     const publicOrigin = env.PUBLIC_ORIGIN || 'http://127.0.0.1:3000';
@@ -506,21 +627,46 @@ function registerAuthRoutes(app, { pool, env, firebaseVerifier = null }) {
   });
 
   app.post('/api/auth/resend-verification', {
-    config: { rateLimit: { max: 3, timeWindow: '1 hour' } },
+    config: { rateLimit: { max: 5, timeWindow: '1 hour' } },
   }, async (request) => {
     assertSameOrigin(request, env);
+    requireCaptchaIfEnabled(env, request.body || {});
     if (emailVerificationDisabled(env)) {
       return {
         status: 'verification_not_required',
-        message: 'Chế độ dùng thử đang tắt xác minh email. Hãy đăng nhập bằng email và mật khẩu đã đăng ký.',
+        message: 'Tài khoản môi trường kiểm thử không cần xác minh email.',
       };
     }
     const email = typeof request.body?.email === 'string' ? request.body.email.trim().toLowerCase() : '';
     if (!email || email.length > 254) throw new ApiError(400, 'validation_error', 'Email không hợp lệ.');
     const found = await pool.query(
-      `SELECT id, email FROM users WHERE email_normalized = $1 AND status IN ('pending', 'active') AND email_verified_at IS NULL`,
+      `SELECT id, email, display_name, firebase_uid FROM users WHERE email_normalized = $1 AND status IN ('pending', 'active') AND email_verified_at IS NULL`,
       [email]
     );
+    if (verifier.configured) {
+      if (found.rowCount && !found.rows[0].firebase_uid && typeof verifier.ensureUser === 'function') {
+        try {
+          const fbUser = await verifier.ensureUser({
+            email: found.rows[0].email,
+            displayName: found.rows[0].display_name,
+            emailVerified: false,
+          });
+          if (fbUser?.uid) {
+            await withUser(pool, found.rows[0].id, (client) => client.query(
+              'UPDATE users SET firebase_uid = COALESCE(firebase_uid, $2), updated_at = now() WHERE id = $1',
+              [found.rows[0].id, fbUser.uid]
+            ));
+          }
+        } catch (error) {
+          request.log.warn({ err: error.message }, 'Firebase user provisioning failed on resend verification');
+        }
+      }
+      return {
+        status: 'verification_requested',
+        provider: 'firebase',
+        message: 'Nếu tài khoản chưa xác minh tồn tại, Slink sẽ gửi lại email xác nhận qua Firebase.',
+      };
+    }
     let delivery;
     if (found.rowCount) {
       const token = await withUser(pool, found.rows[0].id, (client) => recordVerificationToken(client, found.rows[0].id));
@@ -543,37 +689,57 @@ function registerAuthRoutes(app, { pool, env, firebaseVerifier = null }) {
     config: { rateLimit: { max: 5, timeWindow: '1 hour' } },
   }, async (request) => {
     assertSameOrigin(request, env);
+    requireCaptchaIfEnabled(env, request.body || {});
     const email = typeof request.body?.email === 'string' ? request.body.email.trim() : '';
     const emailNormalized = email.toLowerCase();
     if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new ApiError(400, 'validation_error', 'Email không hợp lệ.');
     const found = await pool.query(
-      `SELECT id, email FROM users WHERE email_normalized = $1 AND status = 'active' AND email_verified_at IS NOT NULL`,
+      `SELECT id, email, display_name, firebase_uid FROM users WHERE email_normalized = $1 AND status = 'active' AND email_verified_at IS NOT NULL`,
       [emailNormalized]
     );
     let delivery;
     if (found.rowCount) {
-      const userId = found.rows[0].id;
-      const token = newToken();
-      await withUser(pool, userId, async (client) => {
-        await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId]);
-        await client.query('DELETE FROM password_reset_tokens WHERE user_id = $1 AND consumed_at IS NULL', [userId]);
-        await client.query(
-          `INSERT INTO password_reset_tokens (user_id, token_digest, expires_at)
-           VALUES ($1, $2, now() + ($3::text || ' hours')::interval)`,
-          [userId, digest(token), PASSWORD_RESET_HOURS]
-        );
-      });
-      const resetUrl = new URL('/', env.PUBLIC_ORIGIN || 'http://127.0.0.1:3000');
-      resetUrl.hash = new URLSearchParams({ reset: token }).toString();
-      try {
-        delivery = await sendPasswordReset(env, found.rows[0].email, resetUrl.toString());
-      } catch (error) {
-        request.log.warn({ code: error.code || 'email_unavailable', ...(Number.isInteger(error.providerStatus) ? { providerStatus: error.providerStatus } : {}) }, 'Password reset email delivery failed');
+      const row = found.rows[0];
+      const publicOrigin = env.PUBLIC_ORIGIN || 'http://127.0.0.1:3000';
+      if (verifier.configured && typeof verifier.sendPasswordResetEmail === 'function') {
+        try {
+          if (!row.firebase_uid && typeof verifier.ensureUser === 'function') {
+            const fbUser = await verifier.ensureUser({ email: row.email, displayName: row.display_name, emailVerified: true });
+            if (fbUser?.uid) {
+              await withUser(pool, row.id, (client) => client.query(
+                'UPDATE users SET firebase_uid = COALESCE(firebase_uid, $2), updated_at = now() WHERE id = $1',
+                [row.id, fbUser.uid]
+              ));
+            }
+          }
+          await verifier.sendPasswordResetEmail(row.email, `${publicOrigin}/?mode=resetPassword`);
+        } catch (error) {
+          request.log.warn({ code: error.code || 'firebase_reset_failed', ...(Number.isInteger(error.providerStatus) ? { providerStatus: error.providerStatus } : {}) }, 'Firebase password reset email delivery failed');
+        }
+      } else {
+        const userId = row.id;
+        const token = newToken();
+        await withUser(pool, userId, async (client) => {
+          await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId]);
+          await client.query('DELETE FROM password_reset_tokens WHERE user_id = $1 AND consumed_at IS NULL', [userId]);
+          await client.query(
+            `INSERT INTO password_reset_tokens (user_id, token_digest, expires_at)
+             VALUES ($1, $2, now() + ($3::text || ' hours')::interval)`,
+            [userId, digest(token), PASSWORD_RESET_HOURS]
+          );
+        });
+        const resetUrl = new URL('/', publicOrigin);
+        resetUrl.hash = new URLSearchParams({ reset: token }).toString();
+        try {
+          delivery = await sendPasswordReset(env, row.email, resetUrl.toString());
+        } catch (error) {
+          request.log.warn({ code: error.code || 'email_unavailable', ...(Number.isInteger(error.providerStatus) ? { providerStatus: error.providerStatus } : {}) }, 'Password reset email delivery failed');
+        }
       }
     }
     return {
       status: 'password_reset_requested',
-      message: 'Nếu tài khoản đã xác nhận email tồn tại, Slink sẽ gửi liên kết đặt lại mật khẩu.',
+      message: 'Nếu tài khoản đã xác nhận email tồn tại, Slink sẽ gửi liên kết và mã đặt lại mật khẩu.',
       ...(delivery?.developmentUrl ? { developmentResetUrl: delivery.developmentUrl } : {}),
     };
   });
@@ -623,11 +789,133 @@ function registerAuthRoutes(app, { pool, env, firebaseVerifier = null }) {
     }
   });
 
+  app.post('/api/auth/change-password/request', {
+    config: { rateLimit: { max: 3, timeWindow: '15 minutes' } },
+  }, async (request) => {
+    const auth = await authenticate(pool, request);
+    requireCsrf(request, env);
+    const found = await pool.query(
+      'SELECT id, email, display_name, firebase_uid, status FROM users WHERE id = $1 LIMIT 1',
+      [auth.userId]
+    );
+    if (!found.rowCount || found.rows[0].status !== 'active') {
+      throw new ApiError(401, 'unauthorized', 'Phiên đăng nhập không còn hợp lệ.');
+    }
+    const user = found.rows[0];
+    const publicOrigin = env.PUBLIC_ORIGIN || 'http://127.0.0.1:3000';
+    if (verifier.configured && typeof verifier.sendPasswordResetEmail === 'function') {
+      if (!user.firebase_uid && typeof verifier.ensureUser === 'function') {
+        const fbUser = await verifier.ensureUser({ email: user.email, displayName: user.display_name, emailVerified: true });
+        if (fbUser?.uid) {
+          await withUser(pool, user.id, (client) => client.query(
+            'UPDATE users SET firebase_uid = COALESCE(firebase_uid, $2), updated_at = now() WHERE id = $1',
+            [user.id, fbUser.uid]
+          ));
+        }
+      }
+      try {
+        await verifier.sendPasswordResetEmail(user.email, `${publicOrigin}/?mode=resetPassword`);
+      } catch (error) {
+        request.log.warn({ code: error.code || 'firebase_reset_failed', ...(Number.isInteger(error.providerStatus) ? { providerStatus: error.providerStatus } : {}) }, 'Failed sending Firebase change-password confirmation email');
+        throw new ApiError(503, 'email_unavailable', 'Chưa thể gửi email xác nhận đổi mật khẩu. Vui lòng thử lại sau.');
+      }
+      return {
+        status: 'confirmation_email_sent',
+        provider: 'firebase',
+        email: user.email,
+        message: `Đã gửi email xác nhận đổi mật khẩu tới ${user.email}. Hãy mở liên kết hoặc dán mã xác nhận từ email vào khung bên dưới.`,
+      };
+    }
+
+    const token = newToken();
+    await withUser(pool, user.id, async (client) => {
+      await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [user.id]);
+      await client.query('DELETE FROM password_reset_tokens WHERE user_id = $1 AND consumed_at IS NULL', [user.id]);
+      await client.query(
+        `INSERT INTO password_reset_tokens (user_id, token_digest, expires_at)
+         VALUES ($1, $2, now() + ($3::text || ' hours')::interval)`,
+        [user.id, digest(token), PASSWORD_RESET_HOURS]
+      );
+    });
+    const resetUrl = new URL('/', publicOrigin);
+    resetUrl.hash = new URLSearchParams({ reset: token }).toString();
+    const delivery = await sendPasswordReset(env, user.email, resetUrl.toString());
+    return {
+      status: 'confirmation_email_sent',
+      provider: 'email',
+      email: user.email,
+      message: `Đã gửi email xác nhận đổi mật khẩu tới ${user.email}. Hãy dán mã hoặc liên kết trong email vào khung bên dưới.`,
+      ...(delivery?.developmentUrl ? { developmentResetUrl: delivery.developmentUrl } : {}),
+    };
+  });
+
+  app.post('/api/auth/change-password/confirm', {
+    config: { rateLimit: { max: 5, timeWindow: '15 minutes' } },
+  }, async (request) => {
+    const auth = await authenticate(pool, request);
+    requireCsrf(request, env);
+    if (!verifier.configured) {
+      throw new ApiError(503, 'firebase_auth_unavailable', 'Xác thực Firebase chưa được cấu hình.');
+    }
+    const idToken = typeof request.body?.idToken === 'string' ? request.body.idToken.trim() : '';
+    if (!idToken || idToken.length < 20 || idToken.length > 8192) {
+      throw new ApiError(400, 'validation_error', 'Mã xác thực Firebase không hợp lệ.');
+    }
+    let decoded;
+    try {
+      decoded = await verifier.verifyIdToken(idToken);
+    } catch {
+      throw new ApiError(401, 'invalid_firebase_token', 'Phiên xác nhận mật khẩu không hợp lệ hoặc đã hết hạn.');
+    }
+    const firebaseUid = typeof decoded?.uid === 'string' ? decoded.uid.trim() : '';
+    const tokenEmail = typeof decoded?.email === 'string' ? decoded.email.trim().toLowerCase() : '';
+    const authTimeSec = Number(decoded?.auth_time);
+    if (!firebaseUid || !decoded?.email_verified || tokenEmail !== auth.email.toLowerCase()) {
+      throw new ApiError(403, 'email_mismatch', 'Tài khoản xác nhận không khớp với email đang đăng nhập.');
+    }
+    if (Number.isFinite(authTimeSec) && Math.floor(Date.now() / 1000) - authTimeSec > 600) {
+      throw new ApiError(401, 'stale_authentication', 'Xác nhận đã quá hạn. Hãy thực hiện xác nhận qua email lại.');
+    }
+    const passwordHash = await hashPassword(randomBytes(32).toString('hex'));
+    await withUser(pool, auth.userId, async (client) => {
+      const user = await client.query('SELECT status, firebase_uid FROM users WHERE id = $1 FOR UPDATE', [auth.userId]);
+      if (!user.rowCount || user.rows[0].status !== 'active') {
+        throw new ApiError(401, 'unauthorized', 'Phiên đăng nhập không còn hợp lệ.');
+      }
+      if (user.rows[0].firebase_uid && user.rows[0].firebase_uid !== firebaseUid) {
+        throw new ApiError(409, 'firebase_uid_mismatch', 'Tài khoản không khớp với định danh Firebase đã liên kết.');
+      }
+      await client.query(
+        `UPDATE users
+         SET password_hash = $2,
+             firebase_uid = COALESCE(firebase_uid, $3),
+             email_verified_at = COALESCE(email_verified_at, now()),
+             password_changed_at = now(),
+             updated_at = now()
+         WHERE id = $1`,
+        [auth.userId, passwordHash, firebaseUid]
+      );
+      await client.query(
+        'UPDATE password_reset_tokens SET consumed_at = now() WHERE user_id = $1 AND consumed_at IS NULL',
+        [auth.userId]
+      );
+      await client.query(
+        'UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND token_digest <> $2 AND revoked_at IS NULL',
+        [auth.userId, auth.tokenDigest]
+      );
+      await recordSecurityEvent(client, auth.userId, 'password_changed');
+    });
+    return { status: 'password_changed', message: 'Đã xác nhận qua email và đổi mật khẩu thành công. Các thiết bị khác cần đăng nhập lại.' };
+  });
+
   app.post('/api/auth/change-password', {
     config: { rateLimit: { max: 5, timeWindow: '15 minutes' } },
   }, async (request) => {
     const auth = await authenticate(pool, request);
     requireCsrf(request, env);
+    if (env.NODE_ENV === 'production' || (verifier.configured && env.ALLOW_DIRECT_PASSWORD_CHANGE !== 'true')) {
+      throw new ApiError(403, 'email_confirmation_required', 'Đổi mật khẩu yêu cầu xác nhận qua email. Hãy dùng nút Gửi email xác nhận đổi mật khẩu.');
+    }
     const currentPassword = typeof request.body?.currentPassword === 'string' ? request.body.currentPassword : '';
     const newPassword = typeof request.body?.newPassword === 'string' ? request.body.newPassword : '';
     if (!currentPassword || currentPassword.length > 128) throw new ApiError(400, 'validation_error', 'Hãy nhập mật khẩu hiện tại.');
@@ -668,22 +956,53 @@ function registerAuthRoutes(app, { pool, env, firebaseVerifier = null }) {
     if (!email || email.length > 254 || !password || password.length > 128) throw new ApiError(401, 'invalid_credentials', 'Email hoặc mật khẩu không đúng.');
     const demoBypass = emailVerificationDisabled(env);
     const found = await pool.query(
-      `SELECT id, email, display_name, password_hash, status, email_verified_at FROM users
-       WHERE email_normalized = $1 AND (
-         (status = 'active' AND (email_verified_at IS NOT NULL OR $2::boolean))
-         OR ($2::boolean AND status = 'pending' AND email_verified_at IS NULL)
-       )`,
-      [email, demoBypass]
+      `SELECT id, email, display_name, password_hash, status, email_verified_at, firebase_uid FROM users
+       WHERE email_normalized = $1 AND status IN ('active', 'pending')`,
+      [email]
     );
-    const encoded = found.rowCount ? found.rows[0].password_hash : DUMMY_PASSWORD_HASH;
+    const candidate = found.rows[0];
+    if (candidate && candidate.firebase_uid && verifier.configured) {
+      await verifyPassword(password, DUMMY_PASSWORD_HASH);
+      throw new ApiError(401, 'invalid_credentials', 'Email hoặc mật khẩu không đúng.');
+    }
+    const encoded = found.rowCount ? candidate.password_hash : DUMMY_PASSWORD_HASH;
     const passwordMatches = await verifyPassword(password, encoded);
     if (!found.rowCount || !passwordMatches) {
       if (found.rowCount) {
-        await withUser(pool, found.rows[0].id, (client) => recordSecurityEvent(client, found.rows[0].id, 'login_failed'));
+        await withUser(pool, candidate.id, (client) => recordSecurityEvent(client, candidate.id, 'login_failed'));
       }
       throw new ApiError(401, 'invalid_credentials', 'Email hoặc mật khẩu không đúng.');
     }
-    const user = found.rows[0];
+    const user = candidate;
+    if (!user.email_verified_at && !demoBypass) {
+      if (verifier.configured && typeof verifier.ensureUser === 'function') {
+        try {
+          const fbUser = await verifier.ensureUser({ email: user.email, displayName: user.display_name, emailVerified: false, password });
+          if (fbUser?.uid) {
+            await withUser(pool, user.id, (client) => client.query(
+              'UPDATE users SET firebase_uid = COALESCE(firebase_uid, $2), updated_at = now() WHERE id = $1',
+              [user.id, fbUser.uid]
+            ));
+          }
+        } catch (err) {
+          request.log.warn({ err: err.message }, 'Firebase provisioning failed during unverified login');
+        }
+      }
+      throw new ApiError(401, 'email_verification_required', 'Tài khoản này chưa xác minh email. Hãy xác nhận email trước khi đăng nhập.');
+    }
+    if (user.email_verified_at && !user.firebase_uid && verifier.configured && typeof verifier.ensureUser === 'function') {
+      try {
+        const fbUser = await verifier.ensureUser({ email: user.email, displayName: user.display_name, emailVerified: true, password });
+        if (fbUser?.uid) {
+          await withUser(pool, user.id, (client) => client.query(
+            'UPDATE users SET firebase_uid = COALESCE(firebase_uid, $2), updated_at = now() WHERE id = $1',
+            [user.id, fbUser.uid]
+          ));
+        }
+      } catch (err) {
+        request.log.warn({ err: err.message }, 'Best-effort Firebase sync failed during legacy login');
+      }
+    }
     return createUserSession(pool, user.id, reply, env, { activatePendingOwner: demoBypass && user.status === 'pending' });
   });
 

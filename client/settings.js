@@ -359,7 +359,23 @@
 
 
   S.fn.renderChangePasswordForm = function renderChangePasswordForm() {
-    return `<section class='panel settings-panel'><h2>Đổi mật khẩu</h2><form class='auth-form account-password-form' data-form='change-password'>${S.fn.authPasswordField('settings-current-password', 'currentPassword', 'Mật khẩu hiện tại', 'current-password')}${S.fn.authPasswordField('settings-new-password', 'newPassword', 'Mật khẩu mới (≥ 12 ký tự)', 'new-password')}${S.fn.authPasswordField('settings-confirm-password', 'confirmPassword', 'Nhập lại mật khẩu mới', 'new-password', 'settings-new-password')}<div class='auth-message error' data-password-feedback role='alert' hidden></div><button class='btn btn-primary auth-submit' type='submit'>Đổi mật khẩu</button></form></section>`;
+    const email = S.state.authSession?.user?.email || '';
+    const emailState = S.state.passwordChangeEmailState || {};
+    return `<section class='panel settings-panel'>
+      <h2>Đổi mật khẩu (xác nhận qua email)</h2>
+      <div class='settings-email-change-box'>
+        <p>Để bảo vệ tài khoản <strong>${S.fn.esc(email)}</strong>, Slink yêu cầu xác nhận qua email trước khi cập nhật mật khẩu mới.</p>
+        <div><button class='btn btn-secondary' type='button' data-action='request-password-change-email'>Gửi email xác nhận đổi mật khẩu</button></div>
+        ${emailState.message ? `<div class='auth-message ${emailState.tone === 'error' ? 'error' : ''}' role='status'>${S.fn.esc(emailState.message)}${emailState.developmentUrl ? `<br/><a href='${S.fn.esc(emailState.developmentUrl)}'>Mở liên kết xác nhận đổi mật khẩu</a>` : ''}</div>` : ''}
+      </div>
+      <form class='auth-form account-password-form' data-form='confirm-email-password-change'>
+        <div class='form-field'><label class='input-label' for='settings-reset-code'>Mã xác nhận hoặc liên kết trong email</label><input class='input' id='settings-reset-code' name='code' required maxlength='2048' autocomplete='off' placeholder='Dán mã oobCode hoặc liên kết từ email'/></div>
+        ${S.fn.authPasswordField('settings-new-password', 'newPassword', 'Mật khẩu mới (≥ 12 ký tự)', 'new-password')}
+        ${S.fn.authPasswordField('settings-confirm-password', 'confirmPassword', 'Nhập lại mật khẩu mới', 'new-password', 'settings-new-password')}
+        <div class='auth-message error' data-password-feedback role='alert' hidden></div>
+        <button class='btn btn-primary auth-submit' type='submit'>Xác nhận email &amp; đổi mật khẩu</button>
+      </form>
+    </section>`;
   }
 
 
@@ -519,6 +535,79 @@
       if (error.status === 401) S.fn.showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
       else if (feedback) { feedback.hidden = false; feedback.textContent = error.message; }
       else S.fn.toast('Chưa lưu được lựa chọn', error.message, 'error');
+      if (submitButton && submitButton.isConnected) submitButton.disabled = false;
+    }
+  }
+
+
+  S.fn.requestPasswordChangeEmail = async function requestPasswordChangeEmail(button) {
+    if (button) button.disabled = true;
+    try {
+      const result = await S.fn.apiRequest('/api/auth/change-password/request', { method: 'POST', body: {} });
+      S.state.passwordChangeEmailState = {
+        tone: 'success',
+        message: result.message || 'Đã gửi email xác nhận đổi mật khẩu. Hãy kiểm tra hộp thư và dán mã vào ô bên dưới.',
+        developmentUrl: result.developmentResetUrl || '',
+      };
+      S.fn.render();
+      document.getElementById('settings-reset-code')?.focus();
+      S.fn.toast('Đã gửi email xác nhận', result.email || '');
+    } catch (error) {
+      if (error.status === 401 && error.code === 'unauthorized') S.fn.showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
+      else {
+        S.state.passwordChangeEmailState = { tone: 'error', message: error.message || 'Chưa gửi được email xác nhận.' };
+        S.fn.render();
+      }
+    } finally {
+      if (button && button.isConnected) button.disabled = false;
+    }
+  }
+
+
+  S.fn.confirmEmailPasswordChange = async function confirmEmailPasswordChange(form) {
+    if (!S.fn.updatePasswordConfirmation(form)) {
+      const confirmation = form.querySelector('[data-password-confirm-for]');
+      if (confirmation) confirmation.reportValidity();
+      return;
+    }
+    const data = new FormData(form);
+    const submitButton = form.querySelector('[type="submit"]');
+    const feedback = form.querySelector('[data-password-feedback]');
+    const rawCode = String(data.get('code') || '').trim();
+    const newPassword = String(data.get('newPassword') || '');
+    if (submitButton) submitButton.disabled = true;
+    if (feedback) feedback.hidden = true;
+    try {
+      const email = S.state.authSession?.user?.email || '';
+      const cfg = S.state.firebaseConfig?.enabled
+        ? S.state.firebaseConfig
+        : (window.SlinkFirebaseAuth ? await window.SlinkFirebaseAuth.loadConfig() : { enabled: false });
+      S.state.firebaseConfig = cfg;
+      let result;
+      if (cfg?.enabled && window.SlinkFirebaseAuth) {
+        await window.SlinkFirebaseAuth.confirmPasswordResetWithCode(rawCode, newPassword, { config: cfg });
+        const signed = await window.SlinkFirebaseAuth.signInWithEmailPassword(email, newPassword, { config: cfg });
+        result = await S.fn.apiRequest('/api/auth/change-password/confirm', {
+          method: 'POST',
+          body: { idToken: signed.idToken },
+        });
+      } else {
+        const match = rawCode.match(/[?&#]reset=([^&#]+)/i);
+        const token = match ? decodeURIComponent(match[1]) : rawCode;
+        result = await S.fn.apiRequest('/api/auth/password-reset/complete', {
+          method: 'POST',
+          body: { token, password: newPassword },
+        });
+      }
+      form.reset();
+      S.state.passwordChangeEmailState = null;
+      await S.fn.loadAccountSecurity();
+      S.fn.toast(result.message || 'Đã đổi mật khẩu', 'Mật khẩu mới đã có hiệu lực.');
+    } catch (error) {
+      if (error.status === 401 && error.code === 'unauthorized') S.fn.showSignedOut('Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.', 'error');
+      else if (feedback) { feedback.hidden = false; feedback.textContent = error.message; }
+      else S.fn.toast('Chưa đổi được mật khẩu', error.message, 'error');
+    } finally {
       if (submitButton && submitButton.isConnected) submitButton.disabled = false;
     }
   }

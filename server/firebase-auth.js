@@ -49,11 +49,34 @@ function loadServiceAccount(env = {}) {
   return null;
 }
 
+function isFirebaseFullyConfigured(env = {}, verifierConfigured = false) {
+  const apiKey = typeof env.FIREBASE_WEB_API_KEY === 'string' ? env.FIREBASE_WEB_API_KEY.trim() : '';
+  const authDomain = typeof env.FIREBASE_AUTH_DOMAIN === 'string' ? env.FIREBASE_AUTH_DOMAIN.trim() : '';
+  const projectId = typeof env.FIREBASE_PROJECT_ID === 'string' ? env.FIREBASE_PROJECT_ID.trim() : '';
+  const appId = typeof env.FIREBASE_APP_ID === 'string' ? env.FIREBASE_APP_ID.trim() : '';
+  return Boolean(verifierConfigured && apiKey && authDomain && projectId && appId);
+}
+
 function createFirebaseVerifier(env = {}, customVerifier = null) {
   if (typeof customVerifier === 'function') {
     return {
       configured: true,
       verifyIdToken: (idToken) => customVerifier(idToken),
+    };
+  }
+  if (customVerifier && typeof customVerifier === 'object' && typeof customVerifier.verifyIdToken === 'function') {
+    return {
+      configured: true,
+      verifyIdToken: (idToken) => customVerifier.verifyIdToken(idToken),
+      ...(typeof customVerifier.ensureUser === 'function'
+        ? { ensureUser: (details) => customVerifier.ensureUser(details) }
+        : {}),
+      ...(typeof customVerifier.sendPasswordResetEmail === 'function'
+        ? { sendPasswordResetEmail: (email, continueUrl) => customVerifier.sendPasswordResetEmail(email, continueUrl) }
+        : {}),
+      ...(typeof customVerifier.revokeRefreshTokens === 'function'
+        ? { revokeRefreshTokens: (uid) => customVerifier.revokeRefreshTokens(uid) }
+        : {}),
     };
   }
   const serviceAccount = loadServiceAccount(env);
@@ -70,9 +93,61 @@ function createFirebaseVerifier(env = {}, customVerifier = null) {
     ? getApp(appName)
     : initializeApp({ credential: cert(serviceAccount) }, appName);
   const authClient = getAuth(firebaseApp);
+  const webApiKey = typeof env.FIREBASE_WEB_API_KEY === 'string' ? env.FIREBASE_WEB_API_KEY.trim() : '';
   return {
     configured: true,
     verifyIdToken: (idToken) => authClient.verifyIdToken(idToken, true),
+    async ensureUser({ email, displayName, emailVerified = false, password = '' }) {
+      const normalizedEmail = String(email || '').trim().toLowerCase();
+      try {
+        const existing = await authClient.getUserByEmail(normalizedEmail);
+        return {
+          uid: existing.uid,
+          email: existing.email || normalizedEmail,
+          emailVerified: Boolean(existing.emailVerified),
+        };
+      } catch (error) {
+        if (error?.code !== 'auth/user-not-found') throw error;
+      }
+      const created = await authClient.createUser({
+        email: normalizedEmail,
+        ...(displayName ? { displayName: String(displayName).trim().slice(0, 120) } : {}),
+        emailVerified: Boolean(emailVerified),
+        ...(password ? { password } : {}),
+      });
+      return {
+        uid: created.uid,
+        email: created.email || normalizedEmail,
+        emailVerified: Boolean(created.emailVerified),
+      };
+    },
+    async sendPasswordResetEmail(email, continueUrl = '') {
+      if (!webApiKey) {
+        throw new Error('FIREBASE_WEB_API_KEY is missing.');
+      }
+      const endpoint = `https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${encodeURIComponent(webApiKey)}`;
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        redirect: 'error',
+        headers: {
+          'content-type': 'application/json',
+          'x-firebase-locale': 'vi',
+        },
+        body: JSON.stringify({
+          requestType: 'PASSWORD_RESET',
+          email: String(email || '').trim(),
+          ...(continueUrl ? { continueUrl } : {}),
+        }),
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!response.ok) {
+        const err = new Error(`Firebase sendOobCode failed with HTTP ${response.status}`);
+        err.providerStatus = response.status;
+        throw err;
+      }
+      return { sent: true };
+    },
+    revokeRefreshTokens: (uid) => authClient.revokeRefreshTokens(uid),
   };
 }
 
@@ -83,7 +158,7 @@ function getPublicFirebaseConfig(env = {}, verifierConfigured = false) {
   const storageBucket = typeof env.FIREBASE_STORAGE_BUCKET === 'string' ? env.FIREBASE_STORAGE_BUCKET.trim() : '';
   const messagingSenderId = typeof env.FIREBASE_MESSAGING_SENDER_ID === 'string' ? env.FIREBASE_MESSAGING_SENDER_ID.trim() : '';
   const appId = typeof env.FIREBASE_APP_ID === 'string' ? env.FIREBASE_APP_ID.trim() : '';
-  const enabled = Boolean(verifierConfigured && apiKey && authDomain && projectId && appId);
+  const enabled = isFirebaseFullyConfigured(env, verifierConfigured);
   if (!enabled) {
     return { enabled: false };
   }
@@ -104,6 +179,7 @@ function getPublicFirebaseConfig(env = {}, verifierConfigured = false) {
 
 module.exports = {
   loadServiceAccount,
+  isFirebaseFullyConfigured,
   createFirebaseVerifier,
   getPublicFirebaseConfig,
 };

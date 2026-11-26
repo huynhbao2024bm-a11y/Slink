@@ -4,6 +4,13 @@
 
 Status labels: **Not started**, **In progress**, **Blocked by external dependency**, **Evidence passed**. “Evidence passed” applies only to the named milestone, never to the whole product by implication.
 
+## 2026-11-26 · Slink 0.9.3.0 — Bật xác minh email Firebase + Ô nhập mã, CAPTCHA ký tự biến dạng & Đổi mật khẩu qua email
+
+- Gỡ `DEMO_DISABLE_EMAIL_VERIFICATION` khỏi môi trường production ([render.yaml](render.yaml), [.env.example](.env.example), [auth.js](server/auth.js), [index.js](server/index.js)); bật xác minh email thật qua Firebase Auth kèm màn hình `verify-email` hỗ trợ vừa bấm liên kết vừa dán mã `oobCode` / liên kết xác nhận.
+- Bổ sung CAPTCHA hình ảnh SVG chữ & số biến dạng ngẫu nhiên ký HMAC-SHA256 dùng 1 lần ([captcha.js](server/captcha.js), `GET /api/auth/captcha`) cho đăng ký, gửi lại email xác nhận và quên mật khẩu.
+- Chuyển toàn bộ đổi mật khẩu (Cài đặt & Quên mật khẩu) sang quy trình xác nhận qua email ([firebase-auth.js](server/firebase-auth.js), [auth.js](server/auth.js), [settings.js](client/settings.js), `POST /api/auth/change-password/request` & `/confirm`), chặn đổi mật khẩu trực tiếp không qua email trên production/Firebase; nâng mặc định Android lên `0.9.3.0` (`versionCode: 3034`).
+- **Evidence passed** (`node --test server/test/*.test.js` đạt `116/116` pass, bao gồm [auth-captcha-email.test.js](server/test/auth-captcha-email.test.js)).
+
 ## 2026-11-26 · Slink 0.9.2.0 — Đăng nhập Firebase Google (Web & Android) & Khóa bảo mật mức Production
 
 - Bổ sung Firebase Authentication (Google Sign-In + liên kết tự động email đã xác minh, bỏ SMS OTP, giữ nguyên PostgreSQL/Supabase làm cơ sở dữ liệu giao dịch) cho Web ([firebase-auth-ui.js](firebase-auth-ui.js), [firebase-auth.js](server/firebase-auth.js), [auth.js](server/auth.js), migration [20261126160000_firebase_auth_identities.sql](server/migrations/20261126160000_firebase_auth_identities.sql)) và Android gốc ([FirebaseAuthBridge.java](android/app/src/main/java/com/slink/retail/FirebaseAuthBridge.java) dùng Credential Manager + FirebaseAuth).

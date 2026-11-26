@@ -83,7 +83,20 @@
       S.fn.setupLandingInteractions();
       return;
     }
-    if (!S.state.firebaseConfigLoaded && window.SlinkFirebaseAuth && ['login', 'register'].includes(mode)) {
+    if (!S.state.authPolicyLoaded && ['login', 'register', 'resend', 'reset', 'verify-email', 'reset-complete'].includes(mode)) {
+      S.state.authPolicyLoaded = true;
+      Promise.all([
+        S.fn.apiRequest('/api/auth/policy').catch(() => null),
+        window.SlinkFirebaseAuth ? window.SlinkFirebaseAuth.loadConfig() : Promise.resolve({ enabled: false }),
+      ]).then(function ([policy, cfg]) {
+        if (policy) S.state.authPolicy = policy;
+        S.state.firebaseConfigLoaded = true;
+        S.state.firebaseConfig = cfg || { enabled: false };
+        if (!S.dom.authRoot?.hidden && !S.state.authSession && S.state.authMode !== 'landing') {
+          S.fn.renderAuth();
+        }
+      });
+    } else if (!S.state.firebaseConfigLoaded && window.SlinkFirebaseAuth && ['login', 'register'].includes(mode)) {
       window.SlinkFirebaseAuth.loadConfig().then(function (cfg) {
         S.state.firebaseConfigLoaded = true;
         S.state.firebaseConfig = cfg;
@@ -91,6 +104,9 @@
           S.fn.renderAuth();
         }
       });
+    }
+    if (['register', 'resend', 'reset'].includes(mode) && S.state.authPolicy?.captchaRequired !== false && !S.state.authCaptcha?.token && !S.state.authCaptcha?.loading) {
+      S.fn.loadAuthCaptcha?.();
     }
     const showModeTabs = mode === 'login' || mode === 'register';
     const modeTabs = showModeTabs
@@ -583,10 +599,75 @@
   }
 
 
+  S.fn.updateCaptchaBoxes = function updateCaptchaBoxes() {
+    const captcha = S.state.authCaptcha || {};
+    document.querySelectorAll('[data-captcha-box]').forEach(function (box) {
+      const imgWrap = box.querySelector('.auth-captcha-img-wrap');
+      const tokenInput = box.querySelector('input[name="captchaToken"]');
+      const answerInput = box.querySelector('input[name="captchaAnswer"]');
+      if (tokenInput) tokenInput.value = captcha.token || '';
+      if (imgWrap) {
+        if (captcha.imageDataUrl) {
+          imgWrap.innerHTML = `<img class='auth-captcha-img' src='${S.fn.esc(captcha.imageDataUrl)}' alt='Mã xác nhận CAPTCHA'/>`;
+        } else if (captcha.error) {
+          imgWrap.innerHTML = `<span class='muted' style='font-size:12px;padding:0 8px'>${S.fn.esc(captcha.error)}</span>`;
+        } else {
+          imgWrap.innerHTML = `<span class='muted' style='font-size:12px'>Đang tải mã…</span>`;
+        }
+      }
+      if (answerInput && captcha.clearInput) answerInput.value = '';
+    });
+    if (S.state.authCaptcha) S.state.authCaptcha.clearInput = false;
+  };
+
+  S.fn.loadAuthCaptcha = async function loadAuthCaptcha(force = false) {
+    if (S.state.authPolicy?.captchaRequired === false) return;
+    if (!S.state.authCaptcha) S.state.authCaptcha = {};
+    if (S.state.authCaptcha.loading && !force) return;
+    S.state.authCaptcha.loading = true;
+    S.state.authCaptcha.error = '';
+    if (force) {
+      S.state.authCaptcha.imageDataUrl = '';
+      S.state.authCaptcha.clearInput = true;
+    }
+    S.fn.updateCaptchaBoxes();
+    try {
+      const data = await S.fn.apiRequest('/api/auth/captcha');
+      S.state.authCaptcha = {
+        token: data.captchaToken || '',
+        imageDataUrl: data.imageDataUrl || '',
+        loading: false,
+        error: '',
+        clearInput: force,
+      };
+    } catch (error) {
+      S.state.authCaptcha = {
+        token: '',
+        imageDataUrl: '',
+        loading: false,
+        error: error.message || 'Chưa tải được CAPTCHA.',
+        clearInput: false,
+      };
+    }
+    S.fn.updateCaptchaBoxes();
+  };
+
+  S.fn.renderCaptchaField = function renderCaptchaField() {
+    if (S.state.authPolicy?.captchaRequired === false) return '';
+    const captcha = S.state.authCaptcha || {};
+    const imgHtml = captcha.imageDataUrl
+      ? `<img class='auth-captcha-img' src='${S.fn.esc(captcha.imageDataUrl)}' alt='Mã xác nhận CAPTCHA'/>`
+      : captcha.error
+        ? `<span class='muted' style='font-size:12px;padding:0 8px'>${S.fn.esc(captcha.error)}</span>`
+        : `<span class='muted' style='font-size:12px'>Đang tải mã…</span>`;
+    return `<div class='form-field auth-captcha-field' data-captcha-box><label class='input-label' for='auth-captcha'>Mã xác nhận bảo mật (nhập đúng ký tự trong hình)</label><div class='auth-captcha-row'><div class='auth-captcha-img-wrap'>${imgHtml}</div><button class='btn btn-secondary auth-captcha-refresh' type='button' data-action='refresh-captcha' title='Đổi mã khác'>Đổi mã</button></div><input type='hidden' name='captchaToken' value='${S.fn.esc(captcha.token || '')}'/><input class='input' id='auth-captcha' name='captchaAnswer' autocomplete='off' autocapitalize='characters' spellcheck='false' required minlength='6' maxlength='8' placeholder='Nhập 6 ký tự trên hình'/></div>`;
+  };
+
   S.fn.renderAuth = function renderAuth(message, tone, verificationUrl) {
     let title = 'Đăng nhập';
     let subtitle = '';
     let body = '';
+    const captchaHtml = S.fn.renderCaptchaField();
     const passwordMeterHtml = `<div class='auth-password-meter' data-password-meter><div class='auth-password-meter-track'><span class='auth-password-meter-bar'></span></div><small class='auth-password-meter-hint'>Tối thiểu 12 ký tự để bảo vệ cửa hàng</small></div>`;
     const firebaseQuickButtonsHtml = S.state.firebaseConfig?.enabled
       ? `<div class='auth-oauth-divider'><span>hoặc</span></div>
@@ -605,6 +686,21 @@
       title = 'Hoàn tất khởi tạo cửa hàng';
       subtitle = identityLabel;
       body = `<form class='auth-form' data-auth-form='firebase-onboarding'><div class='form-field'><label class='input-label' for='auth-name'>Tên của bạn</label><input class='input' id='auth-name' name='displayName' autocomplete='name' value='${S.fn.esc(profile.displayName || '')}' required minlength='2' maxlength='120'/></div><div class='form-field'><label class='input-label' for='auth-store'>Tên cửa hàng</label><input class='input' id='auth-store' name='storeName' autocomplete='organization' required minlength='2' maxlength='160' placeholder='Ví dụ: Linh Chi Boutique'/></div><input type='hidden' name='workspaceMode' value='shop'/><button class='btn btn-primary auth-submit' type='submit'>Hoàn tất &amp; vào cửa hàng →</button></form><button class='auth-switch' type='button' data-action='firebase-cancel-onboarding'>← Dùng tài khoản khác</button>`;
+    } else if (S.state.authMode === 'verify-email') {
+      const pendingEmail = S.state.pendingVerifyEmail || '';
+      title = 'Xác nhận email tài khoản';
+      subtitle = pendingEmail ? `Đã gửi thư tới ${pendingEmail}` : 'Mở liên kết trong email hoặc dán mã xác nhận vào ô bên dưới.';
+      body = `<div class='auth-verify-actions'>
+          ${S.state.firebaseConfig?.enabled ? `<button class='btn btn-primary auth-submit' type='button' data-action='firebase-check-verified'>Tôi đã bấm liên kết trong email → Vào cửa hàng</button>` : ''}
+        </div>
+        <form class='auth-form' data-auth-form='verify-code'>
+          <div class='form-field'><label class='input-label' for='auth-verify-code'>Mã xác nhận hoặc liên kết từ email</label><input class='input' id='auth-verify-code' name='code' autocomplete='off' required maxlength='2048' placeholder='Dán mã oobCode hoặc liên kết xác nhận trong email'/></div>
+          <button class='btn ${S.state.firebaseConfig?.enabled ? 'btn-secondary' : 'btn-primary'} auth-submit' type='submit'>Xác nhận mã</button>
+        </form>
+        <div class='auth-secondary-links'>
+          <button class='link-button' type='button' data-action='auth-mode' data-mode='resend'>Gửi lại email xác nhận</button>
+          <button class='link-button' type='button' data-action='auth-mode' data-mode='login'>← Quay lại đăng nhập</button>
+        </div>`;
     } else if (S.state.authMode === 'invite-confirm' && S.state.invitationInfo) {
       title = 'Xác nhận tham gia cửa hàng';
       subtitle = `Bạn được mời vào ${S.state.invitationInfo.storeName} với vai trò ${S.fn.staffRoleName(S.state.invitationInfo.role)}.`;
@@ -616,26 +712,31 @@
     } else if (S.state.authMode === 'register') {
       title = 'Tạo cửa hàng mới';
       subtitle = 'Không gian riêng theo từng cửa hàng, chuẩn VND.';
-      body = `<form class='auth-form' data-auth-form='register'><input type='hidden' name='workspaceMode' value='shop'/><div class='auth-form-row-2'><div class='form-field'><label class='input-label' for='auth-name'>Tên của bạn</label><input class='input' id='auth-name' name='displayName' autocomplete='name' required minlength='2' maxlength='120'/></div><div class='form-field' data-shop-registration><label class='input-label' for='auth-store'>Tên cửa hàng</label><input class='input' id='auth-store' name='storeName' autocomplete='organization' required minlength='2' maxlength='160'/></div></div><div class='form-field'><label class='input-label' for='auth-email'>Email quản trị</label><input class='input' id='auth-email' name='email' type='email' autocomplete='email' required maxlength='254'/></div><div class='auth-form-row-2'>${S.fn.authPasswordField('auth-password', 'password', 'Mật khẩu (≥ 12 ký tự)', 'new-password')}${S.fn.authPasswordField('auth-password-confirm', 'passwordConfirm', 'Nhập lại mật khẩu', 'new-password', 'auth-password')}</div>${passwordMeterHtml}<button class='btn btn-primary auth-submit' type='submit'>Tạo cửa hàng miễn phí →</button></form>${firebaseQuickButtonsHtml}`;
+      body = `<form class='auth-form' data-auth-form='register'><input type='hidden' name='workspaceMode' value='shop'/><div class='auth-form-row-2'><div class='form-field'><label class='input-label' for='auth-name'>Tên của bạn</label><input class='input' id='auth-name' name='displayName' autocomplete='name' required minlength='2' maxlength='120'/></div><div class='form-field' data-shop-registration><label class='input-label' for='auth-store'>Tên cửa hàng</label><input class='input' id='auth-store' name='storeName' autocomplete='organization' required minlength='2' maxlength='160'/></div></div><div class='form-field'><label class='input-label' for='auth-email'>Email quản trị</label><input class='input' id='auth-email' name='email' type='email' autocomplete='email' required maxlength='254'/></div><div class='auth-form-row-2'>${S.fn.authPasswordField('auth-password', 'password', 'Mật khẩu (≥ 12 ký tự)', 'new-password')}${S.fn.authPasswordField('auth-password-confirm', 'passwordConfirm', 'Nhập lại mật khẩu', 'new-password', 'auth-password')}</div>${passwordMeterHtml}${captchaHtml}<button class='btn btn-primary auth-submit' type='submit'>Tạo cửa hàng miễn phí →</button></form>${firebaseQuickButtonsHtml}`;
     } else if (S.state.authMode === 'resend') {
       title = 'Gửi lại email xác nhận';
-      subtitle = '';
-      body = `<form class='auth-form' data-auth-form='resend'><div class='form-field'><label class='input-label' for='auth-email'>Email</label><input class='input' id='auth-email' name='email' type='email' autocomplete='email' required maxlength='254'/></div><button class='btn btn-primary auth-submit' type='submit'>Gửi liên kết mới</button></form><button class='auth-switch' type='button' data-action='auth-mode' data-mode='login'>← Quay lại đăng nhập</button>`;
+      subtitle = S.state.firebaseConfig?.enabled ? 'Nhập email và mật khẩu để Firebase gửi lại liên kết / mã xác nhận.' : '';
+      const needPwdForFirebase = Boolean(S.state.firebaseConfig?.enabled && !(window.firebase?.auth?.()?.currentUser));
+      body = `<form class='auth-form' data-auth-form='resend'><div class='form-field'><label class='input-label' for='auth-email'>Email</label><input class='input' id='auth-email' name='email' type='email' autocomplete='email' value='${S.fn.esc(S.state.pendingVerifyEmail || '')}' required maxlength='254'/></div>${needPwdForFirebase && !S.state.pendingVerifyPassword ? S.fn.authPasswordField('auth-resend-password', 'password', 'Mật khẩu tài khoản', 'current-password') : ''}${captchaHtml}<button class='btn btn-primary auth-submit' type='submit'>Gửi email xác nhận mới</button></form><div class='auth-secondary-links'><button class='link-button' type='button' data-action='auth-mode' data-mode='verify-email'>Đã có mã xác nhận?</button><button class='link-button' type='button' data-action='auth-mode' data-mode='login'>← Quay lại đăng nhập</button></div>`;
     } else if (S.state.authMode === 'reset') {
       title = 'Đặt lại mật khẩu';
-      subtitle = '';
-      body = `<form class='auth-form' data-auth-form='reset'><div class='form-field'><label class='input-label' for='auth-email'>Email</label><input class='input' id='auth-email' name='email' type='email' autocomplete='email' required maxlength='254'/></div><button class='btn btn-primary auth-submit' type='submit'>Gửi liên kết đặt lại</button></form><button class='auth-switch' type='button' data-action='auth-mode' data-mode='login'>← Quay lại đăng nhập</button>`;
+      subtitle = 'Slink sẽ gửi liên kết và mã xác nhận đặt lại mật khẩu qua email.';
+      body = `<form class='auth-form' data-auth-form='reset'><div class='form-field'><label class='input-label' for='auth-email'>Email</label><input class='input' id='auth-email' name='email' type='email' autocomplete='email' required maxlength='254'/></div>${captchaHtml}<button class='btn btn-primary auth-submit' type='submit'>Gửi email đặt lại mật khẩu</button></form><div class='auth-secondary-links'><button class='link-button' type='button' data-action='auth-mode' data-mode='reset-complete'>Đã có mã xác nhận trong email?</button><button class='link-button' type='button' data-action='auth-mode' data-mode='login'>← Quay lại đăng nhập</button></div>`;
     } else if (S.state.authMode === 'reset-complete') {
-      title = 'Tạo mật khẩu mới';
+      title = 'Xác nhận email &amp; đặt mật khẩu mới';
       subtitle = '';
-      const resetToken = new URLSearchParams(window.location.hash.slice(1)).get('reset') || '';
-      body = resetToken ? `<form class='auth-form' data-auth-form='reset-complete'><input type='hidden' name='token' value='${S.fn.esc(resetToken)}'/><div class='auth-form-row-2'>${S.fn.authPasswordField('auth-password', 'password', 'Mật khẩu mới (≥ 12 ký tự)', 'new-password')}${S.fn.authPasswordField('auth-password-confirm', 'passwordConfirm', 'Nhập lại mật khẩu', 'new-password', 'auth-password')}</div>${passwordMeterHtml}<button class='btn btn-primary auth-submit' type='submit'>Cập nhật mật khẩu</button></form>` : `<div class='auth-message error'>Liên kết đặt lại mật khẩu không hợp lệ hoặc đã hết hạn.</div>`;
-      body += `<button class='auth-switch' type='button' data-action='auth-mode' data-mode='login'>← Quay lại đăng nhập</button>`;
+      const resetHashToken = new URLSearchParams(window.location.hash.slice(1)).get('reset') || '';
+      const oobCode = S.state.pendingResetOobCode || '';
+      const prefilledCode = resetHashToken || oobCode;
+      const codeFieldHtml = resetHashToken
+        ? `<input type='hidden' name='token' value='${S.fn.esc(resetHashToken)}'/>`
+        : `<div class='form-field'><label class='input-label' for='auth-reset-code'>Mã xác nhận hoặc liên kết từ email</label><input class='input' id='auth-reset-code' name='code' value='${S.fn.esc(prefilledCode)}' required maxlength='2048' autocomplete='off' placeholder='Dán mã oobCode hoặc liên kết từ email'/></div>`;
+      body = `<form class='auth-form' data-auth-form='reset-complete'>${codeFieldHtml}<div class='auth-form-row-2'>${S.fn.authPasswordField('auth-password', 'password', 'Mật khẩu mới (≥ 12 ký tự)', 'new-password')}${S.fn.authPasswordField('auth-password-confirm', 'passwordConfirm', 'Nhập lại mật khẩu', 'new-password', 'auth-password')}</div>${passwordMeterHtml}<button class='btn btn-primary auth-submit' type='submit'>Xác nhận &amp; cập nhật mật khẩu</button></form><button class='auth-switch' type='button' data-action='auth-mode' data-mode='login'>← Quay lại đăng nhập</button>`;
     } else {
       const invited = S.state.authMode === 'invite-login' && S.state.invitationInfo;
       if (invited) { title = 'Đăng nhập để tham gia'; subtitle = `${S.state.invitationInfo.storeName} · ${S.fn.staffRoleName(S.state.invitationInfo.role)}`; }
       else { subtitle = 'Mở quầy bán hàng, kho và sổ quỹ.'; }
-      body = `<form class='auth-form' data-auth-form='login'><div class='form-field'><label class='input-label' for='auth-email'>Email đăng nhập</label><input class='input' id='auth-email' name='email' type='email' autocomplete='username' value='${S.fn.esc(invited ? S.state.invitationInfo.email : '')}' required maxlength='254'/></div>${S.fn.authPasswordField('auth-password', 'password', 'Mật khẩu', 'current-password')}<button class='btn btn-primary auth-submit' type='submit'>${invited ? 'Đăng nhập và tham gia' : 'Đăng nhập vào cửa hàng →'}</button></form><div class='auth-secondary-links'>${invited ? `<button class='link-button' type='button' data-action='auth-mode' data-mode='invite-register'>Tạo tài khoản mới</button><button class='link-button' type='button' data-action='auth-mode' data-mode='resend'>Gửi lại xác nhận</button>` : `<button class='link-button' type='button' data-action='auth-mode' data-mode='reset'>Quên mật khẩu?</button><button class='link-button' type='button' data-action='auth-mode' data-mode='resend'>Gửi lại xác nhận</button>`}</div>${invited ? '' : firebaseQuickButtonsHtml}`;
+      body = `<form class='auth-form' data-auth-form='login'><div class='form-field'><label class='input-label' for='auth-email'>Email đăng nhập</label><input class='input' id='auth-email' name='email' type='email' autocomplete='username' value='${S.fn.esc(invited ? S.state.invitationInfo.email : '')}' required maxlength='254'/></div>${S.fn.authPasswordField('auth-password', 'password', 'Mật khẩu', 'current-password')}<button class='btn btn-primary auth-submit' type='submit'>${invited ? 'Đăng nhập và tham gia' : 'Đăng nhập vào cửa hàng →'}</button></form><div class='auth-secondary-links'>${invited ? `<button class='link-button' type='button' data-action='auth-mode' data-mode='invite-register'>Tạo tài khoản mới</button><button class='link-button' type='button' data-action='auth-mode' data-mode='resend'>Gửi lại xác nhận</button>` : `<button class='link-button' type='button' data-action='auth-mode' data-mode='reset'>Quên mật khẩu?</button><button class='link-button' type='button' data-action='auth-mode' data-mode='verify-email'>Nhập mã xác nhận</button><button class='link-button' type='button' data-action='auth-mode' data-mode='resend'>Gửi lại xác nhận</button>`}</div>${invited ? '' : firebaseQuickButtonsHtml}`;
     }
     let htmlMessage = message ? S.fn.esc(message) : '';
     if (verificationUrl) htmlMessage += `<br/><a href='${S.fn.esc(verificationUrl)}'>${S.state.authMode === 'reset' ? 'Mở liên kết đặt lại mật khẩu' : 'Xác nhận email và kích hoạt cửa hàng'}</a>`;
@@ -687,6 +788,11 @@
     S.state.lastImportedPrintItems = [];
     S.state.productImportSourceRows = [];
     S.state.authSession = null;
+    S.state.pendingVerifyEmail = '';
+    S.state.pendingVerifyPassword = '';
+    S.state.pendingResetOobCode = '';
+    S.state.authCaptcha = null;
+    S.state.passwordChangeEmailState = null;
     S.state.store = S.fn.emptyStore();
     S.state.dashboardState = { data: null, loading: false, error: '', fallback: false, loadedAt: 0 };
     S.state.posCatalogStale = false;
@@ -1479,10 +1585,34 @@
     }
     S.state.firebasePendingIdToken = '';
     S.state.firebasePendingProfile = null;
+    S.state.pendingVerifyEmail = '';
+    S.state.pendingVerifyPassword = '';
     if (S.state.authMode === 'invite-login' && S.state.invitationToken && S.state.invitationInfo?.status === 'pending') {
       await S.fn.acceptStoreInvitation();
     } else {
       await S.fn.enterStore(result);
+    }
+  };
+
+  S.fn.handleCheckFirebaseVerified = async function handleCheckFirebaseVerified(button) {
+    if (!window.SlinkFirebaseAuth) return S.fn.renderAuth('Trình xác thực Firebase chưa sẵn sàng.', 'error');
+    if (button) button.disabled = true;
+    try {
+      const cfg = S.state.firebaseConfig?.enabled ? S.state.firebaseConfig : await window.SlinkFirebaseAuth.loadConfig();
+      const status = await window.SlinkFirebaseAuth.checkEmailVerified({
+        config: cfg,
+        email: S.state.pendingVerifyEmail || '',
+        password: S.state.pendingVerifyPassword || '',
+      });
+      if (!status.emailVerified || !status.idToken) {
+        S.fn.renderAuth('Email chưa được xác minh. Hãy bấm liên kết trong hộp thư (hoặc kiểm tra mục Spam/Quảng cáo) rồi thử lại.', 'error');
+        return;
+      }
+      await S.fn.completeFirebaseLogin(status.idToken);
+    } catch (error) {
+      S.fn.renderAuth(error.message || 'Chưa kiểm tra được trạng thái xác nhận email.', 'error');
+    } finally {
+      if (button && button.isConnected) button.disabled = false;
     }
   };
 
@@ -1528,47 +1658,175 @@
         S.fn.toast('Chào mừng đến Slink', 'Đã khởi tạo cửa hàng của bạn.', 'success');
         return;
       } else if (type === 'login') {
-        const session = await S.fn.apiRequest('/api/auth/login', {
-          method: 'POST', body: { email: String(data.get('email') || '').trim(), password: String(data.get('password') || '') },
-        });
-        if (S.state.authMode === 'invite-login' && S.state.invitationToken && S.state.invitationInfo?.status === 'pending') await S.fn.acceptStoreInvitation();
-        else await S.fn.enterStore(session);
+        const loginEmail = String(data.get('email') || '').trim();
+        const loginPassword = String(data.get('password') || '');
+        if (S.state.firebaseConfig?.enabled && window.SlinkFirebaseAuth) {
+          try {
+            const fbSignIn = await window.SlinkFirebaseAuth.signInWithEmailPassword(loginEmail, loginPassword, { config: S.state.firebaseConfig });
+            if (!fbSignIn.emailVerified) {
+              S.state.pendingVerifyEmail = loginEmail;
+              S.state.pendingVerifyPassword = loginPassword;
+              S.state.authMode = 'verify-email';
+              S.fn.renderAuth('Email của bạn chưa được xác nhận. Hãy bấm liên kết trong email hoặc dán mã xác nhận vào ô bên dưới.', 'error');
+              return;
+            }
+            await S.fn.completeFirebaseLogin(fbSignIn.idToken);
+            return;
+          } catch (fbError) {
+            if (!['auth/user-not-found', 'auth/invalid-credential', 'auth/wrong-password'].includes(fbError.firebaseCode || '')) {
+              throw fbError;
+            }
+          }
+        }
+        try {
+          const session = await S.fn.apiRequest('/api/auth/login', {
+            method: 'POST', body: { email: loginEmail, password: loginPassword },
+          });
+          S.state.pendingVerifyEmail = '';
+          S.state.pendingVerifyPassword = '';
+          if (S.state.authMode === 'invite-login' && S.state.invitationToken && S.state.invitationInfo?.status === 'pending') await S.fn.acceptStoreInvitation();
+          else await S.fn.enterStore(session);
+        } catch (loginError) {
+          if (loginError.code === 'email_verification_required') {
+            S.state.pendingVerifyEmail = loginEmail;
+            S.state.pendingVerifyPassword = loginPassword;
+            S.state.authMode = 'verify-email';
+            S.fn.renderAuth(loginError.message, 'error');
+            return;
+          }
+          throw loginError;
+        }
       } else if (type === 'invite-accept') {
         await S.fn.acceptStoreInvitation();
       } else if (type === 'register') {
-        const result = await S.fn.apiRequest('/api/auth/register', {
-          method: 'POST', body: {
-            displayName: String(data.get('displayName') || '').trim(),
-            storeName: String(data.get('storeName') || '').trim(),
-            workspaceMode: String(data.get('workspaceMode') || 'shop'),
-            email: String(data.get('email') || '').trim(),
-            password: String(data.get('password') || ''),
+        const displayName = String(data.get('displayName') || '').trim();
+        const storeName = String(data.get('storeName') || '').trim();
+        const workspaceMode = String(data.get('workspaceMode') || 'shop');
+        const email = String(data.get('email') || '').trim();
+        const password = String(data.get('password') || '');
+        const captchaToken = String(data.get('captchaToken') || '');
+        const captchaAnswer = String(data.get('captchaAnswer') || '').trim();
+        const prep = await S.fn.apiRequest('/api/auth/register/prepare', {
+          method: 'POST',
+          body: { displayName, storeName, workspaceMode, email, captchaToken, captchaAnswer },
+        });
+        let result;
+        if (S.state.firebaseConfig?.enabled && window.SlinkFirebaseAuth) {
+          const continueUrl = `${window.location.origin}/verify?email=${encodeURIComponent(email)}`;
+          const fbReg = await window.SlinkFirebaseAuth.registerWithEmailPassword(email, password, displayName, continueUrl, { config: S.state.firebaseConfig });
+          result = await S.fn.apiRequest('/api/auth/register', {
+            method: 'POST',
+            body: {
+              displayName,
+              storeName,
+              workspaceMode,
+              email,
+              firebaseIdToken: fbReg.idToken,
+              registrationTicket: prep.registrationTicket,
+            },
+          });
+          S.state.pendingVerifyEmail = email;
+          S.state.pendingVerifyPassword = password;
+          S.state.authCaptcha = null;
+          S.state.authMode = 'verify-email';
+          S.fn.renderAuth(result.message, 'success');
+          return;
+        }
+        result = await S.fn.apiRequest('/api/auth/register', {
+          method: 'POST',
+          body: {
+            displayName,
+            storeName,
+            workspaceMode,
+            email,
+            password,
+            registrationTicket: prep.registrationTicket,
           },
         });
+        S.state.authCaptcha = null;
         if (result.user && Array.isArray(result.stores)) {
           await S.fn.enterStore(result);
-          S.fn.toast('Đã tạo tài khoản', 'Chế độ dùng thử: email chưa cần xác minh.', 'success');
+          S.fn.toast('Đã tạo tài khoản', result.message || 'Đã đăng nhập vào cửa hàng.', 'success');
         } else {
-          S.state.authMode = 'login';
+          S.state.pendingVerifyEmail = email;
+          S.state.authMode = 'verify-email';
           S.fn.renderAuth(result.message, 'success', result.developmentVerificationUrl);
         }
-      } else if (type === 'resend') {
-        const result = await S.fn.apiRequest('/api/auth/resend-verification', {
-          method: 'POST', body: { email: String(data.get('email') || '').trim() },
-        });
+      } else if (type === 'verify-code') {
+        const rawCode = String(data.get('code') || '').trim();
+        const slinkTokenMatch = rawCode.match(/[?&#]token=([^&#]+)/i);
+        if (S.state.firebaseConfig?.enabled && window.SlinkFirebaseAuth && !slinkTokenMatch) {
+          const applied = await window.SlinkFirebaseAuth.applyVerificationCode(rawCode, { config: S.state.firebaseConfig });
+          if (applied.idToken) {
+            await S.fn.completeFirebaseLogin(applied.idToken);
+            return;
+          }
+          S.state.authMode = 'login';
+          S.fn.renderAuth('Email đã được xác nhận thành công. Hãy đăng nhập để vào cửa hàng.', 'success');
+          return;
+        }
+        const token = slinkTokenMatch ? decodeURIComponent(slinkTokenMatch[1]) : rawCode;
+        const verified = await S.fn.apiRequest('/api/auth/verify-email', { method: 'POST', body: { token } });
         S.state.authMode = 'login';
+        S.fn.renderAuth(verified.message, 'success');
+      } else if (type === 'resend') {
+        const email = String(data.get('email') || '').trim();
+        const pwd = String(data.get('password') || '') || S.state.pendingVerifyPassword || '';
+        const result = await S.fn.apiRequest('/api/auth/resend-verification', {
+          method: 'POST',
+          body: {
+            email,
+            captchaToken: String(data.get('captchaToken') || ''),
+            captchaAnswer: String(data.get('captchaAnswer') || '').trim(),
+          },
+        });
+        S.state.authCaptcha = null;
+        if (result.provider === 'firebase' && window.SlinkFirebaseAuth) {
+          const continueUrl = `${window.location.origin}/verify?email=${encodeURIComponent(email)}`;
+          await window.SlinkFirebaseAuth.resendVerificationEmail(continueUrl, {
+            config: S.state.firebaseConfig,
+            email,
+            password: pwd,
+          });
+          S.state.pendingVerifyEmail = email;
+          if (pwd) S.state.pendingVerifyPassword = pwd;
+          S.state.authMode = 'verify-email';
+          S.fn.renderAuth('Đã gửi lại email xác nhận qua Firebase. Hãy kiểm tra hộp thư hoặc dán mã xác nhận vào ô bên dưới.', 'success');
+          return;
+        }
+        S.state.pendingVerifyEmail = email;
+        S.state.authMode = 'verify-email';
         S.fn.renderAuth(result.message, 'success', result.developmentVerificationUrl);
       } else if (type === 'reset') {
         const result = await S.fn.apiRequest('/api/auth/password-reset', {
-          method: 'POST', body: { email: String(data.get('email') || '').trim() },
+          method: 'POST',
+          body: {
+            email: String(data.get('email') || '').trim(),
+            captchaToken: String(data.get('captchaToken') || ''),
+            captchaAnswer: String(data.get('captchaAnswer') || '').trim(),
+          },
         });
+        S.state.authCaptcha = null;
+        S.state.authMode = 'reset-complete';
         S.fn.renderAuth(result.message, 'success', result.developmentResetUrl);
       } else if (type === 'reset-complete') {
         const password = String(data.get('password') || '');
         if (password !== String(data.get('passwordConfirm') || '')) throw new Error('Hai lần nhập mật khẩu chưa khớp.');
+        const hashToken = String(data.get('token') || '').trim();
+        const rawCode = String(data.get('code') || '').trim();
+        if (S.state.firebaseConfig?.enabled && window.SlinkFirebaseAuth && !hashToken) {
+          await window.SlinkFirebaseAuth.confirmPasswordResetWithCode(rawCode, password, { config: S.state.firebaseConfig });
+          S.state.pendingResetOobCode = '';
+          window.history.replaceState({}, '', '/');
+          S.state.authMode = 'login';
+          S.fn.renderAuth('Mật khẩu đã được cập nhật qua xác nhận email. Hãy đăng nhập lại bằng mật khẩu mới.', 'success');
+          return;
+        }
+        const token = hashToken || rawCode;
         const result = await S.fn.apiRequest('/api/auth/password-reset/complete', {
-          method: 'POST', body: { token: String(data.get('token') || ''), password: password },
+          method: 'POST', body: { token, password },
         });
+        S.state.pendingResetOobCode = '';
         window.history.replaceState({}, '', '/');
         S.state.authMode = 'login';
         S.fn.renderAuth(result.message, 'success');
@@ -1582,12 +1840,15 @@
         S.fn.renderAuth(result.message, 'success', result.developmentVerificationUrl);
       }
     } catch (error) {
+      if (['register', 'resend', 'reset'].includes(type)) {
+        S.fn.loadAuthCaptcha?.(true);
+      }
       if (type === 'register' && error.code === 'account_exists') {
         S.state.authMode = 'login';
-        S.fn.renderAuth('Email này đã được đăng ký. Hãy đăng nhập hoặc chọn “Gửi lại email xác nhận” nếu bạn chưa xác nhận email.', 'error');
+        S.fn.renderAuth('Email này đã được đăng ký. Hãy đăng nhập hoặc chọn “Gửi lại xác nhận” nếu bạn chưa xác minh email.', 'error');
       } else if (type === 'register' && error.code === 'email_unavailable') {
         S.state.authMode = 'login';
-        S.fn.renderAuth('Tài khoản đã được tạo nhưng email xác nhận chưa gửi được. Hãy chọn “Gửi lại email xác nhận” sau khi dịch vụ gửi thư hoạt động; không cần tạo lại tài khoản.', 'error');
+        S.fn.renderAuth('Tài khoản đã được tạo nhưng email xác nhận chưa gửi được. Hãy chọn “Gửi lại xác nhận” sau khi dịch vụ gửi thư hoạt động; không cần tạo lại tài khoản.', 'error');
       } else {
         S.fn.renderAuth(error.message, 'error');
       }
