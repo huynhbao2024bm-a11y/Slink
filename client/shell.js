@@ -83,6 +83,15 @@
       S.fn.setupLandingInteractions();
       return;
     }
+    if (!S.state.firebaseConfigLoaded && window.SlinkFirebaseAuth && ['login', 'register'].includes(mode)) {
+      window.SlinkFirebaseAuth.loadConfig().then(function (cfg) {
+        S.state.firebaseConfigLoaded = true;
+        S.state.firebaseConfig = cfg;
+        if (!S.dom.authRoot?.hidden && !S.state.authSession && ['login', 'register'].includes(S.state.authMode) && cfg?.enabled) {
+          S.fn.renderAuth();
+        }
+      });
+    }
     const showModeTabs = mode === 'login' || mode === 'register';
     const modeTabs = showModeTabs
       ? `<div class='auth-mode-tabs' data-tab-glider-host role='tablist' aria-label='Tài khoản'>
@@ -579,7 +588,24 @@
     let subtitle = '';
     let body = '';
     const passwordMeterHtml = `<div class='auth-password-meter' data-password-meter><div class='auth-password-meter-track'><span class='auth-password-meter-bar'></span></div><small class='auth-password-meter-hint'>Tối thiểu 12 ký tự để bảo vệ cửa hàng</small></div>`;
-    if (S.state.authMode === 'invite-confirm' && S.state.invitationInfo) {
+    const firebaseQuickButtonsHtml = S.state.firebaseConfig?.enabled
+      ? `<div class='auth-oauth-divider'><span>hoặc</span></div>
+         <div class='auth-oauth-group'>
+           <button class='btn auth-oauth-btn auth-google-btn' type='button' data-action='firebase-google'>
+             <svg width='18' height='18' viewBox='0 0 24 24' aria-hidden='true'><path fill='#EA4335' d='M12 10.2v3.9h5.4c-.2 1.2-1.4 3.6-5.4 3.6-3.2 0-5.9-2.7-5.9-5.9s2.7-5.9 5.9-5.9c1.9 0 3.1.8 3.8 1.5l2.6-2.5C16.7 3.3 14.6 2.4 12 2.4 6.7 2.4 2.4 6.7 2.4 12s4.3 9.6 9.6 9.6c5.5 0 9.2-3.9 9.2-9.4 0-.6-.1-1.1-.2-1.6H12Z'/><path fill='#34A853' d='M3.5 7.4l3.2 2.3C7.6 7.5 9.6 6.1 12 6.1c1.9 0 3.1.8 3.8 1.5l2.6-2.5C16.7 3.3 14.6 2.4 12 2.4c-3.7 0-6.9 2.1-8.5 5Z' opacity='.01'/><path fill='#FBBC05' d='M3.5 16.6A9.6 9.6 0 0 1 2.4 12c0-1.6.4-3.1 1.1-4.5l3.2 2.4A5.8 5.8 0 0 0 6.1 12c0 .7.2 1.4.6 2.1l-3.2 2.5Z'/><path fill='#34A853' d='M12 21.6c2.6 0 4.8-.9 6.4-2.4l-3.1-2.4c-.8.6-1.9 1-3.3 1-2.5 0-4.7-1.7-5.4-4l-3.2 2.5c1.6 3.1 4.8 5.3 8.6 5.3Z'/><path fill='#4285F4' d='M21.2 12.2c0-.6-.1-1.1-.2-1.6H12v3.9h5.4c-.3 1.3-1.1 2.4-2.1 3.1l3.1 2.4c1.8-1.7 2.8-4.2 2.8-7.8Z'/></svg>
+             <span>Tiếp tục với Google</span>
+           </button>
+         </div>`
+      : '';
+    if (S.state.authMode === 'firebase-onboarding' && S.state.firebasePendingIdToken) {
+      const profile = S.state.firebasePendingProfile || {};
+      const identityLabel = profile.email
+        ? `Tài khoản Google: ${profile.email}`
+        : 'Thiết lập cửa hàng mới trên Slink';
+      title = 'Hoàn tất khởi tạo cửa hàng';
+      subtitle = identityLabel;
+      body = `<form class='auth-form' data-auth-form='firebase-onboarding'><div class='form-field'><label class='input-label' for='auth-name'>Tên của bạn</label><input class='input' id='auth-name' name='displayName' autocomplete='name' value='${S.fn.esc(profile.displayName || '')}' required minlength='2' maxlength='120'/></div><div class='form-field'><label class='input-label' for='auth-store'>Tên cửa hàng</label><input class='input' id='auth-store' name='storeName' autocomplete='organization' required minlength='2' maxlength='160' placeholder='Ví dụ: Linh Chi Boutique'/></div><input type='hidden' name='workspaceMode' value='shop'/><button class='btn btn-primary auth-submit' type='submit'>Hoàn tất &amp; vào cửa hàng →</button></form><button class='auth-switch' type='button' data-action='firebase-cancel-onboarding'>← Dùng tài khoản khác</button>`;
+    } else if (S.state.authMode === 'invite-confirm' && S.state.invitationInfo) {
       title = 'Xác nhận tham gia cửa hàng';
       subtitle = `Bạn được mời vào ${S.state.invitationInfo.storeName} với vai trò ${S.fn.staffRoleName(S.state.invitationInfo.role)}.`;
       body = `<form class='auth-form' data-auth-form='invite-accept'><p class='muted'>Lời mời dành cho ${S.fn.esc(S.state.invitationInfo.email)}.</p><button class='btn btn-primary auth-submit' type='submit'>Tham gia cửa hàng</button></form><button class='auth-switch' type='button' data-action='leave-invitation'>Để sau</button>`;
@@ -590,7 +616,7 @@
     } else if (S.state.authMode === 'register') {
       title = 'Tạo cửa hàng mới';
       subtitle = 'Không gian riêng theo từng cửa hàng, chuẩn VND.';
-      body = `<form class='auth-form' data-auth-form='register'><input type='hidden' name='workspaceMode' value='shop'/><div class='auth-form-row-2'><div class='form-field'><label class='input-label' for='auth-name'>Tên của bạn</label><input class='input' id='auth-name' name='displayName' autocomplete='name' required minlength='2' maxlength='120'/></div><div class='form-field' data-shop-registration><label class='input-label' for='auth-store'>Tên cửa hàng</label><input class='input' id='auth-store' name='storeName' autocomplete='organization' required minlength='2' maxlength='160'/></div></div><div class='form-field'><label class='input-label' for='auth-email'>Email quản trị</label><input class='input' id='auth-email' name='email' type='email' autocomplete='email' required maxlength='254'/></div><div class='auth-form-row-2'>${S.fn.authPasswordField('auth-password', 'password', 'Mật khẩu (≥ 12 ký tự)', 'new-password')}${S.fn.authPasswordField('auth-password-confirm', 'passwordConfirm', 'Nhập lại mật khẩu', 'new-password', 'auth-password')}</div>${passwordMeterHtml}<button class='btn btn-primary auth-submit' type='submit'>Tạo cửa hàng miễn phí →</button></form>`;
+      body = `<form class='auth-form' data-auth-form='register'><input type='hidden' name='workspaceMode' value='shop'/><div class='auth-form-row-2'><div class='form-field'><label class='input-label' for='auth-name'>Tên của bạn</label><input class='input' id='auth-name' name='displayName' autocomplete='name' required minlength='2' maxlength='120'/></div><div class='form-field' data-shop-registration><label class='input-label' for='auth-store'>Tên cửa hàng</label><input class='input' id='auth-store' name='storeName' autocomplete='organization' required minlength='2' maxlength='160'/></div></div><div class='form-field'><label class='input-label' for='auth-email'>Email quản trị</label><input class='input' id='auth-email' name='email' type='email' autocomplete='email' required maxlength='254'/></div><div class='auth-form-row-2'>${S.fn.authPasswordField('auth-password', 'password', 'Mật khẩu (≥ 12 ký tự)', 'new-password')}${S.fn.authPasswordField('auth-password-confirm', 'passwordConfirm', 'Nhập lại mật khẩu', 'new-password', 'auth-password')}</div>${passwordMeterHtml}<button class='btn btn-primary auth-submit' type='submit'>Tạo cửa hàng miễn phí →</button></form>${firebaseQuickButtonsHtml}`;
     } else if (S.state.authMode === 'resend') {
       title = 'Gửi lại email xác nhận';
       subtitle = '';
@@ -609,7 +635,7 @@
       const invited = S.state.authMode === 'invite-login' && S.state.invitationInfo;
       if (invited) { title = 'Đăng nhập để tham gia'; subtitle = `${S.state.invitationInfo.storeName} · ${S.fn.staffRoleName(S.state.invitationInfo.role)}`; }
       else { subtitle = 'Mở quầy bán hàng, kho và sổ quỹ.'; }
-      body = `<form class='auth-form' data-auth-form='login'><div class='form-field'><label class='input-label' for='auth-email'>Email đăng nhập</label><input class='input' id='auth-email' name='email' type='email' autocomplete='username' value='${S.fn.esc(invited ? S.state.invitationInfo.email : '')}' required maxlength='254'/></div>${S.fn.authPasswordField('auth-password', 'password', 'Mật khẩu', 'current-password')}<button class='btn btn-primary auth-submit' type='submit'>${invited ? 'Đăng nhập và tham gia' : 'Đăng nhập vào cửa hàng →'}</button></form><div class='auth-secondary-links'>${invited ? `<button class='link-button' type='button' data-action='auth-mode' data-mode='invite-register'>Tạo tài khoản mới</button><button class='link-button' type='button' data-action='auth-mode' data-mode='resend'>Gửi lại xác nhận</button>` : `<button class='link-button' type='button' data-action='auth-mode' data-mode='reset'>Quên mật khẩu?</button><button class='link-button' type='button' data-action='auth-mode' data-mode='resend'>Gửi lại xác nhận</button>`}</div>`;
+      body = `<form class='auth-form' data-auth-form='login'><div class='form-field'><label class='input-label' for='auth-email'>Email đăng nhập</label><input class='input' id='auth-email' name='email' type='email' autocomplete='username' value='${S.fn.esc(invited ? S.state.invitationInfo.email : '')}' required maxlength='254'/></div>${S.fn.authPasswordField('auth-password', 'password', 'Mật khẩu', 'current-password')}<button class='btn btn-primary auth-submit' type='submit'>${invited ? 'Đăng nhập và tham gia' : 'Đăng nhập vào cửa hàng →'}</button></form><div class='auth-secondary-links'>${invited ? `<button class='link-button' type='button' data-action='auth-mode' data-mode='invite-register'>Tạo tài khoản mới</button><button class='link-button' type='button' data-action='auth-mode' data-mode='resend'>Gửi lại xác nhận</button>` : `<button class='link-button' type='button' data-action='auth-mode' data-mode='reset'>Quên mật khẩu?</button><button class='link-button' type='button' data-action='auth-mode' data-mode='resend'>Gửi lại xác nhận</button>`}</div>${invited ? '' : firebaseQuickButtonsHtml}`;
     }
     let htmlMessage = message ? S.fn.esc(message) : '';
     if (verificationUrl) htmlMessage += `<br/><a href='${S.fn.esc(verificationUrl)}'>${S.state.authMode === 'reset' ? 'Mở liên kết đặt lại mật khẩu' : 'Xác nhận email và kích hoạt cửa hàng'}</a>`;
@@ -1439,13 +1465,69 @@
   }
 
 
+  S.fn.completeFirebaseLogin = async function completeFirebaseLogin(idToken) {
+    const result = await S.fn.apiRequest('/api/auth/firebase', {
+      method: 'POST',
+      body: { idToken },
+    });
+    if (result.status === 'onboarding_required') {
+      S.state.firebasePendingIdToken = idToken;
+      S.state.firebasePendingProfile = result.profile || {};
+      S.state.authMode = 'firebase-onboarding';
+      S.fn.renderAuth();
+      return;
+    }
+    S.state.firebasePendingIdToken = '';
+    S.state.firebasePendingProfile = null;
+    if (S.state.authMode === 'invite-login' && S.state.invitationToken && S.state.invitationInfo?.status === 'pending') {
+      await S.fn.acceptStoreInvitation();
+    } else {
+      await S.fn.enterStore(result);
+    }
+  };
+
+  S.fn.handleFirebaseGoogleSignIn = async function handleFirebaseGoogleSignIn(button) {
+    if (!window.SlinkFirebaseAuth) return S.fn.renderAuth('Trình xác thực Google chưa sẵn sàng.', 'error');
+    if (button) button.disabled = true;
+    try {
+      const cfg = S.state.firebaseConfig?.enabled ? S.state.firebaseConfig : await window.SlinkFirebaseAuth.loadConfig();
+      const { idToken } = await window.SlinkFirebaseAuth.signInWithGoogle({
+        config: cfg,
+        isAndroid: S.fn.isAndroidApp(),
+        nativeAction: S.fn.nativeAction,
+      });
+      await S.fn.completeFirebaseLogin(idToken);
+    } catch (error) {
+      S.fn.renderAuth(error.message || 'Chưa đăng nhập được bằng Google.', 'error');
+    } finally {
+      if (button && button.isConnected) button.disabled = false;
+    }
+  };
+
   S.fn.submitAuth = async function submitAuth(form) {
     const type = form.dataset.authForm;
     const data = new FormData(form);
     const submit = form.querySelector('[type=submit]');
     if (submit) submit.disabled = true;
     try {
-      if (type === 'login') {
+      if (type === 'firebase-onboarding') {
+        if (!S.state.firebasePendingIdToken) throw new Error('Phiên xác thực đã hết hạn. Hãy đăng nhập lại.');
+        const result = await S.fn.apiRequest('/api/auth/firebase', {
+          method: 'POST',
+          body: {
+            idToken: S.state.firebasePendingIdToken,
+            completeOnboarding: true,
+            displayName: String(data.get('displayName') || '').trim(),
+            storeName: String(data.get('storeName') || '').trim(),
+            workspaceMode: String(data.get('workspaceMode') || 'shop'),
+          },
+        });
+        S.state.firebasePendingIdToken = '';
+        S.state.firebasePendingProfile = null;
+        await S.fn.enterStore(result);
+        S.fn.toast('Chào mừng đến Slink', 'Đã khởi tạo cửa hàng của bạn.', 'success');
+        return;
+      } else if (type === 'login') {
         const session = await S.fn.apiRequest('/api/auth/login', {
           method: 'POST', body: { email: String(data.get('email') || '').trim(), password: String(data.get('password') || '') },
         });
@@ -1518,6 +1600,7 @@
   S.fn.signOut = async function signOut() {
     try {
       await S.fn.apiRequest('/api/auth/logout', { method: 'POST', body: {} });
+      await window.SlinkFirebaseAuth?.signOutSilent({ isAndroid: S.fn.isAndroidApp?.(), nativeAction: S.fn.nativeAction });
       S.fn.showSignedOut('Phiên cửa hàng được lưu trên máy chủ. Bạn đã đăng xuất.');
     } catch (error) {
       if (error.status === 401) S.fn.showSignedOut('Phiên đăng nhập đã hết hạn.');

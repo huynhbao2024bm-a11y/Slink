@@ -2,7 +2,7 @@ FROM node:24.22.0-bookworm-slim AS dependencies
 
 WORKDIR /app
 RUN npm install --global pnpm@11.25.0
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --prod --frozen-lockfile
 
 FROM node:24.22.0-bookworm-slim AS runtime
@@ -15,7 +15,7 @@ ENV NODE_ENV=production \
 
 COPY --from=dependencies --chown=node:node /app/node_modules ./node_modules
 COPY --chown=node:node package.json ./package.json
-COPY --chown=node:node app.js purchase-units.js money-inputs.js offline-store.js offline-ledger.js offline-sync.js offline-conflict-ui.js supplier-returns-ui.js barcode-tools.js banks-vn.js vietqr-tools.js escpos-printer.js integrations-ui.js finance-vouchers-ui.js legal-content.js sync-bus.js pos-hardware.js receipt-image.js index.html google02950e16d4d7ed98.html styles.css workspace.css manifest.webmanifest register-sw.js sw.js ./
+COPY --chown=node:node app.js purchase-units.js money-inputs.js offline-store.js offline-ledger.js offline-sync.js offline-conflict-ui.js supplier-returns-ui.js barcode-tools.js banks-vn.js vietqr-tools.js escpos-printer.js integrations-ui.js finance-vouchers-ui.js firebase-auth-ui.js legal-content.js sync-bus.js pos-hardware.js receipt-image.js index.html google02950e16d4d7ed98.html styles.css workspace.css manifest.webmanifest register-sw.js sw.js ./
 COPY --chown=node:node assets ./assets
 COPY --chown=node:node client ./client
 COPY --chown=node:node server ./server

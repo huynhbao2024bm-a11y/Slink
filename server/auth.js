@@ -10,6 +10,8 @@ const {
 const { promisify } = require('node:util');
 const { listStores, withUser } = require('./db');
 const { recordSecurityEvent } = require('./security-events');
+const { createFirebaseVerifier, getPublicFirebaseConfig } = require('./firebase-auth');
+const { assertSafeOutboundUrl } = require('./providers/safe-url');
 
 const scrypt = promisify(scryptCallback);
 const SESSION_COOKIE = 'slink_session';
@@ -142,8 +144,16 @@ async function deliverEmail(env, email, subject, text, developmentUrl) {
     if (env.NODE_ENV === 'production') throw new ApiError(503, 'email_unavailable', 'Dịch vụ gửi thư chưa được cấu hình.');
     return { delivered: false, developmentUrl };
   }
-  const deliveryUrl = new URL(effectiveUrl);
-  if (env.NODE_ENV === 'production' && (deliveryUrl.protocol !== 'https:' || !effectiveToken || !env.EMAIL_FROM?.trim())) {
+  let deliveryUrl;
+  try {
+    deliveryUrl = assertSafeOutboundUrl(effectiveUrl, {
+      allowLocalInTest: env.NODE_ENV !== 'production',
+      label: 'dịch vụ gửi thư',
+    });
+  } catch {
+    throw new ApiError(503, 'email_unavailable', 'Dịch vụ gửi thư chưa được cấu hình an toàn.');
+  }
+  if (env.NODE_ENV === 'production' && (!effectiveToken || !env.EMAIL_FROM?.trim())) {
     throw new ApiError(503, 'email_unavailable', 'Dịch vụ gửi thư chưa được cấu hình an toàn.');
   }
   let response;
@@ -233,7 +243,146 @@ async function createUserSession(pool, userId, reply, env, { activatePendingOwne
   return { user: { id: user.id, email: user.email, displayName: user.display_name, workspaceMode: user.workspace_mode }, stores };
 }
 
-function registerAuthRoutes(app, { pool, env }) {
+function registerAuthRoutes(app, { pool, env, firebaseVerifier = null }) {
+  const verifier = createFirebaseVerifier(env, firebaseVerifier);
+
+  app.get('/api/auth/firebase/config', async (_request, reply) => {
+    reply.header('cache-control', 'no-store');
+    return getPublicFirebaseConfig(env, verifier.configured);
+  });
+
+  app.post('/api/auth/firebase', {
+    config: { rateLimit: { max: 20, timeWindow: '15 minutes' } },
+  }, async (request, reply) => {
+    assertSameOrigin(request, env);
+    if (!verifier.configured) {
+      throw new ApiError(503, 'firebase_auth_unavailable', 'Đăng nhập Google chưa được cấu hình.');
+    }
+    const body = request.body || {};
+    const idToken = typeof body.idToken === 'string' ? body.idToken.trim() : '';
+    if (!idToken || idToken.length < 20 || idToken.length > 8192) {
+      throw new ApiError(400, 'validation_error', 'Mã xác thực Firebase không hợp lệ.');
+    }
+    let decoded;
+    try {
+      decoded = await verifier.verifyIdToken(idToken);
+    } catch {
+      throw new ApiError(401, 'invalid_firebase_token', 'Phiên xác thực Firebase không hợp lệ hoặc đã hết hạn.');
+    }
+    const firebaseUid = typeof decoded?.uid === 'string' ? decoded.uid.trim() : '';
+    if (!firebaseUid || firebaseUid.length > 128) {
+      throw new ApiError(401, 'invalid_firebase_token', 'Không xác định được tài khoản Firebase.');
+    }
+    const provider = String(decoded.firebase?.sign_in_provider || 'firebase').slice(0, 64);
+    const tokenEmail = typeof decoded.email === 'string' ? decoded.email.trim() : '';
+    const tokenEmailNormalized = tokenEmail.toLowerCase();
+    const tokenEmailVerified = Boolean(decoded.email_verified);
+    const tokenName = typeof decoded.name === 'string' ? decoded.name.trim().slice(0, 120) : '';
+    if (!['google.com', 'password'].includes(provider) || !tokenEmail || tokenEmail.length > 254 || !tokenEmailVerified) {
+      throw new ApiError(403, 'email_not_verified', 'Chỉ chấp nhận tài khoản Google hoặc email đã xác minh.');
+    }
+
+    let existing = (await pool.query(
+      `SELECT id, email, display_name, status, email_verified_at, firebase_uid
+       FROM users WHERE firebase_uid = $1 LIMIT 1`,
+      [firebaseUid]
+    )).rows[0];
+    if (!existing) {
+      existing = (await pool.query(
+        `SELECT id, email, display_name, status, email_verified_at, firebase_uid
+         FROM users WHERE email_normalized = $1 LIMIT 1`,
+        [tokenEmailNormalized]
+      )).rows[0];
+    }
+
+    if (existing) {
+      if (existing.status === 'disabled') {
+        throw new ApiError(403, 'account_disabled', 'Tài khoản này đã bị tạm khóa. Hãy liên hệ chủ cửa hàng.');
+      }
+      if (existing.firebase_uid && existing.firebase_uid !== firebaseUid) {
+        throw new ApiError(409, 'firebase_uid_mismatch', 'Tài khoản này đã được liên kết với phương thức đăng nhập khác.');
+      }
+      await withUser(pool, existing.id, async (client) => {
+        const shouldActivate = existing.status === 'pending';
+        await client.query(
+          `UPDATE users
+           SET firebase_uid = COALESCE(firebase_uid, $2),
+               email_verified_at = COALESCE(email_verified_at, now()),
+               status = CASE WHEN $3::boolean THEN 'active' ELSE status END,
+               auth_provider = CASE WHEN auth_provider = 'password' THEN $4 ELSE auth_provider END,
+               updated_at = now()
+           WHERE id = $1`,
+          [existing.id, firebaseUid, shouldActivate, provider]
+        );
+      });
+      return createUserSession(pool, existing.id, reply, env, { activatePendingOwner: true });
+    }
+
+    if (body.completeOnboarding !== true) {
+      return {
+        status: 'onboarding_required',
+        profile: {
+          provider,
+          displayName: tokenName,
+          email: tokenEmail,
+        },
+      };
+    }
+
+    const displayName = typeof body.displayName === 'string' && body.displayName.trim()
+      ? body.displayName.trim()
+      : tokenName;
+    const workspaceMode = body.workspaceMode === undefined ? 'shop' : body.workspaceMode;
+    if (!['shop', 'affiliate'].includes(workspaceMode)) {
+      throw new ApiError(400, 'validation_error', 'Chọn Chủ shop hoặc Affiliate.');
+    }
+    const storeName = typeof body.storeName === 'string' ? body.storeName.trim() : '';
+    if (displayName.length < 2 || displayName.length > 120 || (workspaceMode === 'shop' && (storeName.length < 2 || storeName.length > 160))) {
+      throw new ApiError(400, 'validation_error', 'Hãy nhập tên của bạn (tối thiểu 2 ký tự) và tên cửa hàng.');
+    }
+
+    const { randomUUID } = require('node:crypto');
+    const userId = randomUUID();
+    const storeId = randomUUID();
+    const passwordHash = await hashPassword(randomBytes(32).toString('hex'));
+
+    try {
+      await withUser(pool, userId, async (client) => {
+        await client.query("SELECT set_config('app.store_id', $1, true)", [storeId]);
+        await client.query(
+          `INSERT INTO users (
+             id, email, email_normalized, display_name, password_hash,
+             status, email_verified_at, workspace_mode, firebase_uid, auth_provider
+           )
+           VALUES ($1, $2, $3, $4, $5, 'active', now(), $6, $7, $8)`,
+          [userId, tokenEmail, tokenEmailNormalized, displayName, passwordHash, workspaceMode, firebaseUid, provider]
+        );
+        if (workspaceMode === 'shop') {
+          await client.query('INSERT INTO stores (id, name) VALUES ($1, $2)', [storeId, storeName]);
+          await client.query(
+            `INSERT INTO memberships (store_id, user_id, role, status, joined_at)
+             VALUES ($1, $2, 'owner', 'active', now())`,
+            [storeId, userId]
+          );
+          await client.query('INSERT INTO store_sequences (store_id) VALUES ($1)', [storeId]);
+        }
+      });
+    } catch (error) {
+      if (error.code === '23505') {
+        throw new ApiError(409, 'account_exists', 'Email này đã được sử dụng.');
+      }
+      throw error;
+    }
+
+    const session = await createUserSession(pool, userId, reply, env);
+    reply.code(201);
+    return {
+      ...session,
+      status: 'created_via_firebase',
+      message: 'Đã khởi tạo tài khoản và cửa hàng thành công.',
+    };
+  });
+
   app.post('/api/auth/register', {
     config: { rateLimit: { max: 5, timeWindow: '1 hour' } },
   }, async (request, reply) => {

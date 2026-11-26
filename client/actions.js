@@ -694,6 +694,14 @@
       S.state.authMode = mode === 'landing' && S.fn.isAndroidApp() ? 'login' : mode;
       S.fn.renderAuth();
     }
+    else if (action === 'firebase-google') { S.fn.handleFirebaseGoogleSignIn(button); }
+    else if (action === 'firebase-cancel-onboarding') {
+      S.state.firebasePendingIdToken = '';
+      S.state.firebasePendingProfile = null;
+      window.SlinkFirebaseAuth?.signOutSilent({ isAndroid: S.fn.isAndroidApp?.(), nativeAction: S.fn.nativeAction });
+      S.state.authMode = 'login';
+      S.fn.renderAuth();
+    }
     else if (action === 'logout') { S.fn.closeModal(); S.fn.signOut(); }
     else if (action === 'account-menu') S.fn.showAccountMenu();
     else if (action === 'account-settings') { S.fn.closeModal(); S.state.activeSettingsArea = 0; S.fn.routeTo('settings'); }
