@@ -9,6 +9,7 @@ const { createHash } = require('node:crypto');
 const { brotliCompressSync, constants: zlibConstants, gzipSync } = require('node:zlib');
 const path = require('node:path');
 const { ApiError, emailVerificationDisabled, registerAuthRoutes } = require('./auth');
+const { isFirebaseFullyConfigured, loadServiceAccount } = require('./firebase-auth');
 const { createPool } = require('./db');
 const { databaseTransportOptions } = require('./database-transport');
 const { registerProductRoutes } = require('./products');
@@ -275,27 +276,31 @@ function validateProductionConfig(env) {
   }
   if (env.NODE_ENV !== 'production') return;
   databaseTransportOptions(env, env.APP_DATABASE_URL, 'APP_DATABASE_URL');
-  const demoBypass = emailVerificationDisabled(env);
   let publicOrigin;
-  let deliveryUrl;
-  const effectiveDeliveryUrl = env.EMAIL_DELIVERY_URL || (env.RESEND_API_KEY?.trim() ? 'https://api.resend.com/emails' : '');
-  const effectiveDeliveryToken = env.EMAIL_DELIVERY_TOKEN || env.RESEND_API_KEY || '';
   try {
     publicOrigin = new URL(env.PUBLIC_ORIGIN);
-    if (!demoBypass) deliveryUrl = new URL(effectiveDeliveryUrl);
   } catch {
-    throw new Error(demoBypass
-      ? 'Production demo mode still requires a valid PUBLIC_ORIGIN.'
-      : 'Production requires valid PUBLIC_ORIGIN and EMAIL_DELIVERY_URL (or RESEND_API_KEY) values.');
+    throw new Error('Production requires a valid HTTPS PUBLIC_ORIGIN.');
   }
   if (publicOrigin.protocol !== 'https:' || publicOrigin.pathname !== '/' || publicOrigin.search || publicOrigin.hash || publicOrigin.username || publicOrigin.password) {
     throw new Error('Production PUBLIC_ORIGIN must be an HTTPS origin without a path or credentials.');
   }
-  if (!demoBypass && (deliveryUrl.protocol !== 'https:' || typeof effectiveDeliveryToken !== 'string' || effectiveDeliveryToken.length < 32)) {
-    throw new Error('Production requires an HTTPS email delivery endpoint and a token of at least 32 characters.');
-  }
-  if (!demoBypass && (typeof env.EMAIL_FROM !== 'string' || !env.EMAIL_FROM.trim() || env.EMAIL_FROM.length > 320 || /[\r\n]/.test(env.EMAIL_FROM))) {
-    throw new Error('Production requires EMAIL_FROM to be set; its domain must be verified with the email provider.');
+  const firebaseConfigured = isFirebaseFullyConfigured(env, Boolean(loadServiceAccount(env)));
+  const effectiveDeliveryUrl = env.EMAIL_DELIVERY_URL || (env.RESEND_API_KEY?.trim() ? 'https://api.resend.com/emails' : '');
+  const effectiveDeliveryToken = env.EMAIL_DELIVERY_TOKEN || env.RESEND_API_KEY || '';
+  if (!firebaseConfigured) {
+    let deliveryUrl;
+    try {
+      deliveryUrl = new URL(effectiveDeliveryUrl);
+    } catch {
+      throw new Error('Production requires Firebase Auth configuration or valid EMAIL_DELIVERY_URL (or RESEND_API_KEY) values.');
+    }
+    if (deliveryUrl.protocol !== 'https:' || typeof effectiveDeliveryToken !== 'string' || effectiveDeliveryToken.length < 32) {
+      throw new Error('Production requires an HTTPS email delivery endpoint and a token of at least 32 characters.');
+    }
+    if (typeof env.EMAIL_FROM !== 'string' || !env.EMAIL_FROM.trim() || env.EMAIL_FROM.length > 320 || /[\r\n]/.test(env.EMAIL_FROM)) {
+      throw new Error('Production requires EMAIL_FROM to be set; its domain must be verified with the email provider.');
+    }
   }
 }
 
@@ -312,7 +317,8 @@ async function buildServer({ pool = null, env = process.env, logger = true, fire
           'req.headers["secure-token"]', 'req.headers["x-webhook-token"]', 'req.headers["x-ghn-webhook-secret"]',
           'req.headers["x-api-key"]', 'req.headers["token"]',
           'req.body.password', 'req.body.currentPassword', 'req.body.newPassword', 'req.body.pin',
-          'req.body.secret', 'req.body.code', 'req.body.token', 'req.body.idToken',
+          'req.body.secret', 'req.body.code', 'req.body.token', 'req.body.idToken', 'req.body.firebaseIdToken',
+          'req.body.captchaToken', 'req.body.captchaAnswer', 'req.body.registrationTicket',
           'req.body.refreshToken', 'req.body.signature', 'req.body.credentials', 'req.body.credentials.*',
         ],
         censor: '[REDACTED]',
