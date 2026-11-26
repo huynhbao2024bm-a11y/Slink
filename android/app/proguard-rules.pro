@@ -1,0 +1,6 @@
+-keep class com.slink.retail.MainActivity { *; }
+-keep class com.slink.retail.FirebaseAuthBridge { *; }
+-keep class com.slink.retail.BluetoothEscPosPrinter { *; }
+-keep class com.slink.retail.AppUpdater { *; }
+-keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod
+-dontwarn javax.annotation.**

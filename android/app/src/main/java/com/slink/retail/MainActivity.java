@@ -60,7 +60,7 @@ public class MainActivity extends Activity {
             "offline-ledger.js", "purchase-units.js", "money-inputs.js", "offline-sync.js",
             "offline-conflict-ui.js", "supplier-returns-ui.js", "barcode-tools.js",
             "banks-vn.js", "vietqr-tools.js", "escpos-printer.js", "integrations-ui.js",
-            "finance-vouchers-ui.js", "legal-content.js", "sync-bus.js", "pos-hardware.js",
+            "finance-vouchers-ui.js", "firebase-auth-ui.js", "legal-content.js", "sync-bus.js", "pos-hardware.js",
             "receipt-image.js", "client/core.js", "client/charts.js", "client/landing.js", "client/shell.js",
             "client/dashboard.js", "client/pos.js", "client/products.js", "client/orders.js",
             "client/inventory.js", "client/customers.js", "client/finance.js", "client/reports.js",
@@ -84,6 +84,7 @@ public class MainActivity extends Activity {
     private final java.util.concurrent.ExecutorService btExecutor = java.util.concurrent.Executors.newSingleThreadExecutor();
     private AppUpdater updater;
     private BluetoothEscPosPrinter btPrinter;
+    private FirebaseAuthBridge firebaseAuthBridge;
 
     @Override
     public void onCreate(Bundle state) {
@@ -115,7 +116,12 @@ public class MainActivity extends Activity {
         settings.setUseWideViewPort(true);
         settings.setLoadWithOverviewMode(true);
         settings.setAllowFileAccess(false);
-        settings.setAllowContentAccess(true);
+        settings.setAllowContentAccess(false);
+        settings.setAllowFileAccessFromFileURLs(false);
+        settings.setAllowUniversalAccessFromFileURLs(false);
+        settings.setGeolocationEnabled(false);
+        settings.setSaveFormData(false);
+        settings.setDatabaseEnabled(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setSupportMultipleWindows(false);
         CookieManager.getInstance().setAcceptCookie(true);
@@ -197,6 +203,7 @@ public class MainActivity extends Activity {
         });
         updater = new AppUpdater(this, this::sendUpdateState);
         btPrinter = new BluetoothEscPosPrinter(this);
+        firebaseAuthBridge = new FirebaseAuthBridge(this);
         updater.check(false);
         Uri incoming = getIntent().getData();
         Uri initial = incoming != null && isAppOrigin(incoming) ? incoming : Uri.parse(BuildConfig.APP_ORIGIN + "/");
@@ -232,8 +239,8 @@ public class MainActivity extends Activity {
 
     private boolean isAppOrigin(Uri uri) {
         Uri expected = Uri.parse(BuildConfig.APP_ORIGIN);
-        return "https".equals(uri.getScheme()) && expected.getHost().equals(uri.getHost()) &&
-                uri.getPort() == expected.getPort();
+        return "https".equals(uri.getScheme()) && uri.getUserInfo() == null
+                && expected.getHost().equals(uri.getHost()) && uri.getPort() == expected.getPort();
     }
 
     private WebResourceResponse localResponse(String path) {
@@ -246,6 +253,8 @@ public class MainActivity extends Activity {
             HashMap<String, String> headers = new HashMap<>();
             headers.put("Cache-Control", "no-cache");
             headers.put("X-Content-Type-Options", "nosniff");
+            headers.put("Referrer-Policy", "strict-origin-when-cross-origin");
+            headers.put("X-Frame-Options", "DENY");
             headers.put("Service-Worker-Allowed", "/");
             headers.put("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'");
             return new WebResourceResponse(mime, mime.startsWith("image/") ? null : "UTF-8", 200, "OK", headers,
@@ -299,6 +308,9 @@ public class MainActivity extends Activity {
             handleScreenBrightnessMessage(data, reply);
         } else if (data.optString("type").equals("shareImage")) {
             handleShareImageMessage(data, reply);
+        } else if (data.optString("type").equals("firebaseAuth")) {
+            if (firebaseAuthBridge != null) firebaseAuthBridge.handleMessage(data, reply);
+            else answer(reply, id, "error");
         } else answer(reply, id, "error");
     }
 
@@ -378,8 +390,12 @@ public class MainActivity extends Activity {
     private void handleShareImageMessage(JSONObject data, JavaScriptReplyProxy reply) {
         final String id = data.optString("id");
         final String dataUrl = data.optString("dataUrl", "");
-        final String rawName = data.optString("filename", "slink-receipt.png").replaceAll("[^A-Za-z0-9._-]", "-");
-        final String cleanName = (rawName.endsWith(".png") ? rawName : (rawName + ".png"));
+        final String rawBase = new File(data.optString("filename", "slink-receipt.png")).getName()
+                .replaceAll("[^A-Za-z0-9._-]", "-").replaceAll("\\.+", ".");
+        final String trimmedName = rawBase.replaceAll("^[.-]+", "");
+        final String cleanName = trimmedName.isEmpty()
+                ? "slink-receipt.png"
+                : (trimmedName.endsWith(".png") ? trimmedName : (trimmedName + ".png"));
         final String title = data.optString("title", "Biên nhận Slink");
         final String text = data.optString("text", "");
         int commaIdx = dataUrl.indexOf(',');
@@ -403,6 +419,10 @@ public class MainActivity extends Activity {
                 for (File old : existing) { try { old.delete(); } catch (Exception ignored) {} }
             }
             File outFile = new File(shareDir, cleanName);
+            if (!outFile.getCanonicalPath().startsWith(shareDir.getCanonicalPath() + File.separator)) {
+                reply.postMessage(new JSONObject().put("id", id).put("status", "error").put("message", "Tên tệp chia sẻ không hợp lệ.").toString());
+                return;
+            }
             try (FileOutputStream fos = new FileOutputStream(outFile)) {
                 fos.write(bytes);
                 fos.flush();
@@ -443,6 +463,10 @@ public class MainActivity extends Activity {
                 ps.setJavaScriptEnabled(false);
                 ps.setAllowFileAccess(false);
                 ps.setAllowContentAccess(false);
+                ps.setAllowFileAccessFromFileURLs(false);
+                ps.setAllowUniversalAccessFromFileURLs(false);
+                ps.setGeolocationEnabled(false);
+                ps.setDomStorageEnabled(false);
                 ps.setBlockNetworkLoads(true);
                 pw.setWebViewClient(new WebViewClient() {
                     @Override
@@ -457,7 +481,7 @@ public class MainActivity extends Activity {
                             pm.print(jobName, adapter, new PrintAttributes.Builder().build());
                             reply.postMessage(new JSONObject().put("id", id).put("status", "ok").toString());
                         } catch (Exception error) {
-                            try { reply.postMessage(new JSONObject().put("id", id).put("status", "error").put("message", error.getMessage() != null ? error.getMessage() : "Không mở được hộp thoại in.").toString()); }
+                            try { reply.postMessage(new JSONObject().put("id", id).put("status", "error").put("message", "Không mở được hộp thoại in.").toString()); }
                             catch (Exception ignored) {}
                         }
                     }
@@ -465,7 +489,7 @@ public class MainActivity extends Activity {
                 printWebView = pw;
                 pw.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null);
             } catch (Exception error) {
-                try { reply.postMessage(new JSONObject().put("id", id).put("status", "error").put("message", error.getMessage() != null ? error.getMessage() : "Không khởi tạo được trình in.").toString()); }
+                try { reply.postMessage(new JSONObject().put("id", id).put("status", "error").put("message", "Không khởi tạo được trình in.").toString()); }
                 catch (Exception ignored) {}
             }
         });
@@ -483,8 +507,11 @@ public class MainActivity extends Activity {
             try {
                 btPrinter.saveDevice(data.optString("address"), data.optString("name"));
                 reply.postMessage(new JSONObject().put("id", id).put("status", "ok").put("printer", btPrinter.savedState()).toString());
-            } catch (Exception error) {
+            } catch (IllegalArgumentException | IllegalStateException | SecurityException error) {
                 try { reply.postMessage(new JSONObject().put("id", id).put("status", "error").put("message", error.getMessage() != null ? error.getMessage() : "Không lưu được máy in.").toString()); }
+                catch (Exception ignored) {}
+            } catch (Exception error) {
+                try { reply.postMessage(new JSONObject().put("id", id).put("status", "error").put("message", "Không lưu được máy in.").toString()); }
                 catch (Exception ignored) {}
             }
             return;
@@ -521,10 +548,15 @@ public class MainActivity extends Activity {
                     response.put("status", "error");
                     response.put("message", "Thao tác máy in không hợp lệ.");
                 }
-            } catch (Exception error) {
+            } catch (IllegalArgumentException | IllegalStateException | SecurityException error) {
                 try {
                     response.put("status", "error");
                     response.put("message", error.getMessage() != null ? error.getMessage() : "Lỗi máy in Bluetooth.");
+                } catch (Exception ignored) {}
+            } catch (Exception error) {
+                try {
+                    response.put("status", "error");
+                    response.put("message", "Lỗi kết nối máy in Bluetooth.");
                 } catch (Exception ignored) {}
             }
             final String out = response.toString();
@@ -604,6 +636,10 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         btExecutor.shutdownNow();
+        if (firebaseAuthBridge != null) {
+            firebaseAuthBridge.destroy();
+            firebaseAuthBridge = null;
+        }
         if (tts != null) {
             try { tts.stop(); tts.shutdown(); } catch (Exception ignored) {}
             tts = null;

@@ -27,10 +27,12 @@ async function assertRuntimeSchema(pool) {
       AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='memberships' AND column_name='permissions')
       AND to_regclass('public.customer_point_ledger_entries') IS NOT NULL
       AND to_regclass('public.staff_payslips') IS NOT NULL
-      AND to_regclass('public.pos_prebill_events') IS NOT NULL AS compatible
+      AND to_regclass('public.pos_prebill_events') IS NOT NULL
+      AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='users' AND column_name='firebase_uid')
+      AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='users' AND column_name='auth_provider') AS compatible
   `);
   if (result.rows[0]?.compatible !== true) {
-    throw new Error('Database schema is behind this application. Apply migrations through 20261121210000_zero_touch_hr_crm.sql before deploying.');
+    throw new Error('Database schema is behind this application. Apply migrations through 20261126160000_firebase_auth_identities.sql before deploying.');
   }
 }
 

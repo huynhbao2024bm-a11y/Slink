@@ -1,0 +1,16 @@
+{
+  "auth": {
+    "providers": {
+      "emailPassword": true,
+      "googleSignIn": {
+        "oAuthBrandDisplayName": "Slink",
+        "supportEmail": "abc362409@gmail.com",
+        "authorizedRedirectUris": [
+          "https://slink-ad8be.firebaseapp.com/__/auth/handler",
+          "https://slink-xny3.onrender.com",
+          "http://localhost"
+        ]
+      }
+    }
+  }
+}

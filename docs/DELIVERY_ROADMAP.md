@@ -4,6 +4,12 @@
 
 Status labels: **Not started**, **In progress**, **Blocked by external dependency**, **Evidence passed**. “Evidence passed” applies only to the named milestone, never to the whole product by implication.
 
+## 2026-11-26 · Slink 0.9.2.0 — Đăng nhập Firebase Google (Web & Android) & Khóa bảo mật mức Production
+
+- Bổ sung Firebase Authentication (Google Sign-In + liên kết tự động email đã xác minh, bỏ SMS OTP, giữ nguyên PostgreSQL/Supabase làm cơ sở dữ liệu giao dịch) cho Web ([firebase-auth-ui.js](firebase-auth-ui.js), [firebase-auth.js](server/firebase-auth.js), [auth.js](server/auth.js), migration [20261126160000_firebase_auth_identities.sql](server/migrations/20261126160000_firebase_auth_identities.sql)) và Android gốc ([FirebaseAuthBridge.java](android/app/src/main/java/com/slink/retail/FirebaseAuthBridge.java) dùng Credential Manager + FirebaseAuth).
+- Khóa bảo mật mức production toàn diện: chặn SSRF cho tích hợp/webhook/email ([safe-url.js](server/providers/safe-url.js)), fail-closed khóa mã hóa và GHN webhook + đối chiếu `ShopID` ([credentials.js](server/providers/credentials.js), [integrations.js](server/integrations.js)), ẩn khóa bí mật khỏi log Pino, mặc định `Cache-Control: no-store` cho `/api/*`, siết CSP/COOP ([index.js](server/index.js)), bật R8 (`minifyEnabled`/`shrinkResources`), `network_security_config.xml`, `data_extraction_rules.xml`, và siết WebView/canonical-path trong [MainActivity.java](android/app/src/main/java/com/slink/retail/MainActivity.java); nâng mặc định Android lên `0.9.2.0` (`versionCode: 3033`).
+- **Evidence passed** (`node --test server/test/*.test.js` đạt `112/112` pass, APK release R8 ký và kiểm tra qua `apksigner verify --verbose`).
+
 ## 2026-11-25 · Slink 0.9.1.5 — Tinh gọn mật độ chữ, Sửa scroll-spy & Glider thanh tab
 
 - Rút gọn mật độ chữ và câu giải thích dư trên [landing.js](client/landing.js), [shell.js](client/shell.js), [staff.js](client/staff.js), [actions.js](client/actions.js), [inventory.js](client/inventory.js) và [products.js](client/products.js).

@@ -1,5 +1,19 @@
 'use strict';
 
+const { assertSafeOutboundUrl } = require('./safe-url');
+
+function parseHttpsProviderUrl(raw, env, label) {
+  try {
+    return {
+      url: assertSafeOutboundUrl(raw, { allowLocalInTest: env.NODE_ENV === 'test', label }),
+    };
+  } catch (err) {
+    return {
+      error: { ok: false, statusCode: 503, code: 'integration_not_configured', message: err.message || `Địa chỉ kết nối ${label} không hợp lệ.` },
+    };
+  }
+}
+
 function buildEinvoicePayload(order, storeConfig) {
   return {
     taxCode: storeConfig.tax_code,
@@ -21,17 +35,6 @@ function buildEinvoicePayload(order, storeConfig) {
       lineTotalVnd: String(l.line_total_vnd),
     })),
   };
-}
-
-function parseHttpsProviderUrl(raw, env, label) {
-  let url;
-  try { url = new URL(raw); } catch {
-    return { error: { ok: false, statusCode: 503, code: 'integration_not_configured', message: `Địa chỉ kết nối ${label} không hợp lệ.` } };
-  }
-  if (env.NODE_ENV === 'production' && url.protocol !== 'https:') {
-    return { error: { ok: false, statusCode: 503, code: 'integration_not_configured', message: `${label} bắt buộc dùng HTTPS trong môi trường vận hành.` } };
-  }
-  return { url };
 }
 
 async function issueEinvoice(provider, order, storeConfig, env = process.env) {

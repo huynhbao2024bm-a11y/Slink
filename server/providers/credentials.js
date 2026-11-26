@@ -1,10 +1,12 @@
 'use strict';
 
 const { createCipheriv, createDecipheriv, createHash, randomBytes } = require('node:crypto');
+const { assertSafeOutboundUrl } = require('./safe-url');
 
 const ALLOWED_CREDENTIAL_KEYS = [
   'GHN_TOKEN',
   'GHN_SHOP_ID',
+  'GHN_WEBHOOK_SECRET',
   'GHTK_TOKEN',
   'VTP_TOKEN',
   'SEPAY_WEBHOOK_TOKEN',
@@ -29,12 +31,11 @@ const ALLOWED_CREDENTIAL_KEYS = [
 const ALLOWED_KEY_SET = new Set(ALLOWED_CREDENTIAL_KEYS);
 
 function deriveEncryptionKey(env = process.env) {
-  const seed = String(
-    env.INTEGRATION_ENCRYPTION_KEY
-    || env.SESSION_SECRET
-    || env.APP_DATABASE_URL
-    || 'slink-local-dev-integration-key'
-  );
+  const configured = env.INTEGRATION_ENCRYPTION_KEY || env.SESSION_SECRET || env.APP_DATABASE_URL || '';
+  if (env.NODE_ENV === 'production' && !String(configured).trim()) {
+    throw new Error('Production requires INTEGRATION_ENCRYPTION_KEY (or SESSION_SECRET / APP_DATABASE_URL) for store secret encryption.');
+  }
+  const seed = String(configured || 'slink-local-dev-integration-key');
   return createHash('sha256').update(seed, 'utf8').digest();
 }
 
@@ -100,13 +101,7 @@ function mergeCredentialUpdates(existingCreds, incomingCreds, clearKeys = []) {
         throw new Error(`Giá trị cấu hình ${key} quá dài (tối đa 512 ký tự).`);
       }
       if (/_URL$|_ENDPOINT$/.test(key)) {
-        let parsed;
-        try { parsed = new URL(trimmed); } catch {
-          throw new Error(`Địa chỉ ${key} không hợp lệ.`);
-        }
-        if (!['https:', 'http:'].includes(parsed.protocol)) {
-          throw new Error(`Địa chỉ ${key} phải dùng http/https.`);
-        }
+        assertSafeOutboundUrl(trimmed, { allowLocalInTest: false, label: key });
       }
       next[key] = trimmed;
       if (!changedKeys.includes(key)) changedKeys.push(key);

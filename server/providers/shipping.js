@@ -1,16 +1,16 @@
 'use strict';
 
+const { assertSafeOutboundUrl } = require('./safe-url');
 const shopCache = new Map();
 
 function parseHttpsEndpoint(raw, env, label) {
-  let url;
-  try { url = new URL(raw); } catch {
-    return { error: { ok: false, statusCode: 503, code: 'integration_not_configured', message: `Địa chỉ kết nối ${label} không hợp lệ.` } };
+  try {
+    return {
+      url: assertSafeOutboundUrl(raw, { allowLocalInTest: env.NODE_ENV === 'test', label }),
+    };
+  } catch (err) {
+    return { error: { ok: false, statusCode: 503, code: 'integration_not_configured', message: err.message || `Địa chỉ kết nối ${label} không hợp lệ.` } };
   }
-  if (env.NODE_ENV === 'production' && url.protocol !== 'https:') {
-    return { error: { ok: false, statusCode: 503, code: 'integration_not_configured', message: `${label} bắt buộc dùng HTTPS trong môi trường vận hành.` } };
-  }
-  return { url };
 }
 
 function safeFeeVnd(value) {

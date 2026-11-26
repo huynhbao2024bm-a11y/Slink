@@ -77,9 +77,11 @@ function validateSettingsInput(body) {
 
 function resolveOrigin(request, env) {
   if (env.PUBLIC_ORIGIN) return String(env.PUBLIC_ORIGIN).replace(/\/$/, '');
-  const proto = request.protocol || 'http';
-  const host = request.headers.host || '127.0.0.1:3000';
-  return `${proto}://${host}`;
+  const proto = request.protocol === 'https' ? 'https' : 'http';
+  const rawHost = typeof request.headers.host === 'string' && /^[a-z0-9.:-]+$/i.test(request.headers.host)
+    ? request.headers.host
+    : '127.0.0.1:3000';
+  return `${proto}://${rawHost}`;
 }
 
 function registerIntegrationRoutes(app, { pool, env }) {
@@ -922,24 +924,7 @@ function registerIntegrationRoutes(app, { pool, env }) {
   app.post('/api/webhooks/shipping/ghn/:storeId', async (request, reply) => {
     const { storeId } = request.params;
     if (!UUID_PATTERN.test(storeId)) throw new ApiError(400, 'validation_error', 'Cửa hàng không hợp lệ.');
-    if (!String(env.GHN_TOKEN || '').trim()) {
-      throw new ApiError(503, 'integration_not_configured', 'Cổng Giao Hàng Nhanh chưa được gắn khóa GHN_TOKEN.');
-    }
-    const configuredSecret = String(env.GHN_WEBHOOK_SECRET || '').trim();
-    if (configuredSecret) {
-      const authHeader = String(request.headers['x-ghn-webhook-secret'] || request.headers['authorization'] || request.query?.token || '').replace(/^(Bearer|Apikey)\s+/i, '').trim();
-      const a = Buffer.from(authHeader);
-      const b = Buffer.from(configuredSecret);
-      if (a.length === 0 || a.length !== b.length || !timingSafeEqual(a, b)) {
-        throw new ApiError(401, 'invalid_webhook_signature', 'Khóa xác thực webhook GHN không hợp lệ.');
-      }
-    }
     const body = request.body || {};
-    const configuredShopId = String(env.GHN_SHOP_ID || '').trim();
-    const payloadShopId = String(body.ShopID ?? body.shop_id ?? '').trim();
-    if (configuredShopId && payloadShopId && payloadShopId !== configuredShopId) {
-      throw new ApiError(401, 'invalid_webhook_signature', 'ShopID trên webhook GHN không khớp với cửa hàng đã cấu hình.');
-    }
     const orderCode = String(body.OrderCode || body.order_code || '').trim().slice(0, 64);
     const rawStatus = String(body.Status || body.status || '').trim().toLowerCase().slice(0, 40);
     if (!orderCode || !rawStatus || !/^[a-z0-9_-]{1,40}$/.test(rawStatus)) {
@@ -953,13 +938,35 @@ function registerIntegrationRoutes(app, { pool, env }) {
       await client.query('BEGIN');
       await client.query("SELECT set_config('app.store_id', $1, true)", [storeId]);
       const storeCheck = await client.query(
-        `SELECT s.id,
+        `SELECT s.id, s.integration_secrets_enc,
                 (SELECT m.user_id FROM memberships m WHERE m.store_id = s.id AND m.status = 'active' AND m.role = 'owner' ORDER BY m.joined_at, m.created_at LIMIT 1) AS owner_user_id
          FROM stores s WHERE s.id = $1 AND s.status = 'active'`,
         [storeId]
       );
       if (!storeCheck.rowCount) throw new ApiError(404, 'store_not_found', 'Không tìm thấy cửa hàng.');
-      const ownerUserId = storeCheck.rows[0].owner_user_id;
+      const storeRow = storeCheck.rows[0];
+      const storeEnv = buildStoreEnv(env, storeRow);
+      if (!String(storeEnv.GHN_TOKEN || '').trim()) {
+        throw new ApiError(503, 'integration_not_configured', 'Cổng Giao Hàng Nhanh chưa được gắn khóa GHN_TOKEN.');
+      }
+      const configuredSecret = String(storeEnv.GHN_WEBHOOK_SECRET || '').trim();
+      if (env.NODE_ENV === 'production' && !configuredSecret) {
+        throw new ApiError(503, 'integration_not_configured', 'Webhook GHN bắt buộc phải cấu hình khóa xác thực GHN_WEBHOOK_SECRET.');
+      }
+      if (configuredSecret) {
+        const authHeader = String(request.headers['x-ghn-webhook-secret'] || request.headers['authorization'] || request.query?.token || '').replace(/^(Bearer|Apikey)\s+/i, '').trim();
+        const a = Buffer.from(authHeader);
+        const b = Buffer.from(configuredSecret);
+        if (a.length === 0 || a.length !== b.length || !timingSafeEqual(a, b)) {
+          throw new ApiError(401, 'invalid_webhook_signature', 'Khóa xác thực webhook GHN không hợp lệ.');
+        }
+      }
+      const configuredShopId = String(storeEnv.GHN_SHOP_ID || '').trim();
+      const payloadShopId = String(body.ShopID ?? body.shop_id ?? '').trim();
+      if (configuredShopId && payloadShopId !== configuredShopId) {
+        throw new ApiError(401, 'invalid_webhook_signature', 'ShopID trên webhook GHN không khớp với cửa hàng đã cấu hình.');
+      }
+      const ownerUserId = storeRow.owner_user_id;
       if (!ownerUserId) throw new ApiError(409, 'store_owner_missing', 'Không xác định được chủ cửa hàng.');
       await client.query("SELECT set_config('app.user_id', $1, true)", [ownerUserId]);
 

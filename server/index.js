@@ -72,6 +72,7 @@ const ASSETS = new Map([
   ['/escpos-printer.js', 'escpos-printer.js'],
   ['/integrations-ui.js', 'integrations-ui.js'],
   ['/finance-vouchers-ui.js', 'finance-vouchers-ui.js'],
+  ['/firebase-auth-ui.js', 'firebase-auth-ui.js'],
   ['/legal-content.js', 'legal-content.js'],
   ['/sync-bus.js', 'sync-bus.js'],
   ['/pos-hardware.js', 'pos-hardware.js'],
@@ -298,7 +299,7 @@ function validateProductionConfig(env) {
   }
 }
 
-async function buildServer({ pool = null, env = process.env, logger = true } = {}) {
+async function buildServer({ pool = null, env = process.env, logger = true, firebaseVerifier = null } = {}) {
   const app = Fastify({
     logController: new LogController({
       disableRequestLogging: (request) => request.url.startsWith('/api/') || request.url.includes('?'),
@@ -306,7 +307,14 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
     logger: logger ? {
       level: env.LOG_LEVEL || 'info',
       redact: {
-        paths: ['req.headers.cookie', 'req.headers.authorization', 'req.headers["x-csrf-token"]', 'req.headers["secure-token"]', 'req.headers["x-webhook-token"]', 'req.headers["x-api-key"]', 'req.body.password', 'req.body.currentPassword', 'req.body.newPassword', 'req.body.pin', 'req.body.secret', 'req.body.code', 'req.body.token', 'req.body.signature'],
+        paths: [
+          'req.headers.cookie', 'req.headers.authorization', 'req.headers["x-csrf-token"]',
+          'req.headers["secure-token"]', 'req.headers["x-webhook-token"]', 'req.headers["x-ghn-webhook-secret"]',
+          'req.headers["x-api-key"]', 'req.headers["token"]',
+          'req.body.password', 'req.body.currentPassword', 'req.body.newPassword', 'req.body.pin',
+          'req.body.secret', 'req.body.code', 'req.body.token', 'req.body.idToken',
+          'req.body.refreshToken', 'req.body.signature', 'req.body.credentials', 'req.body.credentials.*',
+        ],
         censor: '[REDACTED]',
       },
     } : false,
@@ -316,9 +324,13 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
   });
   app.decorate('slinkEmailVerificationDisabled', emailVerificationDisabled(env));
 
+  const firebaseAuthOrigin = typeof env.FIREBASE_AUTH_DOMAIN === 'string' && env.FIREBASE_AUTH_DOMAIN.trim()
+    ? `https://${env.FIREBASE_AUTH_DOMAIN.trim()}`
+    : 'https://slink-ad8be.firebaseapp.com';
+
   await app.register(helmet, {
     referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
-    crossOriginOpenerPolicy: { policy: 'same-origin' },
+    crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
@@ -326,9 +338,10 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
         objectSrc: ["'none'"],
         frameAncestors: ["'none'"],
         formAction: ["'self'"],
-        scriptSrc: ["'self'"],
-        connectSrc: ["'self'"],
-        imgSrc: ["'self'", 'data:', 'blob:'],
+        scriptSrc: ["'self'", 'https://www.gstatic.com', 'https://apis.google.com'],
+        connectSrc: ["'self'", 'https://identitytoolkit.googleapis.com', 'https://securetoken.googleapis.com', 'https://www.googleapis.com'],
+        frameSrc: ["'self'", firebaseAuthOrigin, 'https://accounts.google.com'],
+        imgSrc: ["'self'", 'data:', 'blob:', 'https://lh3.googleusercontent.com', 'https://www.gstatic.com'],
         styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
         fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
       },
@@ -361,6 +374,9 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
     reply.header('permissions-policy', 'camera=(self), microphone=(), geolocation=(), payment=()');
     if (pathName.startsWith('/api/') || pathName === '/verify' || pathName === '/invite' || pathName.startsWith('/download/')) {
       reply.header('x-robots-tag', 'noindex, nofollow');
+    }
+    if (pathName.startsWith('/api/') && !reply.getHeader('cache-control')) {
+      reply.header('cache-control', 'no-store');
     }
     if (ASSETS.has(pathName)) {
       reply.header('cache-control', pathName === '/sw.js'
@@ -431,7 +447,7 @@ async function buildServer({ pool = null, env = process.env, logger = true } = {
   });
 
   if (pool) {
-    registerAuthRoutes(app, { pool, env });
+    registerAuthRoutes(app, { pool, env, firebaseVerifier });
     registerProductRoutes(app, { pool, env });
     registerProductImageRoutes(app, { pool, env });
     registerSerialRoutes(app, { pool, env });
