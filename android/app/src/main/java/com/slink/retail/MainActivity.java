@@ -13,6 +13,7 @@ import android.print.PrintAttributes;
 import android.print.PrintDocumentAdapter;
 import android.print.PrintManager;
 import android.provider.MediaStore;
+import android.speech.RecognizerIntent;
 import android.speech.tts.TextToSpeech;
 import android.util.Base64;
 import android.view.View;
@@ -55,6 +56,7 @@ public class MainActivity extends Activity {
     private static final int CAMERA_PERMISSION = 3;
     private static final int PHOTO_PERMISSION = 4;
     private static final int BLUETOOTH_PERMISSION = 5;
+    private static final int SPEECH_RECOGNIZE = 6;
     private static final Set<String> WEB_FILES = new HashSet<>(Arrays.asList(
             "index.html", "styles.css", "workspace.css", "app.js", "offline-store.js",
             "offline-ledger.js", "purchase-units.js", "money-inputs.js", "offline-sync.js",
@@ -81,6 +83,8 @@ public class MainActivity extends Activity {
     private JavaScriptReplyProxy saveReply;
     private JSONObject pendingBtRequest;
     private JavaScriptReplyProxy btReply;
+    private String pendingSpeechReqId;
+    private JavaScriptReplyProxy speechReply;
     private final java.util.concurrent.ExecutorService btExecutor = java.util.concurrent.Executors.newSingleThreadExecutor();
     private AppUpdater updater;
     private BluetoothEscPosPrinter btPrinter;
@@ -256,7 +260,7 @@ public class MainActivity extends Activity {
             headers.put("Referrer-Policy", "strict-origin-when-cross-origin");
             headers.put("X-Frame-Options", "DENY");
             headers.put("Service-Worker-Allowed", "/");
-            headers.put("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'");
+            headers.put("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; script-src 'self' https://www.gstatic.com https://apis.google.com; connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com; frame-src 'self' https://slink-ad8be.firebaseapp.com https://accounts.google.com; img-src 'self' data: blob: https://lh3.googleusercontent.com https://www.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com");
             return new WebResourceResponse(mime, mime.startsWith("image/") ? null : "UTF-8", 200, "OK", headers,
                     getAssets().open("web/" + path));
         } catch (IOException error) { return null; }
@@ -311,7 +315,34 @@ public class MainActivity extends Activity {
         } else if (data.optString("type").equals("firebaseAuth")) {
             if (firebaseAuthBridge != null) firebaseAuthBridge.handleMessage(data, reply);
             else answer(reply, id, "error");
+        } else if (data.optString("type").equals("speech") && "recognize".equals(data.optString("action"))) {
+            handleSpeechRecognizeMessage(id, reply);
         } else answer(reply, id, "error");
+    }
+
+    private void handleSpeechRecognizeMessage(String id, JavaScriptReplyProxy reply) {
+        if (speechReply != null) {
+            answer(reply, id, "busy");
+            return;
+        }
+        Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "vi-VN");
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "vi-VN");
+        intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
+        intent.putExtra(RecognizerIntent.EXTRA_PROMPT, "Đọc đơn hàng (VD: Bán 2 mì Hảo Hảo cho cô Ba)");
+        pendingSpeechReqId = id;
+        speechReply = reply;
+        try {
+            startActivityForResult(intent, SPEECH_RECOGNIZE);
+        } catch (ActivityNotFoundException error) {
+            pendingSpeechReqId = null;
+            speechReply = null;
+            try {
+                reply.postMessage(new JSONObject().put("id", id).put("status", "error")
+                        .put("message", "Thiết bị chưa bật nhận dạng giọng nói Google. Bạn hãy gõ câu lệnh vào ô AI.").toString());
+            } catch (Exception ignored) {}
+        }
     }
 
     private void handleSpeakMessage(JSONObject data, JavaScriptReplyProxy reply) {
@@ -590,6 +621,26 @@ public class MainActivity extends Activity {
                 final String outcome = status;
                 runOnUiThread(() -> answer(reply, payload.optString("id"), outcome));
             }).start();
+        }
+        if (request == SPEECH_RECOGNIZE && speechReply != null) {
+            final String id = pendingSpeechReqId == null ? "" : pendingSpeechReqId;
+            final JavaScriptReplyProxy reply = speechReply;
+            pendingSpeechReqId = null;
+            speechReply = null;
+            if (result == RESULT_OK && data != null) {
+                java.util.ArrayList<String> matches = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
+                String transcript = (matches != null && !matches.isEmpty() && matches.get(0) != null) ? matches.get(0).trim() : "";
+                if (!transcript.isEmpty()) {
+                    try {
+                        reply.postMessage(new JSONObject().put("id", id).put("status", "ok").put("transcript", transcript).toString());
+                    } catch (Exception ignored) {}
+                    return;
+                }
+            }
+            try {
+                reply.postMessage(new JSONObject().put("id", id).put("status", "error")
+                        .put("message", result == RESULT_CANCELED ? "Đã hủy nhận dạng giọng nói." : "Chưa nghe rõ giọng nói. Hãy thử lại.").toString());
+            } catch (Exception ignored) {}
         }
     }
 

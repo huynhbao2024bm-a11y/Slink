@@ -274,8 +274,44 @@
       <section class='panel'><div class='panel-header'><h2>Tổng hợp công nợ khách hàng</h2><button class='link-button' data-route='customers'>Mở danh sách khách →</button></div><div class='detail-kv-grid'><div class='detail-kv-item'><small>Phát sinh phải thu mới</small><strong>${S.fn.moneyVndText(summary.receivableVnd || '0')}</strong></div><div class='detail-kv-item'><small>Tổng dư nợ hiện tại</small><strong>${S.fn.moneyVndText(S.state.financeSummary?.customerDebtVnd || '0')}</strong></div></div></section>`;
     }
 
-    return S.fn.pageHeading('Báo cáo', '', `<button class='btn btn-secondary' data-action='download-reports-csv' ${reportCanPrint ? '' : 'disabled'}>Tải CSV</button><button class='btn btn-secondary' data-action='print-reports-pdf' ${reportCanPrint ? '' : 'disabled'} title='In hoặc lưu báo cáo thành PDF'>In / lưu PDF</button>`) +
+    return S.fn.pageHeading('Báo cáo', '', `<button class='btn btn-primary' data-action='download-accounting-tt152' ${reportCanPrint ? '' : 'disabled'}>Xuất Sổ Kế Toán Thuế (Mẫu TT 152/2025)</button><button class='btn btn-secondary' data-action='download-reports-csv' ${reportCanPrint ? '' : 'disabled'}>Tải CSV</button><button class='btn btn-secondary' data-action='print-reports-pdf' ${reportCanPrint ? '' : 'disabled'} title='In hoặc lưu báo cáo thành PDF'>In / lưu PDF</button>`) +
       `${S.state.analyticsError ? `<div class='notice-item'><span>${S.fn.icon('alert', 18)}</span><span><strong>Chưa tải được báo cáo</strong><small>${S.fn.esc(S.state.analyticsError)}</small></span></div>` : ''}${filterBar}${tabBar}${bodyHtml}`;
+  }
+
+  S.fn.downloadAccountingTt152 = async function downloadAccountingTt152() {
+    if (!S.state.store?.id) return;
+    const resolved = S.fn.resolveReportQuery();
+    const url = `/api/stores/${encodeURIComponent(S.state.store.id)}/exports/accounting-tt152.xlsx?${resolved.query}`;
+    try {
+      const response = await fetch(url, { credentials: 'same-origin' });
+      if (!response.ok) {
+        let message = `Mã lỗi ${response.status}`;
+        try {
+          const errJson = await response.json();
+          if (errJson?.error) message = errJson.error;
+        } catch (_) { /* ignore non-JSON */ }
+        S.fn.toast('Không thể xuất Sổ TT 152/2025', message, 'error');
+        return;
+      }
+      const blob = await response.blob();
+      const disposition = response.headers.get('content-disposition') || '';
+      const utfMatch = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+      const asciiMatch = disposition.match(/filename="?([^";]+)"?/i);
+      const filename = utfMatch
+        ? decodeURIComponent(utfMatch[1])
+        : (asciiMatch ? asciiMatch[1] : `So_ke_toan_TT152_${S.fn.reportIsoDay(new Date())}.xlsx`);
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(function () { URL.revokeObjectURL(objectUrl); }, 1500);
+      S.fn.toast('Đã xuất Sổ kế toán TT 152/2025', filename);
+    } catch (error) {
+      S.fn.toast('Không thể xuất Sổ TT 152/2025', error.message || 'Lỗi kết nối máy chủ.', 'error');
+    }
   }
 
 })(window.Slink = window.Slink || { dom: {}, c: {}, state: {}, fn: {}, charts: {} });

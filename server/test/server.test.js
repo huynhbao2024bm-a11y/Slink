@@ -72,7 +72,7 @@ test('server exposes the app shell and health routes without exposing source fil
     assert.equal(download.headers['x-robots-tag'], 'noindex, nofollow');
   }
 
-  assert.equal(health.headers['permissions-policy'], 'camera=(self), microphone=(), geolocation=(), payment=()');
+  assert.equal(health.headers['permissions-policy'], 'camera=(self), microphone=(self), geolocation=(), payment=()');
   assert.equal(health.headers['referrer-policy'], 'strict-origin-when-cross-origin');
   assert.equal(health.headers['x-robots-tag'], 'noindex, nofollow');
 
@@ -81,7 +81,8 @@ test('server exposes the app shell and health routes without exposing source fil
   assert.equal(worker.headers['cache-control'], 'no-store');
   assert.match(worker.body, /slink-offline-[a-f0-9]{20}/);
   assert.ok(!worker.body.includes('__SLINK_ASSET_VERSION__'));
-  assert.match(worker.body, /if \(shellFile && cached\) return cached/);
+  assert.match(worker.body, /if \(shellFile\) \{\s*event\.respondWith\(fetch\(event\.request\)/);
+  assert.ok(!worker.body.includes('if (shellFile && cached) return cached'));
 
   const privateFile = await app.inject({ method: 'GET', url: '/server/db.js' });
   assert.equal(privateFile.statusCode, 404);

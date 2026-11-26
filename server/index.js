@@ -33,6 +33,8 @@ const { registerAnalyticsRoutes } = require('./analytics');
 const { registerDashboardRoutes } = require('./dashboard');
 const { registerStoreSettingsRoutes } = require('./settings');
 const { registerExportRoutes } = require('./exports');
+const { registerAccountingTt152Routes } = require('./accounting-tt152');
+const { registerAiAssistantRoutes } = require('./ai-assistant');
 const { registerStaffRoutes } = require('./staff');
 const { registerCashRegisterRoutes } = require('./cash-register');
 const { registerAuditRoutes } = require('./audit');
@@ -304,7 +306,7 @@ function validateProductionConfig(env) {
   }
 }
 
-async function buildServer({ pool = null, env = process.env, logger = true, firebaseVerifier = null } = {}) {
+async function buildServer({ pool = null, env = process.env, logger = true, firebaseVerifier = null, aiClient = null } = {}) {
   const app = Fastify({
     logController: new LogController({
       disableRequestLogging: (request) => request.url.startsWith('/api/') || request.url.includes('?'),
@@ -319,6 +321,7 @@ async function buildServer({ pool = null, env = process.env, logger = true, fire
           'req.body.password', 'req.body.currentPassword', 'req.body.newPassword', 'req.body.pin',
           'req.body.secret', 'req.body.code', 'req.body.token', 'req.body.idToken', 'req.body.firebaseIdToken',
           'req.body.captchaToken', 'req.body.captchaAnswer', 'req.body.registrationTicket',
+          'req.body.imageBase64',
           'req.body.refreshToken', 'req.body.signature', 'req.body.credentials', 'req.body.credentials.*',
         ],
         censor: '[REDACTED]',
@@ -377,7 +380,7 @@ async function buildServer({ pool = null, env = process.env, logger = true, fire
 
   app.addHook('onSend', async (request, reply, payload) => {
     const pathName = request.url.split('?')[0];
-    reply.header('permissions-policy', 'camera=(self), microphone=(), geolocation=(), payment=()');
+    reply.header('permissions-policy', 'camera=(self), microphone=(self), geolocation=(), payment=()');
     if (pathName.startsWith('/api/') || pathName === '/verify' || pathName === '/invite' || pathName.startsWith('/download/')) {
       reply.header('x-robots-tag', 'noindex, nofollow');
     }
@@ -474,6 +477,8 @@ async function buildServer({ pool = null, env = process.env, logger = true, fire
     registerDashboardRoutes(app, { pool, env });
     registerStoreSettingsRoutes(app, { pool, env });
     registerExportRoutes(app, { pool, env });
+    registerAccountingTt152Routes(app, { pool, env });
+    registerAiAssistantRoutes(app, { pool, env, aiClient });
     registerStaffRoutes(app, { pool, env });
     registerCashRegisterRoutes(app, { pool, env });
     registerAuditRoutes(app, { pool, env });

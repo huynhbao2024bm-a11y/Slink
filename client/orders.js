@@ -1148,4 +1148,38 @@
       feedback.textContent = action === 'receipt-share' ? 'Chưa mở được trình chia sẻ. Bạn có thể sao chép hoặc lưu tệp.' : 'Chọn nội dung ở trên để sao chép thủ công.';
     } finally { button.disabled = false; }
   }
+
+  S.fn.openOrderVietQrModal = async function openOrderVietQrModal(orderId) {
+    const o = S.state.store.orders.find(function (item) { return item.id === orderId; });
+    if (!o) return;
+    if (!S.state.integrationState.data && !S.state.integrationState.loading) {
+      await S.fn.loadIntegrationStatus();
+    }
+    const settings = S.state.integrationState.data?.settings || {};
+    if (!settings.bankBin || !settings.bankAccountNumber || !window.SlinkIntegrationsUI) {
+      S.fn.toast('Chưa cấu hình tài khoản ngân hàng', 'Vào Cài đặt để nhập ngân hàng và số tài khoản nhận VietQR.', 'error');
+      return;
+    }
+    const dueAmount = Number(o.due || 0);
+    if (!(dueAmount > 0)) {
+      S.fn.toast('Đơn hàng đã thu đủ', `${o.number} không còn khoản phải thu.`);
+      return;
+    }
+    const qrHtml = window.SlinkIntegrationsUI.renderVietQrCard({
+      bankBin: settings.bankBin,
+      bankAccountNumber: settings.bankAccountNumber,
+      bankAccountName: settings.bankAccountName,
+      bankName: settings.bankName,
+      amountVnd: String(Math.round(dueAmount)),
+      orderNumber: o.number,
+      note: `${S.state.store.settings.storeName || 'SLINK'} ${o.number}`.slice(0, 45),
+    });
+    const body = `<div class='vietqr-fullscreen-body'><div class='vietqr-fullscreen-amount'>${S.fn.money(dueAmount)}</div>${qrHtml}<p class='vietqr-fullscreen-note'>Thu ngân kiểm tra tiền đã vào tài khoản ngân hàng, sau đó bấm nút bên dưới để ghi nhận thu tiền thủ công.</p></div>`;
+    const collectBtn = o.customerId
+      ? `<button class='btn btn-primary' type='button' data-action='collect-payment' data-id='${S.fn.esc(o.id)}'>Ghi nhận thu tiền</button>`
+      : '';
+    const footer = `<div class='vietqr-fullscreen-actions'><button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button>${collectBtn}</div>`;
+    S.fn.showModal(`VietQR đơn ${o.number}`, 'Quét bằng app ngân hàng bất kỳ', body, footer);
+    S.dom.modal.classList.add('modal-vietqr-fullscreen');
+  }
 })(window.Slink = window.Slink || { dom: {}, c: {}, state: {}, fn: {}, charts: {} });

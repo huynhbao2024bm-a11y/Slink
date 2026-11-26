@@ -54,3 +54,5 @@ services:
         sync: false
       - key: GHN_WEBHOOK_SECRET
         sync: false
+      - key: GEMINI_API_KEY
+        sync: false
