@@ -5602,3 +5602,13 @@ body.pos-fullscreen .view {
 .receive-ai-status.is-error {
   color: #b3261e;
 }
+
+/* Receipt review lives alongside the editable purchase form. */
+[data-receive-ai-review] { display: grid; gap: 10px; margin-block: 8px; }
+[data-receive-ai-review][hidden] { display: none; }
+[data-photo-summary] { padding: 10px; margin: 0; background: var(--surface-subtle); border-radius: 8px; overflow-wrap: anywhere; }
+[data-receive-ai-review] img { display: block; max-width: 100%; max-height: 60vh; object-fit: contain; margin-inline: auto; }
+[data-receive-lines] > summary, [data-receive-ai-review] summary { cursor: pointer; min-height: 36px; font-weight: 650; }
+.photo-line-needs-review { border-inline-start: 3px solid var(--warning, #854410); }
+.photo-unit-check:not([hidden]) { display: flex; align-items: center; gap: 8px; min-height: 40px; }
+[data-photo-product-editor] { margin-top: 10px; }

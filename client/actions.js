@@ -122,7 +122,7 @@
     const profiles = S.state.channelState.profiles.filter((item) => item.status === 'active');
     if (!profiles.length) return S.fn.toast('Chưa có gian hàng', 'Hãy khai báo gian hàng trước khi ghi nhận đơn.', 'error');
     const profileOptions = profiles.map((profile) => `<option value='${S.fn.esc(profile.id)}'>${S.fn.esc(S.fn.channelProfileLabel(profile))}</option>`).join('');
-    S.fn.showModal('Ghi nhận đơn từ kênh', 'Nhập đơn kênh ngoài (không tự đồng bộ sàn).', `<form id='entity-form' data-form='channel-order-create' data-idempotency-key='${S.fn.newIdempotencyKey()}'><div class='form-grid'><label class='form-field'><span class='input-label'>Gian hàng *</span><select class='input' id='channel-order-profile-id' name='channelProfileId' required>${profileOptions}</select></label><label class='form-field'><span class='input-label'>Kho giao *</span><select class='input' id='channel-order-warehouse-id' name='warehouseId' required><option value=''>Đang tải kho…</option></select></label><div class='form-field full channel-order-ref-field'><label class='input-label' for='channel-order-external-ref'>Mã đơn trên kênh *</label><input class='input' id='channel-order-external-ref' name='externalOrderRef' required maxlength='120' autocomplete='off' placeholder='Ví dụ: 240801ABCDEF'/><button class='btn btn-secondary' type='button' data-action='scan-channel-order'>Quét mã đơn</button><div class='scan-camera-panel channel-order-scan-panel' data-scan-surface data-scan-mode='order' data-scan-target='channel-order-external-ref' hidden><ol class='scan-steps'><li>Đưa mã đơn vào giữa khung camera, nơi đủ sáng.</li><li>Chọn Cho phép nếu điện thoại hỏi quyền camera.</li><li>Nếu sau 10 giây chưa đọc được, Slink chụp ảnh để bạn xem và tự nhập mã.</li></ol><video id='scan-camera-video' class='scan-camera-video' playsinline muted hidden aria-label='Khung camera để quét mã đơn'></video><img id='scan-photo-preview' class='scan-photo-preview' alt='Ảnh mã đơn chụp để xem lại' hidden/><button class='btn btn-secondary' type='button' data-action='start-camera-scan'>Mở camera để quét</button><p id='scan-camera-status' class='scan-camera-status' role='status' aria-live='polite'>Mã đơn sẽ điền vào ô phía trên. Hãy kiểm tra lại và nhập các thông tin còn lại trước khi lưu.</p><small class='scan-privacy-note'>Ảnh chỉ hiện tạm thời trên thiết bị này. Slink chưa đọc chữ trong ảnh và không lưu ảnh vào đơn. Bạn có thể nhập hoặc dán mã nếu chỉ có một điện thoại.</small></div></div><label class='form-field'><span class='input-label'>Thanh toán hiển thị ở kênh</span><select class='input' name='paymentStatusSnapshot'><option value='unknown'>Chưa rõ</option><option value='unpaid'>Chưa thanh toán</option><option value='paid'>Đã thanh toán</option><option value='cod'>Thu hộ COD</option></select></label><label class='form-field'><span class='input-label'>Tên người nhận</span><input class='input' name='customerName' maxlength='160' autocomplete='name'/></label><label class='form-field'><span class='input-label'>Điện thoại người nhận</span><input class='input' name='customerPhone' type='tel' inputmode='tel' maxlength='32' autocomplete='tel'/></label><label class='form-field full'><span class='input-label'>Địa chỉ giao hàng</span><textarea class='input' name='shippingAddress' rows='2' maxlength='500' autocomplete='shipping street-address'></textarea></label><label class='form-field full'><span class='input-label'>Ghi chú đóng gói nội bộ</span><textarea class='input' name='internalNote' rows='2' maxlength='500'></textarea></label></div><div class='channel-order-catalog-search'><label class='form-field'><span class='input-label'>Tìm SKU đã ánh xạ</span><input class='input' id='channel-order-mapping-search' type='search' maxlength='100' placeholder='Tên, SKU Slink hoặc SKU trên kênh'/></label><small id='channel-order-catalog-note'>Đang tải SKU đã ánh xạ…</small></div><div id='channel-order-lines'>${S.fn.channelOrderLineRow(0)}</div><button class='btn btn-secondary' type='button' data-action='add-channel-order-line'>Thêm mặt hàng</button><div class='channel-order-total'><span>Tổng mặt hàng theo giá kênh</span><strong data-channel-order-total>—</strong></div><div class='notice-item channel-modal-note'><span>${S.fn.icon('alert', 16)}</span><span><strong>Giữ tồn tại kho giao</strong><small>Khi đánh dấu “Đã gửi” mới trừ tồn kho; thao tác này không tự ghi thu tiền vào sổ quỹ.</small></span></div></form>`, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Hủy</button><button class='btn btn-primary' type='submit' form='entity-form'>Giữ tồn và ghi đơn</button>`, true);
+    S.fn.showModal('Ghi nhận đơn từ kênh', 'Nhập đơn kênh ngoài hoặc dán tin nhắn/ảnh để AI điền tự động.', `<form id='entity-form' data-form='channel-order-create' data-idempotency-key='${S.fn.newIdempotencyKey()}'><div class='receive-ai-toolbar' style='margin-bottom:10px'><textarea class='input' id='channel-order-ai-text' rows='2' maxlength='2000' placeholder='Dán tin nhắn Zalo/FB hoặc thông tin đơn sàn để AI điền nhanh…'></textarea><div class='heading-actions'><button class='btn btn-secondary' type='button' data-action='channel-order-ai-parse'>✨ Điền từ tin nhắn</button><button class='btn btn-secondary' type='button' data-action='channel-order-ai-photo-btn'>📸 Đọc ảnh đơn</button><input type='file' id='channel-order-ai-photo' accept='image/*' hidden/></div><div id='channel-order-ai-status' class='receive-ai-status' role='status' hidden></div></div><div class='form-grid'><label class='form-field'><span class='input-label'>Gian hàng *</span><select class='input' id='channel-order-profile-id' name='channelProfileId' required>${profileOptions}</select></label><label class='form-field'><span class='input-label'>Kho giao *</span><select class='input' id='channel-order-warehouse-id' name='warehouseId' required><option value=''>Đang tải kho…</option></select></label><div class='form-field full channel-order-ref-field'><label class='input-label' for='channel-order-external-ref'>Mã đơn trên kênh *</label><input class='input' id='channel-order-external-ref' name='externalOrderRef' required maxlength='120' autocomplete='off' placeholder='Ví dụ: 240801ABCDEF'/><button class='btn btn-secondary' type='button' data-action='scan-channel-order'>Quét mã đơn</button><div class='scan-camera-panel channel-order-scan-panel' data-scan-surface data-scan-mode='order' data-scan-target='channel-order-external-ref' hidden><ol class='scan-steps'><li>Đưa mã đơn vào giữa khung camera, nơi đủ sáng.</li><li>Chọn Cho phép nếu điện thoại hỏi quyền camera.</li><li>Nếu sau 10 giây chưa đọc được, Slink chụp ảnh để bạn xem và tự nhập mã.</li></ol><video id='scan-camera-video' class='scan-camera-video' playsinline muted hidden aria-label='Khung camera để quét mã đơn'></video><img id='scan-photo-preview' class='scan-photo-preview' alt='Ảnh mã đơn chụp để xem lại' hidden/><button class='btn btn-secondary' type='button' data-action='start-camera-scan'>Mở camera để quét</button><p id='scan-camera-status' class='scan-camera-status' role='status' aria-live='polite'>Mã đơn sẽ điền vào ô phía trên. Hãy kiểm tra lại và nhập các thông tin còn lại trước khi lưu.</p><small class='scan-privacy-note'>Ảnh chỉ hiện tạm thời trên thiết bị này. Bạn có thể nhập, dán tin nhắn hoặc chụp ảnh đơn để AI điền nhanh.</small></div></div><label class='form-field'><span class='input-label'>Thanh toán hiển thị ở kênh</span><select class='input' name='paymentStatusSnapshot'><option value='unknown'>Chưa rõ</option><option value='unpaid'>Chưa thanh toán</option><option value='paid'>Đã thanh toán</option><option value='cod'>Thu hộ COD</option></select></label><label class='form-field'><span class='input-label'>Tên người nhận</span><input class='input' name='customerName' maxlength='160' autocomplete='name'/></label><label class='form-field'><span class='input-label'>Điện thoại người nhận</span><input class='input' name='customerPhone' type='tel' inputmode='tel' maxlength='32' autocomplete='tel'/></label><label class='form-field full'><span class='input-label'>Địa chỉ giao hàng</span><textarea class='input' name='shippingAddress' rows='2' maxlength='500' autocomplete='shipping street-address'></textarea></label><label class='form-field full'><span class='input-label'>Ghi chú đóng gói nội bộ</span><textarea class='input' name='internalNote' rows='2' maxlength='500'></textarea></label></div><div class='channel-order-catalog-search'><label class='form-field'><span class='input-label'>Tìm SKU đã ánh xạ</span><input class='input' id='channel-order-mapping-search' type='search' maxlength='100' placeholder='Tên, SKU Slink hoặc SKU trên kênh'/></label><small id='channel-order-catalog-note'>Đang tải SKU đã ánh xạ…</small></div><div id='channel-order-lines'>${S.fn.channelOrderLineRow(0)}</div><button class='btn btn-secondary' type='button' data-action='add-channel-order-line'>Thêm mặt hàng</button><div class='channel-order-total'><span>Tổng mặt hàng theo giá kênh</span><strong data-channel-order-total>—</strong></div><div class='notice-item channel-modal-note'><span>${S.fn.icon('alert', 16)}</span><span><strong>Giữ tồn tại kho giao</strong><small>Khi đánh dấu “Đã gửi” mới trừ tồn kho; thao tác này không tự ghi thu tiền vào sổ quỹ.</small></span></div></form>`, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Hủy</button><button class='btn btn-primary' type='submit' form='entity-form'>Giữ tồn và ghi đơn</button>`, true);
     try {
       const result = await S.fn.apiRequest(`/api/stores/${encodeURIComponent(S.state.store.id)}/warehouses`);
       if (S.dom.modal.hidden) return;
@@ -1362,6 +1362,63 @@
     else if (action === 'supplier-payment') S.fn.openSupplierPayment(id);
     else if (action === 'supplier-balance') S.fn.openSupplierBalance(id);
     else if (action === 'receive-stock') S.fn.openReceive(id);
+    else if (action === 'receive-stock-photo') S.fn.openReceiveWithPhoto?.();
+    else if (action === 'load-restock-suggestions') S.fn.loadRestockSuggestions?.();
+    else if (action === 'pos-ai-search-chip') {
+      const q = button.dataset.query || '';
+      const search = document.getElementById('pos-search');
+      if (search && q) { search.value = q; S.state.searchTerms.pos = q; S.fn.refreshPosCatalog?.(); search.focus(); }
+    }
+    else if (action === 'pos-delivery-ai-paste') {
+      const box = document.getElementById('pos-delivery-ai-box');
+      if (box) { box.hidden = false; document.getElementById('pos-delivery-ai-text')?.focus(); }
+    }
+    else if (action === 'pos-delivery-ai-close') {
+      const box = document.getElementById('pos-delivery-ai-box');
+      if (box) box.hidden = true;
+    }
+    else if (action === 'pos-delivery-ai-apply') {
+      const text = String(document.getElementById('pos-delivery-ai-text')?.value || '').trim();
+      if (!text || !S.state.store?.id) return S.fn.toast('Chưa có nội dung', 'Hãy dán tin nhắn khách hàng trước.', 'error');
+      button.disabled = true;
+      S.fn.apiRequest(`/api/stores/${encodeURIComponent(S.state.store.id)}/ai/parse-channel-order`, {
+        method: 'POST', body: { text },
+      }).then(res => {
+        if (res.customerName) S.state.posDelivery.receiverName = res.customerName;
+        if (res.customerPhone) S.state.posDelivery.receiverPhone = res.customerPhone;
+        if (res.shippingAddress) S.state.posDelivery.address = res.shippingAddress;
+        if (res.internalNote) S.state.posDelivery.note = res.internalNote;
+        if (res.paymentStatusSnapshot === 'paid') S.state.posDelivery.collection = 'prepaid';
+        else if (res.paymentStatusSnapshot === 'cod') S.state.posDelivery.collection = 'cod';
+        if (Array.isArray(res.items) && res.items.length) S.fn.applyAiOrderResult?.(res);
+        else S.fn.refreshCartPanels?.();
+        const box = document.getElementById('pos-delivery-ai-box');
+        if (box) box.hidden = true;
+        S.fn.toast('Đã điền thông tin giao hàng', res.customerPhone || res.customerName || 'Kiểm tra lại trước khi lưu');
+      }).catch(err => S.fn.toast('Chưa tách được tin nhắn', err.message, 'error'))
+        .finally(() => { button.disabled = false; });
+    }
+    else if (action === 'channel-order-ai-photo-btn') document.getElementById('channel-order-ai-photo')?.click();
+    else if (action === 'channel-order-ai-parse') {
+      const form = document.querySelector("[data-form='channel-order-create']");
+      const text = String(document.getElementById('channel-order-ai-text')?.value || '').trim();
+      const status = document.getElementById('channel-order-ai-status');
+      if (!form || !text || !S.state.store?.id) return S.fn.toast('Chưa có tin nhắn', 'Dán nội dung tin nhắn hoặc đơn trước.', 'error');
+      button.disabled = true;
+      if (status) { status.hidden = false; status.textContent = 'AI đang trích xuất đơn…'; }
+      S.fn.apiRequest(`/api/stores/${encodeURIComponent(S.state.store.id)}/ai/parse-channel-order`, {
+        method: 'POST', body: { text },
+      }).then(res => {
+        if (res.externalOrderRef) form.elements.externalOrderRef.value = res.externalOrderRef;
+        if (res.customerName) form.elements.customerName.value = res.customerName;
+        if (res.customerPhone) form.elements.customerPhone.value = res.customerPhone;
+        if (res.shippingAddress) form.elements.shippingAddress.value = res.shippingAddress;
+        if (res.internalNote) form.elements.internalNote.value = res.internalNote;
+        if (res.paymentStatusSnapshot) form.elements.paymentStatusSnapshot.value = res.paymentStatusSnapshot;
+        if (status) status.textContent = 'Đã điền thông tin đơn. Kiểm tra lại mã SKU & địa chỉ trước khi lưu.';
+      }).catch(err => { if (status) status.textContent = err.message || 'Chưa trích xuất được đơn.'; })
+        .finally(() => { button.disabled = false; });
+    }
     else if (action === 'new-warehouse') S.fn.openNewWarehouse();
     else if (action === 'archive-warehouse') S.fn.openArchiveWarehouse(id);
     else if (action === 'new-warehouse-transfer') S.fn.openWarehouseTransfer();
@@ -1740,6 +1797,26 @@
       if (file && form) S.fn.handleReceiveAiInvoiceFile(file, form);
       return;
     }
+    if (event.target.id === 'channel-order-ai-photo') {
+      const file = event.target.files?.[0];
+      const form = document.querySelector("[data-form='channel-order-create']");
+      const status = document.getElementById('channel-order-ai-status');
+      event.target.value = '';
+      if (!file || !form || !S.state.store?.id) return;
+      if (status) { status.hidden = false; status.textContent = 'AI đang đọc ảnh đơn hàng…'; }
+      S.fn.resizeInvoiceImageToBase64(file).then(img => S.fn.apiRequest(`/api/stores/${encodeURIComponent(S.state.store.id)}/ai/parse-channel-order`, {
+        method: 'POST', body: img,
+      })).then(res => {
+        if (res.externalOrderRef) form.elements.externalOrderRef.value = res.externalOrderRef;
+        if (res.customerName) form.elements.customerName.value = res.customerName;
+        if (res.customerPhone) form.elements.customerPhone.value = res.customerPhone;
+        if (res.shippingAddress) form.elements.shippingAddress.value = res.shippingAddress;
+        if (res.internalNote) form.elements.internalNote.value = res.internalNote;
+        if (res.paymentStatusSnapshot) form.elements.paymentStatusSnapshot.value = res.paymentStatusSnapshot;
+        if (status) status.textContent = 'Đã trích xuất từ ảnh. Kiểm tra lại thông tin & SKU trước khi lưu.';
+      }).catch(err => { if (status) status.textContent = err.message || 'Chưa đọc được ảnh đơn.'; });
+      return;
+    }
     if (event.target.name === 'businessProfile' && event.target.closest('#business-profile-onboarding')) {
       const form = event.target.closest('#business-profile-onboarding');
       const choices = form.querySelector('.task-focus-choices');
@@ -2084,13 +2161,29 @@
     }
     if (event.target.matches('[data-purchase-mode]')) {
       const row = event.target.closest('[data-purchase-line]');
+      if (row?.dataset.photoLine !== undefined) {
+        const confirm = row.querySelector('[data-photo-unit]');
+        if (confirm) confirm.checked = true;
+      }
       S.fn.setReceivePackMode(row, S.fn.productById(row.querySelector('[data-purchase-product]').value), false);
       S.fn.updateReceivePurchaseTotal(event.target.form); return;
+    }
+    if (event.target.matches('[data-purchase-qty], [data-purchase-cost], [data-purchase-pack-size], [data-purchase-price-mode]')) {
+      const row = event.target.closest('[data-purchase-line]');
+      if (row?.dataset.photoLine !== undefined) {
+        const confirm = row.querySelector('[data-photo-unit]');
+        if (confirm) confirm.checked = true;
+      }
     }
     if (event.target.matches('[data-purchase-product]')) {
       const row = event.target.closest('[data-purchase-line]');
       const product = S.fn.productById(event.target.value);
-      if (!S.fn.loadPendingPurchase()) S.fn.setReceivePackMode(row, product, true);
+      if (row.dataset.photoLine !== undefined) {
+        const confirm = row.querySelector('[data-photo-unit]');
+        if (confirm) confirm.checked = false;
+        const create = row.querySelector('[data-receive-create]');
+        if (create) create.hidden = Boolean(product) || !S.fn.hasPerm('editProducts');
+      } else if (!S.fn.loadPendingPurchase()) S.fn.setReceivePackMode(row, product, true);
       S.fn.updateReceivePurchaseTotal(S.dom.modal.querySelector('[data-form="receive"]'));
     }
     if (event.target.matches('[data-order-product]')) {
