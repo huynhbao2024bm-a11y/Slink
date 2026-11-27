@@ -1250,6 +1250,13 @@ select.input,
   pointer-events: none;
 }
 
+@media (max-width: 768px) {
+  body.pos-fullscreen .toast-stack {
+    top: auto;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 5.25rem);
+  }
+}
+
 .toast {
   pointer-events: auto;
   display: flex;

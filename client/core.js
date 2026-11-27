@@ -655,14 +655,14 @@
     frame.id = 'slink-hidden-print-frame';
     frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
     document.body.appendChild(frame);
+    const cleanHtml = String(html).replace(/<script[\s\S]*?<\/script>/gi, '');
     const doc = frame.contentDocument || frame.contentWindow?.document;
     if (!doc) {
       const win = window.open('', '_blank', 'width=460,height=680');
       if (!win) { S.fn.toast('Trình duyệt đã chặn cửa sổ in', 'Hãy cho phép bật cửa sổ in rồi thử lại.', 'error'); return false; }
-      win.document.open(); win.document.write(html); win.document.close();
+      win.document.open(); win.document.write(cleanHtml); win.document.close();
       return true;
     }
-    const cleanHtml = String(html).replace(/<script[\s\S]*?<\/script>/gi, '');
     doc.open(); doc.write(cleanHtml); doc.close();
     window.setTimeout(() => {
       try { frame.contentWindow.focus(); frame.contentWindow.print(); } catch (_) {}
@@ -1178,7 +1178,7 @@
     const match = url.match(/^\/api\/stores\/([^/]+)\//);
     if (match && !/\/(exports|staff|audit(?:-events)?)(\/|\?|$)/.test(url)) {
       const id = decodeURIComponent(match[1]);
-      if (S.state.authSession.stores.some(item => item.id === id)) return S.state.offlineDisk.scopeKey(S.state.authSession.user.id, id);
+      if ((S.state.authSession.stores || []).some(item => item.id === id)) return S.state.offlineDisk.scopeKey(S.state.authSession.user.id, id);
     }
     if (/^\/api\/(affiliate\/links|commerce\/platforms)(\?|$)/.test(url)) return S.state.offlineDisk.scopeKey(S.state.authSession.user.id, 'personal');
     return '';
@@ -1456,7 +1456,10 @@
       payload.warehouseId = warehouseId;
       payload.offline = { actorUserId: S.state.authSession.user.id, deviceId, occurredAt: S.fn.serverNowIso(), cashSessionId: state.session?.id || null, expectedCashVnd: kind === 'shift-close' ? source._slinkExpectedCashVnd ?? state.session?.expectedCashVnd : null };
       const productSnapshots = Array.from(productIds, id => state.products.get(window.SlinkOfflineLedger.productKey(warehouseId, id))).filter(Boolean);
-      if (kind === 'sale') payload.items.forEach(item => { item.expectedUnitPriceVnd ??= String(S.fn.productById(item.productId)?.price ?? state.products.get(window.SlinkOfflineLedger.productKey(payload.warehouseId, item.productId))?.sale_price_vnd); });
+      if (kind === 'sale') payload.items.forEach(item => {
+        const expectedPrice = S.fn.productById(item.productId)?.price ?? state.products.get(window.SlinkOfflineLedger.productKey(payload.warehouseId, item.productId))?.sale_price_vnd;
+        if (expectedPrice != null && item.expectedUnitPriceVnd == null) item.expectedUnitPriceVnd = String(expectedPrice);
+      });
       if (kind === 'purchase') payload.items.forEach(item => { item.expectedProductVersion ??= S.fn.productById(item.productId)?.version ?? state.products.get(window.SlinkOfflineLedger.productKey(payload.warehouseId, item.productId))?.version; });
       record = await S.state.offlineDisk.enqueue({ userId: S.state.authSession.user.id, storeId: S.state.store.id, actorName: S.state.authSession.user.displayName, kind, key, url, payload, source, productSnapshots });
       S.state.offlinePreparation += 1; S.state.offlineState.preparing = false;

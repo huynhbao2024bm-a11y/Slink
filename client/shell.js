@@ -445,7 +445,9 @@
 
   S.fn.scheduleInitialGuidedTour = function scheduleInitialGuidedTour() {
     if (!S.state.authSession || !S.state.store.id || S.fn.guidedTourWasSeen()) return;
-    if (S.state.page !== 'dashboard' || S.state.products.length > 0 || S.state.orders.length > 0) return;
+    const products = S.state.store?.products || [];
+    const orders = S.state.store?.orders || [];
+    if (S.state.page !== 'dashboard' || products.length > 0 || orders.length > 0) return;
     window.setTimeout(function () {
       if (S.state.page === 'dashboard' && S.dom.modal.hidden && !S.fn.guidedTourWasSeen()) {
         S.fn.startGuidedTour(false);
@@ -1462,7 +1464,7 @@
     const avatar = S.fn.esc(S.fn.initials(user.displayName || user.email || 'S'));
     const storeName = S.fn.esc(S.state.store.settings.storeName || 'Cửa hàng của bạn');
     const body = `<div class='account-summary'><span class='account-avatar' aria-hidden='true'>${avatar}</span><div class='account-summary-copy'><strong>${displayName}</strong><span>${email}</span></div></div><div class='account-store'><span class='account-store-label'>Cửa hàng</span><strong>${storeName}</strong></div>`;
-    const switchButton = S.state.store.id && S.state.authSession.stores.length > 1 ? `<button class='btn btn-secondary' data-action='store-picker'>Đổi cửa hàng</button>` : '';
+    const switchButton = S.state.store.id && (S.state.authSession?.stores?.length || 0) > 1 ? `<button class='btn btn-secondary' data-action='store-picker'>Đổi cửa hàng</button>` : '';
     const footer = `${switchButton}<button class='btn btn-secondary' data-action='account-settings'>Cài đặt tài khoản</button><button class='btn btn-danger' data-action='logout'>Đăng xuất</button>`;
     S.fn.showModal('Tài khoản', '', body, footer);
   }
