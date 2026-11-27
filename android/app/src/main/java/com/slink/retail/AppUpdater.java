@@ -51,7 +51,7 @@ final class AppUpdater {
 
     void check(boolean manual) {
         long last = activity.getPreferences(0).getLong("update-check", 0);
-        if ((!manual && System.currentTimeMillis() - last < 6 * 60 * 60 * 1000L) || !busy.compareAndSet(false, true)) return;
+        if ((!manual && System.currentTimeMillis() - last < 15 * 60 * 1000L) || !busy.compareAndSet(false, true)) return;
         new Thread(() -> {
             try {
                 status = "checking"; notifyChanged();

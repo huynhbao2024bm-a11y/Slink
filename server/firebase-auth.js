@@ -77,6 +77,12 @@ function createFirebaseVerifier(env = {}, customVerifier = null) {
       ...(typeof customVerifier.revokeRefreshTokens === 'function'
         ? { revokeRefreshTokens: (uid) => customVerifier.revokeRefreshTokens(uid) }
         : {}),
+      ...(typeof customVerifier.hasPasswordProvider === 'function'
+        ? { hasPasswordProvider: (uid) => customVerifier.hasPasswordProvider(uid) }
+        : {}),
+      ...(typeof customVerifier.attachPasswordProvider === 'function'
+        ? { attachPasswordProvider: (uid, password) => customVerifier.attachPasswordProvider(uid, password) }
+        : {}),
     };
   }
   const serviceAccount = loadServiceAccount(env);
@@ -120,6 +126,15 @@ function createFirebaseVerifier(env = {}, customVerifier = null) {
         email: created.email || normalizedEmail,
         emailVerified: Boolean(created.emailVerified),
       };
+    },
+    async hasPasswordProvider(uid) {
+      const userRecord = await authClient.getUser(String(uid || '').trim());
+      return Array.isArray(userRecord.providerData)
+        && userRecord.providerData.some((item) => item && item.providerId === 'password');
+    },
+    async attachPasswordProvider(uid, password) {
+      if (!password) return;
+      await authClient.updateUser(String(uid || '').trim(), { password: String(password) });
     },
     async sendPasswordResetEmail(email, continueUrl = '') {
       if (!webApiKey) {

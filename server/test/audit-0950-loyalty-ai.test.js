@@ -374,3 +374,85 @@ test('0.9.5.0 Phone Loyalty Points + Instant Hybrid AI Engine (<20ms local parse
   assert.ok(localHit);
   assert.equal(localHit.delivery_address, '12 Nguyễn Trãi');
 });
+
+test('0.9.5.1 Auth: Google-linked account can still sign in with matching manual password when Firebase has no password provider', async (t) => {
+  const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'slink-google-pw-'));
+  const runtime = await openPGliteRuntime({ dataDirectory: dataDir, migrationsDirectory: path.resolve(__dirname, '../migrations') });
+  let hasFbPassword = false;
+  let attachedPassword = '';
+  const firebaseVerifier = {
+    verifyIdToken: async (token) => {
+      if (token === 'google-id-token-for-dual-login-test') {
+        return {
+          uid: 'fb-google-uid-1',
+          email: 'dualuser@example.com',
+          email_verified: true,
+          name: 'Dual User',
+          firebase: { sign_in_provider: 'google.com' },
+        };
+      }
+      throw new Error('invalid token');
+    },
+    hasPasswordProvider: async () => hasFbPassword,
+    attachPasswordProvider: async (_uid, password) => {
+      attachedPassword = password;
+      hasFbPassword = true;
+    },
+  };
+  const app = await buildServer({
+    pool: runtime.pool,
+    firebaseVerifier,
+    env: {
+      NODE_ENV: 'test',
+      PUBLIC_ORIGIN: 'http://127.0.0.1:3000',
+      DEMO_DISABLE_EMAIL_VERIFICATION: 'true',
+      SESSION_SECRET: '0123456789abcdef0123456789abcdef',
+    },
+  });
+  t.after(async () => {
+    await app.close();
+    await fs.rm(dataDir, { recursive: true, force: true }).catch(() => {});
+  });
+
+  const reg = await app.inject({
+    method: 'POST',
+    url: '/api/auth/register',
+    headers: { origin: 'http://127.0.0.1:3000' },
+    payload: {
+      displayName: 'Dual User',
+      storeName: 'Dual Auth Shop',
+      email: 'dualuser@example.com',
+      password: 'VeryStrongPassword#2026',
+    },
+  });
+  assert.equal(reg.statusCode, 201);
+
+  // Sign in via Google links firebase_uid without creating a Firebase password provider
+  const ggLogin = await app.inject({
+    method: 'POST',
+    url: '/api/auth/firebase',
+    headers: { origin: 'http://127.0.0.1:3000' },
+    payload: { idToken: 'google-id-token-for-dual-login-test' },
+  });
+  assert.equal(ggLogin.statusCode, 200, ggLogin.body);
+
+  // Manual login with same email + password succeeds and attaches password to Firebase
+  const manualOk = await app.inject({
+    method: 'POST',
+    url: '/api/auth/login',
+    headers: { origin: 'http://127.0.0.1:3000' },
+    payload: { email: 'dualuser@example.com', password: 'VeryStrongPassword#2026' },
+  });
+  assert.equal(manualOk.statusCode, 200, manualOk.body);
+  assert.equal(attachedPassword, 'VeryStrongPassword#2026');
+  assert.equal(hasFbPassword, true);
+
+  // Once Firebase has a password provider, /api/auth/login defers to Firebase Auth
+  const manualBlocked = await app.inject({
+    method: 'POST',
+    url: '/api/auth/login',
+    headers: { origin: 'http://127.0.0.1:3000' },
+    payload: { email: 'dualuser@example.com', password: 'VeryStrongPassword#2026' },
+  });
+  assert.equal(manualBlocked.statusCode, 401);
+});

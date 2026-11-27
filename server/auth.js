@@ -1055,10 +1055,6 @@ function registerAuthRoutes(app, { pool, env, firebaseVerifier = null }) {
       [email]
     );
     const candidate = found.rows[0];
-    if (candidate && candidate.firebase_uid && verifier.configured) {
-      await verifyPassword(password, DUMMY_PASSWORD_HASH);
-      throw new ApiError(401, 'invalid_credentials', 'Email hoặc mật khẩu không đúng.');
-    }
     const encoded = found.rowCount ? candidate.password_hash : DUMMY_PASSWORD_HASH;
     const passwordMatches = await verifyPassword(password, encoded);
     if (!found.rowCount || !passwordMatches) {
@@ -1068,6 +1064,17 @@ function registerAuthRoutes(app, { pool, env, firebaseVerifier = null }) {
       throw new ApiError(401, 'invalid_credentials', 'Email hoặc mật khẩu không đúng.');
     }
     const user = candidate;
+    if (user.firebase_uid && verifier.configured) {
+      const hasFbPassword = typeof verifier.hasPasswordProvider === 'function'
+        ? await verifier.hasPasswordProvider(user.firebase_uid).catch(() => true)
+        : true;
+      if (hasFbPassword) {
+        throw new ApiError(401, 'invalid_credentials', 'Email hoặc mật khẩu không đúng.');
+      }
+      if (user.email_verified_at && typeof verifier.attachPasswordProvider === 'function') {
+        await verifier.attachPasswordProvider(user.firebase_uid, password).catch(() => {});
+      }
+    }
     if (!user.email_verified_at && !demoBypass) {
       if (verifier.configured && typeof verifier.ensureUser === 'function') {
         try {

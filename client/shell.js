@@ -121,6 +121,7 @@
           <span class='brand-mark' aria-hidden='true'><svg viewBox='0 0 32 32'><path d='M8 8.5h16v5H13v2h11v8H8v-5h11v-2H8z' fill='currentColor'/><circle cx='24.5' cy='7.5' r='2.5' fill='#c8f36c'/></svg></span>
           <span class='brand-name'>slink<span class='brand-period'>.</span></span>
           <span class='android-auth-label'>Android</span>
+          ${S.fn.fontScaleControlsHtml ? S.fn.fontScaleControlsHtml('auth-font-controls') : ''}
         </div>
         ${modeTabs}
         <h1>${S.fn.esc(title)}</h1>
@@ -172,7 +173,10 @@
       <div class='auth-portal-wrap'>
         <header class='auth-portal-topbar'>
           <button type='button' class='lp-brand' data-action='auth-mode' data-mode='landing' aria-label='Về trang giới thiệu Slink'>${brandHtml}</button>
-          <button type='button' class='lp-btn lp-btn-glass' data-action='auth-mode' data-mode='landing'>← Trang giới thiệu</button>
+          <div class='auth-portal-topbar-actions'>
+            ${S.fn.fontScaleControlsHtml ? S.fn.fontScaleControlsHtml('lp-font-controls') : ''}
+            <button type='button' class='lp-btn lp-btn-glass' data-action='auth-mode' data-mode='landing'>← Trang giới thiệu</button>
+          </div>
         </header>
         <div class='auth-portal-main'>
           <div class='auth-portal-shell lp-glass lp-sheen-host'>
