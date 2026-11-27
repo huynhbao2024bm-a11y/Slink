@@ -162,15 +162,23 @@ function registerFinanceRoutes(app, { pool, env }) {
           [storeId, fullFinanceAccess, auth.userId]
         ) : Promise.resolve({ rows: [] }),
         () => fullFinanceAccess ? client.query(
-          `SELECT s.id, s.name,
+          `SELECT s.id, s.name, COALESCE(s.code, '') AS code, COALESCE(s.phone, '') AS phone,
+                  COALESCE(s.email, '') AS email, COALESCE(s.tax_code, '') AS tax_code,
+                  COALESCE(s.address, '') AS address, COALESCE(s.contact_name, '') AS contact_name,
+                  COALESCE(s.group_name, '') AS group_name, COALESCE(s.note, '') AS note,
                   COALESCE(SUM(l.increases_payable_vnd) - SUM(l.decreases_payable_vnd), 0)::text AS balance_vnd,
                   MAX(l.occurred_at) AS last_activity_at
            FROM suppliers s LEFT JOIN supplier_ledger_entries l ON l.store_id = s.store_id AND l.supplier_id = s.id
            WHERE s.store_id = $1 AND s.status = 'active'
-           GROUP BY s.id, s.name ORDER BY s.name`,
+           GROUP BY s.id, s.name, s.code, s.phone, s.email, s.tax_code, s.address, s.contact_name, s.group_name, s.note
+           ORDER BY s.name`,
           [storeId]
         ) : purchaseAccess ? client.query(
-          `SELECT id, name FROM suppliers WHERE store_id = $1 AND status = 'active' ORDER BY name`,
+          `SELECT id, name, COALESCE(code, '') AS code, COALESCE(phone, '') AS phone,
+                  COALESCE(email, '') AS email, COALESCE(tax_code, '') AS tax_code,
+                  COALESCE(address, '') AS address, COALESCE(contact_name, '') AS contact_name,
+                  COALESCE(group_name, '') AS group_name, COALESCE(note, '') AS note
+           FROM suppliers WHERE store_id = $1 AND status = 'active' ORDER BY name`,
           [storeId]
         ) : Promise.resolve({ rows: [] }),
         () => fullFinanceAccess ? client.query(
@@ -241,9 +249,16 @@ function registerFinanceRoutes(app, { pool, env }) {
       }
       const canViewCost = hasPermission(membership, 'view_cost_price');
       const result = await client.query(
-        `SELECT s.id, s.name,
+        `SELECT s.id, s.name, COALESCE(s.code, '') AS code, COALESCE(s.phone, '') AS phone,
+                COALESCE(s.email, '') AS email, COALESCE(s.tax_code, '') AS tax_code,
+                COALESCE(s.address, '') AS address, COALESCE(s.contact_name, '') AS contact_name,
+                COALESCE(s.group_name, '') AS group_name, COALESCE(s.note, '') AS note,
                 (SELECT COALESCE(SUM(l.increases_payable_vnd) - SUM(l.decreases_payable_vnd), 0)::text
                  FROM supplier_ledger_entries l WHERE l.store_id = s.store_id AND l.supplier_id = s.id) AS balance_vnd,
+                (SELECT COALESCE(SUM(l.increases_payable_vnd), 0)::text
+                 FROM supplier_ledger_entries l WHERE l.store_id = s.store_id AND l.supplier_id = s.id) AS total_purchased_vnd,
+                (SELECT COALESCE(SUM(l.decreases_payable_vnd), 0)::text
+                 FROM supplier_ledger_entries l WHERE l.store_id = s.store_id AND l.supplier_id = s.id) AS total_settled_vnd,
                 COALESCE((SELECT json_agg(recent ORDER BY recent.occurred_at DESC, recent.id DESC) FROM (
                   SELECT l.id, l.entry_type, l.increases_payable_vnd::text, l.decreases_payable_vnd::text,
                          l.occurred_at, l.note, p.id AS purchase_id, p.purchase_number
@@ -257,11 +272,40 @@ function registerFinanceRoutes(app, { pool, env }) {
       if (!result.rowCount) throw new ApiError(404, 'supplier_not_found', 'Không tìm thấy nhà cung cấp.');
       const { entries, ...supplier } = result.rows[0];
       const warehouseIds = allowedWarehouseIds(membership);
-      const purchases = await recentPurchases(client, storeId, warehouseIds, supplierId, 8, canViewCost);
-      const purchaseOrders = await recentPurchaseOrders(client, storeId, warehouseIds, supplierId, 8, canViewCost);
-      return { supplier, entries, purchases: purchases.rows, purchaseOrders: purchaseOrders.rows };
+      const purchases = await recentPurchases(client, storeId, warehouseIds, supplierId, 10, canViewCost);
+      const purchaseOrders = await recentPurchaseOrders(client, storeId, warehouseIds, supplierId, 10, canViewCost);
+      const returnsRes = await client.query(
+        `SELECT ae.entity_id AS id, ae.reason, ae.occurred_at, ae.metadata
+         FROM audit_events ae
+         WHERE ae.store_id = $1 AND ae.action = 'supplier_return.created'
+           AND ae.metadata->>'supplierId' = $2::text
+         ORDER BY ae.occurred_at DESC, ae.id DESC LIMIT 10`,
+        [storeId, supplierId]
+      );
+      const supplierReturns = returnsRes.rows.map((r) => ({
+        id: r.id,
+        return_number: r.metadata?.returnNumber || 'THNCC',
+        total_vnd: String(r.metadata?.totalVnd || '0'),
+        refund_received_vnd: String(r.metadata?.refundReceivedVnd || '0'),
+        returned_at: r.occurred_at,
+        note: r.reason || '',
+      }));
+      return { supplier, entries, purchases: purchases.rows, purchaseOrders: purchaseOrders.rows, supplierReturns };
     });
   });
+
+  function validateSupplierDetails(body = {}) {
+    const clean = (val, max) => (typeof val === 'string' ? val.trim().slice(0, max) : '');
+    const code = clean(body.code, 40);
+    const phone = clean(body.phone, 40);
+    const email = clean(body.email, 254);
+    const taxCode = clean(body.taxCode ?? body.tax_code, 40);
+    const address = clean(body.address, 300);
+    const contactName = clean(body.contactName ?? body.contact_name, 120);
+    const groupName = clean(body.groupName ?? body.group_name, 80);
+    const note = clean(body.note, 500);
+    return { code, phone, email, taxCode, address, contactName, groupName, note };
+  }
 
   app.post('/api/stores/:storeId/suppliers', async (request, reply) => {
     const auth = await authenticate(pool, request);
@@ -272,11 +316,12 @@ function registerFinanceRoutes(app, { pool, env }) {
     const name = typeof body.name === 'string' ? body.name.trim() : '';
     if (name.length < 1 || name.length > 160) throw new ApiError(400, 'validation_error', 'Tên nhà cung cấp cần từ 1 đến 160 ký tự.');
     const openingBalance = nonNegativeAmount(body.openingPayableVnd, 'Khoản phải trả ban đầu');
+    const details = validateSupplierDetails(body);
     const idempotencyKey = request.headers['idempotency-key'];
     if (typeof idempotencyKey !== 'string' || idempotencyKey.length < 16 || idempotencyKey.length > 200) {
       throw new ApiError(400, 'idempotency_key_required', 'Thiếu mã lưu nhà cung cấp an toàn. Hãy thử lại.');
     }
-    const value = { name, openingPayableVnd: openingBalance.toString() };
+    const value = { name, openingPayableVnd: openingBalance.toString(), ...details };
     const digest = createHash('sha256').update(JSON.stringify(value)).digest();
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
       if (!hasPermission(membership, 'edit_products') && !hasPermission(membership, 'record_cashbook') && !hasPermission(membership, 'view_reports')) {
@@ -304,7 +349,11 @@ function registerFinanceRoutes(app, { pool, env }) {
       }
 
       const existing = await client.query(
-        `SELECT id, name FROM suppliers WHERE store_id = $1 AND status = 'active' AND lower(name) = lower($2)
+        `SELECT id, name, COALESCE(code, '') AS code, COALESCE(phone, '') AS phone,
+                COALESCE(email, '') AS email, COALESCE(tax_code, '') AS tax_code,
+                COALESCE(address, '') AS address, COALESCE(contact_name, '') AS contact_name,
+                COALESCE(group_name, '') AS group_name, COALESCE(note, '') AS note
+         FROM suppliers WHERE store_id = $1 AND status = 'active' AND lower(name) = lower($2)
          ORDER BY created_at, id LIMIT 1 FOR UPDATE`,
         [storeId, name]
       );
@@ -312,16 +361,23 @@ function registerFinanceRoutes(app, { pool, env }) {
       let created = false;
       if (existing.rowCount) supplier = existing.rows[0];
       else {
+        const autoCode = details.code || `NCC-${randomUUID().slice(0, 6).toUpperCase()}`;
         const inserted = await client.query(
-          `INSERT INTO suppliers (store_id, name, created_by) VALUES ($1, $2, $3) RETURNING id, name`,
-          [storeId, name, auth.userId]
+          `INSERT INTO suppliers (store_id, name, code, phone, email, tax_code, address, contact_name, group_name, note, created_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+           RETURNING id, name, COALESCE(code, '') AS code, COALESCE(phone, '') AS phone,
+                     COALESCE(email, '') AS email, COALESCE(tax_code, '') AS tax_code,
+                     COALESCE(address, '') AS address, COALESCE(contact_name, '') AS contact_name,
+                     COALESCE(group_name, '') AS group_name, COALESCE(note, '') AS note`,
+          [storeId, name, autoCode, details.phone || null, details.email || null,
+            details.taxCode, details.address, details.contactName, details.groupName, details.note, auth.userId]
         );
         supplier = inserted.rows[0];
         created = true;
         await client.query(
           `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, metadata)
-           VALUES ($1, $2, 'supplier.created', 'supplier', $3, jsonb_build_object('name', $4::text))`,
-          [storeId, auth.userId, supplier.id, supplier.name]
+           VALUES ($1, $2, 'supplier.created', 'supplier', $3, jsonb_build_object('name', $4::text, 'code', $5::text))`,
+          [storeId, auth.userId, supplier.id, supplier.name, supplier.code]
         );
       }
 
@@ -346,13 +402,138 @@ function registerFinanceRoutes(app, { pool, env }) {
         [storeId, supplier.id]
       );
       const status = created ? 201 : 200;
-      const response = { supplier: { id: supplier.id, name: supplier.name, balance_vnd: balance.rows[0].balance_vnd, last_activity_at: balance.rows[0].last_activity_at, created } };
+      const response = { supplier: { ...supplier, balance_vnd: balance.rows[0].balance_vnd, last_activity_at: balance.rows[0].last_activity_at, created } };
       await client.query(
         `UPDATE idempotency_records SET response_status = $4, response_body = $5::jsonb, completed_at = now()
          WHERE store_id = $1 AND actor_user_id = $2 AND idempotency_key = $3`,
         [storeId, auth.userId, idempotencyKey, status, JSON.stringify(response)]
       );
       return { status, body: response, replayed: false };
+    });
+    if (outcome.replayed) reply.header('idempotent-replayed', 'true');
+    return reply.code(outcome.status).send(outcome.body);
+  });
+
+  app.put('/api/stores/:storeId/suppliers/:supplierId', async (request) => {
+    const auth = await authenticate(pool, request);
+    requireCsrf(request, env);
+    const { storeId, supplierId } = request.params;
+    if (!UUID_PATTERN.test(storeId) || !UUID_PATTERN.test(supplierId)) {
+      throw new ApiError(400, 'validation_error', 'Nhà cung cấp không hợp lệ.');
+    }
+    const body = request.body || {};
+    const name = typeof body.name === 'string' ? body.name.trim() : '';
+    if (name.length < 1 || name.length > 160) {
+      throw new ApiError(400, 'validation_error', 'Tên nhà cung cấp cần từ 1 đến 160 ký tự.');
+    }
+    const details = validateSupplierDetails(body);
+    return withStore(pool, auth.userId, storeId, async (client, membership) => {
+      if (!hasPermission(membership, 'edit_products') && !hasPermission(membership, 'record_cashbook')) {
+        throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền sửa nhà cung cấp.');
+      }
+      const updated = await client.query(
+        `UPDATE suppliers
+         SET name = $3,
+             code = COALESCE(NULLIF($4, ''), code),
+             phone = NULLIF($5, ''),
+             email = NULLIF($6, ''),
+             tax_code = $7,
+             address = $8,
+             contact_name = $9,
+             group_name = $10,
+             note = $11,
+             updated_at = now()
+         WHERE store_id = $1 AND id = $2 AND status = 'active'
+         RETURNING id, name, COALESCE(code, '') AS code, COALESCE(phone, '') AS phone,
+                   COALESCE(email, '') AS email, COALESCE(tax_code, '') AS tax_code,
+                   COALESCE(address, '') AS address, COALESCE(contact_name, '') AS contact_name,
+                   COALESCE(group_name, '') AS group_name, COALESCE(note, '') AS note`,
+        [storeId, supplierId, name, details.code, details.phone, details.email,
+          details.taxCode, details.address, details.contactName, details.groupName, details.note]
+      );
+      if (!updated.rowCount) throw new ApiError(404, 'supplier_not_found', 'Không tìm thấy nhà cung cấp.');
+      await client.query(
+        `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, metadata)
+         VALUES ($1, $2, 'supplier.updated', 'supplier', $3, jsonb_build_object('name', $4::text))`,
+        [storeId, auth.userId, supplierId, name]
+      );
+      return { supplier: updated.rows[0] };
+    });
+  });
+
+  app.post('/api/stores/:storeId/suppliers/import', async (request, reply) => {
+    const auth = await authenticate(pool, request);
+    requireCsrf(request, env);
+    const { storeId } = request.params;
+    if (!UUID_PATTERN.test(storeId)) throw new ApiError(400, 'validation_error', 'Cửa hàng không hợp lệ.');
+    const rawItems = Array.isArray(request.body?.items) ? request.body.items : [];
+    if (!rawItems.length || rawItems.length > 200) {
+      throw new ApiError(400, 'validation_error', 'Tệp nhập cần có từ 1 đến 200 nhà cung cấp.');
+    }
+    const idempotencyKey = request.headers['idempotency-key'];
+    if (typeof idempotencyKey !== 'string' || idempotencyKey.length < 16 || idempotencyKey.length > 200) {
+      throw new ApiError(400, 'idempotency_key_required', 'Thiếu mã nhập an toàn. Hãy thử lại.');
+    }
+    const rows = rawItems.map((raw, idx) => {
+      const name = typeof raw?.name === 'string' ? raw.name.trim() : '';
+      if (name.length < 1 || name.length > 160) {
+        throw new ApiError(400, 'validation_error', `Dòng ${idx + 2}: tên nhà cung cấp cần từ 1 đến 160 ký tự.`);
+      }
+      const openingPayable = nonNegativeAmount(raw?.openingPayableVnd ?? 0, `Dòng ${idx + 2}: công nợ ban đầu`);
+      return { name, details: validateSupplierDetails(raw), openingPayable };
+    });
+    const digest = createHash('sha256').update(JSON.stringify(rows.map(r => ({ ...r, openingPayable: r.openingPayable.toString() })))).digest();
+    const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
+      if (!hasPermission(membership, 'edit_products') && !hasPermission(membership, 'record_cashbook')) {
+        throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền nhập nhà cung cấp.');
+      }
+      const reserved = await client.query(
+        `INSERT INTO idempotency_records (store_id, actor_user_id, idempotency_key, request_hash)
+         VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING RETURNING idempotency_key`,
+        [storeId, auth.userId, idempotencyKey, digest]
+      );
+      if (!reserved.rowCount) {
+        const previous = await client.query(
+          `SELECT request_hash, response_status, response_body FROM idempotency_records
+           WHERE store_id = $1 AND actor_user_id = $2 AND idempotency_key = $3 FOR UPDATE`,
+          [storeId, auth.userId, idempotencyKey]
+        );
+        const rec = previous.rows[0];
+        if (!rec || !Buffer.from(rec.request_hash).equals(digest)) throw new ApiError(409, 'idempotency_conflict', 'Mã nhập đã được dùng cho tệp khác.');
+        return { status: rec.response_status || 200, body: rec.response_body || { count: 0 }, replayed: true };
+      }
+      const created = [];
+      let skipped = 0;
+      for (const row of rows) {
+        const exists = await client.query(
+          `SELECT id FROM suppliers WHERE store_id = $1 AND status = 'active' AND lower(name) = lower($2) LIMIT 1`,
+          [storeId, row.name]
+        );
+        if (exists.rowCount) { skipped += 1; continue; }
+        const autoCode = row.details.code || `NCC-${randomUUID().slice(0, 6).toUpperCase()}`;
+        const ins = await client.query(
+          `INSERT INTO suppliers (store_id, name, code, phone, email, tax_code, address, contact_name, group_name, note, created_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+           RETURNING id, name, code`,
+          [storeId, row.name, autoCode, row.details.phone || null, row.details.email || null,
+            row.details.taxCode, row.details.address, row.details.contactName, row.details.groupName, row.details.note, auth.userId]
+        );
+        if (row.openingPayable > 0n && hasPermission(membership, 'record_cashbook')) {
+          await client.query(
+            `INSERT INTO supplier_ledger_entries (store_id, supplier_id, entry_type, increases_payable_vnd, source_type, source_id, note, actor_user_id)
+             VALUES ($1, $2, 'manual_credit', $3, 'opening_balance', $4, 'Công nợ đầu kỳ từ nhập tệp NCC', $5)`,
+            [storeId, ins.rows[0].id, row.openingPayable.toString(), randomUUID(), auth.userId]
+          );
+        }
+        created.push(ins.rows[0]);
+      }
+      const body = { count: created.length, skipped, suppliers: created };
+      await client.query(
+        `UPDATE idempotency_records SET response_status = 201, response_body = $4::jsonb, completed_at = now()
+         WHERE store_id = $1 AND actor_user_id = $2 AND idempotency_key = $3`,
+        [storeId, auth.userId, idempotencyKey, JSON.stringify(body)]
+      );
+      return { status: 201, body, replayed: false };
     });
     if (outcome.replayed) reply.header('idempotent-replayed', 'true');
     return reply.code(outcome.status).send(outcome.body);

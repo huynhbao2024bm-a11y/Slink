@@ -444,7 +444,13 @@
 
 
   S.fn.scheduleInitialGuidedTour = function scheduleInitialGuidedTour() {
-    // Keep initial mobile/desktop screens uncluttered; tour remains accessible via Help or Settings.
+    if (!S.state.authSession || !S.state.store.id || S.fn.guidedTourWasSeen()) return;
+    if (S.state.page !== 'dashboard' || S.state.products.length > 0 || S.state.orders.length > 0) return;
+    window.setTimeout(function () {
+      if (S.state.page === 'dashboard' && S.dom.modal.hidden && !S.fn.guidedTourWasSeen()) {
+        S.fn.startGuidedTour(false);
+      }
+    }, 900);
   }
 
 
@@ -1507,12 +1513,12 @@
 
   S.fn.showHelp = function showHelp() {
     const body = `<div class='help-section'>
-        <h3>Quy trình vận hành chính</h3>
+        <h3>Quy trình vận hành &amp; Tự động hóa AI</h3>
         <div class='notice-list'>
-          <div class='notice-item'><span>${S.fn.icon('cart', 18)}</span><span><strong>Bán hàng &amp; Thu tiền</strong><small>Chọn hoặc quét mã, hỗ trợ Tiền mặt, Chuyển khoản, Ghi nợ.</small></span></div>
-          <div class='notice-item'><span>${S.fn.icon('users', 18)}</span><span><strong>Nhân sự &amp; Chấm công</strong><small>Tính ngày công, hoa hồng thực thu và tạm ứng.</small></span></div>
-          <div class='notice-item'><span>${S.fn.icon('receipt', 18)}</span><span><strong>Khách hàng &amp; Bảo hành</strong><small>Tích điểm theo SĐT, đổi trả và tra Serial / IMEI.</small></span></div>
-          <div class='notice-item'><span>${S.fn.icon('layers', 18)}</span><span><strong>Kho &amp; Offline</strong><small>Kiểm kê quét mã và giữ hàng đợi đơn khi mất mạng.</small></span></div>
+          <div class='notice-item'><span>${S.fn.icon('cart', 18)}</span><span><strong>Bán hàng POS &amp; AI Giọng nói</strong><small>Nói hoặc gõ câu lệnh (VD: "2 trà sữa sđt 0912345678 chuyển khoản"), tự nhận diện &amp; tích điểm SĐT, hỗ trợ VietQR offline.</small></span></div>
+          <div class='notice-item'><span>${S.fn.icon('box', 18)}</span><span><strong>Nhập kho 1 chạm bằng Ảnh &amp; Điều phối AI</strong><small>Bấm "📸 Nhập bằng ảnh" để AI đọc hóa đơn NCC; dùng "✨ Gợi ý điều phối AI" trong Kiểm kê để đặt bù hoặc chuyển kho.</small></span></div>
+          <div class='notice-item'><span>${S.fn.icon('layers', 18)}</span><span><strong>Quản lý Mã vạch &amp; Nhà cung cấp 360°</strong><small>Sinh mã EAN-13 hàng loạt &amp; in tem nhiệt/A4 trong Sản phẩm; theo dõi MST, công nợ, lịch sử nhập-trả ở Nhà cung cấp.</small></span></div>
+          <div class='notice-item'><span>${S.fn.icon('receipt', 18)}</span><span><strong>Đơn Zalo / Facebook / Sàn</strong><small>Bấm "✨ Dán tin nhắn AI" hoặc "📸 Đọc ảnh đơn" để tự điền người nhận, SĐT, địa chỉ và sản phẩm.</small></span></div>
         </div>
       </div>
       <div class='help-section'>
@@ -1526,7 +1532,7 @@
           <div class='help-shortcut-item'><kbd>F9</kbd><span>Thanh toán ngay</span></div>
         </div>
       </div>`;
-    S.fn.showModal('Hướng dẫn sử dụng', '', body, `<button class='btn btn-secondary' type='button' data-action='change-task-focus'>Đổi màn hình mở đầu</button><button class='btn btn-primary' type='button' data-action='close-modal'>Đóng</button>`, true);
+    S.fn.showModal('Hướng dẫn sử dụng Slink', 'Tóm tắt nhanh các tính năng AI, bán hàng, kho và nhà cung cấp.', body, `<button class='btn btn-secondary' type='button' data-action='change-task-focus'>Đổi màn hình mở đầu</button><button class='btn btn-secondary' type='button' data-action='start-guided-tour'>Hướng dẫn từng bước</button><button class='btn btn-primary' type='button' data-action='close-modal'>Đóng</button>`, true);
   }
 
 

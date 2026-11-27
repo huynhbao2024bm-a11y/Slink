@@ -4,6 +4,13 @@
 
 Status labels: **Not started**, **In progress**, **Blocked by external dependency**, **Evidence passed**. “Evidence passed” applies only to the named milestone, never to the whole product by implication.
 
+## 2026-11-27 · Slink 0.9.7.0 (versionCode 3039) — Quản lý mã vạch EAN-13, Hướng dẫn ban đầu & Nhà cung cấp 360°
+
+- **Quản lý mã vạch & In tem tập trung ([products.js](client/products.js), [server/products.js](server/products.js), [settings.js](client/settings.js)):** Nâng cấp `Quản lý mã vạch & In tem` hỗ trợ lọc sản phẩm, chọn 4 khổ giấy in tem (`38×21mm`, `52×29mm`, `70×22mm`, `50×30mm`), nút `✨ Sinh mã EAN-13 hàng loạt` (`POST /products/generate-barcodes`, mã nội bộ chuẩn `20...`), và 2 cấu hình mới trong Cài đặt (`autoGenerateBarcode`, `allowDuplicateBarcodes`, migration [20261127213000_suppliers_barcodes_0970.sql](server/migrations/20261127213000_suppliers_barcodes_0970.sql)).
+- **Hướng dẫn sử dụng ban đầu & Trợ giúp ([dashboard.js](client/dashboard.js), [shell.js](client/shell.js)):** Checklist 4 bước thực tế trên `Tổng quan` (`Cửa hàng & VietQR`, `Thêm/Chụp ảnh SP`, `Nhập kho & Mã vạch`, `Lên đơn POS & Tích điểm`), tự động mở Guided Tour cho cửa hàng mới, và cập nhật modal `?` bao phủ đầy đủ tính năng AI, Mã vạch & NCC 360°.
+- **Nhà cung cấp chuẩn 360° ([finance.js](server/finance.js), [customers.js](client/customers.js), [client/finance.js](client/finance.js), [ai-assistant.js](server/ai-assistant.js)):** Bổ sung `code`, `tax_code`, `address`, `contact_name`, `group_name`; thêm `PUT /suppliers/:id` (Sửa NCC), `POST /suppliers/import` (Nhập CSV NCC hàng loạt), modal `Chi tiết NCC 360°` (`total_purchased_vnd`, `total_settled_vnd`, `balance_vnd`, phiếu trả NCC), tìm kiếm theo mã/SĐT/MST, và đối chiếu NCC theo SĐT trong `groundParsedInvoice`. Nâng mặc định Android lên `0.9.7.0` (`versionCode: 3039`).
+- **Evidence passed:** Toàn bộ bộ kiểm thử tự động máy chủ (`127/127` pass, gồm bài test `0.9.7.0` trong [audit-0950-loyalty-ai.test.js](server/test/audit-0950-loyalty-ai.test.js)) và kiểm thử E2E bot trên trình duyệt thực tế (`1366×820` và `390×844`) với `0` lỗi HTTP `>= 400`.
+
 ## 2026-11-27 · Nhập kho từ một ảnh
 
 **Đang nghiệm thu.** Mục tiêu là đọc phiếu một lần và cho người có quyền chốt kho, công nợ và sổ chi trên cùng phiếu nhập. Bản nháp giữ đủ dòng cần đối chiếu. Mặt hàng tạo nhanh có tồn đầu bằng 0. Việc ghi sổ dùng giao dịch và mã chống gửi trùng của phiếu nhập hiện hành.

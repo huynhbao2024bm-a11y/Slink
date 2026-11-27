@@ -181,7 +181,7 @@
   S.fn.renderProducts = function renderProducts() {
     const canEdit = S.fn.hasPerm('editProducts');
     const moreActions = (canEdit ? `<button class='btn btn-secondary' data-action='import-products'>Nhập danh sách</button><button class='btn btn-secondary' data-action='new-product-variant-group'>Thêm nhiều màu, cỡ</button><button class='btn btn-secondary' data-action='bulk-update-products'>Cập nhật hàng loạt</button>` : '') + `<button class='btn btn-secondary' data-action='print-barcode-batch'>In tem mã vạch</button><button class='btn btn-secondary' data-action='open-warranty-lookup'>Tra cứu bảo hành</button>` + (S.fn.canExportData() ? `<button class='btn btn-secondary' data-action='open-export'>Xuất CSV</button>` : '');
-    const actions = (canEdit ? `<button class='btn btn-primary' data-action='new-product'>＋ Thêm hàng</button><button class='btn btn-secondary desktop-only-btn' data-action='import-products'>Nhập danh sách</button>` : '') + `<button class='btn btn-secondary desktop-only-btn' data-action='print-barcode-batch'>In tem</button>` + (moreActions ? `<details class='catalog-more'><summary class='btn btn-secondary'>Khác</summary><div>${moreActions}</div></details>` : '');
+    const actions = (canEdit ? `<button class='btn btn-primary' data-action='new-product'>＋ Thêm hàng</button><button class='btn btn-secondary desktop-only-btn' data-action='import-products'>Nhập danh sách</button>` : '') + `<button class='btn btn-secondary desktop-only-btn' data-action='print-barcode-batch'>Quản lý mã vạch &amp; In tem</button>` + (moreActions ? `<details class='catalog-more'><summary class='btn btn-secondary'>Khác</summary><div>${moreActions}</div></details>` : '');
     return S.fn.pageHeading('Sản phẩm', '', actions) +
       `<div class='toolbar'><div class='toolbar-left'><div class='search-wrap product-search-wrap'><span class='search-symbol'>⌕</span><input class='input' id='product-search' type='search' placeholder='Tìm tên, mã hàng hoặc mã vạch…' value='${S.fn.esc(S.state.searchTerms.products)}' aria-label='Tìm sản phẩm'><button class='icon-button inventory-scan' type='button' data-action='product-scan' aria-label='Quét mã vạch tìm sản phẩm' title='Quét mã vạch'>${S.fn.icon('scan', 19)}</button></div><span class='result-count' data-product-result-count>${S.state.productLoading ? 'Đang tải…' : `${S.fn.number(S.state.productTotal)} sản phẩm`}</span></div></div>` + S.fn.renderProductList();
   }
@@ -1937,7 +1937,7 @@
     });
     if (!list.length) return S.fn.toast('Chưa có sản phẩm để in tem', 'Thêm sản phẩm trước khi tạo bảng in mã vạch.', 'error');
     const rowHtml = list.map(function (item) {
-      return `<tr data-barcode-print-row data-id='${S.fn.esc(item.id)}' data-name='${S.fn.esc(item.name)}' data-sku='${S.fn.esc(item.sku)}' data-barcode='${S.fn.esc(item.barcode)}' data-price='${S.fn.esc(item.priceVnd)}' data-search='${S.fn.esc(`${item.name} ${item.sku} ${item.barcode}`.toLocaleLowerCase('vi'))}'>
+      return `<tr data-barcode-print-row data-id='${S.fn.esc(item.id)}' data-has-barcode='${item.hasOwnBarcode ? '1' : '0'}' data-name='${S.fn.esc(item.name)}' data-sku='${S.fn.esc(item.sku)}' data-barcode='${S.fn.esc(item.barcode)}' data-price='${S.fn.esc(item.priceVnd)}' data-search='${S.fn.esc(`${item.name} ${item.sku} ${item.barcode}`.toLocaleLowerCase('vi'))}'>
         <td><input type='checkbox' name='selected' ${item.selected ? 'checked' : ''} aria-label='Chọn ${S.fn.esc(item.name)}'/></td>
         <td><strong>${S.fn.esc(item.name)}</strong><br><small>${S.fn.esc(item.barcode || item.sku)}${item.hasOwnBarcode ? '' : ' · dùng tạm SKU'}</small></td>
         <td class='text-right'>${S.fn.moneyVndText(item.priceVnd)}</td>
@@ -1952,6 +1952,7 @@
       <div class='barcode-toolbar'>
         <input class='input' type='search' data-barcode-filter placeholder='Lọc nhanh theo tên, SKU hoặc mã vạch…' aria-label='Lọc sản phẩm in tem' autocomplete='off'/>
         <div class='barcode-toolbar-actions'>
+          ${S.fn.hasPerm('editProducts') && list.some(i => !i.hasOwnBarcode) ? `<button class='btn btn-secondary' type='button' data-action='generate-missing-barcodes'>✨ Sinh mã EAN-13 hàng loạt</button>` : ''}
           <button class='btn btn-secondary' type='button' data-action='barcode-select-all'>Chọn tất cả</button>
           <button class='btn btn-secondary' type='button' data-action='barcode-select-none'>Bỏ chọn</button>
         </div>

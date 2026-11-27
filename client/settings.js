@@ -10,6 +10,8 @@
     if (settings.loyalty_earn_unit_vnd != null) S.state.store.settings.loyaltyEarnUnitVnd = String(settings.loyalty_earn_unit_vnd);
     if (settings.loyalty_redeem_value_vnd != null) S.state.store.settings.loyaltyRedeemValueVnd = String(settings.loyalty_redeem_value_vnd);
     if (settings.protect_cost_margin !== undefined) S.state.store.settings.protectCostMargin = settings.protect_cost_margin !== false;
+    if (settings.allow_duplicate_barcodes !== undefined) S.state.store.settings.allowDuplicateBarcodes = Boolean(settings.allow_duplicate_barcodes);
+    if (settings.auto_generate_barcode !== undefined) S.state.store.settings.autoGenerateBarcode = Boolean(settings.auto_generate_barcode);
     const activeStore = S.state.authSession && S.state.authSession.stores.find(function (item) { return item.id === S.state.store.id; });
     if (activeStore) Object.assign(activeStore, {
       name: settings.name,
@@ -20,6 +22,8 @@
       loyalty_earn_unit_vnd: S.state.store.settings.loyaltyEarnUnitVnd,
       loyalty_redeem_value_vnd: S.state.store.settings.loyaltyRedeemValueVnd,
       protect_cost_margin: S.state.store.settings.protectCostMargin,
+      allow_duplicate_barcodes: S.state.store.settings.allowDuplicateBarcodes,
+      auto_generate_barcode: S.state.store.settings.autoGenerateBarcode,
     });
   }
 
@@ -345,7 +349,9 @@
     const loyaltyEarn = S.state.store.settings.loyaltyEarnUnitVnd || '100000';
     const loyaltyRedeem = S.state.store.settings.loyaltyRedeemValueVnd || '1000';
     const marginChecked = S.state.store.settings.protectCostMargin !== false ? 'checked' : '';
-    const loyaltyBlock = `<section class='panel settings-panel settings-card'><div class='settings-card-head'><h2>Tích điểm SĐT &amp; Bảo vệ giá vốn</h2></div><form data-form='loyalty-settings' data-version='${S.state.store.settings.version || 1}'><div class='form-grid'><div class='form-field'><label class='input-label' for='setting-loyalty-earn'>Chi tiêu tích 1 điểm (VNĐ)</label><input class='input' id='setting-loyalty-earn' name='loyaltyEarnUnitVnd' type='number' min='1000' max='100000000' step='1000' value='${S.fn.esc(loyaltyEarn)}' ${disabled}/><small class='muted'>VD: 100.000đ = 1 điểm khi thanh toán.</small></div><div class='form-field'><label class='input-label' for='setting-loyalty-redeem'>Giá trị quy đổi 1 điểm (VNĐ)</label><input class='input' id='setting-loyalty-redeem' name='loyaltyRedeemValueVnd' type='number' min='100' max='10000000' step='100' value='${S.fn.esc(loyaltyRedeem)}' ${disabled}/><small class='muted'>VD: 1 điểm trừ 1.000đ vào hóa đơn.</small></div></div><div class='settings-toggle-list' style='margin-top:12px'><label class='settings-toggle-row'><span class='settings-toggle-copy'><strong>Chặn nhân viên bán dưới giá vốn</strong><small>Chỉ Chủ cửa hàng mới được phép giảm giá hoặc dùng điểm thấp hơn giá vốn</small></span><span class='ui-switch'><input type='checkbox' name='protectCostMargin' ${marginChecked} ${disabled}/><span class='ui-switch-track' aria-hidden='true'></span></span></label></div>${canEdit ? `<div class='modal-footer settings-form-footer'><button class='btn btn-primary' type='submit'>Lưu cấu hình tích điểm</button></div>` : ''}</form></section>`;
+    const dupBarcodeChecked = S.state.store.settings.allowDuplicateBarcodes === true ? 'checked' : '';
+    const autoBarcodeChecked = S.state.store.settings.autoGenerateBarcode === true ? 'checked' : '';
+    const loyaltyBlock = `<section class='panel settings-panel settings-card'><div class='settings-card-head'><h2>Tích điểm SĐT, Giá vốn &amp; Mã vạch</h2></div><form data-form='loyalty-settings' data-version='${S.state.store.settings.version || 1}'><div class='form-grid'><div class='form-field'><label class='input-label' for='setting-loyalty-earn'>Chi tiêu tích 1 điểm (VNĐ)</label><input class='input' id='setting-loyalty-earn' name='loyaltyEarnUnitVnd' type='number' min='1000' max='100000000' step='1000' value='${S.fn.esc(loyaltyEarn)}' ${disabled}/><small class='muted'>VD: 100.000đ = 1 điểm khi thanh toán.</small></div><div class='form-field'><label class='input-label' for='setting-loyalty-redeem'>Giá trị quy đổi 1 điểm (VNĐ)</label><input class='input' id='setting-loyalty-redeem' name='loyaltyRedeemValueVnd' type='number' min='100' max='10000000' step='100' value='${S.fn.esc(loyaltyRedeem)}' ${disabled}/><small class='muted'>VD: 1 điểm trừ 1.000đ vào hóa đơn.</small></div></div><div class='settings-toggle-list' style='margin-top:12px'><label class='settings-toggle-row'><span class='settings-toggle-copy'><strong>Chặn nhân viên bán dưới giá vốn</strong><small>Chỉ Chủ cửa hàng mới được phép giảm giá hoặc dùng điểm thấp hơn giá vốn</small></span><span class='ui-switch'><input type='checkbox' name='protectCostMargin' ${marginChecked} ${disabled}/><span class='ui-switch-track' aria-hidden='true'></span></span></label><label class='settings-toggle-row'><span class='settings-toggle-copy'><strong>Tự động sinh mã vạch EAN-13 khi tạo sản phẩm mới</strong><small>Tự gắn mã vạch chuẩn nếu bỏ trống ô mã vạch</small></span><span class='ui-switch'><input type='checkbox' name='autoGenerateBarcode' ${autoBarcodeChecked} ${disabled}/><span class='ui-switch-track' aria-hidden='true'></span></span></label><label class='settings-toggle-row'><span class='settings-toggle-copy'><strong>Cho phép dùng chung mã vạch giữa các sản phẩm</strong><small>Hữu ích khi nhiều biến thể dùng chung 1 mã vạch bao bì</small></span><span class='ui-switch'><input type='checkbox' name='allowDuplicateBarcodes' ${dupBarcodeChecked} ${disabled}/><span class='ui-switch-track' aria-hidden='true'></span></span></label></div>${canEdit ? `<div class='modal-footer settings-form-footer'><button class='btn btn-primary' type='submit'>Lưu cấu hình</button></div>` : ''}</form></section>`;
     return S.fn.pageHeading('Cài đặt', '', '') +
       `<section class='settings-panel settings-group' data-label='Cửa hàng'>${storeInfoBlock}${loyaltyBlock}${S.fn.renderBusinessProfileSettings(canEdit)}</section>` +
       `<section class='settings-panel settings-group' data-label='Bán hàng & Thiết bị'>${S.fn.renderPosPrefsSettings()}${printerBlock}</section>` +
@@ -512,6 +518,8 @@
           loyaltyEarnUnitVnd: String(data.get('loyaltyEarnUnitVnd') || '100000').trim(),
           loyaltyRedeemValueVnd: String(data.get('loyaltyRedeemValueVnd') || '1000').trim(),
           protectCostMargin: data.get('protectCostMargin') === 'on',
+          autoGenerateBarcode: data.get('autoGenerateBarcode') === 'on',
+          allowDuplicateBarcodes: data.get('allowDuplicateBarcodes') === 'on',
           version: Number(form.dataset.version || S.state.store.settings.version || 1),
         },
       });

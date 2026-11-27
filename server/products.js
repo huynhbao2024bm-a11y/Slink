@@ -989,6 +989,53 @@ function registerProductRoutes(app, { pool, env }) {
     return reply.code(outcome.status).send(outcome.body);
   });
 
+async function getStoreBarcodePolicy(client, storeId) {
+  const res = await client.query(
+    `SELECT COALESCE(allow_duplicate_barcodes, false) AS allow_duplicate_barcodes,
+            COALESCE(auto_generate_barcode, false) AS auto_generate_barcode
+     FROM stores WHERE id = $1`,
+    [storeId]
+  );
+  return res.rows[0] || { allow_duplicate_barcodes: false, auto_generate_barcode: false };
+}
+
+function buildRandomEan13() {
+  const digits = ['2', '0'];
+  for (let i = 0; i < 10; i += 1) digits.push(String(Math.floor(Math.random() * 10)));
+  let sum = 0;
+  for (let i = 0; i < 12; i += 1) sum += Number(digits[i]) * (i % 2 === 0 ? 1 : 3);
+  const check = (10 - (sum % 10)) % 10;
+  return digits.join('') + String(check);
+}
+
+async function generateUniqueEan13ForStore(client, storeId) {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const candidate = buildRandomEan13();
+    const hit = await client.query(
+      'SELECT 1 FROM products WHERE store_id = $1 AND barcode = $2 LIMIT 1',
+      [storeId, candidate]
+    );
+    if (!hit.rowCount) return candidate;
+  }
+  return buildRandomEan13();
+}
+
+async function assertBarcodeAllowed(client, storeId, barcode, excludeProductId = null, policy = null) {
+  if (!barcode) return;
+  const cfg = policy || await getStoreBarcodePolicy(client, storeId);
+  if (cfg.allow_duplicate_barcodes) return;
+  const dup = await client.query(
+    `SELECT 1 FROM products
+     WHERE store_id = $1 AND status <> 'archived' AND barcode = $2
+       AND ($3::uuid IS NULL OR id <> $3::uuid)
+     LIMIT 1`,
+    [storeId, barcode, excludeProductId]
+  );
+  if (dup.rowCount) {
+    throw new ApiError(409, 'duplicate_barcode', 'Mã vạch này đã tồn tại trên một sản phẩm khác.');
+  }
+}
+
   app.post('/api/stores/:storeId/products', async (request) => {
     const auth = await authenticate(pool, request);
     requireCsrf(request, env);
@@ -1000,6 +1047,12 @@ function registerProductRoutes(app, { pool, env }) {
       return await withStore(pool, auth.userId, storeId, async (client, membership) => {
         requireEditor(membership);
         const canViewCost = hasPermission(membership, 'view_cost_price');
+        const barcodePolicy = await getStoreBarcodePolicy(client, storeId);
+        let finalBarcode = product.barcode;
+        if (!finalBarcode && barcodePolicy.auto_generate_barcode) {
+          finalBarcode = await generateUniqueEan13ForStore(client, storeId);
+        }
+        await assertBarcodeAllowed(client, storeId, finalBarcode, null, barcodePolicy);
         const serialTracked = Boolean(product.serialTracked);
         const inventoryTracked = serialTracked ? true : product.inventoryTracked;
         const inserted = await client.query(
@@ -1010,7 +1063,7 @@ function registerProductRoutes(app, { pool, env }) {
            RETURNING id, sku, barcode, COALESCE(extra_barcodes, '{}'::text[]) AS extra_barcodes, name, category, unit, sale_price_vnd::text AS sale_price_vnd,
                      cost_vnd::text AS cost_vnd, low_stock_threshold::text AS low_stock_threshold,
                      inventory_tracked, serial_tracked, warranty_months, status, version, purchase_pack, created_at`,
-          [storeId, product.sku, product.sku.toLocaleLowerCase('vi'), product.barcode, product.name,
+          [storeId, product.sku, product.sku.toLocaleLowerCase('vi'), finalBarcode, product.name,
             product.category, product.unit, product.salePriceVnd, product.costVnd,
             product.lowStockThreshold, inventoryTracked, auth.userId, product.purchasePack ? JSON.stringify(product.purchasePack) : null,
             product.extraBarcodes || [], serialTracked, product.warrantyMonths ?? 0]
@@ -1291,6 +1344,46 @@ function registerProductRoutes(app, { pool, env }) {
     }
   });
 
+  app.post('/api/stores/:storeId/products/generate-barcodes', async (request) => {
+    const auth = await authenticate(pool, request);
+    requireCsrf(request, env);
+    const { storeId } = request.params;
+    if (!UUID_PATTERN.test(storeId)) throw new ApiError(400, 'validation_error', 'Cửa hàng không hợp lệ.');
+    const rawIds = Array.isArray(request.body?.productIds) ? request.body.productIds : [];
+    const productIds = Array.from(new Set(rawIds.filter((id) => typeof id === 'string' && UUID_PATTERN.test(id)))).slice(0, 100);
+    if (!productIds.length) {
+      throw new ApiError(400, 'validation_error', 'Hãy chọn ít nhất 1 sản phẩm chưa có mã vạch.');
+    }
+    return withStore(pool, auth.userId, storeId, async (client, membership) => {
+      requireEditor(membership);
+      const rows = await client.query(
+        `SELECT id, sku, name, barcode FROM products
+         WHERE store_id = $1 AND id = ANY($2::uuid[]) AND status = 'active' AND (barcode IS NULL OR barcode = '')
+         FOR UPDATE`,
+        [storeId, productIds]
+      );
+      const updated = [];
+      for (const row of rows.rows) {
+        const barcode = await generateUniqueEan13ForStore(client, storeId);
+        const res = await client.query(
+          `UPDATE products SET barcode = $3, version = version + 1, updated_at = now()
+           WHERE store_id = $1 AND id = $2
+           RETURNING id, sku, barcode, name, version`,
+          [storeId, row.id, barcode]
+        );
+        if (res.rowCount) updated.push(res.rows[0]);
+      }
+      if (updated.length) {
+        await client.query(
+          `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, metadata)
+           VALUES ($1, $2, 'product.barcodes_generated', 'store', $1, jsonb_build_object('count', $3::int))`,
+          [storeId, auth.userId, updated.length]
+        );
+      }
+      return { count: updated.length, products: updated };
+    });
+  });
+
   app.put('/api/stores/:storeId/products/:productId', async (request) => {
     const auth = await authenticate(pool, request);
     requireCsrf(request, env);
@@ -1388,6 +1481,7 @@ function registerProductRoutes(app, { pool, env }) {
             throw new ApiError(409, 'inventory_tracking_change_requires_open_purchase_order', 'Hãy nhận đủ hoặc hủy các đơn đặt hàng còn mở trước khi tắt theo dõi tồn kho.');
           }
         }
+        await assertBarcodeAllowed(client, storeId, next.barcode, productId);
         const updated = await client.query(
           `UPDATE products SET sku = $3, sku_normalized = $4, barcode = $5, extra_barcodes = $16::text[], name = $6, category = $7, unit = $8,
                sale_price_vnd = $9, cost_vnd = $10, low_stock_threshold = $11, inventory_tracked = $12, warranty_months = $17,

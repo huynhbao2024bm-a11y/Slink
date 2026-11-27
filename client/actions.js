@@ -1039,6 +1039,9 @@
     else if (action === 'save-customer-segment') S.fn.openSaveCustomerSegment();
     else if (action === 'delete-customer-segment') S.fn.openDeleteCustomerSegment(id);
     else if (action === 'new-supplier') S.fn.openSupplier();
+    else if (action === 'edit-supplier') S.fn.openSupplier(id);
+    else if (action === 'import-suppliers') S.fn.openSupplierImportModal();
+    else if (action === 'start-guided-tour') { S.fn.closeModal(); S.fn.startGuidedTour?.(true); }
     else if (action === 'edit-customer') { S.fn.closeModal(); S.fn.openCustomer(id); }
     else if (action === 'customer-detail') S.fn.openCustomerDetail(id);
     else if (action === 'collect-customer-payment') S.fn.openCollectCustomerPayment(id);
@@ -1336,6 +1339,33 @@
         if (box) box.checked = checked;
       });
       S.fn.updateBarcodePrintPreview();
+    }
+    else if (action === 'generate-missing-barcodes') {
+      const ids = [];
+      S.dom.modal.querySelectorAll('[data-barcode-print-row]').forEach(function (row) {
+        if (row.hidden || row.dataset.hasBarcode === '1') return;
+        const box = row.querySelector('[name="selected"]');
+        if (box && box.checked && row.dataset.id) ids.push(row.dataset.id);
+      });
+      if (!ids.length) {
+        S.dom.modal.querySelectorAll('[data-barcode-print-row]').forEach(function (row) {
+          if (!row.hidden && row.dataset.hasBarcode !== '1' && row.dataset.id) ids.push(row.dataset.id);
+        });
+      }
+      if (!ids.length) return S.fn.toast('Tất cả sản phẩm đã có mã vạch', 'Không có mặt hàng nào đang thiếu mã vạch.');
+      button.disabled = true;
+      S.fn.apiRequest(`/api/stores/${encodeURIComponent(S.state.store.id)}/products/generate-barcodes`, {
+        method: 'POST',
+        body: { productIds: ids.slice(0, 200) },
+      }).then(async function (res) {
+        await S.fn.loadProductsPage(S.state.searchTerms.products || '', S.state.productsPageOffset || 0);
+        S.fn.closeModal();
+        S.fn.openBarcodePrintModal();
+        S.fn.toast('Đã sinh mã EAN-13 hàng loạt', `Đã cấp mã vạch chuẩn cho ${res.count || 0} sản phẩm.`);
+      }).catch(function (err) {
+        button.disabled = false;
+        S.fn.toast('Chưa sinh được mã vạch', err.message || 'Vui lòng thử lại.', 'error');
+      });
     }
     else if (action === 'inventory-tab') {
       S.state.inventoryTab = button.dataset.tab || 'stock';
@@ -2257,6 +2287,7 @@
     else if (type === 'customer-saved-segment-delete') S.fn.deleteCustomerSegment(form);
     else if (type === 'customer-tag') S.fn.changeCustomerTag(form.dataset.id, 'add', String(new FormData(form).get('tag') || '').trim());
     else if (type === 'supplier') S.fn.saveSupplier(form);
+    else if (type === 'supplier-import') S.fn.saveSupplierImport(form);
     else if (type === 'order-note') S.fn.saveOrderNote(form);
     else if (type === 'order-tag') S.fn.changeOrderTag(form.dataset.id, 'add', String(new FormData(form).get('tag') || '').trim());
     else if (type === 'void-order') S.fn.saveVoidOrder(form);
