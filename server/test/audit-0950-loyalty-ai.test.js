@@ -456,3 +456,128 @@ test('0.9.5.1 Auth: Google-linked account can still sign in with matching manual
   });
   assert.equal(manualBlocked.statusCode, 401);
 });
+
+test('0.9.6.0 AI & Automation: F&B local parse, unknown supplier-code fallback, channel-order parse, and restock suggestions', async (t) => {
+  const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'slink-ai0960-'));
+  const runtime = await openPGliteRuntime({ dataDirectory: dataDir, migrationsDirectory: path.resolve(__dirname, '../migrations') });
+  const app = await buildServer({
+    pool: runtime.pool,
+    aiClient: {
+      parseInvoice: async () => ({
+        supplier_name: 'NCC Dai Phat',
+        total_vnd: '100000',
+        discount_vnd: '0',
+        fee_vnd: '0',
+        paid_vnd: '0',
+        method: 'cash',
+        items: [{
+          product_name: 'Trà đào với thạch',
+          code: 'NCC-UNKNOWN-999',
+          unit: 'chiếc',
+          quantity: '5',
+          import_price_vnd: '20000',
+          line_total_vnd: '100000',
+        }],
+      }),
+      parseChannelOrder: async () => ({
+        external_order_ref: 'ZALO-8899',
+        customer_name: 'Chị Hoa',
+        customer_phone: '0912345678',
+        shipping_address: '45 Lê Lợi, Q1',
+        payment_status: 'cod',
+        internal_note: 'Giao giờ hành chính',
+        items: [{ matched_name: 'Trà đào với thạch', quantity: 2 }],
+      }),
+    },
+    env: {
+      NODE_ENV: 'test',
+      PUBLIC_ORIGIN: 'http://127.0.0.1:3000',
+      DEMO_DISABLE_EMAIL_VERIFICATION: 'true',
+      SESSION_SECRET: '0123456789abcdef0123456789abcdef',
+    },
+  });
+  t.after(async () => {
+    await app.close();
+    await fs.rm(dataDir, { recursive: true, force: true }).catch(() => {});
+  });
+
+  const reg = await app.inject({
+    method: 'POST',
+    url: '/api/auth/register',
+    headers: { origin: 'http://127.0.0.1:3000' },
+    payload: {
+      displayName: 'Chu AI 0960',
+      storeName: 'Quan Tra 0960',
+      email: 'ai0960@example.com',
+      password: 'VeryStrongPassword#2026',
+    },
+  });
+  assert.equal(reg.statusCode, 201);
+  const headers = makeAuthHeaders(extractCookies(reg));
+  const storeId = reg.json().stores[0].id;
+
+  const imp = await app.inject({
+    method: 'POST',
+    url: `/api/stores/${storeId}/products/import`,
+    headers: { ...headers, 'idempotency-key': randomUUID() },
+    payload: {
+      items: [{
+        name: 'Trà đào với thạch',
+        sku: 'TD-01',
+        unit: 'cái',
+        salePriceVnd: 35000,
+        costVnd: 20000,
+        lowStockThreshold: 10,
+        openingQuantity: '2',
+      }],
+    },
+  });
+  assert.equal(imp.statusCode, 201, imp.body);
+  const prod = (await app.inject({ method: 'GET', url: `/api/stores/${storeId}/products?limit=10`, headers })).json().products[0];
+
+  // 1. tryFastLocalOrderParse keeps "với" inside product name and reads leading customer + F&B note
+  const fastHit = tryFastLocalOrderParse('Chị Hoa lấy 2 trà đào với thạch ít đường', [prod], []);
+  assert.ok(fastHit);
+  assert.equal(fastHit.items.length, 1);
+  assert.equal(fastHit.items[0].product_id, prod.id);
+  assert.equal(fastHit.items[0].quantity, 2);
+  assert.equal(fastHit.customer_name, 'chi hoa');
+  assert.equal(fastHit.note, 'it duong');
+
+  // 2. parse-invoice matches by name even when supplier code is unknown AND normalizes chiếc == cái
+  const invRes = await app.inject({
+    method: 'POST',
+    url: `/api/stores/${storeId}/ai/parse-invoice`,
+    headers,
+    payload: {
+      mimeType: 'image/jpeg',
+      imageBase64: Buffer.from('fake-jpeg-bytes-for-test-0960-padding-bytes-01234567890123456789012345678901234567890123456789').toString('base64'),
+      draftVersion: 2,
+    },
+  });
+  assert.equal(invRes.statusCode, 200, invRes.body);
+  const invDraft = invRes.json();
+  assert.equal(invDraft.rows[0].product.id, prod.id);
+  assert.equal(invDraft.rows[0].issue, null);
+
+  // 3. parse-channel-order parses pasted message / order screenshot
+  const chRes = await app.inject({
+    method: 'POST',
+    url: `/api/stores/${storeId}/ai/parse-channel-order`,
+    headers,
+    payload: { text: 'Đơn Zalo ZALO-8899 Chị Hoa 0912345678 45 Lê Lợi, Q1 2 trà đào với thạch' },
+  });
+  assert.equal(chRes.statusCode, 200, chRes.body);
+  const chBody = chRes.json();
+  assert.equal(chBody.customerPhone, '0912345678');
+  assert.equal(chBody.items[0].productId, prod.id);
+
+  // 4. restock-suggestions returns urgent low-stock suggestion (stock 2 <= minStock 10)
+  const restockRes = await app.inject({
+    method: 'GET',
+    url: `/api/stores/${storeId}/ai/restock-suggestions`,
+    headers,
+  });
+  assert.equal(restockRes.statusCode, 200, restockRes.body);
+  assert.ok(restockRes.json().suggestions.some((s) => s.productId === prod.id && s.actionType === 'purchase'));
+});

@@ -414,7 +414,11 @@
     const recName = S.state.posDelivery.receiverName || customer?.name || '';
     const recPhone = S.state.posDelivery.receiverPhone || customer?.phone || '';
     return `<div class='pos-delivery-box'>
-      <div class='pos-delivery-head'><strong>${S.fn.icon('truck', 15)} Thông tin giao hàng</strong><span>${S.state.posDelivery.collection === 'cod' ? 'Thu hộ COD' : S.state.posDelivery.collection === 'prepaid' ? 'Đã trả trước' : 'Ghi công nợ'}</span></div>
+      <div class='pos-delivery-head'><strong>${S.fn.icon('truck', 15)} Thông tin giao hàng</strong><div style='display:flex;align-items:center;gap:8px'><button type='button' class='link-button' data-action='pos-delivery-ai-paste' ${disabled}>✨ Dán tin nhắn AI</button><span>${S.state.posDelivery.collection === 'cod' ? 'Thu hộ COD' : S.state.posDelivery.collection === 'prepaid' ? 'Đã trả trước' : 'Ghi công nợ'}</span></div></div>
+      <div id='pos-delivery-ai-box' class='pos-delivery-full' hidden style='margin-bottom:8px'>
+        <textarea class='input' id='pos-delivery-ai-text' rows='2' maxlength='1500' placeholder='Dán tin nhắn Zalo/FB khách (tên, SĐT, địa chỉ, món)…'></textarea>
+        <div style='display:flex;gap:8px;margin-top:6px'><button type='button' class='btn btn-secondary' data-action='pos-delivery-ai-apply'>Điền tự động</button><button type='button' class='btn btn-secondary' data-action='pos-delivery-ai-close'>Đóng</button></div>
+      </div>
       <div class='pos-delivery-fields'>
         <input class='input' type='text' data-delivery-field='receiverName' maxlength='120' placeholder='Tên người nhận *' value='${S.fn.esc(recName)}' aria-label='Tên người nhận' ${disabled}/>
         <input class='input' type='tel' data-delivery-field='receiverPhone' maxlength='30' placeholder='Số điện thoại *' value='${S.fn.esc(recPhone)}' aria-label='Số điện thoại người nhận' ${disabled}/>
@@ -2640,18 +2644,20 @@
     }
     const rec = new SpeechRec();
     rec.lang = 'vi-VN';
-    rec.interimResults = false;
+    rec.interimResults = true;
     rec.maxAlternatives = 1;
     S.state.posAiRec = rec;
     S.state.posAiListening = true;
     if (button) { button.classList.add('is-listening'); button.textContent = 'Đang nghe…'; }
     S.fn.setPosAiStatus('Đang nghe tiếng Việt… hãy nói tên món, số lượng và tên khách nếu có.', false);
     rec.onresult = function (event) {
-      const spoken = String(event.results?.[0]?.[0]?.transcript || '').trim();
-      if (spoken) {
-        const input = document.getElementById('pos-ai-input');
-        if (input) input.value = spoken;
-        S.state.posAiDraftText = spoken;
+      const res = event.results?.[event.results.length - 1];
+      const spoken = String(res?.[0]?.transcript || '').trim();
+      if (!spoken) return;
+      const input = document.getElementById('pos-ai-input');
+      if (input) input.value = spoken;
+      S.state.posAiDraftText = spoken;
+      if (res?.isFinal) {
         S.fn.submitPosAiCommand(spoken);
       }
     };
@@ -2748,6 +2754,7 @@
       S.state.posStandardNote = String(parsed.note).slice(0, 240);
     }
     S.fn.refreshCartPanels();
+    const unmatched = (Array.isArray(parsed?.unmatched) ? parsed.unmatched : []).map(u => String(u?.name || '').trim()).filter(Boolean);
     const notes = [];
     if (added.length) notes.push(`Đã thêm: ${added.join(', ')}`);
     if (parsed?.customerName || parsed?.customerPhone) notes.push(`Khách: ${parsed.customerName || parsed.customerPhone}`);
@@ -2758,11 +2765,23 @@
     if (parsed?.deliveryAddress) notes.push(`Giao: ${parsed.deliveryAddress}`);
     else if (parsed?.isDebt && !S.state.posPrefs?.requireFullPayment) notes.push('Chế độ: Ghi nợ');
     else if (parsed?.paymentMethod === 'bank_transfer') notes.push('Chuyển khoản');
+    const missingNames = skipped.concat(unmatched);
+    if (missingNames.length) notes.push(`Chưa có/hết: ${missingNames.join(', ')}`);
     const statusLine = added.length
       ? `${notes.join(' · ')}. Kiểm tra giỏ trước khi bấm Thu.`
-      : 'Chưa tìm thấy sản phẩm phù hợp trong danh mục.';
+      : (missingNames.length ? `Chưa thêm được: ${missingNames.join(', ')}.` : 'Chưa tìm thấy sản phẩm phù hợp trong danh mục.');
     S.fn.setPosAiStatus(statusLine, !added.length);
-    if (added.length) S.fn.toast('Đã lên đơn vào giỏ', added.join(', '));
+    const statusEl = document.getElementById('pos-ai-status');
+    if (statusEl && unmatched.length) {
+      const chipsHtml = unmatched.slice(0, 4).map(name => `<button type='button' class='link-button' style='margin-left:8px' data-action='pos-ai-search-chip' data-query='${S.fn.esc(name)}'>Tìm "${S.fn.esc(name)}"</button>`).join('');
+      statusEl.insertAdjacentHTML('beforeend', chipsHtml);
+    }
+    if (added.length) {
+      S.state.posAiDraftText = '';
+      const aiInput = document.getElementById('pos-ai-input');
+      if (aiInput) aiInput.value = '';
+      S.fn.toast('Đã lên đơn vào giỏ', missingNames.length ? `${added.join(', ')} · Chưa có: ${missingNames.join(', ')}` : added.join(', '));
+    }
   }
 
   S.fn.submitPosAiCommand = async function submitPosAiCommand(rawText, triggerBtn) {

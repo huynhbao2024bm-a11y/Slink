@@ -143,7 +143,7 @@
     const orderRowsHtml = (S.state.purchaseOrders || []).slice(0, 15).map(function (po) {
       return `<tr><td><button class='link-button order-ref' data-action='purchase-order-detail' data-id='${S.fn.esc(po.id)}'>${S.fn.esc(po.number)}</button></td><td>${S.fn.esc(po.supplierName || 'Nhà cung cấp')}</td><td>${S.fn.humanDate(po.createdAt, true)}</td><td class='text-right'>${S.fn.moneyVndText(po.totalVnd)}</td><td>${S.fn.esc(po.status || '')}</td></tr>`;
     }).join('');
-    return `<section class='panel'><div class='panel-header'><div><h2>Phiếu nhập hàng</h2></div>${canReceive ? `<div class='heading-actions'><button class='btn btn-secondary' data-action='new-purchase-order'>＋ Đặt hàng NCC</button><button class='btn btn-primary' data-action='receive-stock'>＋ Nhập hàng mới</button></div>` : ''}</div><div class='table-wrap'><table class='data-table'><thead><tr><th>Mã phiếu</th><th>Nhà cung cấp</th><th>Thời gian</th><th class='text-right'>Tổng tiền</th><th class='text-right'>Tem mã</th></tr></thead><tbody>${receiptRows || `<tr><td colspan='5'><div class='empty-state'><strong>${S.state.financeDataReady ? 'Chưa có phiếu nhập nào' : 'Đang tải danh sách phiếu nhập…'}</strong>${!S.state.financeDataReady ? `<button type='button' class='link-button' data-action='reload-inventory-purchases'>Tải ngay</button>` : ''}</div></td></tr>`}</tbody></table></div></section>` +
+    return `<section class='panel'><div class='panel-header'><div><h2>Phiếu nhập hàng</h2></div>${canReceive ? `<div class='heading-actions'><button class='btn btn-secondary' data-action='new-purchase-order'>＋ Đặt hàng NCC</button><button class='btn btn-secondary' data-action='receive-stock-photo'>📸 Nhập bằng ảnh</button><button class='btn btn-primary' data-action='receive-stock'>＋ Nhập hàng mới</button></div>` : ''}</div><div class='table-wrap'><table class='data-table'><thead><tr><th>Mã phiếu</th><th>Nhà cung cấp</th><th>Thời gian</th><th class='text-right'>Tổng tiền</th><th class='text-right'>Tem mã</th></tr></thead><tbody>${receiptRows || `<tr><td colspan='5'><div class='empty-state'><strong>${S.state.financeDataReady ? 'Chưa có phiếu nhập nào' : 'Đang tải danh sách phiếu nhập…'}</strong>${!S.state.financeDataReady ? `<button type='button' class='link-button' data-action='reload-inventory-purchases'>Tải ngay</button>` : ''}</div></td></tr>`}</tbody></table></div></section>` +
       (orderRowsHtml ? `<section class='panel' style='margin-top:16px'><div class='panel-header'><div><h2>Đơn đặt hàng NCC</h2></div></div><div class='table-wrap'><table class='data-table'><thead><tr><th>Mã đơn đặt</th><th>Nhà cung cấp</th><th>Ngày tạo</th><th class='text-right'>Giá trị</th><th>Trạng thái</th></tr></thead><tbody>${orderRowsHtml}</tbody></table></div></section>` : '');
   }
 
@@ -160,7 +160,7 @@
   S.fn.renderInventoryStockCount = function renderInventoryStockCount() {
     const canCount = S.fn.hasPerm('manageInventory');
     const needReview = (S.state.inventoryProducts || []).filter(function (p) { return p.inventoryTracked && p.stock <= p.minStock; }).slice(0, 15);
-    return `<section class='panel'><div class='panel-header'><h2>Kiểm kê kho</h2>${canCount ? `<div class='heading-actions'><button class='btn btn-secondary' data-action='bulk-stock-count'>Kiểm kê CSV</button><button class='btn btn-secondary' data-action='adjust-stock-picker'>＋ Kiểm kê mã</button><button class='btn btn-primary' data-action='rapid-stock-count'>${S.fn.icon('scan', 16)} Quét kiểm kho</button></div>` : ''}</div><div class='table-wrap'><table class='data-table'><thead><tr><th>Sản phẩm sắp hết / cần kiểm</th><th>SKU</th><th class='text-right'>Tồn hệ thống</th><th class='text-right'>Định mức tối thiểu</th><th></th></tr></thead><tbody>${needReview.map(function (p) {
+    return `<section class='panel'><div class='panel-header'><h2>Kiểm kê kho</h2>${canCount ? `<div class='heading-actions'><button class='btn btn-secondary' data-action='load-restock-suggestions'>✨ Gợi ý điều phối AI</button><button class='btn btn-secondary' data-action='bulk-stock-count'>Kiểm kê CSV</button><button class='btn btn-secondary' data-action='adjust-stock-picker'>＋ Kiểm kê mã</button><button class='btn btn-primary' data-action='rapid-stock-count'>${S.fn.icon('scan', 16)} Quét kiểm kho</button></div>` : ''}</div><div id='restock-suggestions-panel' hidden></div><div class='table-wrap'><table class='data-table'><thead><tr><th>Sản phẩm sắp hết / cần kiểm</th><th>SKU</th><th class='text-right'>Tồn hệ thống</th><th class='text-right'>Định mức tối thiểu</th><th></th></tr></thead><tbody>${needReview.map(function (p) {
       return `<tr><td><strong>${S.fn.esc(p.name)}</strong></td><td>${S.fn.esc(p.sku)}</td><td class='text-right'><span class='stock-number ${p.stock <= 0 ? 'out' : 'low'}'>${S.fn.number(p.stock)} ${S.fn.esc(p.unit)}</span></td><td class='text-right'>${S.fn.number(p.minStock)} ${S.fn.esc(p.unit)}</td><td class='text-right'>${canCount ? `<button class='btn btn-secondary' data-action='adjust-stock' data-id='${S.fn.esc(p.id)}'>Đếm lại</button>` : ''}</td></tr>`;
     }).join('') || `<tr><td colspan='5'><div class='empty-state'><strong>Các mặt hàng đều đủ định mức</strong></div></td></tr>`}</tbody></table></div></section>`;
   }
@@ -195,7 +195,7 @@
     else tabBody = `<div class='stat-grid inventory-stats'><article class='stat-card'><div class='stat-top'><span class='stat-label'>Tổng mặt hàng</span><span class='stat-icon'>${S.fn.icon('box', 15)}</span></div><div class='stat-value' data-inventory-stat='total'>${S.fn.inventoryStatText('total')}</div></article><article class='stat-card'><div class='stat-top'><span class='stat-label'>Sắp hết hàng</span><span class='stat-icon'>${S.fn.icon('alert', 15)}</span></div><div class='stat-value' data-inventory-stat='low'>${S.fn.inventoryStatText('low')}</div></article><article class='stat-card'><div class='stat-top'><span class='stat-label'>Hết hàng</span><span class='stat-icon'>${S.fn.icon('layers', 15)}</span></div><div class='stat-value' data-inventory-stat='out'>${S.fn.inventoryStatText('out')}</div></article>${showCostValue ? `<article class='stat-card'><div class='stat-top'><span class='stat-label'>Giá trị tồn ước tính</span><span class='stat-icon'>${S.fn.icon('wallet', 15)}</span></div><div class='stat-value' style='font-size:17px' data-inventory-stat='stockValueVnd'>${S.fn.inventoryStatText('stockValueVnd')}</div></article>` : ''}</div>` +
       `<div class='toolbar inventory-search-tools'><div class='toolbar-left'><div class='search-wrap inventory-search-wrap' data-tour-target='inventory-search'><span class='search-symbol' aria-hidden='true'>⌕</span><input class='input' id='inventory-search' type='search' placeholder='Tìm tên, mã hàng hoặc mã vạch…' value='${S.fn.esc(S.state.searchTerms.inventory)}' aria-label='Tìm trong kho'><button class='icon-button inventory-scan' type='button' data-action='inventory-scan' aria-label='Quét mã vạch tìm hàng' title='Quét mã vạch'>${S.fn.icon('scan', 20)}</button></div><span class='result-count' data-inventory-result-count aria-live='polite'>${S.state.inventoryLoading ? 'Đang tải…' : S.state.inventoryError ? 'Chưa tải được' : `${S.fn.number(total)} mặt hàng`}</span></div></div>
       <div class='inventory-stock-filters' role='group' aria-label='Lọc theo tồn kho'>${[['all', 'Tất cả'], ['low', 'Sắp hết'], ['out', 'Hết hàng']].map(([value, label]) => `<button type='button' data-action='inventory-stock-filter' data-stock='${value}' aria-pressed='${S.state.inventoryStockFilter === value}'>${label}</button>`).join('')}</div>` + S.fn.renderInventoryList();
-    return S.fn.pageHeading('Kho hàng', '', `${canReceive ? `<button class='btn btn-primary' data-action='receive-stock' data-tour-target='inventory-receive'>＋ Nhập hàng</button>` : ''}${advanced ? `<details class='catalog-more'><summary class='btn btn-secondary'>Khác</summary><div>${advanced}</div></details>` : ''}`) +
+    return S.fn.pageHeading('Kho hàng', '', `${canReceive ? `<button class='btn btn-secondary' data-action='receive-stock-photo'>📸 Nhập bằng ảnh</button><button class='btn btn-primary' data-action='receive-stock' data-tour-target='inventory-receive'>＋ Nhập hàng</button>` : ''}${advanced ? `<details class='catalog-more'><summary class='btn btn-secondary'>Khác</summary><div>${advanced}</div></details>` : ''}`) +
       `<div class='toolbar warehouse-toolbar'><div class='toolbar-left'><label class='input-label' for='inventory-warehouse'>Kho</label><div class='select-wrap'><select class='input' id='inventory-warehouse' aria-label='Chọn kho tồn kho'>${warehouseOptions}</select></div><span class='result-count'>${S.state.warehouseLoading ? 'Đang tải kho…' : S.state.warehouseError ? 'Chưa tải được kho' : ''}</span></div></div>` +
       tabBar + tabBody;
   }
@@ -1968,7 +1968,13 @@
   };
 
   function normalizeInvoiceUnit(value) {
-    return String(value || '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().trim();
+    const norm = String(value || '').normalize('NFD').replace(/\p{M}/gu, '').replace(/[Đđ]/g, 'd').toLowerCase().trim();
+    if (norm === 'chiec') return 'cai';
+    if (norm === 'lo') return 'chai';
+    if (norm === 'bich') return 'goi';
+    if (norm === 'ky') return 'kg';
+    if (norm === 'quyen') return 'cuon';
+    return norm;
   }
 
   function photoLineNeedsUnit(source, item, product) {
@@ -2014,6 +2020,21 @@
       paid === null ? 'Chưa chọn thanh toán' : `Đã trả ${S.fn.moneyVndText(paid)} · Còn nợ ${S.fn.moneyVndText(total - paid)}`,
       issues ? `${issues} dòng cần kiểm tra` : '',
     ].filter(Boolean).join(' · ');
+    const diffWrap = form.querySelector('[data-photo-diff-wrap]');
+    if (diffWrap) {
+      const sourceTotalRaw = S.fn.moneyInputRaw(form.querySelector('[data-photo-total]')?.value || '');
+      const manualTotal = items.filter(item => item.photoLine === undefined).reduce((sum, item) => {
+        try { return sum + S.fn.normalizeReceivePurchaseLine(item).total; } catch { return sum; }
+      }, 0n);
+      const expected = /^\d+$/.test(sourceTotalRaw) ? BigInt(sourceTotalRaw) + manualTotal : null;
+      const diff = (expected !== null && total !== null) ? (total - expected) : 0n;
+      diffWrap.hidden = !(expected !== null && total !== null && diff !== 0n);
+      const diffLabel = form.querySelector('[data-photo-diff-label]');
+      if (diffLabel && diff !== 0n) {
+        const absDiff = diff < 0n ? -diff : diff;
+        diffLabel.textContent = `Xác nhận chênh lệch ${S.fn.moneyVndText(absDiff)} so với tổng ảnh (do làm tròn/chiết khấu/phí vận chuyển) để lưu minh bạch`;
+      }
+    }
   };
 
   S.fn.checkReceivePhoto = function checkReceivePhoto(form, items, total) {
@@ -2030,11 +2051,14 @@
       return false;
     }
     const sourceTotal = S.fn.moneyInputRaw(form.querySelector('[data-photo-total]').value);
-    const manualTotal = photo.combined ? items.filter(item => item.photoLine === undefined)
-      .reduce((sum, item) => sum + S.fn.normalizeReceivePurchaseLine(item).total, 0n) : 0n;
-    if (!/^\d+$/.test(sourceTotal) || BigInt(sourceTotal) + manualTotal !== total) {
+    const manualTotal = items.filter(item => item.photoLine === undefined)
+      .reduce((sum, item) => sum + S.fn.normalizeReceivePurchaseLine(item).total, 0n);
+    const acceptedDiff = form.querySelector('[data-photo-accept-diff]')?.checked === true;
+    if (!/^\d+$/.test(sourceTotal) || (BigInt(sourceTotal) + manualTotal !== total && !acceptedDiff)) {
       form.querySelector('[data-receive-lines]').open = true;
-      S.fn.toast('Tổng tiền chưa khớp', 'Đối chiếu số tiền trên ảnh với từng dòng hàng.', 'error');
+      const diffWrap = form.querySelector('[data-photo-diff-wrap]');
+      if (diffWrap) diffWrap.hidden = false;
+      S.fn.toast('Tổng tiền chưa khớp', 'Đối chiếu số tiền hoặc tích xác nhận chênh lệch rõ ràng trước khi lưu.', 'error');
       return false;
     }
     return true;
@@ -2073,7 +2097,7 @@
       const outstanding = S.fn.loadPendingProductImport();
       if (outstanding && outstanding.key !== key) { fail('Còn mặt hàng đang chờ lưu. Hãy xử lý lần nhập trước.'); return; }
       const payload = outstanding?.payload ?? { items: [{
-        sku, name, unit, salePriceVnd: Number(salePriceVnd), costVnd: 0, inventoryTracked: true, openingQuantity: '0',
+        sku, barcode: source.code || '', name, unit, salePriceVnd: Number(salePriceVnd), costVnd: 0, inventoryTracked: true, openingQuantity: '0',
       }], warehouseId: form.elements.warehouseId.value };
       if (!S.fn.savePendingProductImport({ storeId, key, payload })) { fail('Chưa giữ được dữ liệu. Hãy thử lại.'); return; }
       editor.querySelectorAll('input,button').forEach(field => { field.disabled = true; });
@@ -2095,6 +2119,8 @@
             select.add(new Option(product.name, product.id));
           }
           select.value = product.id;
+          const unitConfirm = row.querySelector('[data-photo-unit]');
+          if (unitConfirm) unitConfirm.checked = true;
           editor.remove();
           S.fn.updateReceivePurchaseTotal(form);
         }
@@ -2105,7 +2131,7 @@
         fail(error.message || 'Chưa xác nhận được mặt hàng. Hãy bấm Lưu để thử lại.');
       } finally {
         const retryPending = S.fn.loadPendingProductImport()?.key === key;
-        editor.querySelectorAll('input,button').forEach(field => { field.disabled = retryPending && field !== save; });
+        editor.querySelectorAll('input,button').forEach(field => { field.disabled = retryPending && field !== save && field !== cancel; });
       }
     });
   }
@@ -2117,17 +2143,23 @@
   }
 
   function receivePhotoItem(row) {
+    const labelParts = [
+      row.name || 'Dòng trên ảnh',
+      row.quantity && row.unit ? `${row.quantity} ${row.unit}` : row.unit,
+      row.suggestedPackSize && row.product ? `gợi ý 1 ${row.unit || 'kiện'} = ${row.suggestedPackSize} ${row.product.unit}` : '',
+    ].filter(Boolean);
     const item = {
-      photoLine: row.index, sourceLabel: [row.name || 'Dòng trên ảnh', row.quantity && row.unit ? `${row.quantity} ${row.unit}` : row.unit].filter(Boolean).join(' · '),
+      photoLine: row.index, sourceLabel: labelParts.join(' · '),
       productId: row.product?.id || '', quantity: row.quantity ?? '',
       packMode: false, priceMode: row.lineTotalVnd === null ? 'unit' : 'total',
       unitCostVnd: row.unitCostVnd ?? '', lineTotalVnd: row.lineTotalVnd ?? '',
     };
-    if (row.pack && row.quantity && (row.unitCostVnd !== null || row.lineTotalVnd !== null)) {
+    const packObj = row.pack || (row.suggestedPackSize && row.product && row.unit ? { name: row.unit, size: row.suggestedPackSize } : null);
+    if (packObj && row.quantity && (row.unitCostVnd !== null || row.lineTotalVnd !== null)) {
       try {
         const milli = BigInt(window.SlinkOfflineLedger.quantity(row.quantity));
         const unitCost = row.unitCostVnd ?? window.SlinkPurchaseUnits.unitCostFromTotal(row.lineTotalVnd, milli).toString();
-        const pack = { ...row.pack, quantity: row.quantity, unitCostVnd: unitCost };
+        const pack = { ...packObj, quantity: row.quantity, unitCostVnd: unitCost };
         const converted = window.SlinkPurchaseUnits.fromPack(pack);
         if (row.lineTotalVnd === null || converted.lineTotalVnd === BigInt(row.lineTotalVnd)) item.pack = pack;
       } catch { /* Leave values visible for review. */ }
@@ -2159,12 +2191,13 @@
       <details><summary>Xem ảnh phiếu nhập</summary><img alt='Ảnh phiếu nhập đang đối chiếu'></details>
       <label class='form-field'><span class='input-label'>Tổng phải trả trên ảnh (đ)</span>
       <input class='input' type='number' inputmode='numeric' min='0' step='1' data-photo-total required value='${S.fn.esc(draft.totalVnd ?? '')}'></label>
-      ${charges.length ? `<p>${charges.join(' · ')}. Điều chỉnh thành tiền từng dòng để khớp phiếu.</p>` : ''}
+      <label class='photo-unit-check' data-photo-diff-wrap hidden><input type='checkbox' data-photo-accept-diff/> <span data-photo-diff-label>Xác nhận chênh lệch so với tổng ảnh</span></label>
+      ${charges.length ? `<p>${charges.join(' · ')}. Điều chỉnh thành tiền từng dòng hoặc tích xác nhận chênh lệch nếu cần.</p>` : ''}
       ${oldRows.length ? '<p>Tổng phiếu sẽ gồm số tiền trên ảnh và phần đã nhập trước.</p>' : ''}`;
     review.querySelector('img').src = 'data:image/jpeg;base64,' + image.imageBase64;
     if (draft.supplierName && !form.elements.supplierName.value) {
       form.elements.supplierName.value = draft.supplierName;
-      if (draft.supplierId) form.receiveSupplier = { id: draft.supplierId, name: draft.supplierName };
+      form.receiveSupplier = { id: draft.supplierId || '', name: draft.supplierName };
     }
     if (!keepExisting || !form.receivePaymentEdited) {
       const paid = oldRows.length ? null : draft.paidVnd;
@@ -2197,6 +2230,7 @@
     const status = form.querySelector('#receive-ai-status');
     const review = form.querySelector('[data-receive-ai-review]');
     const button = form.querySelector('[data-action="receive-ai-invoice"]');
+    form.querySelector('[data-receive-photo-proposal]')?.remove();
     const session = S.state.authSession;
     const current = () => form.isConnected && S.state.store?.id === storeId && S.state.authSession === session;
     const signature = receiveDraftSignature(form);
@@ -2228,19 +2262,51 @@
         review.before(proposal);
       }
       status.textContent = `Đã đọc ${draft.rows.length} dòng. Phiếu đang nhập vẫn được giữ.`;
-      proposal.innerHTML = "<button type='button' class='btn btn-secondary'>Dùng kết quả đọc ảnh</button>";
-      proposal.querySelector('button').addEventListener('click', () => {
-        const prior = form.receivePhoto;
-        if (prior && !window.confirm('Thay các dòng đã đọc từ ảnh trước? Các dòng nhập tay sẽ được giữ.')) return;
+      proposal.innerHTML = `<div class='heading-actions'><button type='button' class='btn btn-secondary' data-apply-photo-draft>Áp dụng ${draft.rows.length} dòng từ ảnh</button><button type='button' class='btn btn-secondary' data-dismiss-photo-draft>Giữ phiếu hiện tại</button></div>`;
+      proposal.querySelector('[data-apply-photo-draft]').addEventListener('click', () => {
         review.hidden = false;
         applyPurchasePhoto(form, draft, image, true);
-        if (form.receivePhoto !== prior) { proposal.remove(); status.hidden = true; }
+        proposal.remove();
+        status.hidden = true;
+      });
+      proposal.querySelector('[data-dismiss-photo-draft]').addEventListener('click', () => {
+        proposal.remove();
+        status.hidden = true;
       });
     } catch (error) {
       if (current()) status.textContent = error.message || 'Chưa đọc được ảnh. Hãy chụp lại hoặc nhập tay.';
     } finally {
       form.receivePhotoLoading = false;
       if (current()) button.disabled = false;
+    }
+  };
+
+  S.fn.openReceiveWithPhoto = async function openReceiveWithPhoto() {
+    await S.fn.openReceive();
+    const input = document.getElementById('receive-ai-invoice-input');
+    if (input) input.click();
+  };
+
+  S.fn.loadRestockSuggestions = async function loadRestockSuggestions() {
+    const panel = document.getElementById('restock-suggestions-panel');
+    if (!panel || !S.state.store?.id) return;
+    panel.hidden = false;
+    panel.innerHTML = `<p class='receive-ai-status'>Đang phân tích tốc độ bán 14 ngày & tồn đa kho…</p>`;
+    try {
+      const res = await S.fn.apiRequest(`/api/stores/${encodeURIComponent(S.state.store.id)}/ai/restock-suggestions`);
+      const list = Array.isArray(res.suggestions) ? res.suggestions : [];
+      if (!list.length) {
+        panel.innerHTML = `<p class='receive-ai-status'>Tồn kho các chi nhánh đang ổn định, chưa có mặt hàng cần đặt bù gấp.</p>`;
+        return;
+      }
+      panel.innerHTML = `<div class='table-wrap' style='margin:10px 0 14px'><table class='data-table'><thead><tr><th>Mặt hàng</th><th>Kho</th><th class='text-right'>Tồn / Bán 14 ngày</th><th class='text-right'>Gợi ý điều phối</th></tr></thead><tbody>${list.slice(0, 12).map(s => {
+        const badge = s.actionType === 'transfer'
+          ? `<button type='button' class='btn btn-secondary' data-action='new-warehouse-transfer'>Chuyển ${s.recommendedQty} từ ${S.fn.esc(s.sourceWarehouseName)}</button>`
+          : `<button type='button' class='btn btn-secondary' data-action='new-purchase-order'>Đặt bù ${s.recommendedQty} ${S.fn.esc(s.unit || '')}</button>`;
+        return `<tr><td><strong>${S.fn.esc(s.name)}</strong><br><small>${S.fn.esc(s.sku || '')}</small></td><td>${S.fn.esc(s.warehouseName)}</td><td class='text-right'><span class='stock-number ${s.priority === 'urgent' ? 'out' : 'low'}'>${s.currentQty}</span> / ${s.sold14d}</td><td class='text-right'>${badge}</td></tr>`;
+      }).join('')}</tbody></table></div>`;
+    } catch (error) {
+      panel.innerHTML = `<p class='receive-ai-status is-error'>${S.fn.esc(error.message || 'Chưa tải được gợi ý điều phối.')}</p>`;
     }
   };
 
