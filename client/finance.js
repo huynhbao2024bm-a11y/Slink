@@ -21,7 +21,25 @@
       S.state.store.cashbook = result.movements.map(function (row) {
         return { id: row.source_id, movementId: row.movement_id || [row.source_id, row.method, row.direction].join(':'), voucherNumber: row.voucher_number || '', fundType: row.fund_type || '', movementKind: row.movement_kind || 'standard', includeInPnl: row.include_in_pnl === true, voidReason: row.void_reason || '', reversedByMovementId: row.reversed_by_movement_id || null, orderId: row.order_id, orderNumber: row.order_number, counterparty: row.counterparty, sourceType: row.source_type, local: row.offline_pending === true, type: row.direction, category: row.category, amountVnd: row.amount_vnd, note: row.note, method: row.method, actorName: row.actor_name, cashSessionId: row.cash_session_id, cashSessionOpenedAt: row.cash_session_opened_at, createdAt: row.occurred_at };
       });
-      S.state.store.suppliers = result.suppliers.map(function (row) { return { id: row.id, name: row.name, debtVnd: String(row.balance_vnd || '0'), lastActivityAt: row.last_activity_at, local: row.offline_pending === true }; });
+      S.state.store.suppliers = result.suppliers.map(function (row) {
+        return {
+          id: row.id,
+          name: row.name,
+          code: row.code || '',
+          phone: row.phone || '',
+          email: row.email || '',
+          tax_code: row.tax_code || '',
+          address: row.address || '',
+          contact_name: row.contact_name || '',
+          group_name: row.group_name || '',
+          note: row.note || '',
+          balance_vnd: String(row.balance_vnd || '0'),
+          debtVnd: String(row.balance_vnd || '0'),
+          last_activity_at: row.last_activity_at || null,
+          lastActivityAt: row.last_activity_at || null,
+          local: row.offline_pending === true,
+        };
+      });
       S.state.purchaseHistory = (result.purchases || []).map(S.fn.mapFinancePurchase);
       S.state.purchaseOrders = (result.purchaseOrders || []).map(S.fn.mapFinancePurchaseOrder);
       S.state.financeTopCustomers = result.customerDebtors.map(function (row) { return { id: row.id, name: row.name, phone: row.phone, debt: String(row.balance_vnd) }; });
@@ -447,12 +465,37 @@
         ? documentButton('receipt', { id: entry.purchase_id }, entry.purchase_number) : '';
       return `<div class='activity-item'><span class='activity-text'><strong>${label}</strong><small>${S.fn.humanDate(entry.occurred_at, true)}${entry.note ? ' · ' + S.fn.esc(entry.note) : ''}</small>${receipt}</span><strong>${S.fn.moneyVndText(increased > 0n ? increased : entry.decreases_payable_vnd)}</strong></div>`;
     }).join('');
-    const body = `<div class='checkout-total'><span>${due < 0n ? 'Đã trả trước' : 'Cần trả'}</span><strong>${S.fn.moneyVndText(due < 0n ? -due : due)}</strong></div>
-      ${result ? `<section class='activity-list' aria-label='Lịch sử công nợ'><h3>${result.offlineCachedAt ? 'Lịch sử đã tải' : 'Lịch sử gần đây'}</h3>${entries || '<p>Chưa có phát sinh.</p>'}</section>` : `<p class='muted'>${S.fn.esc(supplier.local ? 'Khoản này đã lưu trên máy.' : issue)}</p>`}
-      ${orders.length || receipts.length ? `<section class='activity-list finance-supplier-documents' data-supplier-documents><h3>Chứng từ gần đây</h3>${receipts.map(row => documentButton('receipt', row, 'Phiếu nhập ' + row.number)).join('')}${orders.map(row => documentButton('order', row, 'Đơn đặt ' + row.number)).join('')}</section>` : ''}`;
-    const action = due > 0n && result && !result.offlineCachedAt ? `<button type='button' class='btn btn-primary' data-action='supplier-payment' data-id='${S.fn.esc(id)}'>Ghi trả tiền</button>` : '';
+    const sMeta = result?.supplier || {};
+    const totalPurchased = BigInt(sMeta.total_purchased_vnd || 0);
+    const totalSettled = BigInt(sMeta.total_settled_vnd || 0);
+    const supplierReturns = result?.supplierReturns || [];
+    const metaBadges = [
+      sMeta.code ? `Mã: ${sMeta.code}` : '',
+      sMeta.group_name ? `Nhóm: ${sMeta.group_name}` : '',
+      sMeta.phone ? `SĐT: ${sMeta.phone}` : '',
+      sMeta.tax_code ? `MST: ${sMeta.tax_code}` : '',
+      sMeta.contact_name ? `Liên hệ: ${sMeta.contact_name}` : '',
+    ].filter(Boolean);
+    const body = `${metaBadges.length || sMeta.address || sMeta.email || sMeta.note ? `<section class='panel' style='padding:12px;margin-bottom:12px;background:var(--surface-subtle)'>
+      ${metaBadges.length ? `<div style='display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px'>${metaBadges.map(b => `<span class='badge badge-neutral'>${S.fn.esc(b)}</span>`).join('')}</div>` : ''}
+      ${sMeta.email ? `<div class='muted' style='font-size:12.5px'>Email: ${S.fn.esc(sMeta.email)}</div>` : ''}
+      ${sMeta.address ? `<div class='muted' style='font-size:12.5px'>Địa chỉ: ${S.fn.esc(sMeta.address)}</div>` : ''}
+      ${sMeta.note ? `<div class='muted' style='font-size:12.5px'>Ghi chú: ${S.fn.esc(sMeta.note)}</div>` : ''}
+    </section>` : ''}
+      <div class='stat-grid' style='margin-bottom:12px'>
+        <article class='stat-card'><div class='stat-top'><span class='stat-label'>Tổng nhập</span></div><div class='stat-value' style='font-size:16px'>${S.fn.moneyVndText(totalPurchased)}</div></article>
+        <article class='stat-card'><div class='stat-top'><span class='stat-label'>Đã thanh toán</span></div><div class='stat-value' style='font-size:16px'>${S.fn.moneyVndText(totalSettled)}</div></article>
+        <article class='stat-card'><div class='stat-top'><span class='stat-label'>${due < 0n ? 'Đã trả trước' : 'Còn phải trả'}</span></div><div class='stat-value' style='font-size:16px;color:${due > 0n ? 'var(--warning)' : 'var(--ink)'}'>${S.fn.moneyVndText(due < 0n ? -due : due)}</div></article>
+      </div>
+      ${result ? `<section class='activity-list' aria-label='Lịch sử công nợ'><h3>${result.offlineCachedAt ? 'Lịch sử đã tải' : 'Lịch sử công nợ gần đây'}</h3>${entries || '<p>Chưa có phát sinh.</p>'}</section>` : `<p class='muted'>${S.fn.esc(supplier.local ? 'Khoản này đã lưu trên máy.' : issue)}</p>`}
+      ${orders.length || receipts.length ? `<section class='activity-list finance-supplier-documents' data-supplier-documents><h3>Phiếu nhập &amp; Đơn đặt gần đây</h3>${receipts.map(row => documentButton('receipt', row, 'Phiếu nhập ' + row.number)).join('')}${orders.map(row => documentButton('order', row, 'Đơn đặt ' + row.number)).join('')}</section>` : ''}
+      ${supplierReturns.length ? `<section class='activity-list'><h3>Phiếu trả hàng NCC (${supplierReturns.length})</h3>${supplierReturns.map(sr => `<div class='activity-item'><span class='activity-text'><strong>${S.fn.esc(sr.return_number)}</strong><small>${S.fn.humanDate(sr.returned_at, true)}${sr.note ? ' · ' + S.fn.esc(sr.note) : ''}</small></span><strong>${S.fn.moneyVndText(sr.total_vnd)}</strong></div>`).join('')}</section>` : ''}`;
+    const canManageSup = S.fn.hasPerm('manageInventory') || S.fn.hasPerm('recordCashbook');
+    const editBtn = canManageSup ? `<button type='button' class='btn btn-secondary' data-action='edit-supplier' data-id='${S.fn.esc(id)}'>Sửa NCC</button>` : '';
+    const poBtn = S.fn.hasPerm('manageInventory') ? `<button type='button' class='btn btn-secondary' data-action='new-purchase-order'>Đặt hàng NCC</button>` : '';
+    const payBtn = due > 0n && result && !result.offlineCachedAt ? `<button type='button' class='btn btn-primary' data-action='supplier-payment' data-id='${S.fn.esc(id)}'>Ghi trả tiền</button>` : '';
     if (result && !result.offlineCachedAt) supplier.debtVnd = due.toString();
-    S.fn.showModal(supplier.name, 'Công nợ nhà cung cấp', body, `<button class='btn btn-secondary' data-action='close-modal'>Đóng</button>${action}`);
+    S.fn.showModal(supplier.name, 'Hồ sơ 360° & Công nợ nhà cung cấp', body, `<button class='btn btn-secondary' data-action='close-modal'>Đóng</button>${editBtn}${poBtn}${payBtn}`);
     S.dom.modal.querySelector('.modal-body')?.addEventListener('click', function documentClick(event) {
       const button = event.target.closest('[data-supplier-document]');
       if (!button) return;

@@ -373,16 +373,31 @@
   }
 
 
-  S.fn.openSupplier = function openSupplier() {
-    const pending = S.fn.loadPendingSupplier();
-    const saved = pending ? pending.payload : null;
+  S.fn.openSupplier = function openSupplier(supplierId) {
+    const existing = supplierId ? (S.state.store.suppliers || []).find(function (s) { return String(s.id) === String(supplierId); }) : null;
+    const pending = !existing ? S.fn.loadPendingSupplier() : null;
+    const saved = pending ? pending.payload : existing;
     const disabled = pending ? 'disabled' : '';
     const canSetOpeningBalance = S.fn.hasPerm('recordCashbook') || S.fn.hasPerm('viewReports');
-    const openingBalanceField = canSetOpeningBalance
-      ? `<div class='form-field full'><label class='input-label' for='supplier-opening-payable'>Nợ đầu kỳ (VND)</label><input class='input' id='supplier-opening-payable' name='openingPayableVnd' type='number' inputmode='numeric' min='0' step='1' value='${S.fn.esc(saved ? saved.openingPayableVnd : '0')}' ${disabled}/><small>Số còn nợ trước khi dùng Slink (nếu có).</small></div>`
-      : `<input type='hidden' name='openingPayableVnd' value='0'/><div class='form-field full'><small>Khoản phải trả ban đầu do chủ cửa hàng, quản lý hoặc kế toán ghi nhận.</small></div>`;
-    const form = `<form id='entity-form' data-form='supplier'><div class='form-grid'><div class='form-field full'><label class='input-label' for='supplier-name'>Tên nhà cung cấp *</label><input class='input' id='supplier-name' name='name' value='${S.fn.esc(saved ? saved.name : '')}' required maxlength='160' placeholder='Tên doanh nghiệp hoặc người bán' ${disabled}/></div>${openingBalanceField}</div></form>`;
-    S.fn.modalForm(pending ? 'Kiểm tra nhà cung cấp đang chờ' : 'Thêm nhà cung cấp', pending ? 'Gửi lại đúng nội dung đã lưu để máy chủ xác nhận, tránh ghi nợ hai lần.' : 'Tạo hồ sơ và ghi sổ phải trả ban đầu nếu có.', form, pending ? 'Gửi lại nhà cung cấp' : 'Lưu nhà cung cấp');
+    const openingBalanceField = existing ? '' : (canSetOpeningBalance
+      ? `<div class='form-field'><label class='input-label' for='supplier-opening-payable'>Nợ đầu kỳ (VND)</label><input class='input' id='supplier-opening-payable' name='openingPayableVnd' type='number' inputmode='numeric' min='0' step='1' value='${S.fn.esc(saved && saved.openingPayableVnd != null ? saved.openingPayableVnd : '0')}' ${disabled}/><small>Số còn nợ trước khi dùng Slink (nếu có).</small></div>`
+      : `<input type='hidden' name='openingPayableVnd' value='0'/><div class='form-field'><small>Khoản phải trả ban đầu do chủ cửa hàng, quản lý hoặc kế toán ghi nhận.</small></div>`);
+    const form = `<form id='entity-form' data-form='supplier' ${existing ? `data-id='${S.fn.esc(existing.id)}'` : ''}><div class='form-grid'>
+      <div class='form-field'><label class='input-label' for='supplier-name'>Tên nhà cung cấp *</label><input class='input' id='supplier-name' name='name' value='${S.fn.esc(saved ? saved.name || '' : '')}' required maxlength='160' placeholder='Tên doanh nghiệp hoặc người bán' ${disabled}/></div>
+      <div class='form-field'><label class='input-label' for='supplier-code'>Mã NCC</label><input class='input' id='supplier-code' name='code' value='${S.fn.esc(saved ? saved.code || '' : '')}' maxlength='64' placeholder='Để trống sẽ tự sinh NCC-...' ${disabled}/></div>
+      <div class='form-field'><label class='input-label' for='supplier-phone'>Số điện thoại</label><input class='input' id='supplier-phone' name='phone' type='tel' inputmode='tel' value='${S.fn.esc(saved ? saved.phone || '' : '')}' maxlength='32' placeholder='09xx xxx xxx' ${disabled}/></div>
+      <div class='form-field'><label class='input-label' for='supplier-email'>Email</label><input class='input' id='supplier-email' name='email' type='email' value='${S.fn.esc(saved ? saved.email || '' : '')}' maxlength='160' placeholder='ncc@example.com' ${disabled}/></div>
+      <div class='form-field'><label class='input-label' for='supplier-tax-code'>Mã số thuế</label><input class='input' id='supplier-tax-code' name='taxCode' value='${S.fn.esc(saved ? (saved.taxCode || saved.tax_code || '') : '')}' maxlength='32' placeholder='MST doanh nghiệp' ${disabled}/></div>
+      <div class='form-field'><label class='input-label' for='supplier-contact-name'>Người liên hệ</label><input class='input' id='supplier-contact-name' name='contactName' value='${S.fn.esc(saved ? (saved.contactName || saved.contact_name || '') : '')}' maxlength='120' placeholder='Tên sale / kế toán đối tác' ${disabled}/></div>
+      <div class='form-field'><label class='input-label' for='supplier-group-name'>Nhóm NCC</label><input class='input' id='supplier-group-name' name='groupName' value='${S.fn.esc(saved ? (saved.groupName || saved.group_name || '') : '')}' maxlength='80' placeholder='VD: Sỉ, Xưởng may, FMCG' ${disabled}/></div>
+      ${openingBalanceField}
+      <div class='form-field full'><label class='input-label' for='supplier-address'>Địa chỉ</label><input class='input' id='supplier-address' name='address' value='${S.fn.esc(saved ? saved.address || '' : '')}' maxlength='300' placeholder='Địa chỉ kho / văn phòng NCC' ${disabled}/></div>
+      <div class='form-field full'><label class='input-label' for='supplier-note'>Ghi chú</label><input class='input' id='supplier-note' name='note' value='${S.fn.esc(saved ? saved.note || '' : '')}' maxlength='500' placeholder='Điều khoản thanh toán, lịch giao hàng...' ${disabled}/></div>
+    </div></form>`;
+    const title = existing ? `Sửa NCC: ${existing.name}` : (pending ? 'Kiểm tra nhà cung cấp đang chờ' : 'Thêm nhà cung cấp');
+    const subtitle = existing ? 'Cập nhật thông tin liên hệ, mã số thuế và nhóm nhà cung cấp.' : (pending ? 'Gửi lại đúng nội dung đã lưu để máy chủ xác nhận, tránh ghi nợ hai lần.' : 'Tạo hồ sơ 360° và ghi sổ phải trả ban đầu nếu có.');
+    const submitLabel = existing ? 'Lưu thay đổi' : (pending ? 'Gửi lại nhà cung cấp' : 'Lưu nhà cung cấp');
+    S.fn.modalForm(title, subtitle, form, submitLabel);
   }
 
 
@@ -629,15 +644,51 @@
 
 
   S.fn.saveSupplier = async function saveSupplier(form) {
+    const supplierId = String(form.dataset.id || '').trim();
+    const data = new FormData(form);
+    const name = String(data.get('name') || '').trim();
+    const code = String(data.get('code') || '').trim();
+    const phone = String(data.get('phone') || '').trim();
+    const email = String(data.get('email') || '').trim();
+    const taxCode = String(data.get('taxCode') || '').trim();
+    const contactName = String(data.get('contactName') || '').trim();
+    const groupName = String(data.get('groupName') || '').trim();
+    const address = String(data.get('address') || '').trim();
+    const note = String(data.get('note') || '').trim();
+    if (!name || name.length > 160) return S.fn.toast('Tên nhà cung cấp không hợp lệ', 'Tên cần từ 1 đến 160 ký tự.', 'error');
+
+    if (supplierId) {
+      form.querySelectorAll('input').forEach(function (field) { field.disabled = true; });
+      const submitButton = S.dom.modal.querySelector('button[type="submit"][form="entity-form"]');
+      if (submitButton) submitButton.disabled = true;
+      try {
+        const result = await S.fn.apiRequest(`/api/stores/${encodeURIComponent(S.state.store.id)}/suppliers/${encodeURIComponent(supplierId)}`, {
+          method: 'PUT',
+          body: { name, code, phone, email, taxCode, contactName, groupName, address, note },
+        });
+        S.fn.closeModal();
+        S.fn.emitSyncDomains(['suppliers', 'cashbook'], { source: 'supplier-update' });
+        await S.fn.loadFinancePage();
+        S.fn.render();
+        S.fn.toast('Đã cập nhật nhà cung cấp', result.supplier.name);
+      } catch (error) {
+        form.querySelectorAll('input').forEach(function (field) { field.disabled = false; });
+        if (submitButton && !S.dom.modal.hidden) submitButton.disabled = false;
+        S.fn.toast('Chưa cập nhật được nhà cung cấp', error.message, 'error');
+      }
+      return;
+    }
+
     let pending = S.fn.loadPendingSupplier();
     if (!pending) {
-      const data = new FormData(form);
-      const name = String(data.get('name') || '').trim();
       const amountText = String(data.get('openingPayableVnd') || '0').trim() || '0';
       const openingPayableVnd = Number(amountText);
-      if (!name || name.length > 160) return S.fn.toast('Tên nhà cung cấp không hợp lệ', 'Tên cần từ 1 đến 160 ký tự.', 'error');
       if (!/^\d+$/.test(amountText) || !Number.isSafeInteger(openingPayableVnd) || openingPayableVnd < 0) return S.fn.toast('Khoản phải trả ban đầu không hợp lệ', 'Nhập số VND nguyên không âm.', 'error');
-      pending = { storeId: S.state.store.id, key: S.fn.newIdempotencyKey(), payload: { name: name, openingPayableVnd: String(openingPayableVnd) } };
+      pending = {
+        storeId: S.state.store.id,
+        key: S.fn.newIdempotencyKey(),
+        payload: { name, code, phone, email, taxCode, contactName, groupName, address, note, openingPayableVnd: String(openingPayableVnd) },
+      };
     }
     if (!S.fn.savePendingSupplier(pending)) return S.fn.pendingSaveFailed();
     form.querySelectorAll('input').forEach(function (field) { field.disabled = true; });
@@ -664,6 +715,59 @@
     }
   }
 
+  S.fn.openSupplierImportModal = function openSupplierImportModal() {
+    const sample = 'Ten NCC,Ma NCC,SDT,Email,MST,Nguoi lien he,Nhom,Dia chi,No dau ky\nXưởng May An Phát,NCC-AP,0901234567,anphat@example.com,0312345678,Chị Lan,Xưởng sỉ,123 Lê Lợi Q1,0';
+    const form = `<form id='entity-form' data-form='supplier-import'>
+      <p class='muted' style='margin-bottom:10px'>Dán danh sách CSV hoặc bảng copy từ Excel theo cột: <strong>Tên NCC, Mã NCC, SĐT, Email, MST, Người liên hệ, Nhóm, Địa chỉ, Nợ đầu kỳ</strong>.</p>
+      <div class='form-grid'>
+        <div class='form-field full'><label class='input-label' for='supplier-import-csv'>Dữ liệu CSV / Bảng dán từ Excel</label><textarea class='input' id='supplier-import-csv' name='csvText' rows='6' required placeholder='${S.fn.esc(sample)}'></textarea></div>
+      </div>
+    </form>`;
+    S.fn.modalForm('Nhập hàng loạt nhà cung cấp', 'Hỗ trợ tạo mới nhiều nhà cung cấp cùng lúc từ CSV/Excel.', form, 'Nhập nhà cung cấp');
+  }
+
+  S.fn.saveSupplierImport = async function saveSupplierImport(form) {
+    const text = String(new FormData(form).get('csvText') || '').trim();
+    if (!text) return S.fn.toast('Chưa có dữ liệu CSV', 'Vui lòng dán danh sách nhà cung cấp.', 'error');
+    const lines = text.split(/\r?\n/).map(function (l) { return l.trim(); }).filter(Boolean);
+    const items = [];
+    lines.forEach(function (line, idx) {
+      const sep = line.includes('\t') ? '\t' : ',';
+      const cols = line.split(sep).map(function (c) { return c.trim().replace(/^["']|["']$/g, ''); });
+      if (idx === 0 && /tên|ten ncc|name/i.test(cols[0] || '')) return;
+      if (!cols[0]) return;
+      items.push({
+        name: cols[0],
+        code: cols[1] || '',
+        phone: cols[2] || '',
+        email: cols[3] || '',
+        taxCode: cols[4] || '',
+        contactName: cols[5] || '',
+        groupName: cols[6] || '',
+        address: cols[7] || '',
+        openingPayableVnd: /^\d+$/.test(cols[8] || '') ? cols[8] : '0',
+      });
+    });
+    if (!items.length) return S.fn.toast('Không tìm thấy dòng hợp lệ', 'Kiểm tra lại định dạng cột CSV.', 'error');
+    const submitButton = S.dom.modal.querySelector('button[type="submit"][form="entity-form"]');
+    if (submitButton) submitButton.disabled = true;
+    try {
+      const res = await S.fn.apiRequest(`/api/stores/${encodeURIComponent(S.state.store.id)}/suppliers/import`, {
+        method: 'POST',
+        headers: { 'idempotency-key': S.fn.newIdempotencyKey() },
+        body: { items },
+      });
+      S.fn.closeModal();
+      S.fn.emitSyncDomains(['suppliers', 'cashbook'], { source: 'supplier-import' });
+      await S.fn.loadFinancePage();
+      S.fn.render();
+      S.fn.toast('Đã nhập nhà cung cấp', `Tạo mới ${res.count || 0} NCC (bỏ qua trùng ${res.skipped || 0}).`);
+    } catch (error) {
+      if (submitButton && !S.dom.modal.hidden) submitButton.disabled = false;
+      S.fn.toast('Chưa nhập được nhà cung cấp', error.message, 'error');
+    }
+  }
+
 
   S.fn.loadSuppliersPage = async function loadSuppliersPage() {
     if (!S.state.authSession || !S.state.store.id) return;
@@ -678,7 +782,10 @@
     }
     const query = String(S.state.searchTerms.suppliers || '').trim().toLocaleLowerCase('vi');
     const suppliers = (S.state.store.suppliers || []).filter(function (s) {
-      return !query || String(s.name || '').toLocaleLowerCase('vi').includes(query);
+      if (!query) return true;
+      return [s.name, s.code, s.phone, s.tax_code, s.group_name, s.contact_name].some(function (val) {
+        return String(val || '').toLocaleLowerCase('vi').includes(query);
+      });
     });
     const canManage = S.fn.hasPerm('manageInventory') || S.fn.hasPerm('recordCashbook');
     const canPay = S.fn.hasPerm('recordCashbook');
@@ -693,11 +800,13 @@
       const balHtml = canViewFinance
         ? `<strong style='color:${bal > 0 ? 'var(--warning)' : 'var(--ink)'}'>${S.fn.moneyVndText(s.balance_vnd || '0')}</strong>`
         : `<span class='muted'>—</span>`;
+      const metaBits = [s.code, s.phone, s.group_name].filter(Boolean).map(S.fn.esc).join(' · ');
       return `<tr>
-        <td><strong>${S.fn.esc(s.name)}</strong>${s.last_activity_at ? `<div class='muted' style='font-size:11.5px'>GD gần nhất: ${S.fn.humanDate(s.last_activity_at, true)}</div>` : ''}</td>
+        <td><strong>${S.fn.esc(s.name)}</strong>${metaBits ? `<div class='muted' style='font-size:12px'>${metaBits}</div>` : ''}${s.last_activity_at ? `<div class='muted' style='font-size:11.5px'>GD gần nhất: ${S.fn.humanDate(s.last_activity_at, true)}</div>` : ''}</td>
         <td class='text-right'>${balHtml}</td>
         <td class='text-right'>
-          ${canViewFinance ? `<button class='btn btn-secondary' type='button' data-action='supplier-balance' data-id='${S.fn.esc(s.id)}' style='min-height:32px;padding:4px 10px'>Sổ công nợ</button>` : ''}
+          ${canManage ? `<button class='btn btn-secondary' type='button' data-action='edit-supplier' data-id='${S.fn.esc(s.id)}' style='min-height:32px;padding:4px 10px'>Sửa</button>` : ''}
+          ${canViewFinance ? `<button class='btn btn-secondary' type='button' data-action='supplier-balance' data-id='${S.fn.esc(s.id)}' style='min-height:32px;padding:4px 10px'>Chi tiết 360°</button>` : ''}
           ${canPay && bal > 0 ? `<button class='btn btn-primary' type='button' data-action='supplier-payment' data-id='${S.fn.esc(s.id)}' style='min-height:32px;padding:4px 10px'>Trả nợ</button>` : ''}
         </td>
       </tr>`;
@@ -705,24 +814,27 @@
     const mobileCards = suppliers.map(function (s) {
       const bal = Number(s.balance_vnd || 0);
       const balText = canViewFinance ? S.fn.moneyVndText(s.balance_vnd || '0') : '—';
+      const metaBits = [s.code, s.phone].filter(Boolean).map(S.fn.esc).join(' · ');
       return `<article class='product-mobile-card'>
         <div class='product-mobile-info'>
           <strong>${S.fn.esc(s.name)}</strong>
+          ${metaBits ? `<small class='muted'>${metaBits}</small>` : ''}
           ${s.last_activity_at ? `<small class='muted'>${S.fn.humanDate(s.last_activity_at, true)}</small>` : ''}
         </div>
         <div class='product-mobile-side'>
           <strong style='color:${bal > 0 ? 'var(--warning)' : 'var(--ink)'}'>${balText}</strong>
           <div style='display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end'>
-            ${canViewFinance ? `<button class='btn btn-secondary' type='button' data-action='supplier-balance' data-id='${S.fn.esc(s.id)}' style='min-height:32px;padding:4px 10px;font-size:12px'>Sổ nợ</button>` : ''}
+            ${canManage ? `<button class='btn btn-secondary' type='button' data-action='edit-supplier' data-id='${S.fn.esc(s.id)}' style='min-height:32px;padding:4px 10px;font-size:12px'>Sửa</button>` : ''}
+            ${canViewFinance ? `<button class='btn btn-secondary' type='button' data-action='supplier-balance' data-id='${S.fn.esc(s.id)}' style='min-height:32px;padding:4px 10px;font-size:12px'>360°</button>` : ''}
             ${canPay && bal > 0 ? `<button class='btn btn-primary' type='button' data-action='supplier-payment' data-id='${S.fn.esc(s.id)}' style='min-height:32px;padding:4px 10px;font-size:12px'>Trả nợ</button>` : ''}
           </div>
         </div>
       </article>`;
     }).join('');
-    const headingActions = `${canManage ? `<button class='btn btn-primary' type='button' data-action='new-supplier'>＋ Thêm NCC</button><button class='btn btn-secondary desktop-only-btn' type='button' data-action='receive-stock'>Nhập hàng</button>` : ''}`;
+    const headingActions = `${canManage ? `<button class='btn btn-primary' type='button' data-action='new-supplier'>＋ Thêm NCC</button><button class='btn btn-secondary desktop-only-btn' type='button' data-action='import-suppliers'>Nhập CSV NCC</button><button class='btn btn-secondary desktop-only-btn' type='button' data-action='receive-stock'>Nhập hàng</button>` : ''}`;
     return S.fn.pageHeading('Nhà cung cấp', '', headingActions) +
       (canViewFinance ? `<div class='stat-grid' style='margin-bottom:16px'><article class='stat-card'><div class='stat-top'><span class='stat-label'>Tổng NCC</span></div><div class='stat-value'>${S.fn.number(suppliers.length)}</div></article><article class='stat-card'><div class='stat-top'><span class='stat-label'>NCC đang nợ</span></div><div class='stat-value'>${S.fn.number(owingCount)}</div></article><article class='stat-card'><div class='stat-top'><span class='stat-label'>Tổng phải trả</span></div><div class='stat-value' style='color:var(--warning)'>${S.fn.money(totalPayable)}</div></article></div>` : '') +
-      `<div class='toolbar'><div class='toolbar-left'><div class='search-wrap'><span class='search-symbol'>⌕</span><input class='input' id='supplier-search' type='search' placeholder='Tìm tên nhà cung cấp…' value='${S.fn.esc(S.state.searchTerms.suppliers || '')}' aria-label='Tìm nhà cung cấp'></div><span class='result-count'>${S.fn.number(suppliers.length)} NCC</span></div></div>` +
+      `<div class='toolbar'><div class='toolbar-left'><div class='search-wrap'><span class='search-symbol'>⌕</span><input class='input' id='supplier-search' type='search' placeholder='Tìm tên, mã NCC, SĐT, MST…' value='${S.fn.esc(S.state.searchTerms.suppliers || '')}' aria-label='Tìm nhà cung cấp'></div><span class='result-count'>${S.fn.number(suppliers.length)} NCC</span></div></div>` +
       `<section class='panel desktop-only-table'><div class='table-wrap'><table class='data-table'><thead><tr><th>Nhà cung cấp</th><th class='text-right'>Công nợ phải trả</th><th class='text-right'>Thao tác</th></tr></thead><tbody>${rows || `<tr><td colspan='3'><div class='empty-state'><strong>${S.state.financeLoading ? 'Đang tải…' : 'Chưa có nhà cung cấp'}</strong></div></td></tr>`}</tbody></table></div></section>` +
       `<div class='mobile-only-cards'>${mobileCards || `<section class='panel empty-state'><strong>${S.state.financeLoading ? 'Đang tải…' : 'Chưa có nhà cung cấp'}</strong></section>`}</div>`;
   }

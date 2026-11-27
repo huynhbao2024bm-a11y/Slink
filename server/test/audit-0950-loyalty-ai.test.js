@@ -581,3 +581,172 @@ test('0.9.6.0 AI & Automation: F&B local parse, unknown supplier-code fallback, 
   assert.equal(restockRes.statusCode, 200, restockRes.body);
   assert.ok(restockRes.json().suggestions.some((s) => s.productId === prod.id && s.actionType === 'purchase'));
 });
+
+test('0.9.7.0 Bulk EAN-13 Barcodes, Allow Duplicate Barcodes, Suppliers 360 & AI Phone Match', async (t) => {
+  const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'slink-0970-'));
+  const runtime = await openPGliteRuntime({
+    dataDirectory: dataDir,
+    migrationsDirectory: path.join(__dirname, '..', 'migrations'),
+  });
+  const app = await buildServer({
+    pool: runtime.pool,
+    logger: false,
+    env: {
+      NODE_ENV: 'test',
+      PUBLIC_ORIGIN: 'http://127.0.0.1:3000',
+      DEMO_DISABLE_EMAIL_VERIFICATION: 'true',
+      SESSION_SECRET: '0123456789abcdef0123456789abcdef',
+    },
+  });
+  t.after(async () => {
+    await app.close();
+    await fs.rm(dataDir, { recursive: true, force: true }).catch(() => {});
+  });
+
+  const reg = await app.inject({
+    method: 'POST',
+    url: '/api/auth/register',
+    headers: { origin: 'http://127.0.0.1:3000' },
+    payload: {
+      displayName: 'Chu 0970',
+      storeName: 'Shop 0970',
+      email: 'owner0970@example.com',
+      password: 'VeryStrongPassword#2026',
+    },
+  });
+  assert.equal(reg.statusCode, 201, reg.body);
+  const headers = makeAuthHeaders(extractCookies(reg));
+  const storeId = reg.json().stores[0].id;
+
+  // 1. Create two products without barcodes, then bulk-generate EAN-13
+  const p1Res = await app.inject({
+    method: 'POST',
+    url: `/api/stores/${storeId}/products`,
+    headers: { ...headers, 'idempotency-key': randomUUID() },
+    payload: { name: 'Áo thun 0970', sku: 'AT-0970', salePriceVnd: 150000 },
+  });
+  assert.equal(p1Res.statusCode, 200, p1Res.body);
+  const p2Res = await app.inject({
+    method: 'POST',
+    url: `/api/stores/${storeId}/products`,
+    headers: { ...headers, 'idempotency-key': randomUUID() },
+    payload: { name: 'Quần short 0970', sku: 'QS-0970', salePriceVnd: 180000 },
+  });
+  assert.equal(p2Res.statusCode, 200, p2Res.body);
+  const p1Id = p1Res.json().product.id;
+  const p2Id = p2Res.json().product.id;
+
+  const genRes = await app.inject({
+    method: 'POST',
+    url: `/api/stores/${storeId}/products/generate-barcodes`,
+    headers,
+    payload: { productIds: [p1Id, p2Id] },
+  });
+  assert.equal(genRes.statusCode, 200, genRes.body);
+  assert.equal(genRes.json().count, 2);
+  const generatedCode = genRes.json().products[0].barcode;
+  assert.match(generatedCode, /^20\d{11}$/);
+
+  // 2. Duplicate barcode blocked by default, allowed after enabling allowDuplicateBarcodes
+  const dupBlocked = await app.inject({
+    method: 'PUT',
+    url: `/api/stores/${storeId}/products/${p2Id}`,
+    headers,
+    payload: { name: 'Quần short 0970', sku: 'QS-0970', barcode: generatedCode, salePriceVnd: 180000, version: 2 },
+  });
+  assert.equal(dupBlocked.statusCode, 409, dupBlocked.body);
+
+  const curSet = (await app.inject({ method: 'GET', url: `/api/stores/${storeId}/settings`, headers })).json().settings;
+  const updSet = await app.inject({
+    method: 'PUT',
+    url: `/api/stores/${storeId}/settings`,
+    headers,
+    payload: {
+      name: curSet.name,
+      allowDuplicateBarcodes: true,
+      autoGenerateBarcode: true,
+      version: curSet.version,
+    },
+  });
+  assert.equal(updSet.statusCode, 200, updSet.body);
+  assert.equal(updSet.json().settings.allow_duplicate_barcodes, true);
+  assert.equal(updSet.json().settings.auto_generate_barcode, true);
+
+  const dupAllowed = await app.inject({
+    method: 'PUT',
+    url: `/api/stores/${storeId}/products/${p2Id}`,
+    headers,
+    payload: { name: 'Quần short 0970', sku: 'QS-0970', barcode: generatedCode, salePriceVnd: 180000, version: 2 },
+  });
+  assert.equal(dupAllowed.statusCode, 200, dupAllowed.body);
+
+  // 3. Suppliers 360: create, edit, bulk import, and 360 ledger
+  const supCreate = await app.inject({
+    method: 'POST',
+    url: `/api/stores/${storeId}/suppliers`,
+    headers: { ...headers, 'idempotency-key': randomUUID() },
+    payload: {
+      name: 'Xưởng May Bình Minh',
+      code: 'NCC-BM01',
+      phone: '0909111222',
+      taxCode: '0311223344',
+      contactName: 'Anh Minh',
+      groupName: 'Xưởng sỉ',
+      address: '10 Nguyễn Huệ',
+      openingPayableVnd: '500000',
+    },
+  });
+  assert.equal(supCreate.statusCode, 201, supCreate.body);
+  const supId = supCreate.json().supplier.id;
+  assert.equal(supCreate.json().supplier.code, 'NCC-BM01');
+
+  const supUpdate = await app.inject({
+    method: 'PUT',
+    url: `/api/stores/${storeId}/suppliers/${supId}`,
+    headers,
+    payload: {
+      name: 'Xưởng May Bình Minh Pro',
+      code: 'NCC-BM01',
+      phone: '0909111222',
+      taxCode: '0311223344',
+      contactName: 'Chị Hương',
+      groupName: 'VIP',
+      address: '12 Nguyễn Huệ',
+    },
+  });
+  assert.equal(supUpdate.statusCode, 200, supUpdate.body);
+  assert.equal(supUpdate.json().supplier.contact_name, 'Chị Hương');
+
+  const supImport = await app.inject({
+    method: 'POST',
+    url: `/api/stores/${storeId}/suppliers/import`,
+    headers: { ...headers, 'idempotency-key': randomUUID() },
+    payload: {
+      items: [
+        { name: 'NCC Sỉ Miền Nam', phone: '0988777666', groupName: 'FMCG' },
+        { name: 'NCC Bao Bì', code: 'NCC-BB', openingPayableVnd: '100000' },
+      ],
+    },
+  });
+  assert.equal(supImport.statusCode, 201, supImport.body);
+  assert.equal(supImport.json().count, 2);
+
+  const ledgerRes = await app.inject({
+    method: 'GET',
+    url: `/api/stores/${storeId}/suppliers/${supId}/ledger`,
+    headers,
+  });
+  assert.equal(ledgerRes.statusCode, 200, ledgerRes.body);
+  assert.equal(ledgerRes.json().supplier.balance_vnd, '500000');
+  assert.equal(ledgerRes.json().supplier.total_purchased_vnd, '500000');
+  assert.ok(Array.isArray(ledgerRes.json().supplierReturns));
+
+  // 4. groundParsedInvoice matches supplier by phone even when name differs
+  const { groundParsedInvoice } = require('../ai-assistant');
+  const grounded = groundParsedInvoice(
+    { supplier_name: 'Tên Khác Không Khớp', supplier_phone: '0909 111 222', items: [] },
+    [],
+    [{ id: supId, name: 'Xưởng May Bình Minh Pro', phone: '0909111222' }],
+  );
+  assert.equal(grounded.supplierId, supId);
+});

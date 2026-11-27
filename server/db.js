@@ -82,7 +82,9 @@ async function listStores(pool, userId) {
                 business_profile, onboarding_completed_at,
                 COALESCE(loyalty_earn_unit_vnd, 100000)::text AS loyalty_earn_unit_vnd,
                 COALESCE(loyalty_redeem_value_vnd, 1000)::text AS loyalty_redeem_value_vnd,
-                COALESCE(protect_cost_margin, true) AS protect_cost_margin
+                COALESCE(protect_cost_margin, true) AS protect_cost_margin,
+                COALESCE(allow_duplicate_barcodes, false) AS allow_duplicate_barcodes,
+                COALESCE(auto_generate_barcode, false) AS auto_generate_barcode
          FROM stores WHERE id = $1 AND status = 'active'`,
         [member.store_id]
       );

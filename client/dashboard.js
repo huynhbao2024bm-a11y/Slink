@@ -143,20 +143,20 @@
     const hasStock = invTotal > 0 && invOut < invTotal;
     const hasOrders = Boolean((d && Number(d.todayOrderCount) > 0) || S.state.store.orders.length > 0 || Number(S.state.analyticsData?.summary?.orderCount || 0) > 0);
     const steps = [
-      { key: 'settings', label: '1. Cửa hàng', done: hasStoreInfo, attr: `data-route='settings'` },
-      { key: 'products', label: '2. Thêm hàng', done: hasProducts, attr: S.fn.hasPerm('editProducts') ? `data-action='new-product'` : `data-route='products'` },
-      { key: 'inventory', label: '3. Nhập kho', done: hasStock, attr: `data-route='inventory'` },
-      { key: 'pos', label: '4. Bán đơn đầu', done: hasOrders, attr: `data-route='pos'` },
+      { key: 'settings', label: '1. Cửa hàng & VietQR', desc: 'Điền SĐT hoặc cài ngân hàng nhận chuyển khoản', done: hasStoreInfo, attr: `data-route='settings'` },
+      { key: 'products', label: '2. Thêm hoặc chụp ảnh hàng', desc: 'Tạo sản phẩm đầu tiên hoặc đọc ảnh phiếu nhập', done: hasProducts, attr: S.fn.hasPerm('editProducts') ? `data-action='new-product'` : `data-route='products'` },
+      { key: 'inventory', label: '3. Nhập kho & Mã vạch', desc: 'Cập nhật tồn kho hoặc sinh mã vạch in tem', done: hasStock, attr: `data-route='inventory'` },
+      { key: 'pos', label: '4. Lên đơn POS & Tích điểm', desc: 'Thử bán hàng tại quầy hoặc nói câu lệnh AI', done: hasOrders, attr: `data-route='pos'` },
     ];
     const doneCount = steps.filter(function (s) { return s.done; }).length;
     if (doneCount === steps.length) return '';
-    return `<section class='onboarding-card' aria-label='Thiết lập cửa hàng mới'>
+    return `<section class='onboarding-card' aria-label='Hướng dẫn bắt đầu cửa hàng mới'>
       <div class='onboarding-head'>
-        <h2>Khởi tạo (${doneCount}/${steps.length})</h2>
-        <button type='button' class='link-button' data-action='dismiss-onboarding'>Ẩn</button>
+        <div><h2>Hướng dẫn bắt đầu (${doneCount}/${steps.length} bước)</h2><small class='muted'>Hoàn thành 4 bước cơ bản để vận hành cửa hàng trơn tru</small></div>
+        <div class='heading-actions'><button type='button' class='btn btn-secondary' data-action='start-guided-tour' style='min-height:32px;padding:4px 10px'>Xem hướng dẫn từng bước</button><button type='button' class='link-button' data-action='dismiss-onboarding'>Ẩn</button></div>
       </div>
       <div class='onboarding-steps'>${steps.map(function (s) {
-        return `<button type='button' class='onboarding-step ${s.done ? 'is-done' : ''}' ${s.attr}><div class='onboarding-step-top'><span>${s.done ? '✓ Đã xong' : 'Cần làm'}</span><span>→</span></div><strong>${S.fn.esc(s.label)}</strong></button>`;
+        return `<button type='button' class='onboarding-step ${s.done ? 'is-done' : ''}' ${s.attr}><div class='onboarding-step-top'><span>${s.done ? '✓ Đã xong' : 'Cần làm'}</span><span>→</span></div><strong>${S.fn.esc(s.label)}</strong><small style='display:block;margin-top:4px;color:var(--muted)'>${S.fn.esc(s.desc)}</small></button>`;
       }).join('')}</div>
     </section>`;
   }

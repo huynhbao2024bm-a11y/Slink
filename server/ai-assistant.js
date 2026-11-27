@@ -486,6 +486,7 @@ function groundParsedInvoice(parsed, products, suppliers) {
   const byCode = uniqueIndex(products, product => [product.sku, product.barcode, ...(product.extra_barcodes || [])].map(codeKey));
   const byName = uniqueIndex(products, product => [normalizeViText(product.name)]);
   const suppliersByName = uniqueIndex(suppliers, supplier => [normalizeViText(supplier.name)]);
+  const suppliersByPhone = uniqueIndex(suppliers, supplier => [String(supplier.phone || '').replace(/\D+/g, '')]);
   const rows = rawItems.map((row, index) => {
     const name = String(row?.product_name || row?.matched_name || '').trim().slice(0, 240);
     const code = codeKey(row?.code).slice(0, 120);
@@ -533,7 +534,8 @@ function groundParsedInvoice(parsed, products, suppliers) {
     if (!row.issue && duplicateProducts.has(row.product?.id)) row.issue = 'duplicate';
   }
   const supplierName = String(parsed?.supplier_name || '').trim().slice(0, 160);
-  const supHit = suppliersByName.get(normalizeViText(supplierName));
+  const supplierPhoneDigits = String(parsed?.supplier_phone || '').replace(/\D+/g, '');
+  const supHit = (supplierPhoneDigits ? suppliersByPhone.get(supplierPhoneDigits) : undefined) ?? suppliersByName.get(normalizeViText(supplierName));
   let supplier = supHit ?? null;
   if (!supplier && supHit === undefined && supplierName) {
     const fuzzySup = scoreProductMatch(suppliers, normalizeViText(supplierName));
@@ -795,7 +797,7 @@ function registerAiAssistantRoutes(app, { pool, env, aiClient = null }) {
         [storeId],
       );
       const suppliers = await client.query(
-        "SELECT id, name FROM suppliers WHERE store_id = $1 AND status = 'active'", [storeId],
+        "SELECT id, name, phone FROM suppliers WHERE store_id = $1 AND status = 'active'", [storeId],
       );
       return { ...groundParsedInvoice(parsed, products.rows, suppliers.rows), canRecordPayment: hasPermission(membership, 'record_cashbook') };
     });

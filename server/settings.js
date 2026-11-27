@@ -36,7 +36,9 @@ function storeLoyaltySettings(input) {
     redeemValue = num.toString();
   }
   const protectCostMargin = typeof source.protectCostMargin === 'boolean' ? source.protectCostMargin : null;
-  return { earnUnit, redeemValue, protectCostMargin };
+  const allowDuplicateBarcodes = typeof source.allowDuplicateBarcodes === 'boolean' ? source.allowDuplicateBarcodes : null;
+  const autoGenerateBarcode = typeof source.autoGenerateBarcode === 'boolean' ? source.autoGenerateBarcode : null;
+  return { earnUnit, redeemValue, protectCostMargin, allowDuplicateBarcodes, autoGenerateBarcode };
 }
 
 function registerStoreSettingsRoutes(app, { pool, env }) {
@@ -84,7 +86,9 @@ function registerStoreSettingsRoutes(app, { pool, env }) {
         `SELECT id, name, phone, address, receipt_footer, version,
                 COALESCE(loyalty_earn_unit_vnd, 100000)::text AS loyalty_earn_unit_vnd,
                 COALESCE(loyalty_redeem_value_vnd, 1000)::text AS loyalty_redeem_value_vnd,
-                COALESCE(protect_cost_margin, true) AS protect_cost_margin
+                COALESCE(protect_cost_margin, true) AS protect_cost_margin,
+                COALESCE(allow_duplicate_barcodes, false) AS allow_duplicate_barcodes,
+                COALESCE(auto_generate_barcode, false) AS auto_generate_barcode
          FROM stores WHERE id = $1 AND status = 'active'`,
         [storeId]
       );
@@ -109,14 +113,19 @@ function registerStoreSettingsRoutes(app, { pool, env }) {
              loyalty_earn_unit_vnd = COALESCE($7::bigint, loyalty_earn_unit_vnd),
              loyalty_redeem_value_vnd = COALESCE($8::bigint, loyalty_redeem_value_vnd),
              protect_cost_margin = COALESCE($9::boolean, protect_cost_margin),
+             allow_duplicate_barcodes = COALESCE($10::boolean, allow_duplicate_barcodes),
+             auto_generate_barcode = COALESCE($11::boolean, auto_generate_barcode),
              version = version + 1, updated_at = now()
          WHERE id = $1 AND status = 'active' AND version = $2
          RETURNING id, name, phone, address, receipt_footer, version,
                    COALESCE(loyalty_earn_unit_vnd, 100000)::text AS loyalty_earn_unit_vnd,
                    COALESCE(loyalty_redeem_value_vnd, 1000)::text AS loyalty_redeem_value_vnd,
-                   COALESCE(protect_cost_margin, true) AS protect_cost_margin`,
+                   COALESCE(protect_cost_margin, true) AS protect_cost_margin,
+                   COALESCE(allow_duplicate_barcodes, false) AS allow_duplicate_barcodes,
+                   COALESCE(auto_generate_barcode, false) AS auto_generate_barcode`,
         [storeId, expectedVersion, profile.name, profile.phone, profile.address, profile.receiptFooter,
-          loyalty.earnUnit, loyalty.redeemValue, loyalty.protectCostMargin]
+          loyalty.earnUnit, loyalty.redeemValue, loyalty.protectCostMargin,
+          loyalty.allowDuplicateBarcodes, loyalty.autoGenerateBarcode]
       );
       if (!result.rowCount) throw new ApiError(409, 'version_conflict', 'Cài đặt đã được thay đổi trên thiết bị khác. Hãy tải lại rồi thử lại.');
       await client.query(
