@@ -29,7 +29,7 @@ function pickFreePort() {
   });
 }
 
-async function bootTempApp() {
+async function bootTempApp({ aiClient = null } = {}) {
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'slink-e2e-'));
   const port = await pickFreePort();
   const origin = `http://127.0.0.1:${port}`;
@@ -42,7 +42,7 @@ async function bootTempApp() {
     PUBLIC_ORIGIN: origin,
     DEMO_DISABLE_EMAIL_VERIFICATION: 'true',
   };
-  const app = await buildServer({ pool: runtime.pool, logger: false, env });
+  const app = await buildServer({ pool: runtime.pool, logger: false, env, aiClient });
   await app.listen({ port, host: '127.0.0.1' });
   return {
     origin,
@@ -872,7 +872,9 @@ async function run() {
   }
 }
 
-run().catch((err) => {
+module.exports = { bootTempApp, registerOwnerInBrowser, loadPlaywright, launchBrowser };
+
+if (require.main === module) run().catch((err) => {
   console.error(err);
   process.exitCode = 1;
 });

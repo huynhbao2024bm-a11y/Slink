@@ -4,6 +4,15 @@
 
 Status labels: **Not started**, **In progress**, **Blocked by external dependency**, **Evidence passed**. “Evidence passed” applies only to the named milestone, never to the whole product by implication.
 
+## 2026-11-27 · Nhập kho từ một ảnh
+
+**Đang nghiệm thu.** Mục tiêu là đọc phiếu một lần và cho người có quyền chốt kho, công nợ và sổ chi trên cùng phiếu nhập. Bản nháp giữ đủ dòng cần đối chiếu. Mặt hàng tạo nhanh có tồn đầu bằng 0. Việc ghi sổ dùng giao dịch và mã chống gửi trùng của phiếu nhập hiện hành.
+
+- Máy chủ nhận ảnh qua `/ai/parse-invoice`. Bản mới yêu cầu `draftVersion: 2`. Bản cũ nhận kết quả theo định dạng cũ cho phiếu đủ điều kiện, hoặc được hướng dẫn nhập tay. Chỉ máy chủ đọc `GEMINI_PURCHASE_API_KEY`. Thời hạn một lần gọi Google là 12 giây.
+- Đã kiểm tra với kết quả đọc ảnh mô phỏng, API Slink thật và cơ sở dữ liệu thử. Trình duyệt ở 390×844 và 1440×900, cùng APK thử trên giả lập Android API 35, đều đi được từ chọn ảnh đến chốt kho. Một ram 100 tờ giá 200.000 đ làm tồn tăng 100 tờ, giá vốn thành 2.000 đ/tờ. Phiếu 25.000 đ trả 10.000 đ qua ngân hàng làm nợ tăng 15.000 đ. Gửi lại cùng nội dung giữ nguyên mã phiếu và các số dư.
+- Kiểm tra tương thích bằng phần giao diện lấy từ APK đã phát hành `android-v0.9.5.1` (đối chiếu SHA-256 với GitHub). Bản này điền được phiếu rõ và dừng khi phiếu có dòng chưa khớp. Có kiểm thử hồi quy tại `e2e/purchase-photo.js` và `server/test/contest-features.test.js`.
+- Trước khi mở cho cửa hàng thật, thu hồi khóa từng xuất hiện trong chat và dùng khóa thay thế riêng trên máy chủ thử. Dùng cùng bộ ảnh phiếu in, viết tay và mờ đã che thông tin riêng tư, ghi thời gian từ chọn ảnh tới khi thấy bản nháp, đối chiếu số dòng phải sửa với chứng từ gốc, rồi kiểm tra bằng camera trên điện thoại. Thời gian và độ chính xác của Gemini thật đang chờ bước này.
+
 ## 2026-11-27 · Slink 0.9.5.0 (versionCode 3036) — Khắc phục toàn diện kiểm toán bảo mật, Đồng bộ Online-First, Tích điểm SĐT, AI Hybrid & Cỡ chữ A−/A+
 
 - **Khắc phục toàn bộ 71 phát hiện (`AUD-001`–`AUD-071`) trong [SLINK_FULL_AUDIT_REPORT_20261126.md](SLINK_FULL_AUDIT_REPORT_20261126.md):** Cô lập thông tin kết nối đa cửa hàng (`buildStoreEnv`, `fail-closed` giải mã `decryptStoreCredentials`), siết SSRF/DNS rebinding (`safe-url.js`, MISA/Viettel `einvoice.js`), sửa `render.yaml`/`Dockerfile`/`container-release.yml` (`--target runtime`)/`production-backup.yml`, chống replay CAPTCHA/vé đăng ký/phiếu đổi mật khẩu dùng 1 lần qua bảng mới `consumed_security_tickets` (`20261127150000_audit_hardening_loyalty.sql`), siết RBAC thu ngân (`records.js`, `exchanges.js`), chia đều FIFO thanh toán hỗn hợp (`sales.js`), lọc chuyển quỹ nội bộ khỏi P&L (`analytics.js`) và thu hồi quyền `UPDATE/DELETE/TRUNCATE` của `slink_app` trên các bảng nhật ký chỉ-ghi-thêm.

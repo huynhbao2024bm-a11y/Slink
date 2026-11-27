@@ -293,9 +293,9 @@ test('Gemini AI Assistant grounds parse-order & parse-invoice against DB catalog
     async parseInvoice({ mimeType }) {
       seenInvoiceMime = mimeType;
       return {
-        supplier_name: 'Nhà phân phối An Bình',
+        supplier_name: 'Nhà phân phối An Bình', total_vnd: '195000', paid_vnd: '0',
         items: [
-          { matched_name: 'Cà phê sữa đá', quantity: 10, import_price_vnd: 14500 },
+          { matched_name: 'Cà phê sữa đá', unit: 'Ly', quantity: 10, import_price_vnd: 14500 },
           { product_name: 'Ly nhựa không có trong kho', quantity: 100, import_price_vnd: 500 },
         ],
       };
@@ -379,16 +379,36 @@ test('Gemini AI Assistant grounds parse-order & parse-invoice against DB catalog
     method: 'POST',
     url: `/api/stores/${owner.storeId}/ai/parse-invoice`,
     headers: owner.headers,
-    payload: { mimeType: 'image/jpeg', imageBase64: fakeBase64 },
+    payload: { mimeType: 'image/jpeg', imageBase64: fakeBase64, draftVersion: 2 },
   });
   assert.equal(invRes.statusCode, 200, invRes.body);
   assert.equal(seenInvoiceMime, 'image/jpeg');
   const invBody = invRes.json();
   assert.equal(invBody.supplierId, realSupplierId);
-  assert.equal(invBody.items.length, 1);
-  assert.equal(invBody.items[0].productId, realProductId);
-  assert.equal(invBody.items[0].unitCostVnd, '14500');
-  assert.equal(invBody.unmatched.length, 1);
+  assert.equal(invBody.rows.length, 2);
+  assert.equal(invBody.rows[0].product.id, realProductId);
+  assert.equal(invBody.rows[0].unitCostVnd, '14500');
+  assert.equal(invBody.rows[1].issue, 'product');
+  assert.equal(invBody.totalVnd, '195000');
+
+  const legacy = await app.inject({
+    method: 'POST', url: `/api/stores/${owner.storeId}/ai/parse-invoice`,
+    headers: owner.headers, payload: { mimeType: 'image/jpeg', imageBase64: fakeBase64 },
+  });
+  assert.equal(legacy.statusCode, 422, legacy.body);
+  mockAiClient.parseInvoice = async () => ({
+    supplier_name: 'Nhà phân phối An Bình', total_vnd: '14500', paid_vnd: '0',
+    items: [{ code: 'CF01', unit: 'Ly', quantity: '1', import_price_vnd: '14500' }],
+  });
+  const legacyReady = await app.inject({
+    method: 'POST', url: `/api/stores/${owner.storeId}/ai/parse-invoice`,
+    headers: owner.headers, payload: { mimeType: 'image/jpeg', imageBase64: fakeBase64 },
+  });
+  assert.equal(legacyReady.statusCode, 200, legacyReady.body);
+  assert.equal(legacyReady.json().items[0].productId, realProductId);
+  assert.equal(legacyReady.json().items[0].unitCostVnd, '14500');
+  assert.deepEqual(legacyReady.json().unmatched, []);
+
 
   const badMime = await app.inject({
     method: 'POST',
@@ -430,6 +450,20 @@ test('Gemini AI Assistant grounds parse-order & parse-invoice against DB catalog
     payload: { mimeType: 'image/jpeg', imageBase64: fakeBase64 },
   });
   assert.equal(cashierInv.statusCode, 403);
+  for (const [role, canRecordPayment] of [['stockkeeper', false], ['accountant', true]]) {
+    const email = role + '@slink.test';
+    const password = 'VeryStrongPassword#2026!';
+    const create = await app.inject({ method: 'POST', url: '/api/stores/' + owner.storeId + '/staff/direct-create',
+      headers: owner.headers, payload: { role, email, password, displayName: role } });
+    assert.equal(create.statusCode, 201, create.body);
+    const login = await app.inject({ method: 'POST', url: '/api/auth/login', headers: { origin }, payload: { email, password } });
+    const cookies = cookiesFrom(login);
+    const receipt = await app.inject({ method: 'POST', url: '/api/stores/' + owner.storeId + '/ai/parse-invoice',
+      headers: { origin, cookie: 'slink_session=' + cookies.slink_session + '; slink_csrf=' + cookies.slink_csrf, 'x-csrf-token': cookies.slink_csrf },
+      payload: { mimeType: 'image/jpeg', imageBase64: fakeBase64, draftVersion: 2 } });
+    assert.equal(receipt.statusCode, 200, receipt.body);
+    assert.equal(receipt.json().canRecordPayment, canRecordPayment);
+  }
 });
 
 test('Gemini AI returns 503 ai_unavailable when GEMINI_API_KEY is not configured', async (t) => {
@@ -494,4 +528,65 @@ test('UI renders offline NAPAS VietQR and hides all third-party provider integra
 
   const swSource = await readFile(path.join(rootDirectory, 'sw.js'), 'utf8');
   assert.match(swSource, /new URL\(file, self\.location\.href\)\.pathname === cleanPathname/);
+});
+
+test('receipt drafts retain ambiguous names, extra barcodes, duplicate lines and conflicting amounts', () => {
+  const { groundParsedInvoice } = require('../ai-assistant');
+  const catalog = [
+    { id: 'paper-1', name: 'Giấy A4', sku: 'G1', unit: 'tờ', extra_barcodes: ['99001'], purchase_pack: { name: 'Ram', size: '100' } },
+    { id: 'paper-2', name: 'Giấy A4', sku: 'G2', unit: 'tờ' },
+  ];
+  const items = [
+    { product_name: 'Giay A4', unit: 'tờ', quantity: '1' },
+    { code: '99001', unit: 'ram', quantity: '1', import_price_vnd: '200000', line_total_vnd: '150000' },
+    { code: 'G1', unit: 'tờ', quantity: '1', line_total_vnd: '0' },
+    { code: 'G2', unit: 'tờ', quantity: '1' },
+  ];
+  const vendors = [{ id: 'a', name: 'An' }, { id: 'b', name: 'Ân' }];
+  const draft = groundParsedInvoice({ items, supplier_name: 'An' }, catalog, vendors);
+  assert.equal(draft.supplierId, null);
+  assert.equal(draft.rows.length, items.length);
+  assert.deepEqual(draft.rows.map(row => row.issue), ['product', 'line_total', 'duplicate', 'price']);
+  assert.equal(draft.rows[0].product, null);
+  assert.equal(draft.rows[1].product.id, 'paper-1');
+  assert.equal(draft.rows[1].pack.size, '100');
+  assert.equal(draft.rows[2].lineTotalVnd, '0');
+  assert.equal(draft.rows[3].lineTotalVnd, null);
+  assert.throws(() => groundParsedInvoice({ items, too_many_rows: true }, catalog, vendors), /50/);
+});
+
+test('purchase OCR sends one image with the separate key and preserves blanks and explicit zero', async (t) => {
+  const { app } = await setupApp(t, { extraEnv: { GEMINI_API_KEY: 'test-pos', GEMINI_PURCHASE_API_KEY: 'test-purchase' } });
+  const owner = await registerUser(app, 'purchase-ocr@slink.test', 'Kho kiểm thử');
+  const calls = [];
+  t.mock.method(global, 'fetch', async (url, options) => {
+    calls.push({ url, ...options, body: JSON.parse(options.body) });
+    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({
+      items: [{ product_name: 'Hàng mẫu', quantity: null, line_total_vnd: '0', import_price_vnd: null }],
+      total_vnd: '0',
+    }) }] } }] }), { status: 200 });
+  });
+  const imageBase64 = Buffer.alloc(90, 23).toString('base64');
+  const result = await app.inject({
+    method: 'POST', url: `/api/stores/${owner.storeId}/ai/parse-invoice`, headers: owner.headers,
+    payload: { mimeType: 'image/jpeg', imageBase64, draftVersion: 2 },
+  });
+  assert.equal(result.statusCode, 200, result.body);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].headers['x-goog-api-key'], 'test-purchase');
+  assert.equal(new URL(calls[0].url).search, '');
+  assert.equal(calls[0].body.generationConfig.thinkingConfig.thinkingLevel, 'MINIMAL');
+  assert.equal(calls[0].body.contents[0].parts[1].inlineData.data, imageBase64);
+  const { rows, paidVnd } = result.json();
+  assert.equal(rows[0].quantity, null);
+  assert.equal(rows[0].unitCostVnd, null);
+  assert.equal(rows[0].lineTotalVnd, '0');
+  assert.equal(paidVnd, null);
+
+  const readAgain = () => app.inject({ method: 'POST', url: '/api/stores/' + owner.storeId + '/ai/parse-invoice',
+    headers: owner.headers, payload: { mimeType: 'image/jpeg', imageBase64, draftVersion: 2 } });
+  global.fetch.mock.mockImplementation(async () => new Response('quota', { status: 429 }));
+  assert.equal((await readAgain()).statusCode, 429);
+  global.fetch.mock.mockImplementation(async () => { throw new Error('disconnected'); });
+  assert.equal((await readAgain()).statusCode, 502);
 });

@@ -2090,7 +2090,12 @@
     if (event.target.matches('[data-purchase-product]')) {
       const row = event.target.closest('[data-purchase-line]');
       const product = S.fn.productById(event.target.value);
-      if (!S.fn.loadPendingPurchase()) S.fn.setReceivePackMode(row, product, true);
+      if (row.dataset.photoLine !== undefined) {
+        const confirm = row.querySelector('[data-photo-unit]');
+        if (confirm) confirm.checked = false;
+        const create = row.querySelector('[data-receive-create]');
+        if (create) create.hidden = Boolean(product) || !S.fn.hasPerm('editProducts');
+      } else if (!S.fn.loadPendingPurchase()) S.fn.setReceivePackMode(row, product, true);
       S.fn.updateReceivePurchaseTotal(S.dom.modal.querySelector('[data-form="receive"]'));
     }
     if (event.target.matches('[data-order-product]')) {
