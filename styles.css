@@ -74,6 +74,20 @@ html {
   background: var(--bg);
   scroll-behavior: smooth;
   -webkit-text-size-adjust: 100%;
+  --font-scale: 1;
+}
+
+body {
+  font-size: calc(14px * var(--font-scale, 1));
+}
+
+.data-table,
+.cart-row,
+.cart-total-line,
+.pos-assist-line,
+.product-card strong,
+.pos-product-row strong {
+  font-size: calc(13.5px * var(--font-scale, 1));
 }
 
 body {
@@ -1211,7 +1225,7 @@ select.input,
 /* Compact Dismissible Toasts (never block viewport) */
 .toast-stack {
   position: fixed;
-  top: 1rem;
+  top: calc(var(--topbar-h, 3.65rem) + 0.5rem);
   right: 2%;
   z-index: 980;
   display: grid;

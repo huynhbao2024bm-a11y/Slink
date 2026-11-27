@@ -614,6 +614,8 @@
     if (route) { S.fn.routeTo(route.dataset.route); return; }
     const button = event.target.closest('[data-action]'); if (!button) return;
     const action = button.dataset.action; const id = button.dataset.id;
+    const posMore = button.closest('.pos-more-menu');
+    if (posMore) posMore.open = false;
     if (editorMenu?.contains(button)) {
       editorMenu.open = false;
       if (action === 'print-barcode-single') {
@@ -843,6 +845,8 @@
     else if (action === 'import-customers') S.fn.openCustomerImport();
     else if (action === 'download-customer-import-template') S.fn.downloadCustomerImportTemplate();
     else if (action === 'help') S.fn.showHelp();
+    else if (action === 'font-decrease') { S.fn.stepFontScale?.(-1); return; }
+    else if (action === 'font-increase') { S.fn.stepFontScale?.(1); return; }
     else if (action === 'more-menu') S.fn.showMoreMenu();
     else if (action === 'new-channel-profile') S.fn.openChannelProfile(null);
     else if (action === 'edit-channel-profile') {
@@ -2190,6 +2194,7 @@
     else if (type === 'cash-session-open') S.fn.saveCashSessionOpen(form);
     else if (type === 'cash-session-close') S.fn.saveCashSessionClose(form);
     else if (type === 'settings') S.fn.saveSettings(form);
+    else if (type === 'loyalty-settings') S.fn.saveLoyaltySettings(form);
     else if (type === 'integration-settings') S.fn.saveIntegrationSettings(form);
     else if (type === 'order-shipping') S.fn.saveOrderShipping(form);
     else if (type === 'staff-invite') S.fn.saveStaffInvitation(form);
@@ -2309,7 +2314,16 @@
     S.fn.renderShell();
     S.fn.resumeOfflineWork().catch(error => { S.state.offlineState.storageIssue = error.message; });
   });
-  S.state.offlineChannel?.addEventListener('message', function (event) { if (event.data?.scope === S.fn.activeOfflineScope()) { S.fn.offlineRowsChanged(false).catch(() => {}); S.state.offlineRefreshDue = true; S.fn.refreshAfterOfflineSync(); S.fn.startOfflineSync(); } });
+  S.state.offlineChannel?.addEventListener('message', function (event) {
+    if (event.data?.scope !== S.fn.activeOfflineScope()) return;
+    S.fn.offlineRowsChanged(false).catch(() => {});
+    if (event.data?.reason === 'acknowledged') {
+      S.state.offlineRefreshDue = true;
+      S.fn.refreshAfterOfflineSync();
+    } else if (event.data?.reason === 'enqueued') {
+      S.fn.startOfflineSync();
+    }
+  });
   window.setInterval(function () { if (S.state.authSession && navigator.onLine && S.state.offlineState.pending) S.fn.startOfflineSync(); S.fn.refreshAfterOfflineSync(); }, 30000);
   window.addEventListener('offline', function () { S.state.offlinePreparation += 1; S.state.offlineState.preparing = false; S.state.offlineState.mode = 'offline'; S.fn.renderShell(); });
   document.addEventListener('input', function (event) {

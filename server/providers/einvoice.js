@@ -1,11 +1,11 @@
 'use strict';
 
-const { assertSafeOutboundUrl } = require('./safe-url');
+const { assertSafeOutboundUrl, assertSafeOutboundUrlResolved } = require('./safe-url');
 
-function parseHttpsProviderUrl(raw, env, label) {
+async function parseHttpsProviderUrl(raw, env, label) {
   try {
     return {
-      url: assertSafeOutboundUrl(raw, { allowLocalInTest: env.NODE_ENV === 'test', label }),
+      url: await assertSafeOutboundUrlResolved(raw, { allowLocalInTest: env.NODE_ENV === 'test', label }),
     };
   } catch (err) {
     return {
@@ -46,7 +46,7 @@ async function issueEinvoice(provider, order, storeConfig, env = process.env) {
     if (!env.MISA_EINVOICE_URL || !env.MISA_APP_ID || !env.MISA_SECRET) {
       return { ok: false, statusCode: 503, code: 'integration_not_configured', message: 'Chưa gắn tài khoản MISA meInvoice (MISA_EINVOICE_URL, MISA_APP_ID, MISA_SECRET).' };
     }
-    const parsed = parseHttpsProviderUrl(env.MISA_EINVOICE_URL, env, 'MISA meInvoice');
+    const parsed = await parseHttpsProviderUrl(env.MISA_EINVOICE_URL, env, 'MISA meInvoice');
     if (parsed.error) return parsed.error;
     let res;
     try {
@@ -70,7 +70,7 @@ async function issueEinvoice(provider, order, storeConfig, env = process.env) {
     if (!env.VIETTEL_EINVOICE_URL || !env.VIETTEL_EINVOICE_USER || !env.VIETTEL_EINVOICE_PASS) {
       return { ok: false, statusCode: 503, code: 'integration_not_configured', message: 'Chưa gắn tài khoản Viettel S-Invoice (VIETTEL_EINVOICE_URL, VIETTEL_EINVOICE_USER, VIETTEL_EINVOICE_PASS).' };
     }
-    const parsed = parseHttpsProviderUrl(env.VIETTEL_EINVOICE_URL, env, 'Viettel S-Invoice');
+    const parsed = await parseHttpsProviderUrl(env.VIETTEL_EINVOICE_URL, env, 'Viettel S-Invoice');
     if (parsed.error) return parsed.error;
     const authHdr = 'Basic ' + Buffer.from(`${env.VIETTEL_EINVOICE_USER}:${env.VIETTEL_EINVOICE_PASS}`).toString('base64');
     let res;

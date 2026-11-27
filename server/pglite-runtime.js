@@ -210,6 +210,14 @@ async function applyMigrations(db, migrationsDirectory) {
       GRANT SELECT, INSERT ON public.integration_webhook_events TO slink_app;
       REVOKE DELETE, TRUNCATE ON public.cash_categories FROM slink_app;
       GRANT SELECT, INSERT, UPDATE ON public.cash_categories TO slink_app;
+      REVOKE UPDATE, DELETE, TRUNCATE ON public.order_internal_notes, public.order_tag_events, public.customer_tag_events, public.product_sale_price_history FROM slink_app;
+      GRANT SELECT, INSERT ON public.order_internal_notes, public.order_tag_events, public.customer_tag_events, public.product_sale_price_history TO slink_app;
+      REVOKE UPDATE, DELETE, TRUNCATE ON public.product_serial_codes, public.customer_point_ledger_entries, public.staff_payslips, public.pos_prebill_events FROM slink_app;
+      GRANT SELECT, INSERT, UPDATE ON public.product_serial_codes TO slink_app;
+      GRANT SELECT, INSERT ON public.customer_point_ledger_entries, public.staff_payslips TO slink_app;
+      GRANT SELECT, INSERT, UPDATE ON public.pos_prebill_events TO slink_app;
+      REVOKE ALL ON public.consumed_security_tickets FROM slink_app;
+      GRANT SELECT, INSERT, DELETE ON public.consumed_security_tickets TO slink_app;
   `);
 }
 

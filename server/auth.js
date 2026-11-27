@@ -14,7 +14,9 @@ const { createFirebaseVerifier, getPublicFirebaseConfig, isFirebaseFullyConfigur
 const {
   createCaptchaChallenge,
   createRegistrationTicket,
+  decodeSignedTokenPayload,
   isCaptchaRequired,
+  persistConsumedSecurityTicket,
   verifyCaptchaChallenge,
   verifyRegistrationTicket,
 } = require('./captcha');
@@ -49,10 +51,21 @@ function emailVerificationDisabled(env) {
   return env.NODE_ENV !== 'production' && env.DEMO_DISABLE_EMAIL_VERIFICATION === 'true';
 }
 
-function requireCaptchaIfEnabled(env, body) {
+async function requireCaptchaIfEnabled(pool, env, body) {
   if (!isCaptchaRequired(env)) return;
   if (!verifyCaptchaChallenge(env, body?.captchaToken, body?.captchaAnswer)) {
     throw new ApiError(400, 'captcha_invalid', 'Mã xác nhận CAPTCHA không đúng hoặc đã hết hạn. Vui lòng nhập lại.');
+  }
+  const payload = decodeSignedTokenPayload(env, body?.captchaToken);
+  if (payload?.id) {
+    const firstUse = await persistConsumedSecurityTicket(pool, {
+      ticketId: `captcha:${payload.id}`,
+      kind: 'captcha',
+      expiresAtMs: payload.exp,
+    });
+    if (!firstUse) {
+      throw new ApiError(400, 'captcha_invalid', 'Mã xác nhận CAPTCHA đã được sử dụng hoặc hết hạn. Vui lòng nhập lại.');
+    }
   }
 }
 
@@ -348,6 +361,35 @@ function registerAuthRoutes(app, { pool, env, firebaseVerifier = null }) {
         if (!existing.email_verified_at) {
           await recordSecurityEvent(client, existing.id, 'email_verified');
         }
+        const pendingInvite = await client.query(
+          `SELECT id, store_id, role, invited_by FROM store_invitations
+           WHERE (claimed_user_id = $1 OR email_normalized = $2)
+             AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()
+           ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
+          [existing.id, tokenEmailNormalized]
+        );
+        if (pendingInvite.rowCount) {
+          const invitation = pendingInvite.rows[0];
+          await client.query("SELECT set_config('app.store_id', $1, true)", [invitation.store_id]);
+          const activeStore = await client.query("SELECT id FROM stores WHERE id = $1 AND status = 'active'", [invitation.store_id]);
+          if (activeStore.rowCount) {
+            await client.query(
+              `INSERT INTO memberships (store_id, user_id, role, status, invited_by, joined_at)
+               VALUES ($1, $2, $3, 'active', $4, now())
+               ON CONFLICT (store_id, user_id) DO NOTHING`,
+              [invitation.store_id, existing.id, invitation.role, invitation.invited_by]
+            );
+            await client.query(
+              'UPDATE store_invitations SET claimed_user_id = COALESCE(claimed_user_id, $2), accepted_at = now(), updated_at = now() WHERE id = $1',
+              [invitation.id, existing.id]
+            );
+            await client.query(
+              `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, metadata)
+               VALUES ($1, $2, 'staff.joined', 'store_invitation', $3, $4::jsonb)`,
+              [invitation.store_id, existing.id, invitation.id, JSON.stringify({ role: invitation.role, acceptedDuring: 'firebase_login' })]
+            );
+          }
+        }
       });
       return createUserSession(pool, existing.id, reply, env, { activatePendingOwner: true });
     }
@@ -431,7 +473,7 @@ function registerAuthRoutes(app, { pool, env, firebaseVerifier = null }) {
     if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || displayName.length < 2 || displayName.length > 120 || (workspaceMode === 'shop' && (storeName.length < 2 || storeName.length > 160))) {
       throw new ApiError(400, 'validation_error', 'Hãy kiểm tra email, tên và tên cửa hàng.');
     }
-    requireCaptchaIfEnabled(env, body);
+    await requireCaptchaIfEnabled(pool, env, body);
     const exists = await pool.query('SELECT 1 FROM users WHERE email_normalized = $1 LIMIT 1', [emailNormalized]);
     if (exists.rowCount) {
       throw new ApiError(409, 'account_exists', 'Email này đã được sử dụng.');
@@ -460,8 +502,21 @@ function registerAuthRoutes(app, { pool, env, firebaseVerifier = null }) {
     }
 
     const usedTicket = verifyRegistrationTicket(env, body.registrationTicket, emailNormalized);
-    if (!usedTicket) {
-      requireCaptchaIfEnabled(env, body);
+    if (usedTicket) {
+      const regPayload = decodeSignedTokenPayload(env, body.registrationTicket);
+      if (regPayload?.id) {
+        const firstReg = await persistConsumedSecurityTicket(pool, {
+          ticketId: `reg:${regPayload.id}`,
+          kind: 'registration_ticket',
+          metadata: { email: emailNormalized },
+          expiresAtMs: regPayload.exp,
+        });
+        if (!firstReg) {
+          throw new ApiError(400, 'captcha_invalid', 'Phiên xác thực đăng ký đã được sử dụng. Vui lòng thử lại.');
+        }
+      }
+    } else {
+      await requireCaptchaIfEnabled(pool, env, body);
     }
 
     const { randomUUID } = require('node:crypto');
@@ -630,7 +685,7 @@ function registerAuthRoutes(app, { pool, env, firebaseVerifier = null }) {
     config: { rateLimit: { max: 5, timeWindow: '1 hour' } },
   }, async (request) => {
     assertSameOrigin(request, env);
-    requireCaptchaIfEnabled(env, request.body || {});
+    await requireCaptchaIfEnabled(pool, env, request.body || {});
     if (emailVerificationDisabled(env)) {
       return {
         status: 'verification_not_required',
@@ -689,7 +744,7 @@ function registerAuthRoutes(app, { pool, env, firebaseVerifier = null }) {
     config: { rateLimit: { max: 5, timeWindow: '1 hour' } },
   }, async (request) => {
     assertSameOrigin(request, env);
-    requireCaptchaIfEnabled(env, request.body || {});
+    await requireCaptchaIfEnabled(pool, env, request.body || {});
     const email = typeof request.body?.email === 'string' ? request.body.email.trim() : '';
     const emailNormalized = email.toLowerCase();
     if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new ApiError(400, 'validation_error', 'Email không hợp lệ.');
@@ -773,13 +828,17 @@ function registerAuthRoutes(app, { pool, env, firebaseVerifier = null }) {
       await client.query('UPDATE password_reset_tokens SET consumed_at = now() WHERE id = $1', [found.rows[0].id]);
       const updated = await client.query(
         `UPDATE users SET password_hash = $2, password_changed_at = now(), updated_at = now()
-         WHERE id = $1 AND status = 'active' AND email_verified_at IS NOT NULL RETURNING id`,
+         WHERE id = $1 AND status = 'active' AND email_verified_at IS NOT NULL RETURNING id, firebase_uid`,
         [userId, passwordHash]
       );
       if (!updated.rowCount) throw new ApiError(400, 'invalid_token', 'Tài khoản không còn hoạt động. Hãy liên hệ quản lý.');
       await client.query('UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [userId]);
       await recordSecurityEvent(client, userId, 'password_changed');
       await client.query('COMMIT');
+      const firebaseUid = updated.rows[0].firebase_uid;
+      if (firebaseUid && verifier.configured && typeof verifier.revokeRefreshTokens === 'function') {
+        await verifier.revokeRefreshTokens(firebaseUid).catch(() => {});
+      }
       return { status: 'password_changed', message: 'Mật khẩu đã được cập nhật. Đăng nhập lại bằng mật khẩu mới.' };
     } catch (error) {
       await client.query('ROLLBACK');
@@ -804,21 +863,27 @@ function registerAuthRoutes(app, { pool, env, firebaseVerifier = null }) {
     const user = found.rows[0];
     const publicOrigin = env.PUBLIC_ORIGIN || 'http://127.0.0.1:3000';
     if (verifier.configured && typeof verifier.sendPasswordResetEmail === 'function') {
-      if (!user.firebase_uid && typeof verifier.ensureUser === 'function') {
-        const fbUser = await verifier.ensureUser({ email: user.email, displayName: user.display_name, emailVerified: true });
-        if (fbUser?.uid) {
-          await withUser(pool, user.id, (client) => client.query(
-            'UPDATE users SET firebase_uid = COALESCE(firebase_uid, $2), updated_at = now() WHERE id = $1',
-            [user.id, fbUser.uid]
-          ));
-        }
-      }
       try {
+        if (!user.firebase_uid && typeof verifier.ensureUser === 'function') {
+          const fbUser = await verifier.ensureUser({ email: user.email, displayName: user.display_name, emailVerified: true });
+          if (fbUser?.uid) {
+            await withUser(pool, user.id, (client) => client.query(
+              'UPDATE users SET firebase_uid = COALESCE(firebase_uid, $2), updated_at = now() WHERE id = $1',
+              [user.id, fbUser.uid]
+            ));
+          }
+        }
         await verifier.sendPasswordResetEmail(user.email, `${publicOrigin}/?mode=resetPassword`);
       } catch (error) {
         request.log.warn({ code: error.code || 'firebase_reset_failed', ...(Number.isInteger(error.providerStatus) ? { providerStatus: error.providerStatus } : {}) }, 'Failed sending Firebase change-password confirmation email');
         throw new ApiError(503, 'email_unavailable', 'Chưa thể gửi email xác nhận đổi mật khẩu. Vui lòng thử lại sau.');
       }
+      await persistConsumedSecurityTicket(pool, {
+        ticketId: `pwchgreq:${require('node:crypto').randomUUID()}`,
+        kind: 'password_change_request',
+        userId: user.id,
+        expiresAtMs: Date.now() + 60 * 60 * 1000,
+      });
       return {
         status: 'confirmation_email_sent',
         provider: 'firebase',
@@ -873,7 +938,7 @@ function registerAuthRoutes(app, { pool, env, firebaseVerifier = null }) {
     if (!firebaseUid || !decoded?.email_verified || tokenEmail !== auth.email.toLowerCase()) {
       throw new ApiError(403, 'email_mismatch', 'Tài khoản xác nhận không khớp với email đang đăng nhập.');
     }
-    if (Number.isFinite(authTimeSec) && Math.floor(Date.now() / 1000) - authTimeSec > 600) {
+    if (!Number.isFinite(authTimeSec) || Math.floor(Date.now() / 1000) - authTimeSec > 600) {
       throw new ApiError(401, 'stale_authentication', 'Xác nhận đã quá hạn. Hãy thực hiện xác nhận qua email lại.');
     }
     const passwordHash = await hashPassword(randomBytes(32).toString('hex'));
@@ -884,6 +949,27 @@ function registerAuthRoutes(app, { pool, env, firebaseVerifier = null }) {
       }
       if (user.rows[0].firebase_uid && user.rows[0].firebase_uid !== firebaseUid) {
         throw new ApiError(409, 'firebase_uid_mismatch', 'Tài khoản không khớp với định danh Firebase đã liên kết.');
+      }
+      const reqEvt = await client.query(
+        `SELECT ticket_id FROM consumed_security_tickets
+         WHERE user_id = $1 AND kind = 'password_change_request'
+           AND expires_at > now()
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [auth.userId]
+      );
+      if (!reqEvt.rowCount) {
+        throw new ApiError(409, 'password_change_not_requested', 'Chưa có yêu cầu đổi mật khẩu qua email gần đây. Hãy bấm Gửi email xác nhận trước.');
+      }
+      await client.query('DELETE FROM consumed_security_tickets WHERE ticket_id = $1', [reqEvt.rows[0].ticket_id]);
+      const firstConfirm = await persistConsumedSecurityTicket(client, {
+        ticketId: `pwchg:${auth.userId}:${authTimeSec}`,
+        kind: 'password_change_confirm',
+        userId: auth.userId,
+        expiresAtMs: Date.now() + 3600_000,
+      });
+      if (!firstConfirm) {
+        throw new ApiError(409, 'confirmation_already_used', 'Phiên xác nhận đổi mật khẩu này đã được sử dụng. Hãy gửi lại email xác nhận.');
       }
       await client.query(
         `UPDATE users
@@ -905,6 +991,9 @@ function registerAuthRoutes(app, { pool, env, firebaseVerifier = null }) {
       );
       await recordSecurityEvent(client, auth.userId, 'password_changed');
     });
+    if (verifier.configured && typeof verifier.revokeRefreshTokens === 'function') {
+      await verifier.revokeRefreshTokens(firebaseUid).catch(() => {});
+    }
     return { status: 'password_changed', message: 'Đã xác nhận qua email và đổi mật khẩu thành công. Các thiết bị khác cần đăng nhập lại.' };
   });
 
@@ -920,9 +1009,11 @@ function registerAuthRoutes(app, { pool, env, firebaseVerifier = null }) {
     const newPassword = typeof request.body?.newPassword === 'string' ? request.body.newPassword : '';
     if (!currentPassword || currentPassword.length > 128) throw new ApiError(400, 'validation_error', 'Hãy nhập mật khẩu hiện tại.');
     if (newPassword.length < 12 || newPassword.length > 128) throw new ApiError(400, 'validation_error', 'Mật khẩu mới cần từ 12 đến 128 ký tự.');
+    let fbUid = null;
     await withUser(pool, auth.userId, async (client) => {
-      const user = await client.query('SELECT password_hash, status FROM users WHERE id = $1 FOR UPDATE', [auth.userId]);
+      const user = await client.query('SELECT password_hash, status, firebase_uid FROM users WHERE id = $1 FOR UPDATE', [auth.userId]);
       if (!user.rowCount || user.rows[0].status !== 'active') throw new ApiError(401, 'unauthorized', 'Phiên đăng nhập không còn hợp lệ. Hãy đăng nhập lại.');
+      fbUid = user.rows[0].firebase_uid;
       if (!await verifyPassword(currentPassword, user.rows[0].password_hash)) {
         throw new ApiError(400, 'current_password_invalid', 'Mật khẩu hiện tại chưa đúng.');
       }
@@ -944,6 +1035,9 @@ function registerAuthRoutes(app, { pool, env, firebaseVerifier = null }) {
       );
       await recordSecurityEvent(client, auth.userId, 'password_changed');
     });
+    if (fbUid && verifier.configured && typeof verifier.revokeRefreshTokens === 'function') {
+      await verifier.revokeRefreshTokens(fbUid).catch(() => {});
+    }
     return { status: 'password_changed', message: 'Đã đổi mật khẩu. Các thiết bị khác cần đăng nhập lại.' };
   });
 
@@ -977,13 +1071,7 @@ function registerAuthRoutes(app, { pool, env, firebaseVerifier = null }) {
     if (!user.email_verified_at && !demoBypass) {
       if (verifier.configured && typeof verifier.ensureUser === 'function') {
         try {
-          const fbUser = await verifier.ensureUser({ email: user.email, displayName: user.display_name, emailVerified: false, password });
-          if (fbUser?.uid) {
-            await withUser(pool, user.id, (client) => client.query(
-              'UPDATE users SET firebase_uid = COALESCE(firebase_uid, $2), updated_at = now() WHERE id = $1',
-              [user.id, fbUser.uid]
-            ));
-          }
+          await verifier.ensureUser({ email: user.email, displayName: user.display_name, emailVerified: false, password });
         } catch (err) {
           request.log.warn({ err: err.message }, 'Firebase provisioning failed during unverified login');
         }

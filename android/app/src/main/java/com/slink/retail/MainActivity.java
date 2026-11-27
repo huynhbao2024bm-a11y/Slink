@@ -75,6 +75,7 @@ public class MainActivity extends Activity {
     private TextToSpeech tts;
     private boolean ttsReady = false;
     private String pendingSpeechText = null;
+    private ToneGenerator toneGenerator;
     private ValueCallback<Uri[]> fileCallback;
     private Uri capturedPhoto;
     private PermissionRequest cameraRequest;
@@ -158,8 +159,13 @@ public class MainActivity extends Activity {
             WebViewCompat.addWebMessageListener(web, "SlinkAndroid", Collections.singleton(BuildConfig.APP_ORIGIN),
                     (view, message, origin, mainFrame, reply) -> {
                         if (!mainFrame || !isAppOrigin(origin)) return;
+                        String raw = message.getData();
+                        if (raw == null || raw.length() > 16000000) {
+                            Toast.makeText(this, "Dữ liệu gửi lên vượt giới hạn cho phép.", Toast.LENGTH_SHORT).show();
+                            return;
+                        }
                         JSONObject payload = null;
-                        try { payload = new JSONObject(message.getData()); handleMessage(payload, reply); }
+                        try { payload = new JSONObject(raw); handleMessage(payload, reply); }
                         catch (Exception error) {
                             if (payload != null) {
                                 String id = payload.optString("id");
@@ -242,9 +248,26 @@ public class MainActivity extends Activity {
     }
 
     private boolean isAppOrigin(Uri uri) {
+        if (uri == null) return false;
         Uri expected = Uri.parse(BuildConfig.APP_ORIGIN);
+        int uriPort = uri.getPort() == -1 && "https".equals(uri.getScheme()) ? 443 : uri.getPort();
+        int expPort = expected.getPort() == -1 && "https".equals(expected.getScheme()) ? 443 : expected.getPort();
         return "https".equals(uri.getScheme()) && uri.getUserInfo() == null
-                && expected.getHost().equals(uri.getHost()) && uri.getPort() == expected.getPort();
+                && expected.getHost() != null && expected.getHost().equalsIgnoreCase(uri.getHost())
+                && uriPort == expPort;
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        Uri incoming = intent != null ? intent.getData() : null;
+        if (incoming != null && isAppOrigin(incoming) && web != null) {
+            web.loadUrl(incoming.buildUpon()
+                    .appendQueryParameter("platform", "android")
+                    .appendQueryParameter("appVersion", String.valueOf(BuildConfig.VERSION_CODE))
+                    .build().toString());
+        }
     }
 
     private WebResourceResponse localResponse(String path) {
@@ -357,8 +380,10 @@ public class MainActivity extends Activity {
         runOnUiThread(() -> {
             if (chime) {
                 try {
-                    ToneGenerator tg = new ToneGenerator(AudioManager.STREAM_NOTIFICATION, 85);
-                    tg.startTone(ToneGenerator.TONE_PROP_ACK, 180);
+                    if (toneGenerator == null) {
+                        toneGenerator = new ToneGenerator(AudioManager.STREAM_NOTIFICATION, 85);
+                    }
+                    toneGenerator.startTone(ToneGenerator.TONE_PROP_ACK, 180);
                 } catch (Exception ignored) {}
             }
             try {
@@ -374,18 +399,26 @@ public class MainActivity extends Activity {
                                 if (toSpeak != null && !toSpeak.isEmpty()) {
                                     tts.speak(toSpeak, TextToSpeech.QUEUE_FLUSH, null, "slink_tts_" + System.currentTimeMillis());
                                 }
+                            } else {
+                                ttsReady = false;
                             }
+                        } else {
+                            ttsReady = false;
                         }
                     });
                     reply.postMessage(new JSONObject().put("id", id).put("status", "ok").toString());
                     return;
                 }
                 if (ttsReady) {
-                    tts.speak(rawText, TextToSpeech.QUEUE_FLUSH, null, "slink_tts_" + System.currentTimeMillis());
-                    reply.postMessage(new JSONObject().put("id", id).put("status", "ok").toString());
+                    int speakRes = tts.speak(rawText, TextToSpeech.QUEUE_FLUSH, null, "slink_tts_" + System.currentTimeMillis());
+                    if (speakRes == TextToSpeech.ERROR) {
+                        reply.postMessage(new JSONObject().put("id", id).put("status", "error").put("message", "Không phát được giọng đọc.").toString());
+                    } else {
+                        reply.postMessage(new JSONObject().put("id", id).put("status", "ok").toString());
+                    }
                 } else {
                     pendingSpeechText = rawText;
-                    reply.postMessage(new JSONObject().put("id", id).put("status", "ok").toString());
+                    reply.postMessage(new JSONObject().put("id", id).put("status", "error").put("message", "Thiết bị chưa sẵn sàng giọng đọc tiếng Việt.").toString());
                 }
             } catch (Exception error) {
                 try { reply.postMessage(new JSONObject().put("id", id).put("status", "error").put("message", "Không phát được giọng đọc.").toString()); }
@@ -436,41 +469,58 @@ public class MainActivity extends Activity {
             catch (Exception ignored) {}
             return;
         }
-        try {
-            byte[] bytes = Base64.decode(b64, Base64.DEFAULT);
-            if (bytes == null || bytes.length < 8 || bytes.length > 5242880
-                    || (bytes[0] & 0xFF) != 0x89 || bytes[1] != 0x50 || bytes[2] != 0x4E || bytes[3] != 0x47) {
-                reply.postMessage(new JSONObject().put("id", id).put("status", "error").put("message", "Định dạng ảnh PNG không hợp lệ.").toString());
-                return;
+        btExecutor.execute(() -> {
+            try {
+                byte[] bytes = Base64.decode(b64, Base64.DEFAULT);
+                if (bytes == null || bytes.length < 8 || bytes.length > 5242880
+                        || (bytes[0] & 0xFF) != 0x89 || bytes[1] != 0x50 || bytes[2] != 0x4E || bytes[3] != 0x47) {
+                    runOnUiThread(() -> {
+                        try { reply.postMessage(new JSONObject().put("id", id).put("status", "error").put("message", "Định dạng ảnh PNG không hợp lệ.").toString()); }
+                        catch (Exception ignored) {}
+                    });
+                    return;
+                }
+                File shareDir = new File(getCacheDir(), "shares");
+                if (!shareDir.exists()) shareDir.mkdirs();
+                File[] existing = shareDir.listFiles();
+                if (existing != null && existing.length > 10) {
+                    for (File old : existing) { try { old.delete(); } catch (Exception ignored) {} }
+                }
+                File outFile = new File(shareDir, cleanName);
+                if (!outFile.getCanonicalPath().startsWith(shareDir.getCanonicalPath() + File.separator)) {
+                    runOnUiThread(() -> {
+                        try { reply.postMessage(new JSONObject().put("id", id).put("status", "error").put("message", "Tên tệp chia sẻ không hợp lệ.").toString()); }
+                        catch (Exception ignored) {}
+                    });
+                    return;
+                }
+                try (FileOutputStream fos = new FileOutputStream(outFile)) {
+                    fos.write(bytes);
+                    fos.flush();
+                }
+                Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".files", outFile);
+                runOnUiThread(() -> {
+                    try {
+                        Intent send = new Intent(Intent.ACTION_SEND);
+                        send.setType("image/png");
+                        send.putExtra(Intent.EXTRA_STREAM, uri);
+                        if (!title.isEmpty()) send.putExtra(Intent.EXTRA_SUBJECT, title);
+                        if (!text.isEmpty()) send.putExtra(Intent.EXTRA_TEXT, text);
+                        send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                        startActivity(Intent.createChooser(send, title.isEmpty() ? "Chia sẻ biên nhận" : title));
+                        reply.postMessage(new JSONObject().put("id", id).put("status", "ok").toString());
+                    } catch (Exception uiErr) {
+                        try { reply.postMessage(new JSONObject().put("id", id).put("status", "error").put("message", "Không chia sẻ được ảnh.").toString()); }
+                        catch (Exception ignored) {}
+                    }
+                });
+            } catch (Exception error) {
+                runOnUiThread(() -> {
+                    try { reply.postMessage(new JSONObject().put("id", id).put("status", "error").put("message", "Không chia sẻ được ảnh.").toString()); }
+                    catch (Exception ignored) {}
+                });
             }
-            File shareDir = new File(getCacheDir(), "shares");
-            if (!shareDir.exists()) shareDir.mkdirs();
-            File[] existing = shareDir.listFiles();
-            if (existing != null && existing.length > 10) {
-                for (File old : existing) { try { old.delete(); } catch (Exception ignored) {} }
-            }
-            File outFile = new File(shareDir, cleanName);
-            if (!outFile.getCanonicalPath().startsWith(shareDir.getCanonicalPath() + File.separator)) {
-                reply.postMessage(new JSONObject().put("id", id).put("status", "error").put("message", "Tên tệp chia sẻ không hợp lệ.").toString());
-                return;
-            }
-            try (FileOutputStream fos = new FileOutputStream(outFile)) {
-                fos.write(bytes);
-                fos.flush();
-            }
-            Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".files", outFile);
-            Intent send = new Intent(Intent.ACTION_SEND);
-            send.setType("image/png");
-            send.putExtra(Intent.EXTRA_STREAM, uri);
-            if (!title.isEmpty()) send.putExtra(Intent.EXTRA_SUBJECT, title);
-            if (!text.isEmpty()) send.putExtra(Intent.EXTRA_TEXT, text);
-            send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            startActivity(Intent.createChooser(send, title.isEmpty() ? "Chia sẻ biên nhận" : title));
-            reply.postMessage(new JSONObject().put("id", id).put("status", "ok").toString());
-        } catch (Exception error) {
-            try { reply.postMessage(new JSONObject().put("id", id).put("status", "error").put("message", "Không chia sẻ được ảnh.").toString()); }
-            catch (Exception ignored) {}
-        }
+        });
     }
 
     private void handlePrintHtmlMessage(JSONObject data, JavaScriptReplyProxy reply) {
@@ -678,6 +728,8 @@ public class MainActivity extends Activity {
     @Override
     protected void onPause() { super.onPause(); CookieManager.getInstance().flush(); web.onPause(); }
     @Override
+    protected void onStop() { super.onStop(); CookieManager.getInstance().flush(); }
+    @Override
     protected void onResume() { super.onResume(); if (web != null) web.onResume(); if (updater != null) updater.check(false); }
 
     private void sendUpdateState() {
@@ -687,6 +739,10 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         btExecutor.shutdownNow();
+        if (toneGenerator != null) {
+            try { toneGenerator.release(); } catch (Exception ignored) {}
+            toneGenerator = null;
+        }
         if (firebaseAuthBridge != null) {
             firebaseAuthBridge.destroy();
             firebaseAuthBridge = null;

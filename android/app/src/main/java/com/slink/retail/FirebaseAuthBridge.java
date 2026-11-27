@@ -20,12 +20,14 @@ import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.auth.GoogleAuthProvider;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.json.JSONObject;
 
 final class FirebaseAuthBridge {
     private final Activity activity;
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final CancellationSignal activeCancellation = new CancellationSignal();
+    private final AtomicBoolean signInInFlight = new AtomicBoolean(false);
 
     FirebaseAuthBridge(Activity activity) {
         this.activity = activity;
@@ -49,6 +51,7 @@ final class FirebaseAuthBridge {
     }
 
     void destroy() {
+        signInInFlight.set(false);
         try {
             activeCancellation.cancel();
         } catch (Exception ignored) {}
@@ -56,6 +59,13 @@ final class FirebaseAuthBridge {
     }
 
     private void startGoogleSignIn(String id, JavaScriptReplyProxy reply) {
+        if (!signInInFlight.compareAndSet(false, true)) {
+            try {
+                reply.postMessage(new JSONObject().put("id", id).put("status", "error")
+                        .put("message", "Đang xử lý đăng nhập Google. Vui lòng hoàn tất cửa sổ hiện tại.").toString());
+            } catch (Exception ignored) {}
+            return;
+        }
         int resId = activity.getResources().getIdentifier("default_web_client_id", "string", activity.getPackageName());
         if (resId == 0) {
             sendError(reply, id, "Ứng dụng chưa cấu hình Google OAuth (thiếu default_web_client_id).");
@@ -134,6 +144,7 @@ final class FirebaseAuthBridge {
     }
 
     private void sendSuccess(JavaScriptReplyProxy reply, String id, JSONObject extra) {
+        signInInFlight.set(false);
         activity.runOnUiThread(() -> {
             try {
                 extra.put("id", id);
@@ -144,6 +155,7 @@ final class FirebaseAuthBridge {
     }
 
     private void sendError(JavaScriptReplyProxy reply, String id, String message) {
+        signInInFlight.set(false);
         activity.runOnUiThread(() -> {
             try {
                 reply.postMessage(new JSONObject()

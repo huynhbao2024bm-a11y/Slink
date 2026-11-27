@@ -333,8 +333,9 @@ async function buildServer({ pool = null, env = process.env, logger = true, fire
   });
   app.decorate('slinkEmailVerificationDisabled', emailVerificationDisabled(env));
 
-  const firebaseAuthOrigin = typeof env.FIREBASE_AUTH_DOMAIN === 'string' && env.FIREBASE_AUTH_DOMAIN.trim()
-    ? `https://${env.FIREBASE_AUTH_DOMAIN.trim()}`
+  const rawFbDomain = typeof env.FIREBASE_AUTH_DOMAIN === 'string' ? env.FIREBASE_AUTH_DOMAIN.trim() : '';
+  const firebaseAuthOrigin = rawFbDomain && /^[a-z0-9.-]+$/i.test(rawFbDomain)
+    ? `https://${rawFbDomain}`
     : 'https://slink-ad8be.firebaseapp.com';
 
   await app.register(helmet, {
@@ -368,7 +369,7 @@ async function buildServer({ pool = null, env = process.env, logger = true, fire
     max: (request) => {
       if (env.NODE_ENV === 'test') return 2000;
       if (isFrontendPath(request.url.split('?')[0], verificationFiles)) return 1200;
-      return request.url.startsWith('/api/stores/') ? 600 : 120;
+      return request.url.startsWith('/api/stores/') ? 600 : 300;
     },
     timeWindow: '1 minute',
     errorResponseBuilder: () => Object.assign(
@@ -482,7 +483,7 @@ async function buildServer({ pool = null, env = process.env, logger = true, fire
     registerStaffRoutes(app, { pool, env });
     registerCashRegisterRoutes(app, { pool, env });
     registerAuditRoutes(app, { pool, env });
-    registerSecurityRoutes(app, { pool, env });
+    registerSecurityRoutes(app, { pool, env, firebaseVerifier });
     registerWarehouseRoutes(app, { pool, env });
     registerChannelMappingRoutes(app, { pool, env });
     registerChannelOrderRoutes(app, { pool, env });

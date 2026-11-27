@@ -89,7 +89,7 @@ function registerIntegrationRoutes(app, { pool, env }) {
     const auth = await authenticate(pool, request);
     const { storeId } = request.params;
     if (!UUID_PATTERN.test(storeId)) throw new ApiError(400, 'validation_error', 'Cửa hàng không hợp lệ.');
-    return withStore(pool, auth.userId, storeId, async (client) => {
+    return withStore(pool, auth.userId, storeId, async (client, membership) => {
       const res = await client.query(
         `SELECT id, name, bank_bin, bank_code, bank_name, bank_account_number, bank_account_name,
                 bank_webhook_provider, einvoice_provider, tax_code, einvoice_template_code,
@@ -99,7 +99,8 @@ function registerIntegrationRoutes(app, { pool, env }) {
       );
       if (!res.rowCount) throw new ApiError(404, 'store_not_found', 'Không tìm thấy cửa hàng.');
       const row = res.rows[0];
-      const storeEnv = buildStoreEnv(env, row);
+      const isAdmin = ADMIN_ROLES.has(membership.role);
+      const storeEnv = isAdmin ? buildStoreEnv(env, row) : {};
       const baseOrigin = resolveOrigin(request, env);
       return {
         settings: {
@@ -108,26 +109,26 @@ function registerIntegrationRoutes(app, { pool, env }) {
           bankName: row.bank_name || '',
           bankAccountNumber: row.bank_account_number || '',
           bankAccountName: row.bank_account_name || '',
-          bankWebhookProvider: row.bank_webhook_provider || 'none',
-          einvoiceProvider: row.einvoice_provider || 'none',
-          taxCode: row.tax_code || '',
-          einvoiceTemplateCode: row.einvoice_template_code || '',
-          einvoiceSerial: row.einvoice_serial || '',
-          shippingProvider: row.shipping_provider || 'none',
-          momoConfigured: Boolean(storeEnv.MOMO_PARTNER_CODE && storeEnv.MOMO_ACCESS_KEY && storeEnv.MOMO_SECRET_KEY),
-          vnpayConfigured: Boolean(storeEnv.VNPAY_TMN_CODE && storeEnv.VNPAY_HASH_SECRET),
+          bankWebhookProvider: isAdmin ? (row.bank_webhook_provider || 'none') : 'none',
+          einvoiceProvider: isAdmin ? (row.einvoice_provider || 'none') : 'none',
+          taxCode: isAdmin ? (row.tax_code || '') : '',
+          einvoiceTemplateCode: isAdmin ? (row.einvoice_template_code || '') : '',
+          einvoiceSerial: isAdmin ? (row.einvoice_serial || '') : '',
+          shippingProvider: isAdmin ? (row.shipping_provider || 'none') : 'none',
+          momoConfigured: Boolean(isAdmin && storeEnv.MOMO_PARTNER_CODE && storeEnv.MOMO_ACCESS_KEY && storeEnv.MOMO_SECRET_KEY),
+          vnpayConfigured: Boolean(isAdmin && storeEnv.VNPAY_TMN_CODE && storeEnv.VNPAY_HASH_SECRET),
         },
-        webhookUrls: {
+        webhookUrls: isAdmin ? {
           sepay: `${baseOrigin}/api/webhooks/bank-transfer/sepay/${storeId}`,
           casso: `${baseOrigin}/api/webhooks/bank-transfer/casso/${storeId}`,
           payos: `${baseOrigin}/api/webhooks/bank-transfer/payos/${storeId}`,
           momo: `${baseOrigin}/api/webhooks/momo/${storeId}`,
           vnpay: `${baseOrigin}/api/webhooks/vnpay/${storeId}`,
           ghn: `${baseOrigin}/api/webhooks/shipping/ghn/${storeId}`,
-        },
-        ghnShopId: String(storeEnv.GHN_SHOP_ID || ''),
-        credentials: summarizeCredentialStatus(storeEnv),
-        connectors: getIntegrationCatalog(storeEnv, row),
+        } : {},
+        ghnShopId: isAdmin ? String(storeEnv.GHN_SHOP_ID || '') : '',
+        credentials: isAdmin ? summarizeCredentialStatus(storeEnv) : {},
+        connectors: isAdmin ? getIntegrationCatalog(storeEnv, row) : [],
       };
     });
   });
@@ -145,7 +146,12 @@ function registerIntegrationRoutes(app, { pool, env }) {
         [storeId]
       );
       if (!cur.rowCount) throw new ApiError(404, 'store_not_found', 'Không tìm thấy cửa hàng.');
-      const existingCreds = decryptStoreCredentials(cur.rows[0].integration_secrets_enc, env);
+      let existingCreds = {};
+      try {
+        existingCreds = decryptStoreCredentials(cur.rows[0].integration_secrets_enc, env);
+      } catch (decryptErr) {
+        throw new ApiError(409, 'credentials_decrypt_failed', decryptErr.message || 'Không giải mã được khóa kết nối hiện có.');
+      }
       let merged;
       try {
         merged = mergeCredentialUpdates(existingCreds, request.body?.credentials, request.body?.clearCredentials);
@@ -812,7 +818,10 @@ function registerIntegrationRoutes(app, { pool, env }) {
          FROM stores s WHERE s.id = $1 AND s.status = 'active'`,
         [storeId]
       );
-      if (!storeCheck.rowCount) return reply.code(200).send({ RspCode: '01', Message: 'Order not found' });
+      if (!storeCheck.rowCount) {
+        await client.query('ROLLBACK').catch(() => {});
+        return reply.code(200).send({ RspCode: '01', Message: 'Order not found' });
+      }
       const storeEnv = buildStoreEnv(env, storeCheck.rows[0]);
       const verified = verifyVnpayIpn(q, storeEnv);
       if (!verified.configured || !verified.valid) {
@@ -865,6 +874,9 @@ function registerIntegrationRoutes(app, { pool, env }) {
       if (ordRes.rowCount) {
         const ord = ordRes.rows[0];
         matchedOrderId = ord.id;
+        if (ord.customer_id) {
+          await client.query(`SELECT id FROM customers WHERE store_id = $1 AND id = $2 FOR UPDATE`, [storeId, ord.customer_id]);
+        }
         const balRes = await client.query(
           `SELECT
              COALESCE((SELECT SUM(amount_vnd) FROM payments WHERE store_id = $1 AND order_id = $2 AND status = 'succeeded'), 0)::text AS paid_vnd,
@@ -895,6 +907,19 @@ function registerIntegrationRoutes(app, { pool, env }) {
             counterpartyKind: ord.customer_id ? 'customer' : null,
             counterpartyId: ord.customer_id || null,
           });
+          if (ord.customer_id) {
+            const ordDebit = await client.query(
+              `SELECT 1 FROM customer_ledger_entries WHERE store_id = $1 AND customer_id = $2 AND source_type = 'order' AND source_id = $3 LIMIT 1`,
+              [storeId, ord.customer_id, ord.id]
+            );
+            if (ordDebit.rowCount) {
+              await client.query(
+                `INSERT INTO customer_ledger_entries (store_id, customer_id, entry_type, credit_vnd, source_type, source_id, note, actor_user_id)
+                 VALUES ($1, $2, 'payment_credit', $3, 'order_payment', $4, $5, $6)`,
+                [storeId, ord.customer_id, applyVnd.toString(), paymentId, `Webhook VNPAY đơn ${ord.order_number}`, ownerUserId]
+              );
+            }
+          }
           await client.query(
             `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id, reason, metadata)
              VALUES ($1, $2, 'payment.webhook_reconciled', 'order', $3, $4,

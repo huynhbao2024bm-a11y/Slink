@@ -8,7 +8,7 @@ const { insertCashMovement } = require('./cashbook-ledger');
 const { normalizeOffline, expectedPrices } = require('./offline-operations');
 const { normalizeSale, quantityText, distributeDiscount } = require('./sales');
 const { findAccessibleWarehouse, requireWarehouseAccess } = require('./warehouse-access');
-const { hasPermission } = require('./rbac');
+const { getPosMaxDiscountPct, hasPermission } = require('./rbac');
 
 const MAX_BIGINT = 9223372036854775807n;
 const RESOLVE_ROLES = new Set(['owner', 'manager']);
@@ -414,10 +414,11 @@ function assertStockAvailable(items, productIds, productMap, balanceMap) {
   }
 }
 
-function buildResolvedFinancials(reqData, productMap) {
+function buildResolvedFinancials(reqData, productMap, { membership = null, storeProtectCostMargin = true } = {}) {
   const { sale, prices, resolutionMode, offlineTotalVnd } = reqData;
   let offlineSubtotal = 0n;
   let serverSubtotal = 0n;
+  let totalCostVnd = 0n;
   const priceComparisons = [];
   const resolvedLines = [];
 
@@ -425,11 +426,14 @@ function buildResolvedFinancials(reqData, productMap) {
     const product = productMap.get(item.productId);
     const offlinePrice = BigInt(prices[item.productId]);
     const serverPrice = BigInt(product.sale_price_vnd);
+    const costVnd = BigInt(product.cost_vnd || '0');
     const qtyBig = BigInt(item.quantityMilli);
     const offlineGross = (offlinePrice * qtyBig + 500n) / 1000n;
     const serverGross = (serverPrice * qtyBig + 500n) / 1000n;
+    const lineCost = (costVnd * qtyBig + 500n) / 1000n;
     offlineSubtotal += offlineGross;
     serverSubtotal += serverGross;
+    totalCostVnd += lineCost;
 
     priceComparisons.push({
       productId: product.id,
@@ -442,7 +446,7 @@ function buildResolvedFinancials(reqData, productMap) {
       ...item,
       product,
       price: useHistorical ? offlinePrice : serverPrice,
-      cost: BigInt(product.cost_vnd),
+      cost: costVnd,
       grossVnd: useHistorical ? offlineGross : serverGross,
     });
   }
@@ -469,6 +473,32 @@ function buildResolvedFinancials(reqData, productMap) {
   const total = subtotal - totalDiscountVnd;
   if (total > MAX_BIGINT || totalDiscountVnd > MAX_BIGINT) {
     throw new ApiError(400, 'validation_error', 'Tổng tiền hoặc chiết khấu vượt giới hạn lưu trữ.');
+  }
+
+  if (membership && manualDiscountVnd > 0n && subtotal > 0n) {
+    const maxDiscountPct = getPosMaxDiscountPct(membership);
+    if (maxDiscountPct < 100 && (maxDiscountPct === 0 || manualDiscountVnd * 100n > subtotal * BigInt(maxDiscountPct))) {
+      throw new ApiError(
+        403,
+        'discount_limit_exceeded',
+        maxDiscountPct === 0
+          ? 'Tài khoản xử lý không có quyền chiết khấu trên đơn hàng.'
+          : `Mức giảm giá vượt giới hạn tối đa ${maxDiscountPct}% được cấp.`
+      );
+    }
+  }
+  if (
+    storeProtectCostMargin
+    && membership?.role !== 'owner'
+    && totalCostVnd > 0n
+    && totalDiscountVnd > 0n
+    && total < totalCostVnd
+  ) {
+    throw new ApiError(
+      403,
+      'margin_guard_violation',
+      'Chốt chặn bảo vệ giá vốn: Mức giảm giá hoặc giữ giá cũ làm tổng thu thấp hơn giá vốn hàng hóa. Chỉ Chủ cửa hàng mới được duyệt bán dưới giá vốn.'
+    );
   }
 
   const nonCashReceived = sale.tenders.filter((t) => t.method !== 'cash').reduce((sum, t) => sum + t.amountReceivedVnd, 0n);
@@ -501,7 +531,7 @@ function buildResolvedFinancials(reqData, productMap) {
   };
 }
 
-async function prepareResolvedSaleData(client, storeId, resolverUserId, reqData) {
+async function prepareResolvedSaleData(client, storeId, resolverUserId, reqData, membership = null) {
   const { operationKey, assignToCurrentCashSession, sale, offline } = reqData;
 
   // Serialize concurrent attempts on the same offline operationKey within the store
@@ -554,7 +584,12 @@ async function prepareResolvedSaleData(client, storeId, resolverUserId, reqData)
   }
   assertStockAvailable(sale.items, productIds, productMap, balanceMap);
 
-  const financials = buildResolvedFinancials(reqData, productMap);
+  const storeMarginRow = await client.query(
+    `SELECT COALESCE(protect_cost_margin, true) AS protect_cost_margin FROM stores WHERE id = $1`,
+    [storeId]
+  );
+  const storeProtectCostMargin = storeMarginRow.rowCount ? Boolean(storeMarginRow.rows[0].protect_cost_margin) : true;
+  const financials = buildResolvedFinancials(reqData, productMap, { membership, storeProtectCostMargin });
   let creditUsed = 0n;
   if (sale.customerId && financials.paid < financials.total) {
     const creditBalance = await client.query(
@@ -849,7 +884,7 @@ function registerOfflineConflictRoutes(app, { pool, env }) {
       const replay = await reserveIdempotency(client, storeId, auth.userId, request.headers['idempotency-key'], reqData.canonicalHash);
       if (replay) return replay;
 
-      const prepared = await prepareResolvedSaleData(client, storeId, auth.userId, reqData);
+      const prepared = await prepareResolvedSaleData(client, storeId, auth.userId, reqData, membership);
       const responseBody = await persistResolvedSaleOrder(client, storeId, auth.userId, reqData, prepared);
 
       await client.query(

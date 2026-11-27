@@ -35,7 +35,7 @@ jobs:
         shell: bash
         run: |
           image="ghcr.io/${GITHUB_REPOSITORY,,}/slink"
-          docker build --pull \
+          docker build --pull --target runtime \
             --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
             --label "org.opencontainers.image.version=${GITHUB_REF_NAME}" \
             --tag "$image:$GITHUB_REF_NAME" \

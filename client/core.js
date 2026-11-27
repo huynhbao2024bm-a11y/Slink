@@ -9,6 +9,47 @@
   S.dom.backdrop = document.getElementById('modal-backdrop');
   S.dom.toastStack = document.getElementById('toast-stack');
   S.dom.pendingCompatibilityWarning = document.getElementById('pending-compatibility-warning');
+
+  const FONT_SCALE_STEPS = [90, 100, 112, 125];
+  S.fn.loadFontScale = function loadFontScale() {
+    try {
+      const saved = Number(window.localStorage.getItem('slink_font_scale_pct') || 100);
+      return FONT_SCALE_STEPS.includes(saved) ? saved : 100;
+    } catch (_) {
+      return 100;
+    }
+  };
+  S.fn.syncFontScaleButtons = function syncFontScaleButtons() {
+    const pct = Number(S.state.fontScalePct || 100);
+    const min = FONT_SCALE_STEPS[0];
+    const max = FONT_SCALE_STEPS[FONT_SCALE_STEPS.length - 1];
+    document.querySelectorAll('[data-action="font-decrease"]').forEach(function (btn) {
+      btn.disabled = pct <= min;
+      btn.title = `Giảm cỡ chữ (hiện tại ${pct}%)`;
+    });
+    document.querySelectorAll('[data-action="font-increase"]').forEach(function (btn) {
+      btn.disabled = pct >= max;
+      btn.title = `Tăng cỡ chữ (hiện tại ${pct}%)`;
+    });
+  };
+  S.fn.applyFontScale = function applyFontScale(rawPct) {
+    const pct = FONT_SCALE_STEPS.includes(Number(rawPct)) ? Number(rawPct) : 100;
+    S.state.fontScalePct = pct;
+    document.documentElement.dataset.fontScale = String(pct);
+    document.documentElement.style.setProperty('--font-scale', String(pct / 100));
+    document.documentElement.style.fontSize = (16 * pct / 100) + 'px';
+    try { window.localStorage.setItem('slink_font_scale_pct', String(pct)); } catch (_) {}
+    S.fn.syncFontScaleButtons();
+    return pct;
+  };
+  S.fn.stepFontScale = function stepFontScale(delta) {
+    const current = S.state.fontScalePct || S.fn.loadFontScale();
+    const idx = Math.max(0, FONT_SCALE_STEPS.indexOf(current));
+    const nextIdx = Math.max(0, Math.min(FONT_SCALE_STEPS.length - 1, idx + delta));
+    const next = S.fn.applyFontScale(FONT_SCALE_STEPS[nextIdx]);
+    S.fn.toast?.('Cỡ chữ giao diện', `${next}%`);
+  };
+  S.fn.applyFontScale(S.fn.loadFontScale());
   S.state.ROLE_CAPABILITIES = {
     owner: {
       posSell: true, posDiscount: true, viewOrders: true, voidOrReturnOrder: true,
@@ -632,7 +673,7 @@
       effectivePermissions: S.fn.resolveEffectivePermissions('cashier', null, null),
       businessProfile: '',
       onboardingCompletedAt: null,
-      settings: { storeName: 'Slink', ownerName: '', phone: '', address: '', receiptFooter: '', version: 1 },
+      settings: { storeName: 'Slink', ownerName: '', phone: '', address: '', receiptFooter: '', version: 1, loyaltyEarnUnitVnd: '100000', loyaltyRedeemValueVnd: '1000', protectCostMargin: true },
       products: [], customers: [], orders: [], cashbook: [], movements: [], suppliers: [], sequence: 1001,
     };
   }
@@ -1147,15 +1188,21 @@
     await S.state.offlineDisk.putMeta('active-user', user.id);
   }
 
-  S.fn.offlineRowsChanged = async function offlineRowsChanged(notifyOthers) {
+  S.fn.serverNowIso = function serverNowIso() {
+    return new Date(Date.now() + (S.state.serverClockOffsetMs || 0)).toISOString();
+  }
+
+  S.fn.offlineRowsChanged = async function offlineRowsChanged(notifyOthers, reason) {
     const scope = S.fn.activeOfflineScope();
     if (!scope) return;
-    const rows = await S.state.offlineDisk.operations(scope);
+    let rows = [];
+    try { rows = await S.state.offlineDisk.operations(scope); }
+    catch (_) { return; }
     if (scope !== S.fn.activeOfflineScope()) return;
     S.state.offlineState.pending = rows.filter(row => row.state !== 'acknowledged').length;
     S.state.offlineState.conflicts = rows.filter(row => row.state === 'conflict').length;
     S.fn.updateOfflineStatus();
-    if (notifyOthers) S.state.offlineChannel?.postMessage({ scope });
+    if (notifyOthers) S.state.offlineChannel?.postMessage({ scope, reason: reason || 'updated' });
   }
 
   S.fn.collectOfflineResponses = async function collectOfflineResponses(storeId, role, confirmed, permissions) {
@@ -1254,12 +1301,11 @@
       disk: S.state.offlineDisk, scope, owner: S.state.offlineOwner, userId, storeId,
       authenticate: async () => { const identity = await S.fn.networkRequest('/api/auth/me'); await S.fn.rememberOfflineSession(identity); return identity; },
       send: S.fn.networkRequest,
-      refresh: async confirmed => {
+      refresh: async () => {
         const identity = await S.fn.networkRequest('/api/auth/me');
         const active = identity.stores.find(row => row.id === storeId && identity.user.id === userId);
-        const role = active?.role;
-        if (!role) { const error = new Error('Đăng nhập đúng tài khoản còn quyền vào cửa hàng để đồng bộ.'); error.status = 403; throw error; }
-        return S.fn.collectOfflineResponses(storeId, role, confirmed, active.effectivePermissions || active.permissions);
+        if (!active?.role) { const error = new Error('Đăng nhập đúng tài khoản còn quyền vào cửa hàng để đồng bộ.'); error.status = 403; throw error; }
+        return [];
       },
       onChange: event => {
         if (scope !== S.fn.activeOfflineScope()) return;
@@ -1281,7 +1327,8 @@
           S.fn.refreshAfterOfflineSync();
         }
         if (event.type === 'issue' || event.type === 'conflict') S.state.offlineState.issue = event.status === 401 ? 'Phiên đã hết hạn. Đăng nhập lại để đồng bộ các việc đã lưu.' : event.message;
-        S.fn.offlineRowsChanged(true).catch(() => {});
+        const broadcastReason = (event.type === 'acknowledged' || event.type === 'confirmed') ? event.type : '';
+        S.fn.offlineRowsChanged(Boolean(broadcastReason), broadcastReason).catch(() => {});
       },
     });
     return S.state.offlineSender;
@@ -1397,11 +1444,11 @@
       const payload = JSON.parse(JSON.stringify(source));
       delete payload._slinkOfflineVersion;
       delete payload._slinkExpectedCashVnd;
-      if (kind === 'sale' && payload.promotionCode) {
-        const error = new Error('Mã ưu đãi cần xác nhận trực tiếp. Dùng giảm giá bằng số tiền hoặc kết nối mạng để hoàn tất đơn có mã.'); error.status = 400; throw error;
+      if (kind === 'sale' && (payload.promotionCode || payload.redeemPoints || Number(payload.pointsToRedeem || 0) > 0 || payload.settlePriorDebt)) {
+        const error = new Error('Đơn có mã ưu đãi, đổi điểm hoặc gộp thu nợ cũ cần kết nối mạng trực tiếp với máy chủ.'); error.status = 400; throw error;
       }
       payload.warehouseId = warehouseId;
-      payload.offline = { actorUserId: S.state.authSession.user.id, deviceId, occurredAt: new Date().toISOString(), cashSessionId: state.session?.id || null, expectedCashVnd: kind === 'shift-close' ? source._slinkExpectedCashVnd ?? state.session?.expectedCashVnd : null };
+      payload.offline = { actorUserId: S.state.authSession.user.id, deviceId, occurredAt: S.fn.serverNowIso(), cashSessionId: state.session?.id || null, expectedCashVnd: kind === 'shift-close' ? source._slinkExpectedCashVnd ?? state.session?.expectedCashVnd : null };
       const productSnapshots = Array.from(productIds, id => state.products.get(window.SlinkOfflineLedger.productKey(warehouseId, id))).filter(Boolean);
       if (kind === 'sale') payload.items.forEach(item => { item.expectedUnitPriceVnd ??= String(S.fn.productById(item.productId)?.price ?? state.products.get(window.SlinkOfflineLedger.productKey(payload.warehouseId, item.productId))?.sale_price_vnd); });
       if (kind === 'purchase') payload.items.forEach(item => { item.expectedProductVersion ??= S.fn.productById(item.productId)?.version ?? state.products.get(window.SlinkOfflineLedger.productKey(payload.warehouseId, item.productId))?.version; });
@@ -1409,7 +1456,7 @@
       S.state.offlinePreparation += 1; S.state.offlineState.preparing = false;
       snapshot = await S.state.offlineDisk.snapshot(scope);
     }
-    await S.fn.offlineRowsChanged(true);
+    await S.fn.offlineRowsChanged(true, 'enqueued');
     S.state.freshReadsUntil = Date.now() + 6000;
     window.setTimeout(S.fn.startOfflineSync, 0);
     return S.fn.provisionalResult(record, snapshot);
@@ -1475,39 +1522,82 @@
   S.fn.runApiRequest = async function runApiRequest(url, options, method) {
     const readGeneration=S.state.localWriteGeneration;
     const isSerialSale = S.fn.offlineKind(url) === 'sale' && Array.isArray(options?.body?.items) && options.body.items.some(line => (Array.isArray(line.serialCodes) && line.serialCodes.length > 0) || !S.fn.productById(line.productId) || Boolean(S.fn.productById(line.productId)?.serialTracked));
-    if (method === 'POST' && S.fn.offlineKind(url) && options?.body?._slinkOfflineVersion === 1 && !(S.fn.offlineKind(url) === 'sale' && (options.body.promotionCode || isSerialSale))) return S.fn.queueOfflineOperation(url, options);
+    const isOnlineOnlySale = S.fn.offlineKind(url) === 'sale' && Boolean(options?.body?.promotionCode || isSerialSale || options?.body?.redeemPoints || Number(options?.body?.pointsToRedeem || 0) > 0 || options?.body?.settlePriorDebt);
+    const activeScope = S.fn.activeOfflineScope();
+    if (method === 'POST' && S.fn.offlineKind(url) && options?.body?._slinkOfflineVersion === 1 && !isOnlineOnlySale) {
+      let hasQueued = false;
+      if (activeScope && S.state.offlineDisk) {
+        try { hasQueued = (await S.state.offlineDisk.operations(activeScope)).some(row => row.state !== 'acknowledged'); }
+        catch (err) { S.state.offlineState.storageIssue = err?.message || ''; }
+      }
+      if (!navigator.onLine || hasQueued) {
+        return S.fn.queueOfflineOperation(url, options);
+      }
+      const onlineBody = JSON.parse(JSON.stringify(options.body));
+      delete onlineBody._slinkOfflineVersion;
+      delete onlineBody._slinkExpectedCashVnd;
+      try {
+        const direct = await S.fn.networkRequest(url, { ...options, body: onlineBody });
+        S.state.offlineState.mode = 'online';
+        S.fn.updateOfflineStatus();
+        return direct;
+      } catch (err) {
+        if ((!err.status || err.status >= 502 || err.code === 'connection_timeout') && err.name !== 'AbortError') {
+          return S.fn.queueOfflineOperation(url, options);
+        }
+        throw err;
+      }
+    }
     const scope = method === 'GET' ? S.fn.cacheScope(url) : '';
-    const snapshot = scope ? (scope === S.state.cachedBootScope && S.state.cachedBootSnapshot ? S.state.cachedBootSnapshot : await S.state.offlineDisk.snapshot(scope)) : null;
+    let snapshot = null;
+    if (scope && S.state.offlineDisk) {
+      try {
+        snapshot = scope === S.state.cachedBootScope && S.state.cachedBootSnapshot ? S.state.cachedBootSnapshot : await S.state.offlineDisk.snapshot(scope);
+      } catch (err) {
+        S.state.offlineState.storageIssue = err?.message || '';
+        snapshot = null;
+      }
+    }
     if (scope && scope === S.state.cachedBootScope && snapshot) {
-      const saved = await S.fn.cachedOfflineRead(scope, url, snapshot);
-      if (saved) return saved;
+      try {
+        const saved = await S.fn.cachedOfflineRead(scope, url, snapshot);
+        if (saved) return saved;
+      } catch (_) {}
     }
     if (snapshot?.operations.some(row => row.state !== 'acknowledged')) {
       if (method === 'GET') {
-        const saved = await S.fn.cachedOfflineRead(scope, url, snapshot); if (saved) return saved;
+        try {
+          const saved = await S.fn.cachedOfflineRead(scope, url, snapshot);
+          if (saved) return saved;
+        } catch (_) {}
         if (/\/(products|inventory|cash-register|finance|customers|orders)(\/|\?|$)/.test(url)) { const error = new Error('Phần này chưa có trên máy. Đồng bộ các chứng từ đang chờ rồi tải lại.'); error.code = 'offline_data_missing'; throw error; }
       }
     }
-    if(!options?.preferFresh&&scope&&snapshot&&Date.now()>=S.state.freshReadsUntil&&/^\/api\/stores\/[^/]+\/(products|inventory|customers|orders|finance|cash-register|settings|warehouses|analytics)(\/|\?|$)/.test(url)){
-      const previous = await S.state.offlineDisk.lookup(scope, url, snapshot);
-      const staleAt = await S.state.offlineDisk.getMeta('cache-stale|' + scope);
-      if (previous && (!staleAt || previous.fetchedAt > staleAt || !navigator.onLine)) {
+    if (!navigator.onLine && !options?.preferFresh && scope && snapshot && /^\/api\/stores\/[^/]+\/(products|inventory|customers|orders|finance|cash-register|settings|warehouses|analytics)(\/|\?|$)/.test(url)) {
+      try {
         const saved = await S.fn.cachedOfflineRead(scope, url, snapshot);
-        if (saved) { if (navigator.onLine) S.fn.refreshCachedRead(url, scope, previous); return saved; }
-      }
+        if (saved) return saved;
+      } catch (_) {}
     }
     try {
       if (!navigator.onLine) throw new TypeError('offline');
       // Other business writes must not race ahead of this device's saved ledger.
-      const active = S.fn.activeOfflineScope();
-      if (!['GET', 'HEAD'].includes(method) && url.startsWith('/api/stores/') && active && (await S.state.offlineDisk.operations(active)).some(row => row.state !== 'acknowledged')) {
-        const error = new Error('Đồng bộ các chứng từ đã lưu trên máy trước khi thay đổi dữ liệu chung.'); error.status = 409; error.code = 'offline_pending_operations'; throw error;
+      const active = activeScope;
+      if (!['GET', 'HEAD'].includes(method) && url.startsWith('/api/stores/') && active && S.state.offlineDisk) {
+        let pendingOps = [];
+        try { pendingOps = await S.state.offlineDisk.operations(active); } catch (_) { pendingOps = []; }
+        if (pendingOps.some(row => row.state !== 'acknowledged')) {
+          const error = new Error('Đồng bộ các chứng từ đã lưu trên máy trước khi thay đổi dữ liệu chung.'); error.status = 409; error.code = 'offline_pending_operations'; throw error;
+        }
       }
-      const result = await S.fn.networkRequest(url, options);
+      const sendOptions = (method !== 'GET' && options?.body?._slinkOfflineVersion === 1)
+        ? (() => { const cleaned = JSON.parse(JSON.stringify(options.body)); delete cleaned._slinkOfflineVersion; delete cleaned._slinkExpectedCashVnd; return { ...options, body: cleaned }; })()
+        : options;
+      const result = await S.fn.networkRequest(url, sendOptions);
       S.state.offlineState.mode = 'online';
       try {
         if ((method === 'GET' && url === '/api/auth/me') || (method === 'POST' && ['/api/auth/login', '/api/auth/register'].includes(url))) await S.fn.rememberOfflineSession(result);
-        if (scope && scope === S.fn.cacheScope(url) && readGeneration===S.state.localWriteGeneration) {
+        if (scope && snapshot && scope === S.fn.cacheScope(url) && readGeneration===S.state.localWriteGeneration) {
           const stored = await S.state.offlineDisk.cacheResponse(scope, url, result, undefined, snapshot.epoch);
           if (!stored) { const current = await S.state.offlineDisk.snapshot(scope); const saved = await S.fn.cachedOfflineRead(scope, url, current); if (saved) return saved; }
         }
@@ -1517,12 +1607,14 @@
       if ((error.status && error.status < 500) || error.name === 'AbortError') throw error;
       S.state.offlineState.mode = 'offline';
       if (method === 'GET' && S.state.offlineDisk) {
-        if (url === '/api/auth/me') {
-          const userId = await S.state.offlineDisk.getMeta('active-user');
-          const session = userId ? await S.state.offlineDisk.getMeta('session|' + userId) : null;
-          if (session) { S.state.offlineState.cachedAt = session.verifiedAt; S.fn.updateOfflineStatus(); return session; }
-        }
-        if (scope) { const saved = await S.fn.cachedOfflineRead(scope, url, await S.state.offlineDisk.snapshot(scope)); if (saved) { S.fn.updateOfflineStatus(); return saved; } }
+        try {
+          if (url === '/api/auth/me') {
+            const userId = await S.state.offlineDisk.getMeta('active-user');
+            const session = userId ? await S.state.offlineDisk.getMeta('session|' + userId) : null;
+            if (session) { S.state.offlineState.cachedAt = session.verifiedAt; S.fn.updateOfflineStatus(); return session; }
+          }
+          if (scope) { const saved = await S.fn.cachedOfflineRead(scope, url, await S.state.offlineDisk.snapshot(scope)); if (saved) { S.fn.updateOfflineStatus(); return saved; } }
+        } catch (idbErr) { S.state.offlineState.storageIssue = idbErr?.message || ''; }
       }
       S.fn.updateOfflineStatus();
       const issue = new Error(method === 'GET' ? 'Dữ liệu này chưa có trên máy. Kết nối mạng để tải về lần đầu.' : 'Việc này cần máy chủ xác nhận. Nội dung đang nhập vẫn được giữ lại.');
@@ -1554,6 +1646,8 @@
       body: config.body === undefined ? undefined : JSON.stringify(config.body),
       signal: controller.signal,
     });
+    const hdrDate = Date.parse(response.headers?.get?.('date') || '');
+    if (Number.isFinite(hdrDate)) S.state.serverClockOffsetMs = hdrDate - Date.now();
     let result = {};
     try { result = await response.json(); } catch (e) { /* The server may return a non-JSON gateway error. */ }
     if (!response.ok) {
@@ -1687,6 +1781,9 @@
       refunded: refunded,
       returned: returned,
       due: Math.max(0, total - paid - returned + refunded),
+      pointsEarned: Number(row.points_earned || 0),
+      pointsRedeemed: Number(row.points_redeemed || 0),
+      pointsRedeemedVnd: String(row.points_redeemed_vnd || '0'),
       itemCount: Number(row.line_count) || 0,
       items: [],
       method: '',
@@ -1746,7 +1843,7 @@
       if(!note){note=document.createElement('p');note.className='form-message';note.dataset.formMessage='true';note.setAttribute('role','alert');form.append(note);}
       note.textContent=title+(message?' · '+message:'');return;
     }
-    if(tone==='error'&&/^Chưa (tải|làm mới|tìm được)/.test(title)){S.state.offlineState.issue=message||title;return;}
+    if(tone==='error'&&S.state.offlineState.mode==='offline'&&/^Chưa (tải|làm mới|tìm được)/.test(title)){S.state.offlineState.issue=message||title;return;}
     if (S.state.toastTimer) {
       window.clearTimeout(S.state.toastTimer);
       S.state.toastTimer = null;

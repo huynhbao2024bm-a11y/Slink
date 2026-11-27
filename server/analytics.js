@@ -166,6 +166,7 @@ function registerAnalyticsRoutes(app, { pool }) {
              WHERE c.store_id = $1
                AND c.include_in_pnl = true
                AND c.movement_kind <> 'transfer'
+               AND c.transfer_group_id IS NULL
                AND c.occurred_at >= (b.start_date::timestamp AT TIME ZONE b.timezone)
                AND c.occurred_at < ((b.end_date + 1)::timestamp AT TIME ZONE b.timezone)${cashWhClause}
            )
@@ -185,6 +186,7 @@ function registerAnalyticsRoutes(app, { pool }) {
            WHERE c.store_id = $1
              AND c.include_in_pnl = true
              AND c.movement_kind <> 'transfer'
+             AND c.transfer_group_id IS NULL
              AND COALESCE(orig.direction, c.direction) = 'out'
              AND c.occurred_at >= (b.start_date::timestamp AT TIME ZONE b.timezone)
              AND c.occurred_at < ((b.end_date + 1)::timestamp AT TIME ZONE b.timezone)${cashWhClause}
@@ -257,6 +259,7 @@ function registerAnalyticsRoutes(app, { pool }) {
              FROM cash_movements c CROSS JOIN bounds b
              LEFT JOIN cash_movements orig ON orig.store_id = c.store_id AND orig.id = c.reverses_movement_id
              WHERE c.store_id = $1 AND c.movement_kind <> 'transfer'
+               AND c.transfer_group_id IS NULL
                AND c.occurred_at >= (b.start_date::timestamp AT TIME ZONE b.timezone)
                AND c.occurred_at < ((b.end_date + 1)::timestamp AT TIME ZONE b.timezone)${cashWhClause}
            )

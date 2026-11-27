@@ -3,6 +3,15 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
+const ALLOWED_TOP_FILES = new Set([
+  'index.html', 'app.js', 'purchase-units.js', 'money-inputs.js', 'offline-store.js',
+  'offline-ledger.js', 'offline-sync.js', 'offline-conflict-ui.js', 'supplier-returns-ui.js',
+  'barcode-tools.js', 'banks-vn.js', 'vietqr-tools.js', 'escpos-printer.js',
+  'integrations-ui.js', 'finance-vouchers-ui.js', 'firebase-auth-ui.js', 'legal-content.js',
+  'sync-bus.js', 'pos-hardware.js', 'receipt-image.js', 'styles.css', 'workspace.css',
+  'manifest.webmanifest', 'register-sw.js', 'sw.js', 'favicon.ico', 'google02950e16d4d7ed98.html',
+]);
+const ALLOWED_DIR_PREFIXES = [`client${path.sep}`, `assets${path.sep}`];
 const mime = {
   '.css': 'text/css; charset=utf-8',
   '.html': 'text/html; charset=utf-8',
@@ -20,7 +29,12 @@ http.createServer((request, response) => {
   catch { response.writeHead(400).end('Bad request'); return; }
 
   const file = path.resolve(root, `.${pathname}`);
-  if (file !== root && !file.startsWith(`${root}${path.sep}`)) {
+  const relPath = path.relative(root, file);
+  const isRootIndex = file === root;
+  const isAllowed = isRootIndex
+    || ALLOWED_TOP_FILES.has(relPath)
+    || ALLOWED_DIR_PREFIXES.some((prefix) => relPath.startsWith(prefix));
+  if (!isAllowed || (file !== root && !file.startsWith(`${root}${path.sep}`))) {
     response.writeHead(403).end('Forbidden');
     return;
   }

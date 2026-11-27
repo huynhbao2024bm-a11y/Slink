@@ -6,8 +6,9 @@ function normalizeOffline(value) {
   if (value === undefined || value === null) return null;
   if (!value || typeof value !== 'object' || !UUID_PATTERN.test(value.deviceId || '')) throw new ApiError(400, 'offline_metadata_invalid', 'Thiếu mã thiết bị cho chứng từ chờ.');
   const occurred = new Date(value.occurredAt);
-  if (!Number.isFinite(occurred.getTime()) || occurred.getUTCFullYear() < 2000 || occurred.getTime() > Date.now() + 10 * 60 * 1000) {
-    throw new ApiError(409, 'offline_clock_invalid', 'Giờ ghi nhận trên thiết bị chưa đúng. Kiểm tra giờ trước khi xử lý chứng từ chờ.');
+  const maxPastMs = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  if (!Number.isFinite(occurred.getTime()) || occurred.getUTCFullYear() < 2000 || occurred.getTime() < maxPastMs || occurred.getTime() > Date.now() + 10 * 60 * 1000) {
+    throw new ApiError(409, 'offline_clock_invalid', 'Giờ ghi nhận trên thiết bị chưa đúng (lệch quá 30 ngày hoặc vượt giờ hiện tại). Kiểm tra giờ trước khi xử lý chứng từ chờ.');
   }
   if (value.cashSessionId != null && !UUID_PATTERN.test(value.cashSessionId)) throw new ApiError(400, 'offline_metadata_invalid', 'Ca tiền mặt của chứng từ chờ chưa hợp lệ.');
   const actorUserId = value.actorUserId == null ? null : String(value.actorUserId).toLowerCase();

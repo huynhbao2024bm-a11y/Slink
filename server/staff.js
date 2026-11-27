@@ -301,11 +301,11 @@ function registerStaffRoutes(app, { pool, env }) {
     if (!UUID_PATTERN.test(storeId)) throw new ApiError(400, 'validation_error', 'Cửa hàng không hợp lệ.');
     return withStore(pool, auth.userId, storeId, async (client) => {
       const res = await client.query(
-        `SELECT m.user_id, u.display_name, m.role, m.staff_code
+        `SELECT m.user_id, COALESCE(m.store_display_name, u.display_name) AS display_name, m.role, m.staff_code
          FROM memberships m
          JOIN users u ON u.id = m.user_id
          WHERE m.store_id = $1 AND m.status = 'active'
-         ORDER BY (m.role = 'owner') DESC, m.created_at ASC, u.display_name ASC
+         ORDER BY (m.role = 'owner') DESC, m.created_at ASC, COALESCE(m.store_display_name, u.display_name) ASC
          LIMIT 50`,
         [storeId]
       );
@@ -320,7 +320,7 @@ function registerStaffRoutes(app, { pool, env }) {
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
       assertOwner(membership);
       const members = await client.query(
-        `SELECT m.user_id, u.display_name, u.email, m.role, m.status, m.joined_at,
+        `SELECT m.user_id, COALESCE(m.store_display_name, u.display_name) AS display_name, u.email, m.role, m.status, m.joined_at,
                 COALESCE(m.permissions, '{}'::jsonb) AS permissions,
                 m.staff_code, m.phone, COALESCE(m.job_title, '') AS job_title, COALESCE(m.note, '') AS note,
                 COALESCE(m.commission_rate_bps, 0)::int AS commission_rate_bps,
@@ -693,8 +693,11 @@ function registerStaffRoutes(app, { pool, env }) {
         throw err;
       }
       if (profileUpdates.displayName && profileUpdates.displayName !== current.display_name) {
-        const otherStores = await client.query(`SELECT 1 FROM memberships WHERE user_id = $1 AND store_id <> $2 LIMIT 1`, [userId, storeId]);
-        if (!otherStores.rowCount) {
+        await client.query(
+          `UPDATE memberships SET store_display_name = $3 WHERE store_id = $1 AND user_id = $2`,
+          [storeId, userId, profileUpdates.displayName]
+        );
+        if (userId === auth.userId) {
           await client.query(`UPDATE users SET display_name = $2, updated_at = now() WHERE id = $1`, [userId, profileUpdates.displayName]);
         }
       }

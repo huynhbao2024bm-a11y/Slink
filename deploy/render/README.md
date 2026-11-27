@@ -12,11 +12,11 @@ Supabase Direct connection của dự án trả IPv6 trong khi Render Web Servic
 
 ## CA và TLS cho Supabase
 
-CA gốc công khai Supabase được lưu ở deploy/render/supabase-ca.crt. Trên dịch vụ Render, cấu hình:
+CA gốc công khai Supabase được lưu ở `supabase-ca.crt` ở thư mục gốc repository. Trên dịch vụ Render, cấu hình:
 
 ```text
 PG_SSL=ca-file
-PG_SSL_CA_FILE=/opt/render/project/src/deploy/render/supabase-ca.crt
+PG_SSL_CA_FILE=/opt/render/project/src/supabase-ca.crt
 ```
 
 APP_DATABASE_URL phải là URI Session pooler được cấp từ Supabase. Nếu URI có tham số query sslmode hoặc sslrootcert, bỏ các tham số đó khi dùng chế độ CA-file. Slink vẫn xác minh chứng chỉ máy chủ (rejectUnauthorized=true). Không đặt NODE_TLS_REJECT_UNAUTHORIZED=0 và không tắt xác minh TLS.
@@ -27,7 +27,7 @@ Tệp CA là chứng chỉ công khai, không chứa khóa riêng; chứng chỉ
 
 Sau khi commit chứa CA có trên nhánh dịch vụ:
 
-1. Trong Render → Slink → Environment, đặt PG_SSL=ca-file và PG_SSL_CA_FILE=/opt/render/project/src/deploy/render/supabase-ca.crt.
+1. Trong Render → Slink → Environment, đặt PG_SSL=ca-file và PG_SSL_CA_FILE=/opt/render/project/src/supabase-ca.crt.
 2. Đặt APP_DATABASE_URL bằng URI Session pooler mới lấy từ Supabase Connect. Nếu mật khẩu database từng xuất hiện trong ảnh/chia sẻ, hãy đổi mật khẩu ở Supabase trước rồi chỉ cập nhật giá trị mới trong Render.
 3. Lưu biến và deploy commit mới nhất (nếu Render chưa tự deploy).
 4. Mở /api/ready và xem log. Hết SELF_SIGNED_CERT_IN_CHAIN chỉ xác nhận TLS; nếu báo lỗi role, bảng hoặc migration thì phải xử lý riêng trước khi dùng dữ liệu thật.

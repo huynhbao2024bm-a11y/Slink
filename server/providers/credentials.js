@@ -41,9 +41,14 @@ function deriveEncryptionKey(env = process.env) {
 
 function decryptStoreCredentials(encoded, env = process.env) {
   const raw = String(encoded || '').trim();
-  if (!raw || !raw.startsWith('v1:')) return {};
+  if (!raw) return {};
+  if (!raw.startsWith('v1:')) {
+    throw new Error('Dữ liệu khóa tích hợp cửa hàng sai định dạng.');
+  }
   const parts = raw.split(':');
-  if (parts.length !== 4) return {};
+  if (parts.length !== 4) {
+    throw new Error('Dữ liệu khóa tích hợp cửa hàng không nguyên vẹn.');
+  }
   try {
     const iv = Buffer.from(parts[1], 'base64');
     const tag = Buffer.from(parts[2], 'base64');
@@ -52,7 +57,9 @@ function decryptStoreCredentials(encoded, env = process.env) {
     decipher.setAuthTag(tag);
     const plain = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
     const parsed = JSON.parse(plain);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('Nội dung khóa tích hợp cửa hàng không hợp lệ.');
+    }
     const out = {};
     for (const [k, v] of Object.entries(parsed)) {
       if (ALLOWED_KEY_SET.has(k) && typeof v === 'string' && v.trim()) {
@@ -60,8 +67,8 @@ function decryptStoreCredentials(encoded, env = process.env) {
       }
     }
     return out;
-  } catch {
-    return {};
+  } catch (err) {
+    throw new Error(err?.message?.includes('khóa tích hợp') ? err.message : 'Không giải mã được khóa tích hợp cửa hàng (kiểm tra INTEGRATION_ENCRYPTION_KEY).');
   }
 }
 
@@ -119,7 +126,14 @@ function maskValue(value) {
 
 function buildStoreEnv(baseEnv, storeRow) {
   const storeCreds = decryptStoreCredentials(storeRow?.integration_secrets_enc, baseEnv);
-  return { ...baseEnv, ...storeCreds };
+  const sharedMode = String(baseEnv?.ALLOW_SHARED_HOST_INTEGRATIONS || '').toLowerCase() === 'true';
+  const safeBase = { ...(baseEnv || {}) };
+  if (!sharedMode) {
+    for (const key of ALLOWED_CREDENTIAL_KEYS) {
+      delete safeBase[key];
+    }
+  }
+  return { ...safeBase, ...storeCreds };
 }
 
 function summarizeCredentialStatus(storeEnv) {

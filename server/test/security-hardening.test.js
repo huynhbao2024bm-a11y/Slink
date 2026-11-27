@@ -168,6 +168,7 @@ test('GHN webhook fails closed in production without GHN_WEBHOOK_SECRET and enfo
     PUBLIC_ORIGIN: 'https://slink-xny3.onrender.com',
     APP_DATABASE_URL: 'postgresql://user:pass@db.example.com:5432/slink',
     PG_SSL: 'true',
+    ALLOW_SHARED_HOST_INTEGRATIONS: 'true',
     GHN_TOKEN: 'ghn-tok-1234',
     GHN_SHOP_ID: '6790898',
   });
@@ -185,6 +186,7 @@ test('GHN webhook fails closed in production without GHN_WEBHOOK_SECRET and enfo
     PUBLIC_ORIGIN: 'https://slink-xny3.onrender.com',
     APP_DATABASE_URL: 'postgresql://user:pass@db.example.com:5432/slink',
     PG_SSL: 'true',
+    ALLOW_SHARED_HOST_INTEGRATIONS: 'true',
     GHN_TOKEN: 'ghn-tok-1234',
     GHN_SHOP_ID: '6790898',
     GHN_WEBHOOK_SECRET: 'ghn_super_secret_key_2026',

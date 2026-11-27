@@ -21,7 +21,7 @@ concurrency:
 jobs:
   backup:
     runs-on: ubuntu-24.04
-    environment: production-migrations
+    environment: production
     timeout-minutes: 15
     steps:
       - name: Check out backup tooling
@@ -39,16 +39,17 @@ jobs:
 
       - name: Run AES-256-GCM encrypted backup and verify checksum
         env:
-          BACKUP_DATABASE_URL: ${{ secrets.DATABASE_MIGRATION_URL }}
+          BACKUP_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
           SLINK_BACKUP_ENCRYPTION_KEY: ${{ secrets.SLINK_BACKUP_ENCRYPTION_KEY }}
           SLINK_BACKUP_KEY_ID: ${{ vars.SLINK_BACKUP_KEY_ID || 'prod-v1' }}
           SLINK_BACKUP_DIR: .backup-out
           BACKUP_REASON: ${{ github.event.inputs.reason || 'scheduled-daily' }}
-          PGSSLMODE: verify-full
+          PG_SSL: ca-file
+          PG_SSL_CA_FILE: ${{ github.workspace }}/supabase-ca.crt
         run: |
           mkdir -p "$SLINK_BACKUP_DIR"
           if [ -z "$BACKUP_DATABASE_URL" ] || [ -z "$SLINK_BACKUP_ENCRYPTION_KEY" ]; then
-            echo "Missing DATABASE_MIGRATION_URL or SLINK_BACKUP_ENCRYPTION_KEY secret." >&2
+            echo "Missing MIGRATION_DATABASE_URL or SLINK_BACKUP_ENCRYPTION_KEY secret." >&2
             exit 1
           fi
           node scripts/postgres-backup.js create

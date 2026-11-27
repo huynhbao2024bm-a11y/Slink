@@ -249,6 +249,26 @@
     });
   }
 
+  function claimConfirmedOnly(scope, owner, now) {
+    const time = now ?? Date.now();
+    return transaction(['meta', 'outbox'], 'readwrite', (tx, done) => {
+      const meta = tx.objectStore('meta'), box = tx.objectStore('outbox');
+      const key = 'lease|' + scope, lease = meta.get(key);
+      lease.onsuccess = () => {
+        if (lease.result?.value.owner !== owner && lease.result?.value.until > time) { done(null); return; }
+        const rows = box.index('scope').getAll(scope);
+        rows.onsuccess = () => {
+          const sorted = rows.result.filter(row => row.state !== 'acknowledged').sort((a, b) => a.sequence - b.sequence);
+          const confirmed = [];
+          for (const row of sorted) { if (row.state !== 'confirmed') break; confirmed.push(row); }
+          if (!confirmed.length) { done(null); return; }
+          meta.put({ key, value: { owner, operationId: confirmed[0].id, until: time + 60000 } });
+          done({ confirmedOnly: true });
+        };
+      };
+    });
+  }
+
   function settle(scope, owner, id, outcome) {
     return transaction(['meta', 'outbox'], 'readwrite', (tx, done, fail) => {
       const meta = tx.objectStore('meta'), box = tx.objectStore('outbox');
@@ -344,14 +364,19 @@
           const prefix = request.result.filter(row => row.state !== 'acknowledged').sort((a, b) => a.sequence - b.sequence);
           const confirmed = [];
           for (const row of prefix) { if (row.state !== 'confirmed') break; confirmed.push(row); }
-          if (!confirmed.length || !freshResponses?.length) { fail(new Error('Chưa đủ dữ liệu đối chiếu để xác nhận đồng bộ.')); return; }
-          if (freshResponses.some(row => !row.url.startsWith('/api/stores/' + encodeURIComponent(confirmed[0].storeId) + '/'))) { fail(new Error('Dữ liệu đối chiếu khác cửa hàng.')); return; }
-          const paths = new Set(freshResponses.map(row => new URL(row.url, 'https://offline.invalid').pathname)), known = cache.index('scope').getAll(scope);
-          known.onsuccess = () => {
-            known.result.forEach(row => { if (paths.has(new URL(row.url, 'https://offline.invalid').pathname)) cache.delete(row.key); });
-            freshResponses.forEach(row => cache.put({ key: scope + '|' + row.url, scope, url: row.url, fetchedAt: row.fetchedAt || new Date().toISOString(), value: copy(row.value) }));
+          if (!confirmed.length) { fail(new Error('Chưa đủ dữ liệu đối chiếu để xác nhận đồng bộ.')); return; }
+          const responsesList = Array.isArray(freshResponses) ? freshResponses : [];
+          if (responsesList.some(row => !row.url.startsWith('/api/stores/' + encodeURIComponent(confirmed[0].storeId) + '/'))) { fail(new Error('Dữ liệu đối chiếu khác cửa hàng.')); return; }
+          const completeAck = () => {
             confirmed.forEach(row => box.put({ ...row, state: 'acknowledged', acknowledgedAt: new Date().toISOString() }));
             meta.put({ key: 'epoch|' + scope, value: 'ack:' + confirmed[confirmed.length - 1].id }); meta.delete('lease|' + scope); done(confirmed);
+          };
+          if (!responsesList.length) { completeAck(); return; }
+          const paths = new Set(responsesList.map(row => new URL(row.url, 'https://offline.invalid').pathname)), known = cache.index('scope').getAll(scope);
+          known.onsuccess = () => {
+            known.result.forEach(row => { if (paths.has(new URL(row.url, 'https://offline.invalid').pathname)) cache.delete(row.key); });
+            responsesList.forEach(row => cache.put({ key: scope + '|' + row.url, scope, url: row.url, fetchedAt: row.fetchedAt || new Date().toISOString(), value: copy(row.value) }));
+            completeAck();
           };
         };
       };
@@ -494,5 +519,5 @@
   }
 
   async function close() { const db = await open(); db.close(); databasePromise = null; }
-  return { open, close, scopeKey, getMeta, putMeta, removeMeta, cacheResponse, cachedResponse, responses, clearResponses, lookup, operations, enqueue, claim, settle, confirm, renew, prepareDelivery, acknowledge, acknowledgeConfirmed, replaceResponses, snapshot, release, retry, resolveConflict, requeueConflict, requestPersistence };
+  return { open, close, scopeKey, getMeta, putMeta, removeMeta, cacheResponse, cachedResponse, responses, clearResponses, lookup, operations, enqueue, claim, claimConfirmedOnly, settle, confirm, renew, prepareDelivery, acknowledge, acknowledgeConfirmed, replaceResponses, snapshot, release, retry, resolveConflict, requeueConflict, requestPersistence };
 });

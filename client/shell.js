@@ -745,8 +745,14 @@
 
 
   S.fn.showSignedOut = function showSignedOut(message, tone) {
+    const prevScope = S.fn.activeOfflineScope ? S.fn.activeOfflineScope() : '';
+    const prevUserId = S.state.authSession?.user?.id || '';
     S.state.offlineSender?.close(); S.state.offlineSender = null; S.state.offlineSenderScope = ''; S.state.offlineState.pending = 0; S.state.offlineState.conflicts = 0; S.state.offlineState.issue = ''; S.state.cartDraftReady = '';
-    if (S.state.offlineDisk) S.state.offlineDisk.removeMeta('active-user').catch(function () {});
+    if (S.state.offlineDisk) {
+      if (prevScope) S.state.offlineDisk.clearResponses(prevScope).catch(function () {});
+      if (prevUserId) S.state.offlineDisk.removeMeta('session|' + prevUserId).catch(function () {});
+      S.state.offlineDisk.removeMeta('active-user').catch(function () {});
+    }
     S.fn.closeModal();
     S.state.taskFocusRoute = '';
     S.state.channelState.requestNumber += 1;
@@ -1008,6 +1014,9 @@
     S.state.store.settings.address = activeStore.address || '';
     S.state.store.settings.receiptFooter = activeStore.receipt_footer || '';
     S.state.store.settings.version = Number(activeStore.version) || 1;
+    S.state.store.settings.loyaltyEarnUnitVnd = String(activeStore.loyalty_earn_unit_vnd || '100000');
+    S.state.store.settings.loyaltyRedeemValueVnd = String(activeStore.loyalty_redeem_value_vnd || '1000');
+    S.state.store.settings.protectCostMargin = activeStore.protect_cost_margin !== false;
     S.state.lastCompletedSale = null;
     S.state.selectedProductIds = new Set();
     S.state.productDetailState = null;
