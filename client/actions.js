@@ -1761,10 +1761,10 @@
           const select = row && row.querySelector('[data-order-product]');
           if (!select) return;
           const products = result.products.map(S.fn.mapProduct);
-          select.innerHTML = products.map(function (product, index) { return `<option value='${product.id}' data-cost='${product.cost}' ${index === 0 ? 'selected' : ''}>${S.fn.esc(product.name)} · ${S.fn.esc(product.sku)}</option>`; }).join('') || `<option value=''>Không tìm thấy sản phẩm</option>`;
+          select.innerHTML = products.map(function (product, index) { return `<option value='${product.id}' data-cost='${product.cost == null ? '' : product.cost}' ${index === 0 ? 'selected' : ''}>${S.fn.esc(product.name)} · ${S.fn.esc(product.sku)}</option>`; }).join('') || `<option value=''>Không tìm thấy sản phẩm</option>`;
           const selected = products[0];
           const cost = row.querySelector('[data-order-cost]');
-          if (selected && cost) cost.value = String(selected.cost);
+          if (selected && cost) cost.value = selected.cost == null ? '' : String(selected.cost);
           S.fn.updatePurchaseOrderTotal(S.dom.modal.querySelector('[data-form="purchase-order"]'));
         } catch (error) {
           if (readGeneration !== S.state.modalGeneration || S.dom.modal.hidden) return;

@@ -17,8 +17,8 @@ android {
         applicationId 'com.slink.retail'
         minSdk 29
         targetSdk 35
-        versionCode providers.gradleProperty('slinkVersionCode').getOrElse('3039').toInteger()
-        versionName providers.gradleProperty('slinkVersionName').getOrElse('0.9.7.0')
+        versionCode providers.gradleProperty('slinkVersionCode').getOrElse('3040').toInteger()
+        versionName providers.gradleProperty('slinkVersionName').getOrElse('0.9.7.1')
         buildConfigField 'String', 'APP_ORIGIN', '"' + appOrigin.replaceAll('/$', '') + '"'
         buildConfigField 'String', 'UPDATE_MANIFEST', '"https://github.com/huynhbao2024bm-a11y/Slink/releases/latest/download/android-update.json"'
         manifestPlaceholders = [slinkHost: originUri.host]

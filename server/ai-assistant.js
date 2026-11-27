@@ -94,13 +94,14 @@ async function callGeminiJson(env, payload) {
           signal: AbortSignal.timeout(12_000),
         });
       } catch {
-        throw new ApiError(502, 'ai_network_error', 'Không kết nối được tới máy chủ Gemini AI. Vui lòng thử lại.');
+        lastStatus = 503;
+        break;
       }
       lastStatus = response.status;
       if (response.ok) {
         const data = await response.json();
         const parts = data?.candidates?.[0]?.content?.parts || [];
-        const rawText = (parts.find((p) => typeof p?.text === 'string') || {}).text || '{}';
+        const rawText = (parts.find((p) => !p?.thought && typeof p?.text === 'string') || {}).text || '{}';
         try {
           return JSON.parse(stripJsonFences(rawText));
         } catch {
@@ -112,7 +113,7 @@ async function callGeminiJson(env, payload) {
       }
       break;
     }
-    if (i < urls.length - 1 && [400, 401, 403, 404, 503].includes(lastStatus)) {
+    if (i < urls.length - 1 && [400, 401, 403, 404, 429, 503].includes(lastStatus)) {
       continue;
     }
     break;
@@ -609,7 +610,8 @@ async function callPurchaseAutomationGemini(env, { contents, responseSchema, use
             body: JSON.stringify({ contents, generationConfig }),
           });
         } catch {
-          throw new ApiError(502, 'ai_upstream_error', 'Không kết nối được tới máy chủ AI. Hãy thử lại hoặc nhập tay.');
+          lastStatus = 503;
+          break;
         }
         lastStatus = response.status;
         if (response.ok) {

@@ -348,17 +348,23 @@ function registerAuthRoutes(app, { pool, env, firebaseVerifier = null }) {
       }
       await withUser(pool, existing.id, async (client) => {
         const shouldActivate = existing.status === 'pending';
+        const rotatedPasswordHash = shouldActivate && !existing.email_verified_at
+          ? await hashPassword(randomBytes(32).toString('hex'))
+          : null;
         await client.query(
           `UPDATE users
            SET firebase_uid = COALESCE(firebase_uid, $2),
                email_verified_at = COALESCE(email_verified_at, now()),
                status = CASE WHEN $3::boolean THEN 'active' ELSE status END,
                auth_provider = CASE WHEN auth_provider = 'password' THEN $4 ELSE auth_provider END,
+               password_hash = COALESCE($5, password_hash),
                updated_at = now()
            WHERE id = $1`,
-          [existing.id, firebaseUid, shouldActivate, provider]
+          [existing.id, firebaseUid, shouldActivate, provider, rotatedPasswordHash]
         );
         if (!existing.email_verified_at) {
+          await client.query('UPDATE email_verification_tokens SET consumed_at = COALESCE(consumed_at, now()) WHERE user_id = $1 AND consumed_at IS NULL', [existing.id]);
+          await client.query('UPDATE password_reset_tokens SET consumed_at = COALESCE(consumed_at, now()) WHERE user_id = $1 AND consumed_at IS NULL', [existing.id]);
           await recordSecurityEvent(client, existing.id, 'email_verified');
         }
         const pendingInvite = await client.query(
