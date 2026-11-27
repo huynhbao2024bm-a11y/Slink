@@ -42,6 +42,12 @@
     S.fn.syncFontScaleButtons();
     return pct;
   };
+  S.fn.fontScaleControlsHtml = function fontScaleControlsHtml(extraClass) {
+    const pct = Number(S.state.fontScalePct || S.fn.loadFontScale());
+    const min = FONT_SCALE_STEPS[0];
+    const max = FONT_SCALE_STEPS[FONT_SCALE_STEPS.length - 1];
+    return `<div class='topbar-font-controls${extraClass ? ' ' + extraClass : ''}' role='group' aria-label='Cỡ chữ'><button class='icon-button font-step-btn' type='button' data-action='font-decrease' title='Giảm cỡ chữ (hiện tại ${pct}%)' aria-label='Giảm cỡ chữ' ${pct <= min ? 'disabled' : ''}>A−</button><button class='icon-button font-step-btn' type='button' data-action='font-increase' title='Tăng cỡ chữ (hiện tại ${pct}%)' aria-label='Tăng cỡ chữ' ${pct >= max ? 'disabled' : ''}>A+</button></div>`;
+  };
   S.fn.stepFontScale = function stepFontScale(delta) {
     const current = S.state.fontScalePct || S.fn.loadFontScale();
     const idx = Math.max(0, FONT_SCALE_STEPS.indexOf(current));
@@ -2048,12 +2054,34 @@
   S.fn.applyAppUpdateState = function applyAppUpdateState(state) {
     S.state.appUpdateState = state;
     const panel = S.dom.root.querySelector('[data-app-update-state]');
-    if (!panel) return;
-    const labels = { idle: 'Tự kiểm tra bản mới khi mở ứng dụng.', checking: 'Đang kiểm tra bản mới…', downloading: 'Đang tải bản mới ở nền…', ready: 'Bản ' + (state.nextVersion || '') + ' đã sẵn sàng.', current: 'Đang dùng bản mới nhất.', unpublished: 'Chưa có bản cập nhật được phát hành.', unavailable: 'Chưa kiểm tra được. Ứng dụng sẽ tự thử lại.' };
-    panel.querySelector('[data-app-version]').textContent = 'Slink ' + state.versionName;
-    panel.querySelector('[data-app-update-message]').textContent = labels[state.status] || labels.idle;
-    panel.querySelector('[data-action="install-app-update"]').hidden = state.status !== 'ready';
-    panel.querySelector('[data-action="check-app-update"]').disabled = ['checking', 'downloading'].includes(state.status);
+    if (panel) {
+      const labels = { idle: 'Tự kiểm tra bản mới khi mở ứng dụng.', checking: 'Đang kiểm tra bản mới…', downloading: 'Đang tải bản mới ở nền…', ready: 'Bản ' + (state.nextVersion || '') + ' đã sẵn sàng.', current: 'Đang dùng bản mới nhất.', unpublished: 'Chưa có bản cập nhật được phát hành.', unavailable: 'Chưa kiểm tra được. Ứng dụng sẽ tự thử lại.' };
+      panel.querySelector('[data-app-version]').textContent = 'Slink ' + state.versionName;
+      panel.querySelector('[data-app-update-message]').textContent = labels[state.status] || labels.idle;
+      panel.querySelector('[data-action="install-app-update"]').hidden = state.status !== 'ready';
+      panel.querySelector('[data-action="check-app-update"]').disabled = ['checking', 'downloading'].includes(state.status);
+    }
+    if (state?.status === 'downloading' && state.nextVersion && S.state.notifiedAppDownloadVersion !== state.nextVersion) {
+      S.state.notifiedAppDownloadVersion = state.nextVersion;
+      S.fn.toast?.('Đang tải bản cập nhật', `Slink ${state.nextVersion} đang được tải về ở nền…`);
+    }
+    if (state?.status === 'ready' && state.nextVersion) {
+      let dismissed = '';
+      try { dismissed = window.sessionStorage.getItem('slink_dismissed_update_version') || ''; } catch (_) {}
+      if (S.state.promptedAppUpdateVersion !== state.nextVersion && dismissed !== state.nextVersion) {
+        S.state.promptedAppUpdateVersion = state.nextVersion;
+        if (S.dom.modal?.hidden !== false) {
+          S.fn.showModal(
+            `Có bản cập nhật Slink ${state.nextVersion}`,
+            'Phiên bản mới đã được tải sẵn và kiểm tra chữ ký an toàn. Dữ liệu cửa hàng của bạn được giữ nguyên.',
+            '<p>Bấm <strong>Cập nhật ngay</strong> để cài đặt bản mới, không cần gỡ ứng dụng hiện tại.</p>',
+            `<button class='btn btn-secondary' type='button' data-action='dismiss-app-update'>Để sau</button><button class='btn btn-primary' type='button' data-action='confirm-app-update'>Cập nhật ngay</button>`
+          );
+        } else {
+          S.fn.toast?.('Có bản cập nhật mới', `Slink ${state.nextVersion} đã sẵn sàng. Vào Cài đặt → Cập nhật ứng dụng để cài đặt.`, 'success');
+        }
+      }
+    }
   }
   window.addEventListener('slink-app-update', event => S.fn.applyAppUpdateState(event.detail));
 

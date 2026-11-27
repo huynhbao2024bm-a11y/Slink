@@ -2748,7 +2748,6 @@
       S.state.posStandardNote = String(parsed.note).slice(0, 240);
     }
     S.fn.refreshCartPanels();
-    const unmatched = Array.isArray(parsed?.unmatched) ? parsed.unmatched : [];
     const notes = [];
     if (added.length) notes.push(`Đã thêm: ${added.join(', ')}`);
     if (parsed?.customerName || parsed?.customerPhone) notes.push(`Khách: ${parsed.customerName || parsed.customerPhone}`);
@@ -2759,16 +2758,11 @@
     if (parsed?.deliveryAddress) notes.push(`Giao: ${parsed.deliveryAddress}`);
     else if (parsed?.isDebt && !S.state.posPrefs?.requireFullPayment) notes.push('Chế độ: Ghi nợ');
     else if (parsed?.paymentMethod === 'bank_transfer') notes.push('Chuyển khoản');
-    if (skipped.length || unmatched.length) {
-      const missing = skipped.concat(unmatched.map(function (u) { return u.name || 'món chưa khớp'; }));
-      notes.push(`Chưa khớp: ${missing.join(', ')}`);
-    }
-    const speedTag = parsed?.source === 'local_fast'
-      ? `AI tức thì (${Math.max(1, Number(parsed?.latencyMs || 1))}ms)`
-      : (parsed?.latencyMs ? `Gemini Turbo (${Number(parsed.latencyMs)}ms)` : 'AI');
-    const statusLine = notes.length ? `[${speedTag}] ${notes.join(' · ')}. Kiểm tra giỏ trước khi bấm Thu.` : 'Chưa tìm thấy sản phẩm khớp danh mục cửa hàng.';
+    const statusLine = added.length
+      ? `${notes.join(' · ')}. Kiểm tra giỏ trước khi bấm Thu.`
+      : 'Chưa tìm thấy sản phẩm phù hợp trong danh mục.';
     S.fn.setPosAiStatus(statusLine, !added.length);
-    if (added.length) S.fn.toast(`${speedTag} đã điền giỏ`, added.join(', '));
+    if (added.length) S.fn.toast('Đã lên đơn vào giỏ', added.join(', '));
   }
 
   S.fn.submitPosAiCommand = async function submitPosAiCommand(rawText, triggerBtn) {

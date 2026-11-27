@@ -752,6 +752,10 @@
       S.fn.showModal('Cài bản Slink mới?', 'Ứng dụng sẽ đóng trong lúc cài. Tài khoản, cửa hàng và dữ liệu đã lưu được giữ nguyên.', '<p>Nếu Android hỏi, hãy cho phép Slink cài bản cập nhật, sau đó quay lại và bấm Cài bản mới. Không cần gỡ ứng dụng hiện tại.</p>', `<button class='btn btn-secondary' data-action='close-modal'>Để sau</button><button class='btn btn-primary' data-action='confirm-app-update'>Tiếp tục</button>`);
     }
     else if (action === 'confirm-app-update') { S.fn.closeModal(); S.fn.nativeAction({ type: 'appUpdate', action: 'install' }).catch(() => S.fn.toast('Chưa cài được bản mới', 'Kiểm tra quyền cài ứng dụng và thử lại.', 'error')); }
+    else if (action === 'dismiss-app-update') {
+      try { if (S.state.appUpdateState?.nextVersion) window.sessionStorage.setItem('slink_dismissed_update_version', S.state.appUpdateState.nextVersion); } catch (_) {}
+      S.fn.closeModal();
+    }
     else if (action === 'account-logout') S.fn.showModal('Đăng xuất tài khoản?', 'Các việc đã lưu trên thiết bị được giữ lại cho đúng tài khoản.', '', `<button class='btn btn-secondary' data-action='close-modal'>Ở lại</button><button class='btn btn-primary' data-action='logout'>Đăng xuất</button>`);
     else if (action === 'discard-settings') { S.dom.root.querySelectorAll('form[data-dirty]').forEach(form => delete form.dataset.dirty); S.fn.routeTo(button.dataset.next); }
     else if (action === 'reload-finance') S.fn.loadFinancePage();
