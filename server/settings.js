@@ -17,6 +17,28 @@ function storeProfile(input) {
   return { name, phone, address, receiptFooter };
 }
 
+function storeLoyaltySettings(input) {
+  const source = input || {};
+  let earnUnit = null;
+  if (source.loyaltyEarnUnitVnd !== undefined && source.loyaltyEarnUnitVnd !== null && source.loyaltyEarnUnitVnd !== '') {
+    const raw = String(source.loyaltyEarnUnitVnd).trim();
+    if (!/^[1-9]\d{0,10}$/.test(raw)) throw new ApiError(400, 'validation_error', 'Mức chi tiêu tích 1 điểm không hợp lệ.');
+    const num = BigInt(raw);
+    if (num < 1000n || num > 100000000n) throw new ApiError(400, 'validation_error', 'Mức chi tiêu tích 1 điểm cần từ 1.000đ đến 100.000.000đ.');
+    earnUnit = num.toString();
+  }
+  let redeemValue = null;
+  if (source.loyaltyRedeemValueVnd !== undefined && source.loyaltyRedeemValueVnd !== null && source.loyaltyRedeemValueVnd !== '') {
+    const raw = String(source.loyaltyRedeemValueVnd).trim();
+    if (!/^[1-9]\d{0,10}$/.test(raw)) throw new ApiError(400, 'validation_error', 'Giá trị quy đổi 1 điểm không hợp lệ.');
+    const num = BigInt(raw);
+    if (num < 100n || num > 10000000n) throw new ApiError(400, 'validation_error', 'Giá trị quy đổi 1 điểm cần từ 100đ đến 10.000.000đ.');
+    redeemValue = num.toString();
+  }
+  const protectCostMargin = typeof source.protectCostMargin === 'boolean' ? source.protectCostMargin : null;
+  return { earnUnit, redeemValue, protectCostMargin };
+}
+
 function registerStoreSettingsRoutes(app, { pool, env }) {
   app.put('/api/stores/:storeId/business-profile', async (request) => {
     const auth = await authenticate(pool, request);
@@ -59,7 +81,11 @@ function registerStoreSettingsRoutes(app, { pool, env }) {
     if (!UUID_PATTERN.test(storeId)) throw new ApiError(400, 'validation_error', 'Cửa hàng không hợp lệ.');
     return withStore(pool, auth.userId, storeId, async (client) => {
       const result = await client.query(
-        `SELECT id, name, phone, address, receipt_footer, version FROM stores WHERE id = $1 AND status = 'active'`,
+        `SELECT id, name, phone, address, receipt_footer, version,
+                COALESCE(loyalty_earn_unit_vnd, 100000)::text AS loyalty_earn_unit_vnd,
+                COALESCE(loyalty_redeem_value_vnd, 1000)::text AS loyalty_redeem_value_vnd,
+                COALESCE(protect_cost_margin, true) AS protect_cost_margin
+         FROM stores WHERE id = $1 AND status = 'active'`,
         [storeId]
       );
       if (!result.rowCount) throw new ApiError(404, 'store_not_found', 'Không tìm thấy cửa hàng đang hoạt động.');
@@ -75,14 +101,22 @@ function registerStoreSettingsRoutes(app, { pool, env }) {
     const expectedVersion = request.body?.version;
     if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) throw new ApiError(400, 'validation_error', 'Phiên bản cửa hàng không hợp lệ. Hãy tải lại rồi thử lại.');
     const profile = storeProfile(request.body);
+    const loyalty = storeLoyaltySettings(request.body);
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
       if (!STORE_ADMIN_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền thay đổi cài đặt cửa hàng.');
       const result = await client.query(
         `UPDATE stores SET name = $3, phone = $4, address = $5, receipt_footer = $6,
+             loyalty_earn_unit_vnd = COALESCE($7::bigint, loyalty_earn_unit_vnd),
+             loyalty_redeem_value_vnd = COALESCE($8::bigint, loyalty_redeem_value_vnd),
+             protect_cost_margin = COALESCE($9::boolean, protect_cost_margin),
              version = version + 1, updated_at = now()
          WHERE id = $1 AND status = 'active' AND version = $2
-         RETURNING id, name, phone, address, receipt_footer, version`,
-        [storeId, expectedVersion, profile.name, profile.phone, profile.address, profile.receiptFooter]
+         RETURNING id, name, phone, address, receipt_footer, version,
+                   COALESCE(loyalty_earn_unit_vnd, 100000)::text AS loyalty_earn_unit_vnd,
+                   COALESCE(loyalty_redeem_value_vnd, 1000)::text AS loyalty_redeem_value_vnd,
+                   COALESCE(protect_cost_margin, true) AS protect_cost_margin`,
+        [storeId, expectedVersion, profile.name, profile.phone, profile.address, profile.receiptFooter,
+          loyalty.earnUnit, loyalty.redeemValue, loyalty.protectCostMargin]
       );
       if (!result.rowCount) throw new ApiError(409, 'version_conflict', 'Cài đặt đã được thay đổi trên thiết bị khác. Hãy tải lại rồi thử lại.');
       await client.query(

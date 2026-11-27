@@ -1,5 +1,6 @@
 'use strict';
 
+const dns = require('node:dns').promises;
 const net = require('node:net');
 
 function isPrivateOrDisallowedIpv4(ip) {
@@ -63,6 +64,7 @@ function assertSafeOutboundUrl(raw, { allowLocalInTest = false, label = 'URL' } 
     || host.endsWith('.internal')
     || host.endsWith('.local')
     || host.endsWith('.home.arpa')
+    || /\.(nip\.io|sslip\.io|localtest\.me)$/i.test(host)
   ) {
     throw new Error(`Địa chỉ ${label} không được trỏ tới mạng nội bộ.`);
   }
@@ -76,4 +78,30 @@ function assertSafeOutboundUrl(raw, { allowLocalInTest = false, label = 'URL' } 
   return url;
 }
 
-module.exports = { assertSafeOutboundUrl };
+async function assertSafeOutboundUrlResolved(raw, options = {}) {
+  const url = assertSafeOutboundUrl(raw, options);
+  if (options.allowLocalInTest) return url;
+  const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (net.isIP(host)) return url;
+  const label = options.label || 'URL';
+  let records;
+  try {
+    records = await dns.lookup(host, { all: true, verbatim: true });
+  } catch {
+    throw new Error(`Không phân giải được tên miền cho ${label}.`);
+  }
+  if (!Array.isArray(records) || !records.length) {
+    throw new Error(`Không tìm thấy địa chỉ IP hợp lệ cho ${label}.`);
+  }
+  for (const rec of records) {
+    if (rec.family === 4 && isPrivateOrDisallowedIpv4(rec.address)) {
+      throw new Error(`Địa chỉ ${label} phân giải tới IP nội bộ không được phép.`);
+    }
+    if (rec.family === 6 && isDisallowedIpv6(rec.address)) {
+      throw new Error(`Địa chỉ ${label} phân giải tới IPv6 nội bộ không được phép.`);
+    }
+  }
+  return url;
+}
+
+module.exports = { assertSafeOutboundUrl, assertSafeOutboundUrlResolved };

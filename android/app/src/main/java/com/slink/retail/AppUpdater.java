@@ -30,11 +30,14 @@ final class AppUpdater {
     AppUpdater(Activity activity, Runnable changed) {
         this.activity = activity; this.changed = changed;
         directory = new File(activity.getCacheDir(), "updates");
-        try {
-            JSONObject saved = new JSONObject(readSmall(new FileInputStream(new File(directory, "ready.json")), 16384));
-            validatePackage(new File(directory, "ready.apk"), saved);
-            ready = saved; status = "ready";
-        } catch (Exception ignored) { /* Cache can be evicted or an update already installed. */ }
+        new Thread(() -> {
+            try {
+                JSONObject saved = new JSONObject(readSmall(new FileInputStream(new File(directory, "ready.json")), 16384));
+                validatePackage(new File(directory, "ready.apk"), saved);
+                ready = saved; status = "ready";
+                notifyChanged();
+            } catch (Exception ignored) { /* Cache can be evicted or an update already installed. */ }
+        }, "Slink-app-update-init").start();
     }
 
     JSONObject state() {

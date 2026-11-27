@@ -372,7 +372,10 @@ function registerHrCrmRoutes(app, { pool, env }) {
       ? request.query.customerId
       : null;
 
-    return withStore(pool, auth.userId, storeId, async (client) => {
+    return withStore(pool, auth.userId, storeId, async (client, membership) => {
+      if (!['owner', 'manager', 'cashier', 'accountant'].includes(membership.role) && !hasPermission(membership, 'pos_sell')) {
+        throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền tra cứu trợ lý khách hàng POS.');
+      }
       let targetCustomer = null;
       let candidates = [];
       let exactTailMatch = false;
@@ -551,7 +554,10 @@ function registerHrCrmRoutes(app, { pool, env }) {
     const lineCount = Math.max(1, Number.parseInt(body.lineCount ?? items.length ?? 1, 10) || 1);
     const customerId = typeof body.customerId === 'string' && UUID_PATTERN.test(body.customerId) ? body.customerId : null;
 
-    return withStore(pool, auth.userId, storeId, async (client) => {
+    return withStore(pool, auth.userId, storeId, async (client, membership) => {
+      if (!['owner', 'manager', 'cashier', 'accountant'].includes(membership.role) && !hasPermission(membership, 'pos_sell')) {
+        throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền ghi nhật ký tạm tính POS.');
+      }
       const res = await client.query(
         `INSERT INTO pos_prebill_events (store_id, actor_user_id, customer_id, subtotal_vnd, expected_total_vnd, line_count, items_snapshot, status)
          VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, 'printed')
@@ -574,7 +580,10 @@ function registerHrCrmRoutes(app, { pool, env }) {
     if (!UUID_PATTERN.test(storeId) || !UUID_PATTERN.test(prebillId)) {
       throw new ApiError(400, 'validation_error', 'Mã phiếu tạm tính không hợp lệ.');
     }
-    return withStore(pool, auth.userId, storeId, async (client) => {
+    return withStore(pool, auth.userId, storeId, async (client, membership) => {
+      if (!['owner', 'manager', 'cashier', 'accountant'].includes(membership.role) && !hasPermission(membership, 'pos_sell')) {
+        throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền cập nhật phiếu tạm tính POS.');
+      }
       await client.query(
         `UPDATE pos_prebill_events
          SET status = 'abandoned_or_shrunk'
@@ -623,16 +632,19 @@ function registerHrCrmRoutes(app, { pool, env }) {
         if (!record || !Buffer.from(record.request_hash).equals(digest)) {
           throw new ApiError(409, 'idempotency_conflict', 'Mã lưu ứng lương đã được dùng cho dữ liệu khác.');
         }
+        if (!record.response_body || !record.response_status) {
+          throw new ApiError(409, 'request_in_progress', 'Khoản ứng lương đang được xử lý. Hãy thử lại sau.');
+        }
         return { status: record.response_status, body: record.response_body, replayed: true };
       }
 
       const memberRes = await client.query(
-        `SELECT m.user_id, m.role, m.staff_code, u.display_name
+        `SELECT m.user_id, m.role, m.staff_code, COALESCE(m.store_display_name, u.display_name) AS display_name
          FROM memberships m JOIN users u ON u.id = m.user_id
-         WHERE m.store_id = $1 AND m.user_id = $2 FOR UPDATE OF m`,
+         WHERE m.store_id = $1 AND m.user_id = $2 AND m.status = 'active' FOR UPDATE OF m`,
         [storeId, userId]
       );
-      if (!memberRes.rowCount) throw new ApiError(404, 'staff_not_found', 'Không tìm thấy nhân viên trong cửa hàng.');
+      if (!memberRes.rowCount) throw new ApiError(404, 'staff_not_found', 'Không tìm thấy nhân viên đang hoạt động trong cửa hàng.');
       const member = memberRes.rows[0];
 
       const cashSessionId = (method === 'cash' && useOpenCashDrawer)
@@ -739,7 +751,7 @@ function registerHrCrmRoutes(app, { pool, env }) {
       const periodEnd = nextMonthDate.toISOString();
 
       const membersRes = await client.query(
-        `SELECT m.user_id, u.display_name, u.email, m.role, m.status,
+        `SELECT m.user_id, COALESCE(m.store_display_name, u.display_name) AS display_name, u.email, m.role, m.status,
                 m.staff_code, m.phone, COALESCE(m.job_title, '') AS job_title,
                 COALESCE(m.salary_mode, 'monthly') AS salary_mode,
                 COALESCE(m.standard_days_per_month, 26)::int AS standard_days_per_month,
@@ -749,7 +761,7 @@ function registerHrCrmRoutes(app, { pool, env }) {
          FROM memberships m
          JOIN users u ON u.id = m.user_id
          WHERE m.store_id = $1 AND m.role <> 'owner'
-         ORDER BY m.created_at ASC, u.display_name ASC`,
+         ORDER BY m.created_at ASC, COALESCE(m.store_display_name, u.display_name) ASC`,
         [storeId]
       );
 
@@ -979,21 +991,24 @@ function registerHrCrmRoutes(app, { pool, env }) {
         if (!record || !Buffer.from(record.request_hash).equals(digest)) {
           throw new ApiError(409, 'idempotency_conflict', 'Mã lưu chốt lương đã được dùng cho dữ liệu khác.');
         }
+        if (!record.response_body || !record.response_status) {
+          throw new ApiError(409, 'request_in_progress', 'Bảng lương đang được chốt. Hãy thử lại sau.');
+        }
         return { status: record.response_status, body: record.response_body, replayed: true };
       }
 
       const memberRes = await client.query(
-        `SELECT m.user_id, u.display_name, m.role, m.staff_code, m.phone, COALESCE(m.job_title, '') AS job_title,
+        `SELECT m.user_id, COALESCE(m.store_display_name, u.display_name) AS display_name, m.role, m.staff_code, m.phone, COALESCE(m.job_title, '') AS job_title,
                 COALESCE(m.salary_mode, 'monthly') AS salary_mode,
                 COALESCE(m.standard_days_per_month, 26)::int AS standard_days_per_month,
                 COALESCE(m.base_salary_vnd, 0)::text AS base_salary_vnd,
                 COALESCE(m.commission_rate_bps, 0)::int AS commission_rate_bps,
                 m.bank_bin, m.bank_account_number, m.bank_account_owner
          FROM memberships m JOIN users u ON u.id = m.user_id
-         WHERE m.store_id = $1 AND m.user_id = $2 FOR UPDATE OF m`,
+         WHERE m.store_id = $1 AND m.user_id = $2 AND m.status = 'active' FOR UPDATE OF m`,
         [storeId, userId]
       );
-      if (!memberRes.rowCount) throw new ApiError(404, 'staff_not_found', 'Không tìm thấy nhân viên.');
+      if (!memberRes.rowCount) throw new ApiError(404, 'staff_not_found', 'Không tìm thấy nhân viên đang hoạt động.');
       const member = memberRes.rows[0];
 
       const periodStart = `${periodMonth}-01T00:00:00.000Z`;

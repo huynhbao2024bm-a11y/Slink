@@ -434,11 +434,11 @@ function registerProductRoutes(app, { pool, env }) {
                   MAX(b.version) FILTER (WHERE ($6::uuid IS NULL OR b.warehouse_id = $6) AND ($7::uuid[] IS NULL OR b.warehouse_id = ANY($7))) AS version
            FROM inventory_balances b WHERE b.store_id = p.store_id AND b.product_id = p.id
          ) i ON true
-         WHERE p.status = $1 AND ($8::uuid IS NULL OR p.id = $8) AND ($2 = '' OR p.name ILIKE '%' || $2 || '%' OR p.category ILIKE '%' || $2 || '%' OR p.variant_group_name ILIKE '%' || $2 || '%'
+         WHERE p.store_id = $9 AND p.status = $1 AND ($8::uuid IS NULL OR p.id = $8) AND ($2 = '' OR p.name ILIKE '%' || $2 || '%' OR p.category ILIKE '%' || $2 || '%' OR p.variant_group_name ILIKE '%' || $2 || '%'
            OR p.variant_attributes::text ILIKE '%' || $2 || '%' OR p.sku_normalized LIKE '%' || lower($2) || '%' OR p.barcode = $2 OR $2 = ANY(p.extra_barcodes)
            OR EXISTS (SELECT 1 FROM product_serial_codes sc WHERE sc.store_id = p.store_id AND sc.product_id = p.id AND (sc.code = $2 OR lower(sc.code) = lower($2))))
          ORDER BY p.name, p.id LIMIT $3 OFFSET $4`,
-        [status, search, limit + 1, offset, canViewCost, requestedWarehouseId || null, warehouseIds, requestedProductId || null]
+        [status, search, limit + 1, offset, canViewCost, requestedWarehouseId || null, warehouseIds, requestedProductId || null, storeId]
       );
       const hasMore = result.rows.length > limit;
       return { products: result.rows.slice(0, limit), total: Number(result.rows[0]?.total_count || 0), nextOffset: hasMore ? offset + limit : null, productPackDefaultsSupported: true, purchasePacksSupported: true };
@@ -941,6 +941,16 @@ function registerProductRoutes(app, { pool, env }) {
             next.unit, next.salePriceVnd, next.costVnd, next.lowStockThreshold, item.version]
         );
         if (!updated.rowCount) throw new ApiError(409, 'version_conflict', `Dòng ${item.sourceLine}: sản phẩm vừa được thay đổi. Không có dòng nào được cập nhật.`);
+        if (next.inventoryTracked && !old.inventory_tracked) {
+          await client.query(
+            `INSERT INTO inventory_balances (store_id, warehouse_id, product_id, on_hand, reserved)
+             SELECT $1, w.id, $2, 0, 0
+             FROM warehouses w
+             WHERE w.store_id = $1 AND w.status = 'active'
+             ON CONFLICT (store_id, warehouse_id, product_id) DO NOTHING`,
+            [storeId, productId]
+          );
+        }
         if (next.costVnd !== Number(old.cost_vnd)) {
           await client.query(
             `INSERT INTO product_cost_history (store_id, product_id, unit_cost_vnd, source_type, actor_user_id)
@@ -1391,6 +1401,16 @@ function registerProductRoutes(app, { pool, env }) {
             JSON.stringify(next.variantAttributes), next.purchasePack ? JSON.stringify(next.purchasePack) : null,
             (next.extraBarcodes || []).filter((code) => code !== next.barcode), next.warrantyMonths]
         );
+        if (next.inventoryTracked && !old.inventory_tracked) {
+          await client.query(
+            `INSERT INTO inventory_balances (store_id, warehouse_id, product_id, on_hand, reserved)
+             SELECT $1, w.id, $2, 0, 0
+             FROM warehouses w
+             WHERE w.store_id = $1 AND w.status = 'active'
+             ON CONFLICT (store_id, warehouse_id, product_id) DO NOTHING`,
+            [storeId, productId]
+          );
+        }
         if (next.costVnd !== Number(old.cost_vnd)) {
           await client.query(
             `INSERT INTO product_cost_history (store_id, product_id, unit_cost_vnd, source_type, actor_user_id)

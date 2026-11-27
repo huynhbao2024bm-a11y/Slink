@@ -1909,7 +1909,7 @@
         const img = new Image();
         img.onerror = function () { reject(new Error('Tệp không phải ảnh hợp lệ.')); };
         img.onload = function () {
-          const maxDim = 1600;
+          const maxDim = 1280;
           const scale = Math.min(1, maxDim / Math.max(img.width || 1, img.height || 1));
           const w = Math.max(1, Math.round((img.width || 1) * scale));
           const h = Math.max(1, Math.round((img.height || 1) * scale));
@@ -1918,7 +1918,7 @@
           canvas.height = h;
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, w, h);
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.84);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
           const parts = dataUrl.split(',');
           resolve({ mimeType: 'image/jpeg', imageBase64: parts[1] || '' });
         };
@@ -1971,7 +1971,8 @@
       const unmatched = Array.isArray(parsed.unmatched) ? parsed.unmatched : [];
       const summaryParts = [];
       if (matchedItems.length) summaryParts.push(`Đã điền ${matchedItems.length} mặt hàng vào phiếu`);
-      if (parsed.supplierName) summaryParts.push(`NCC: ${parsed.supplierName}`);
+      if (parsed.supplierName) summaryParts.push(`NCC: ${parsed.supplierName}${parsed.supplierPhone ? ` (${parsed.supplierPhone})` : ''}`);
+      if (Number(parsed.discountVnd || 0) > 0) summaryParts.push(`Chiết khấu hóa đơn: ${S.fn.money(parsed.discountVnd)}`);
       if (unmatched.length) summaryParts.push(`Chưa khớp ${unmatched.length} dòng (${unmatched.slice(0, 3).map(function (u) { return u.name || 'món lạ'; }).join(', ')})`);
       const message = summaryParts.length ? `${summaryParts.join(' · ')}. Hãy kiểm tra lại trước khi Lưu.` : 'AI chưa nhận diện được dòng hàng khớp danh mục. Hãy nhập thủ công.';
       setStatus(message, !matchedItems.length);

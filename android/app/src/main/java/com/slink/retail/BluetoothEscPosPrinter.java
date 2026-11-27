@@ -14,6 +14,11 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -128,9 +133,24 @@ public class BluetoothEscPosPrinter {
             throw new IllegalArgumentException("Dữ liệu in không hợp lệ.");
         }
         BluetoothSocket socket = null;
+        ExecutorService connectExec = Executors.newSingleThreadExecutor();
         try {
-            socket = device.createRfcommSocketToServiceRecord(SPP_UUID);
-            socket.connect();
+            final BluetoothSocket s = device.createRfcommSocketToServiceRecord(SPP_UUID);
+            socket = s;
+            Future<?> connFuture = connectExec.submit(() -> {
+                s.connect();
+                return null;
+            });
+            try {
+                connFuture.get(8, TimeUnit.SECONDS);
+            } catch (TimeoutException timeout) {
+                connFuture.cancel(true);
+                try { s.close(); } catch (IOException ignored) {}
+                throw new IOException("Kết nối máy in Bluetooth quá thời gian (8 giây). Kiểm tra nguồn máy in.");
+            } catch (Exception connectErr) {
+                connFuture.cancel(true);
+                throw new IOException(connectErr.getMessage() != null ? connectErr.getMessage() : "Không kết nối được máy in.");
+            }
             OutputStream out = socket.getOutputStream();
             int offset = 0;
             while (offset < raw.length) {
@@ -143,6 +163,7 @@ public class BluetoothEscPosPrinter {
         } catch (IOException error) {
             throw new IOException("Không kết nối được máy in Bluetooth (" + address + "). Kiểm tra máy in đã bật và nằm trong phạm vi.");
         } finally {
+            connectExec.shutdownNow();
             if (socket != null) {
                 try { socket.close(); } catch (IOException ignored) {}
             }

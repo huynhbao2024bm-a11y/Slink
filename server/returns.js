@@ -180,6 +180,9 @@ function registerReturnRoutes(app, { pool, env }) {
       }).sort((a, b) => a.line.product_id.localeCompare(b.line.product_id));
       const refundTotal = requestedLines.reduce((sum, item) => sum + item.refundVnd, 0n);
       for (const item of requestedLines) {
+        if (item.line.serial_tracked && item.requested.quantityMilli % 1000 !== 0) {
+          throw new ApiError(400, 'validation_error', `${item.line.product_name_snapshot} quản lý theo từng mã riêng, chỉ trả hàng với số lượng nguyên.`);
+        }
         if (item.requested.serialCodes?.length > 0) {
           const lowerCodes = item.requested.serialCodes.map((c) => c.toLocaleLowerCase('vi'));
           const matchedSerials = await client.query(

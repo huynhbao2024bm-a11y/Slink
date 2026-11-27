@@ -37,7 +37,10 @@ if ! [[ "$archive_name" =~ ^[A-Za-z0-9T._-]+\.slinkbackup$ ]]; then
   exit 1
 fi
 gcloud storage cp "gs://${SLINK_BACKUP_BUCKET}/${archive_name}" "$verify_dir/$archive_name"
+chown 1000:1000 "$verify_dir/$manifest_name" "$verify_dir/$archive_name"
+chmod 0400 "$verify_dir/$manifest_name" "$verify_dir/$archive_name"
 "${compose[@]}" --profile operations run --rm --no-deps \
   --volume "$verify_dir:/gcs-verify:ro" operations \
   scripts/postgres-backup.js verify "/gcs-verify/$manifest_name"
+find /var/lib/slink/backups -maxdepth 1 -type f -name '*.slinkbackup*' -mtime +7 -delete
 echo "Backup reference: gs://${SLINK_BACKUP_BUCKET}/${manifest_name}"

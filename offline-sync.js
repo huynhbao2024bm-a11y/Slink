@@ -35,11 +35,11 @@
     const rows = await disk.operations(scope);
     const confirmed = rows.filter(row => row.state === 'confirmed');
     if (!confirmed.length) return 0;
-    // Reacquire after a failed request released its lease; ready operations may
-    // be marked sending but are not transmitted until this cache fence commits.
-    const claim = await disk.claim(scope, owner);
+    const claim = disk.claimConfirmedOnly
+      ? await disk.claimConfirmedOnly(scope, owner)
+      : await disk.claim(scope, owner);
     if (!claim) return 0;
-    const fresh = await config.refresh(confirmed);
+    const fresh = (await config.refresh(confirmed)) || [];
     const acknowledged = await disk.acknowledgeConfirmed(scope, owner, fresh);
     notify({ type: 'acknowledged', operations: acknowledged });
     return acknowledged.length;

@@ -262,6 +262,24 @@ function verifyRegistrationTicket(env = {}, ticket, emailNormalized) {
   return true;
 }
 
+async function persistConsumedSecurityTicket(pool, { ticketId, kind, userId = null, metadata = {}, expiresAtMs }) {
+  if (!pool || typeof ticketId !== 'string' || !ticketId) return true;
+  const expiresIso = new Date(Number(expiresAtMs) || (Date.now() + REG_TICKET_TTL_MS)).toISOString();
+  const res = await pool.query(
+    `INSERT INTO consumed_security_tickets (ticket_id, kind, user_id, metadata, expires_at)
+     VALUES ($1, $2, $3, $4::jsonb, $5::timestamptz)
+     ON CONFLICT (ticket_id) DO NOTHING
+     RETURNING ticket_id`,
+    [ticketId, kind, userId, JSON.stringify(metadata || {}), expiresIso]
+  );
+  return res.rowCount > 0;
+}
+
+function decodeSignedTokenPayload(env = {}, token) {
+  const secret = deriveCaptchaSecret(env);
+  return verifySignedToken(secret, token);
+}
+
 module.exports = {
   CAPTCHA_ALPHABET,
   CAPTCHA_LENGTH,
@@ -271,4 +289,6 @@ module.exports = {
   verifyCaptchaChallenge,
   createRegistrationTicket,
   verifyRegistrationTicket,
+  persistConsumedSecurityTicket,
+  decodeSignedTokenPayload,
 };

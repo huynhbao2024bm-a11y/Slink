@@ -21,7 +21,7 @@ services:
       - key: PG_SSL
         value: ca-file
       - key: PG_SSL_CA_FILE
-        value: /opt/render/project/src/deploy/render/supabase-ca.crt
+        value: /opt/render/project/src/supabase-ca.crt
       - key: LOG_LEVEL
         value: info
       - key: PUBLIC_ORIGIN

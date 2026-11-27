@@ -342,7 +342,7 @@ async function createShippingOrder(provider, order, shippingInput = {}, env = pr
           PRODUCT_NAME: itemsList,
           PRODUCT_QUANTITY: Math.max(1, (order.lines || []).reduce((acc, l) => acc + Math.max(1, Number(l.quantity) || 1), 0)),
           PRODUCT_PRICE: Number(order.total_vnd),
-          PRODUCT_WEIGHT: Number(validated.weightGrams || 500),
+          PRODUCT_WEIGHT: Number(validated.weightRaw || 500),
           MONEY_COLLECTION: validated.codRaw,
           ORDER_PAYMENT: validated.codRaw > 0 ? 3 : 1,
           ORDER_SERVICE: String(shippingInput.serviceCode || 'VCN'),

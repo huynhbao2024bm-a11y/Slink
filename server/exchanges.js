@@ -6,7 +6,7 @@ const { UUID_PATTERN, withStore } = require('./db');
 const { lockActiveCashSession } = require('./cash-register');
 const { insertCashMovement } = require('./cashbook-ledger');
 const { quantityMilli, quantityText, distributeDiscount } = require('./sales');
-const { requirePermission } = require('./rbac');
+const { getPosMaxDiscountPct, requirePermission } = require('./rbac');
 
 const MAX_BIGINT = 9223372036854775807n;
 const RESTOCK_POLICIES = new Set(['restock', 'damaged', 'discarded']);
@@ -136,7 +136,9 @@ async function lockWarehousesSorted(client, storeId, warehouseIds) {
 
 async function loadOrderAndReturns(client, storeId, orderId, returnItems) {
   const orderRes = await client.query(
-    `SELECT id, order_number, status, customer_id, warehouse_id, total_vnd::text AS total_vnd
+    `SELECT id, order_number, status, customer_id, warehouse_id, total_vnd::text AS total_vnd,
+            COALESCE(points_redeemed, 0)::int AS points_redeemed,
+            COALESCE(points_earned, 0)::int AS points_earned
      FROM orders WHERE store_id = $1 AND id = $2 FOR UPDATE`,
     [storeId, orderId]
   );
@@ -184,11 +186,14 @@ async function loadOrderAndReturns(client, storeId, orderId, returnItems) {
   }).sort((a, b) => a.line.product_id.localeCompare(b.line.product_id));
 
   const returnedTotalVnd = requestedReturnLines.reduce((sum, item) => sum + item.refundVnd, 0n);
-  const previouslyReturnedVnd = linesRes.rows.reduce((sum, l) => sum + BigInt(l.refunded_vnd), 0n);
-  const allLinesReturned = linesRes.rows.every((line) => {
+  const totalSoldMilli = linesRes.rows.reduce((sum, l) => sum + parseDbMilli(l.quantity), 0);
+  const returnedNowMilli = requestedReturnLines.reduce((sum, r) => sum + r.req.quantityMilli, 0);
+  const totalRemainingMilli = linesRes.rows.reduce((sum, line) => {
     const added = requestedReturnLines.find((r) => r.line.id === line.id)?.req.quantityMilli || 0;
-    return parseDbMilli(line.quantity) - parseDbMilli(line.returned_quantity) - added === 0;
-  });
+    return sum + parseDbMilli(line.quantity) - parseDbMilli(line.returned_quantity) - added;
+  }, 0);
+  const previouslyReturnedVnd = linesRes.rows.reduce((sum, l) => sum + BigInt(l.refunded_vnd), 0n);
+  const allLinesReturned = totalRemainingMilli === 0;
 
   const payRes = await client.query(
     `SELECT (
@@ -204,13 +209,16 @@ async function loadOrderAndReturns(client, storeId, orderId, returnItems) {
     customer,
     requestedReturnLines,
     returnedTotalVnd,
+    totalSoldMilli,
+    returnedNowMilli,
+    totalRemainingMilli,
     origNetPaidVnd: BigInt(payRes.rows[0]?.net_paid_vnd || '0'),
     remainingOriginalValue: BigInt(order.total_vnd) - previouslyReturnedVnd - returnedTotalVnd,
     nextOrderStatus: allLinesReturned ? 'returned' : 'partially_returned',
   };
 }
 
-async function prepareReplacementProducts(client, storeId, replacementWarehouseId, replacementItems, discountVnd) {
+async function prepareReplacementProducts(client, storeId, replacementWarehouseId, replacementItems, discountVnd, membership) {
   const productIds = [...new Set(replacementItems.map((i) => i.productId))].sort();
   const prodRes = await client.query(
     `SELECT id, sku, name, unit, sale_price_vnd::text AS sale_price_vnd, cost_vnd::text AS cost_vnd, inventory_tracked, serial_tracked, status
@@ -227,19 +235,39 @@ async function prepareReplacementProducts(client, storeId, replacementWarehouseI
   }
 
   let subtotalVnd = 0n;
+  let totalCostVnd = 0n;
   const lines = replacementItems.map((item) => {
     const product = productMap.get(item.productId);
     const price = BigInt(product.sale_price_vnd);
+    const cost = BigInt(product.cost_vnd);
     const grossVnd = (price * BigInt(item.quantityMilli) + 500n) / 1000n;
+    const lineCostVnd = (cost * BigInt(item.quantityMilli) + 500n) / 1000n;
     subtotalVnd += grossVnd;
+    totalCostVnd += lineCostVnd;
     if (grossVnd > MAX_BIGINT || subtotalVnd > MAX_BIGINT) {
       throw new ApiError(400, 'validation_error', 'Tổng tiền đơn hàng đổi vượt giới hạn lưu trữ.');
     }
-    return { ...item, product, price, cost: BigInt(product.cost_vnd), grossVnd };
+    return { ...item, product, price, cost, grossVnd };
   });
 
   if (discountVnd > subtotalVnd) {
     throw new ApiError(400, 'validation_error', 'Giảm giá trên đơn đổi không được vượt tổng tiền hàng đổi mới.');
+  }
+  const maxDiscountPct = getPosMaxDiscountPct(membership);
+  if (discountVnd > 0n) {
+    if (maxDiscountPct === 0 || discountVnd * 100n > subtotalVnd * BigInt(maxDiscountPct)) {
+      throw new ApiError(
+        403,
+        'discount_limit_exceeded',
+        maxDiscountPct === 0
+          ? 'Tài khoản này không được phép giảm giá thủ công trên đơn đổi.'
+          : `Mức giảm giá đơn đổi vượt giới hạn tối đa ${maxDiscountPct}% được cấp.`
+      );
+    }
+    const storeMarginRes = await client.query(`SELECT COALESCE(protect_cost_margin, true) AS protect_cost_margin FROM stores WHERE id = $1`, [storeId]);
+    if (storeMarginRes.rows[0]?.protect_cost_margin !== false && subtotalVnd - discountVnd < totalCostVnd) {
+      throw new ApiError(409, 'below_cost_margin', 'Giá bán đơn đổi sau giảm thấp hơn giá vốn sản phẩm.');
+    }
   }
   const replacementTotalVnd = subtotalVnd - discountVnd;
 
@@ -319,6 +347,9 @@ async function resolveExchangeSettlement(client, storeId, req, returnStage, repl
   const netDeltaVnd = replacementTotalVnd - returnedTotalVnd;
 
   if (netDeltaVnd >= 0n) {
+    if (netDeltaVnd === 0n && (req.amountReceivedVnd > 0n || req.tenders.some((t) => t.amountReceivedVnd > 0n))) {
+      throw new ApiError(400, 'validation_error', 'Đơn đổi ngang giá không cần thu thêm tiền.');
+    }
     const collectDue = netDeltaVnd;
     const nonCash = req.tenders.filter((t) => t.method !== 'cash').reduce((s, t) => s + t.amountReceivedVnd, 0n);
     const cashTender = req.tenders.find((t) => t.method === 'cash');
@@ -354,6 +385,9 @@ async function resolveExchangeSettlement(client, storeId, req, returnStage, repl
     }
     if (cashReceivedVnd > 0n || cashChangeVnd > 0n) cashSessionId = await lockActiveCashSession(client, storeId);
   } else {
+    if (req.amountReceivedVnd > 0n) {
+      throw new ApiError(400, 'validation_error', 'Đơn đổi cần hoàn tiền hoặc giữ số dư, không nhập tiền khách trả thêm.');
+    }
     const refundDue = -netDeltaVnd;
     const surplusLeftAfterNewOrder = cashSurplusAfterReturn > replacementTotalVnd ? cashSurplusAfterReturn - replacementTotalVnd : 0n;
     refundPaymentVnd = refundDue < surplusLeftAfterNewOrder ? refundDue : surplusLeftAfterNewOrder;
@@ -409,6 +443,50 @@ async function applyReturnHalf(client, storeId, actorUserId, req, returnStage, r
       [storeId, restockWarehouse.id, item.line.product_id, quantityText(restockQty), bal.rows[0].on_hand,
         `Nhập lại hàng đổi ${returnNumber} -> ${replacementNumber}`, returnId, actorUserId]
     );
+  }
+  if (order.customer_id && returnStage.totalSoldMilli > 0) {
+    if (Number(order.points_redeemed || 0) > 0) {
+      const priorRefundedRes = await client.query(
+        `SELECT COALESCE(SUM(pl.points_delta), 0)::int AS refunded_pts
+         FROM customer_point_ledger_entries pl
+         JOIN returns r ON r.store_id = pl.store_id AND r.id = pl.source_id
+         WHERE pl.store_id = $1 AND pl.customer_id = $2
+           AND pl.entry_type = 'return_refund_points' AND r.order_id = $3`,
+        [storeId, order.customer_id, order.id]
+      );
+      const remainingRedeemPts = Math.max(0, Number(order.points_redeemed) - Number(priorRefundedRes.rows[0]?.refunded_pts || 0));
+      const ptsRefund = returnStage.totalRemainingMilli === 0
+        ? remainingRedeemPts
+        : Math.min(remainingRedeemPts, Math.round((Number(order.points_redeemed) * returnStage.returnedNowMilli) / returnStage.totalSoldMilli));
+      if (ptsRefund > 0) {
+        await client.query(
+          `INSERT INTO customer_point_ledger_entries (store_id, customer_id, entry_type, points_delta, source_type, source_id, note, actor_user_id)
+           VALUES ($1, $2, 'return_refund_points', $3, 'return', $4, $5, $6)`,
+          [storeId, order.customer_id, ptsRefund, returnId, `Hoàn lại ${ptsRefund} điểm từ đổi hàng ${order.order_number} (${returnNumber})`, actorUserId]
+        );
+      }
+    }
+    if (Number(order.points_earned || 0) > 0) {
+      const priorClawbackRes = await client.query(
+        `SELECT COALESCE(SUM(-pl.points_delta), 0)::int AS clawed_pts
+         FROM customer_point_ledger_entries pl
+         JOIN returns r ON r.store_id = pl.store_id AND r.id = pl.source_id
+         WHERE pl.store_id = $1 AND pl.customer_id = $2
+           AND pl.entry_type = 'return_clawback_points' AND r.order_id = $3`,
+        [storeId, order.customer_id, order.id]
+      );
+      const remainingEarnedPts = Math.max(0, Number(order.points_earned) - Number(priorClawbackRes.rows[0]?.clawed_pts || 0));
+      const ptsClawback = returnStage.totalRemainingMilli === 0
+        ? remainingEarnedPts
+        : Math.min(remainingEarnedPts, Math.round((Number(order.points_earned) * returnStage.returnedNowMilli) / returnStage.totalSoldMilli));
+      if (ptsClawback > 0) {
+        await client.query(
+          `INSERT INTO customer_point_ledger_entries (store_id, customer_id, entry_type, points_delta, source_type, source_id, note, actor_user_id)
+           VALUES ($1, $2, 'return_clawback_points', $3, 'return', $4, $5, $6)`,
+          [storeId, order.customer_id, -ptsClawback, returnId, `Thu hồi ${ptsClawback} điểm thưởng khi đổi hàng ${order.order_number} (${returnNumber})`, actorUserId]
+        );
+      }
+    }
   }
   await client.query('UPDATE orders SET status = $3, updated_at = now() WHERE store_id = $1 AND id = $2', [storeId, order.id, nextOrderStatus]);
   return { returnId, returnNumber };
@@ -482,22 +560,24 @@ async function recordExchangeSettlementRows(client, storeId, actorUserId, req, r
       [storeId, repOrder.id, tender.method, tender.amountVnd.toString(), actorUserId]
     );
   }
-  for (const tender of req.tenders) {
-    if (tender.amountReceivedVnd <= 0n) continue;
-    await insertCashMovement(client, {
-      storeId,
-      direction: 'in',
-      category: 'Đổi hàng - thu thêm',
-      amountVnd: tender.amountReceivedVnd.toString(),
-      method: tender.method,
-      sourceType: 'order_payment',
-      sourceId: repOrder.id,
-      note: `Thu thêm đổi hàng ${repOrder.order_number}`,
-      actorUserId,
-      cashSessionId: tender.method === 'cash' ? settlement.cashSessionId : null,
-      counterpartyKind: order.customer_id ? 'customer' : null,
-      counterpartyId: order.customer_id || null,
-    });
+  if (settlement.netDeltaVnd > 0n) {
+    for (const tender of req.tenders) {
+      if (tender.amountReceivedVnd <= 0n) continue;
+      await insertCashMovement(client, {
+        storeId,
+        direction: 'in',
+        category: 'Đổi hàng - thu thêm',
+        amountVnd: tender.amountReceivedVnd.toString(),
+        method: tender.method,
+        sourceType: 'order_payment',
+        sourceId: repOrder.id,
+        note: `Thu thêm đổi hàng ${repOrder.order_number}`,
+        actorUserId,
+        cashSessionId: tender.method === 'cash' ? settlement.cashSessionId : null,
+        counterpartyKind: order.customer_id ? 'customer' : null,
+        counterpartyId: order.customer_id || null,
+      });
+    }
   }
   if (settlement.cashChangeVnd > 0n) {
     await insertCashMovement(client, {
@@ -569,13 +649,13 @@ async function recordExchangeSettlementRows(client, storeId, actorUserId, req, r
   }
 }
 
-async function executeExchangeTransaction(client, storeId, actorUserId, orderId, req) {
+async function executeExchangeTransaction(client, storeId, actorUserId, orderId, req, membership) {
   const returnStage = await loadOrderAndReturns(client, storeId, orderId, req.returnItems);
   const restockWhId = req.restockPolicy === 'restock' ? (req.restockWarehouseId || returnStage.order.warehouse_id) : null;
   const replacementWhId = req.replacementWarehouseId || returnStage.order.warehouse_id;
   await lockWarehousesSorted(client, storeId, [restockWhId, replacementWhId]);
 
-  const replacementStage = await prepareReplacementProducts(client, storeId, replacementWhId, req.replacementItems, req.discountVnd);
+  const replacementStage = await prepareReplacementProducts(client, storeId, replacementWhId, req.replacementItems, req.discountVnd, membership);
   await lockAndVerifyExchangeBalances(client, storeId, replacementWhId, returnStage, replacementStage, req.restockPolicy, restockWhId);
   const settlement = await resolveExchangeSettlement(client, storeId, req, returnStage, replacementStage);
 
@@ -668,7 +748,7 @@ function registerExchangeRoutes(app, { pool, env }) {
         return { status: rec.response_status, body: rec.response_body, replayed: true };
       }
 
-      const responseBody = await executeExchangeTransaction(client, storeId, auth.userId, orderId, req);
+      const responseBody = await executeExchangeTransaction(client, storeId, auth.userId, orderId, req, membership);
       await client.query(
         `UPDATE idempotency_records SET response_status = 201, response_body = $4::jsonb, completed_at = now()
          WHERE store_id = $1 AND actor_user_id = $2 AND idempotency_key = $3`,

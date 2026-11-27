@@ -49,4 +49,4 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Build production image
-        run: docker build --pull --tag slink:ci-${{ github.sha }} .
+        run: docker build --pull --target runtime --tag slink:ci-${{ github.sha }} .

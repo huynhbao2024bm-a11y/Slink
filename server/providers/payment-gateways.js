@@ -1,7 +1,7 @@
 'use strict';
 
 const { createHmac, randomUUID, timingSafeEqual } = require('node:crypto');
-const { assertSafeOutboundUrl } = require('./safe-url');
+const { assertSafeOutboundUrl, assertSafeOutboundUrlResolved } = require('./safe-url');
 
 function signMomoCreateRequest({ orderId, requestId, amountVnd, orderInfo, redirectUrl, ipnUrl, extraData = '', requestType = 'captureWallet' }, env = process.env) {
   const { MOMO_PARTNER_CODE, MOMO_ACCESS_KEY, MOMO_SECRET_KEY } = env;
@@ -114,7 +114,7 @@ async function createMomoPaymentSession({ storeId, orderId, orderNumber, amountV
   }
   let url;
   try {
-    url = assertSafeOutboundUrl(signed.endpoint, { allowLocalInTest: env.NODE_ENV === 'test', label: 'MoMo' });
+    url = await assertSafeOutboundUrlResolved(signed.endpoint, { allowLocalInTest: env.NODE_ENV === 'test', label: 'MoMo' });
   } catch (err) {
     return { ok: false, statusCode: 503, code: 'integration_not_configured', message: err.message || 'Địa chỉ kết nối MoMo không hợp lệ.' };
   }

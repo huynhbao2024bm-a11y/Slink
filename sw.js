@@ -24,6 +24,18 @@ self.addEventListener('fetch', function (event) {
     return;
   }
   if (event.request.method !== 'GET' || requestUrl.origin !== self.location.origin || requestUrl.pathname.startsWith('/api/') || requestUrl.pathname.startsWith('/download/') || requestUrl.pathname.startsWith('/legal/') || requestUrl.pathname === '/verify' || requestUrl.pathname === '/robots.txt' || requestUrl.pathname === '/sitemap.xml' || /^\/google[A-Za-z0-9_-]{8,64}\.html$/i.test(requestUrl.pathname) || requestUrl.searchParams.has('token')) return;
+  if (event.request.mode === 'navigate' && requestUrl.origin === self.location.origin) {
+    event.respondWith(fetch(event.request).then(function (response) {
+      if (response && response.ok) {
+        const copy = response.clone();
+        caches.open(CACHE_NAME).then(function (cache) { cache.put('./index.html', copy); });
+      }
+      return response;
+    }).catch(async function () {
+      return (await caches.match(event.request)) || (await caches.match('./index.html')) || Response.error();
+    }));
+    return;
+  }
   const cleanPathname = requestUrl.pathname;
   const shellFile = APP_SHELL.some(function (file) { return new URL(file, self.location.href).pathname === cleanPathname; });
   if (shellFile) {

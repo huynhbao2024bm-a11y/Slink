@@ -23,7 +23,7 @@ jobs:
         env:
           TARGET_URL: ${{ vars.SLINK_PRODUCTION_URL }}
         run: |
-          BASE="${TARGET_URL:-https://slink-production.onrender.com}"
+          BASE="${TARGET_URL:-https://slink-xny3.onrender.com}"
           ENDPOINT="${BASE%/}/api/ready"
           START_MS=$(date +%s%3N)
           HTTP_CODE=$(curl -sS -o /tmp/ready.json -w '%{http_code}' --max-time 20 "$ENDPOINT" || echo "000")
@@ -33,7 +33,8 @@ jobs:
           echo "endpoint=$ENDPOINT" >> "$GITHUB_OUTPUT"
           echo "http_code=$HTTP_CODE" >> "$GITHUB_OUTPUT"
           echo "latency_ms=$LATENCY" >> "$GITHUB_OUTPUT"
-          if [ "$HTTP_CODE" = "200" ] && echo "$BODY" | grep -q '"ready"'; then
+          IS_READY=$(node -e "try{const d=JSON.parse(process.argv[1]||'{}');process.stdout.write(d.status==='ready'?'true':'false')}catch{process.stdout.write('false')}" "$BODY")
+          if [ "$HTTP_CODE" = "200" ] && [ "$IS_READY" = "true" ]; then
             echo "ok=true" >> "$GITHUB_OUTPUT"
             echo "Slink ready ($HTTP_CODE) in ${LATENCY}ms"
           else
@@ -54,15 +55,20 @@ jobs:
           export ALERT_MSG="Slink production readiness check FAILED: ${PROBE_ENDPOINT} returned HTTP ${PROBE_HTTP_CODE} (${PROBE_LATENCY_MS}ms)."
           if [ -n "$ALERT_WEBHOOK_URL" ]; then
             PAYLOAD=$(node -e "process.stdout.write(JSON.stringify({ text: process.env.ALERT_MSG }))")
-            curl -sS -X POST -H 'Content-Type: application/json' \
+            curl -sS --max-time 10 -X POST -H 'Content-Type: application/json' \
               -d "$PAYLOAD" "$ALERT_WEBHOOK_URL" || true
           fi
-          EXISTING=$(gh issue list --repo "${{ github.repository }}" --state open --search "Slink production outage in:title" --json number --jq '.[0].number // empty')
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --state open --search "Slink production outage in:title" --json number,updatedAt --jq '.[0] // empty')
           if [ -z "$EXISTING" ]; then
             gh issue create --repo "${{ github.repository }}" \
               --title "Slink production outage detected" \
               --body "${ALERT_MSG}"$'\n\n'"Run: ${RUN_URL}"
           else
-            gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body "Still failing: ${ALERT_MSG}"
+            ISSUE_NUM=$(echo "$EXISTING" | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log(d.number||'')")
+            LAST_TS=$(echo "$EXISTING" | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log(Date.parse(d.updatedAt||'')||0)")
+            NOW_TS=$(node -e "console.log(Date.now())")
+            if [ -n "$ISSUE_NUM" ] && [ $((NOW_TS - LAST_TS)) -gt 3600000 ]; then
+              gh issue comment "$ISSUE_NUM" --repo "${{ github.repository }}" --body "Still failing: ${ALERT_MSG}"
+            fi
           fi
           exit 1

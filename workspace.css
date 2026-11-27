@@ -551,7 +551,8 @@
   width: 100%;
   min-height: 3.625rem;
   height: auto;
-  padding: 0.5rem 3%;
+  --view-pad-x: clamp(14px, 2.8vw, 32px);
+  padding: 0.5rem var(--view-pad-x);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -605,11 +606,111 @@
   margin-left: auto;
 }
 
+.topbar-right .icon-button {
+  width: 36px;
+  height: 36px;
+  flex: none;
+}
+
+.topbar-font-controls {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-soft);
+  padding: 2px;
+  gap: 2px;
+  height: 36px;
+}
+
+.font-step-btn {
+  width: 32px !important;
+  height: 30px !important;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--ink);
+  border-radius: 7px;
+  letter-spacing: -0.02em;
+}
+
+.font-step-btn:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+.pos-topbar .pos-font-controls {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.pos-topbar .pos-font-controls .font-step-btn,
+.pos-topbar .pos-help-btn {
+  color: #FFFFFF;
+}
+
+.pos-topbar .pos-help-btn {
+  width: 36px;
+  height: 36px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.12);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.pos-topbar .pos-font-controls .font-step-btn:hover:not(:disabled),
+.pos-topbar .pos-help-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.22);
+  color: #FFFFFF;
+}
+
+.pos-more-menu {
+  position: relative;
+}
+
+.pos-more-menu summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.pos-more-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.pos-more-dropdown {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 60;
+  min-width: 210px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow-lg, 0 12px 28px rgba(15, 23, 42, 0.16));
+  display: grid;
+  gap: 6px;
+}
+
+.pos-more-dropdown .pos-topbar-chip {
+  width: 100%;
+  justify-content: flex-start;
+  color: var(--ink);
+  background: var(--surface-soft);
+  border-color: var(--border);
+}
+
+.pos-more-dropdown .pos-topbar-chip.active {
+  background: var(--primary-soft);
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
 .view {
   width: 100%;
   max-width: 88rem;
   margin-inline: auto;
-  padding: clamp(1rem, 2.2%, 1.5rem) 3.2% 2.25rem;
+  padding: clamp(1rem, 2.2%, 1.5rem) clamp(14px, 2.8vw, 32px) 2.25rem;
   min-width: 0;
 }
 
@@ -2029,11 +2130,14 @@ body.pos-fullscreen .view {
     padding-bottom: calc(var(--mobile-nav-h, 4.25rem) + 0.85rem + env(safe-area-inset-bottom));
   }
   body.pos-fullscreen .main-panel {
-    padding-bottom: calc(var(--mobile-nav-h, 4.25rem) + var(--pos-cart-bar-h, 4.25rem) + 0.85rem + env(safe-area-inset-bottom));
+    padding-bottom: calc(var(--pos-cart-bar-h, 4.25rem) + 0.85rem + env(safe-area-inset-bottom));
+  }
+  body.pos-fullscreen .mobile-nav {
+    display: none !important;
   }
   .topbar {
     width: 100%;
-    padding: 0.45rem 3.5%;
+    padding: 0.45rem 14px;
     gap: 0.45rem;
   }
   .topbar-left {
@@ -2078,7 +2182,7 @@ body.pos-fullscreen .view {
   }
   .view {
     width: 100%;
-    padding: 3.5% 3.5% 1.75rem;
+    padding: 14px 14px 1.75rem;
   }
 
   /* Frosted 5-Tab Mobile Bottom Nav */
@@ -2139,10 +2243,10 @@ body.pos-fullscreen .view {
     left: 0;
     right: 0;
     width: 100%;
-    bottom: var(--mobile-nav-h, calc(4rem + env(safe-area-inset-bottom)));
+    bottom: 0;
     display: flex;
     gap: 10px;
-    padding: 0.625rem 3.5%;
+    padding: 0.625rem 14px calc(0.625rem + env(safe-area-inset-bottom));
     background: rgba(255, 255, 255, 0.96);
     backdrop-filter: blur(12px);
     border-top: 1px solid var(--border);
@@ -2834,7 +2938,7 @@ body.pos-fullscreen .view {
 
 .settings-bank-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
 }
 
@@ -5452,14 +5556,17 @@ body.pos-fullscreen .view {
 
 .pos-ai-input-wrap {
   display: flex;
+  flex-wrap: wrap;
   flex: 1 1 260px;
+  min-width: 0;
+  max-width: 100%;
   align-items: center;
   gap: 8px;
 }
 
 .pos-ai-input-wrap .input {
-  flex: 1 1 auto;
-  min-width: 160px;
+  flex: 1 1 160px;
+  min-width: 0;
 }
 
 .pos-ai-mic-btn.is-listening {

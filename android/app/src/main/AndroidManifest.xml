@@ -20,6 +20,7 @@
         android:supportsRtl="true">
         <activity
             android:name=".MainActivity"
+            android:launchMode="singleTop"
             android:configChanges="orientation|screenSize|keyboardHidden|uiMode"
             android:windowSoftInputMode="adjustResize"
             android:exported="true">

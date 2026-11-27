@@ -34,7 +34,7 @@ async function withUser(pool, userId, operation) {
     await client.query('COMMIT');
     return result;
   } catch (error) {
-    await client.query('ROLLBACK');
+    await client.query('ROLLBACK').catch(() => {});
     throw error;
   } finally {
     client.release();
@@ -79,7 +79,10 @@ async function listStores(pool, userId) {
       await client.query("SELECT set_config('app.store_id', $1, true)", [member.store_id]);
       const store = await client.query(
         `SELECT id, name, phone, address, receipt_footer, version, timezone, currency,
-                business_profile, onboarding_completed_at
+                business_profile, onboarding_completed_at,
+                COALESCE(loyalty_earn_unit_vnd, 100000)::text AS loyalty_earn_unit_vnd,
+                COALESCE(loyalty_redeem_value_vnd, 1000)::text AS loyalty_redeem_value_vnd,
+                COALESCE(protect_cost_margin, true) AS protect_cost_margin
          FROM stores WHERE id = $1 AND status = 'active'`,
         [member.store_id]
       );

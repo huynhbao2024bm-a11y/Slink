@@ -151,6 +151,9 @@
     estimatedHeight += 250;
     if (Number(data.discountVnd || 0) > 0) estimatedHeight += 36;
     if (Number(data.debtVnd || 0) > 0) estimatedHeight += 36;
+    if (Number(data.pointsRedeemed || 0) > 0) estimatedHeight += 36;
+    if (Number(data.pointsEarned || 0) > 0) estimatedHeight += 36;
+    if (data.customerPointsBalance != null) estimatedHeight += 36;
     if (data.vietQrText) estimatedHeight += 310;
     estimatedHeight += 90;
 
@@ -267,6 +270,15 @@
     drawSummaryRow('Đã thanh toán (' + String(data.paymentLabel || 'Tiền mặt') + ')', formatIntVnd(data.paidVnd != null ? data.paidVnd : data.totalVnd || 0), false);
     if (Number(data.debtVnd || 0) > 0) {
       drawSummaryRow('Còn ghi nợ', formatIntVnd(data.debtVnd), false, '#dc2626');
+    }
+    if (Number(data.pointsRedeemed || 0) > 0) {
+      drawSummaryRow('Đổi điểm (' + Number(data.pointsRedeemed) + ' điểm)', '-' + formatIntVnd(data.pointsRedeemedVnd || 0), false, '#b45309');
+    }
+    if (Number(data.pointsEarned || 0) > 0) {
+      drawSummaryRow('Tích điểm đơn này', '+' + Number(data.pointsEarned) + ' điểm', false, '#15803d');
+    }
+    if (data.customerPointsBalance != null) {
+      drawSummaryRow('Tổng điểm hiện có', Number(data.customerPointsBalance) + ' điểm', false, '#0f766e');
     }
 
     if (data.vietQrText) {

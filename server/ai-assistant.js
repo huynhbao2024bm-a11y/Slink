@@ -47,8 +47,8 @@ function geminiEndpointUrls(env = {}) {
   const apiKey = String(env.GEMINI_API_KEY || '').trim();
   const explicitModel = String(env.GEMINI_MODEL || '').trim();
   const candidates = explicitModel
-    ? [explicitModel, 'gemini-3-flash-preview', 'gemini-3.1-flash-lite-preview', 'gemini-flash-latest']
-    : ['gemini-3-flash-preview', 'gemini-3.1-flash-lite-preview', 'gemini-flash-latest', 'gemini-2.5-flash'];
+    ? [explicitModel, 'gemini-3.1-flash-lite-preview', 'gemini-3-flash-preview', 'gemini-flash-latest']
+    : ['gemini-3.1-flash-lite-preview', 'gemini-3-flash-preview', 'gemini-flash-latest', 'gemini-2.5-flash'];
   const uniqueModels = Array.from(new Set(candidates.filter(Boolean)));
   const encodedKey = encodeURIComponent(apiKey);
   const urls = uniqueModels.map(
@@ -61,6 +61,18 @@ function geminiEndpointUrls(env = {}) {
   return urls;
 }
 
+function buildGeminiBodyForUrl(payload, url, disableThinking) {
+  if (!disableThinking) return payload;
+  if (!/gemini-(?:2\.5|3)/i.test(url)) return payload;
+  return {
+    ...payload,
+    generationConfig: {
+      ...(payload.generationConfig || {}),
+      thinkingConfig: { thinkingBudget: 0 },
+    },
+  };
+}
+
 async function callGeminiJson(env, payload) {
   const apiKey = String(env.GEMINI_API_KEY || '').trim();
   if (!apiKey) {
@@ -69,30 +81,38 @@ async function callGeminiJson(env, payload) {
   const urls = geminiEndpointUrls(env);
   let lastStatus = 502;
   for (let i = 0; i < urls.length; i += 1) {
-    let response;
-    try {
-      response = await fetch(urls[i], {
-        method: 'POST',
-        redirect: 'error',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(20_000),
-      });
-    } catch {
-      throw new ApiError(502, 'ai_network_error', 'Không kết nối được tới máy chủ Gemini AI. Vui lòng thử lại.');
-    }
-    lastStatus = response.status;
-    if (response.ok) {
-      const data = await response.json();
-      const parts = data?.candidates?.[0]?.content?.parts || [];
-      const rawText = (parts.find((p) => typeof p?.text === 'string') || {}).text || '{}';
+    const url = urls[i];
+    for (const useZeroThinking of [true, false]) {
+      if (useZeroThinking && !/gemini-(?:2\.5|3)/i.test(url)) continue;
+      let response;
       try {
-        return JSON.parse(stripJsonFences(rawText));
+        response = await fetch(url, {
+          method: 'POST',
+          redirect: 'error',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(buildGeminiBodyForUrl(payload, url, useZeroThinking)),
+          signal: AbortSignal.timeout(12_000),
+        });
       } catch {
-        throw new ApiError(502, 'ai_bad_response', 'Phản hồi từ AI không đúng định dạng JSON.');
+        throw new ApiError(502, 'ai_network_error', 'Không kết nối được tới máy chủ Gemini AI. Vui lòng thử lại.');
       }
+      lastStatus = response.status;
+      if (response.ok) {
+        const data = await response.json();
+        const parts = data?.candidates?.[0]?.content?.parts || [];
+        const rawText = (parts.find((p) => typeof p?.text === 'string') || {}).text || '{}';
+        try {
+          return JSON.parse(stripJsonFences(rawText));
+        } catch {
+          throw new ApiError(502, 'ai_bad_response', 'Phản hồi từ AI không đúng định dạng JSON.');
+        }
+      }
+      if (useZeroThinking && response.status === 400) {
+        continue;
+      }
+      break;
     }
-    if (i < urls.length - 1 && [400, 401, 403, 404, 503].includes(response.status)) {
+    if (i < urls.length - 1 && [400, 401, 403, 404, 503].includes(lastStatus)) {
       continue;
     }
     break;
@@ -118,10 +138,19 @@ function matchProductFromList(products, candidateId, candidateName) {
   }) || null;
 }
 
-function matchCustomerFromList(customers, candidateId, candidateName) {
+function matchCustomerFromList(customers, candidateId, candidateName, candidatePhone) {
   if (candidateId) {
     const byId = customers.find((c) => c.id === candidateId);
     if (byId) return byId;
+  }
+  const digits = String(candidatePhone || '').replace(/\D/g, '');
+  const normPhone = digits.startsWith('84') && digits.length >= 11 ? '0' + digits.slice(2) : digits;
+  if (normPhone.length >= 4) {
+    const exactPhone = customers.find((c) => {
+      const cp = String(c.phone || '').replace(/\D/g, '');
+      return cp === normPhone || (normPhone.length === 4 && cp.endsWith(normPhone));
+    });
+    if (exactPhone) return exactPhone;
   }
   const needle = normalizeViText(candidateName);
   if (!needle || needle === 'khach le') return null;
@@ -131,6 +160,210 @@ function matchCustomerFromList(customers, candidateId, candidateName) {
     const hay = normalizeViText(c.name);
     return hay && (hay.includes(needle) || needle.includes(hay));
   }) || null;
+}
+
+const VI_NUMBER_WORDS = {
+  mot: 1, hai: 2, ba: 3, bon: 4, tu: 4, nam: 5, lam: 5,
+  sau: 6, bay: 7, tam: 8, chin: 9, muoi: 10, chuc: 10,
+  ta: 12, lo: 12, nua: 0.5,
+};
+
+const VI_UNIT_WORDS = new Set([
+  'cai', 'chiec', 'hop', 'thung', 'chai', 'lon', 'goi', 'ly', 'coc',
+  'kg', 'ky', 'can', 'g', 'gram', 'l', 'lit', 'bao', 'bich', 'tui',
+  'bo', 'doi', 'vi', 'cuon', 'to', 'suat', 'phan', 'loc', 'day', 'quyen',
+  'tuyp', 'lo', 'hu', 'bat', 'dia', 'chen', 'o', 'qua', 'trai',
+]);
+
+function scoreProductMatch(products, queryNorm) {
+  if (!queryNorm) return null;
+  const tokens = queryNorm.split(' ').filter(Boolean);
+  if (!tokens.length) return null;
+  let best = null;
+  let bestScore = 0;
+  for (const p of products) {
+    const nameNorm = normalizeViText(p.name);
+    const skuNorm = normalizeViText(p.sku);
+    if (!nameNorm && !skuNorm) continue;
+    if (nameNorm === queryNorm || skuNorm === queryNorm) {
+      return { product: p, score: 1 };
+    }
+    let score = 0;
+    if (nameNorm.includes(queryNorm)) {
+      score = Math.max(score, 0.85 + 0.1 * (queryNorm.length / Math.max(1, nameNorm.length)));
+    } else if (queryNorm.length >= 4 && queryNorm.includes(nameNorm) && nameNorm.length >= 3) {
+      score = Math.max(score, 0.8);
+    } else {
+      const hayTokens = new Set(nameNorm.split(' ').filter(Boolean));
+      const matchedTokens = tokens.filter((t) => hayTokens.has(t));
+      const recall = matchedTokens.length / tokens.length;
+      const precision = matchedTokens.length / Math.max(1, hayTokens.size);
+      if (recall >= 0.999) score = Math.max(score, 0.78 + 0.15 * precision);
+      else if (tokens.length >= 2 && recall >= 0.7) score = Math.max(score, 0.72 * recall + 0.15 * precision);
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      best = p;
+    }
+  }
+  return bestScore >= 0.72 && best ? { product: best, score: bestScore } : null;
+}
+
+function deaccentKeepPunct(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[Đđ]/g, (m) => (m === 'Đ' ? 'D' : 'd'))
+    .toLowerCase();
+}
+
+function tryFastLocalOrderParse(transcript, products, customers) {
+  const raw = String(transcript || '').trim();
+  if (!raw || !Array.isArray(products) || !products.length) return null;
+  let working = raw;
+  let note = '';
+  const noteMatch = working.match(/(?:^|[\s,;])(?:ghi\s*ch[uú]|note)\s*[:\-]?\s*([^,;]+)$/i);
+  if (noteMatch) {
+    note = noteMatch[1].trim().slice(0, 240);
+    working = working.slice(0, noteMatch.index).trim();
+  }
+  let deliveryAddress = '';
+  const deliveryMatch = working.match(/(?:^|[\s,;])(?:giao\s*(?:h[aà]ng|t[oớ]i|đ[eế]n|v[eề]|[oở])?|ship\s*(?:t[oớ]i|đ[eế]n)?)\s+([^,;+]+?)(?=(?:,|;|\s+(?:ghi\s*n[oợ]|chuy[eể]n\s*kho[aả]n|ti[eề]n\s*m[aặ]t|gi[aả]m|d[uù]ng\s*đi[eể]m|đ[oổ]i\s*\d*\s*đi[eể]m|ck(?:\s|$))|$))/i);
+  if (deliveryMatch) {
+    deliveryAddress = deliveryMatch[1].trim().slice(0, 240);
+    working = (working.slice(0, deliveryMatch.index) + ' ' + working.slice(deliveryMatch.index + deliveryMatch[0].length)).trim();
+  }
+
+  let ascii = deaccentKeepPunct(working);
+  let customerPhone = '';
+  const phoneFullMatch = ascii.match(/(?:^|\s)(?:(?:cho|cua)\s+)?(?:khach(?:\s+hang)?\s+)?(?:(?:sdt|so)\s*[:.]?\s*)?((?:\+?84|0)[35789](?:[\s.-]?\d){8})(?=\s|$|,|;)/i);
+  if (phoneFullMatch) {
+    let digits = phoneFullMatch[1].replace(/\D/g, '');
+    if (digits.startsWith('84') && digits.length === 11) digits = '0' + digits.slice(2);
+    customerPhone = digits;
+    ascii = (ascii.slice(0, phoneFullMatch.index) + ' ' + ascii.slice(phoneFullMatch.index + phoneFullMatch[0].length)).trim();
+  } else {
+    const tailMatch = ascii.match(/(?:^|\s)(?:(?:cho|cua)\s+)?(?:khach(?:\s+hang)?\s+)?(?:sdt|so|duoi)\s*[:.]?\s*(\d{4})(?=\s|$|,|;)/i);
+    if (tailMatch) {
+      customerPhone = tailMatch[1];
+      ascii = (ascii.slice(0, tailMatch.index) + ' ' + ascii.slice(tailMatch.index + tailMatch[0].length)).trim();
+    }
+  }
+  let redeemPoints = false;
+  let pointsToRedeem = 0;
+  const ptsMatch = ascii.match(/(?:^|\s)(?:dung|doi|tru|su\s+dung)\s*(?:het\s*)?(?:(\d{1,6})\s*)?diem(?=\s|$|,|;)/i);
+  if (ptsMatch) {
+    redeemPoints = true;
+    pointsToRedeem = ptsMatch[1] ? Number(ptsMatch[1]) : 0;
+    ascii = (ascii.slice(0, ptsMatch.index) + ' ' + ascii.slice(ptsMatch.index + ptsMatch[0].length)).trim();
+  }
+  let discountPct = 0;
+  let discountVnd = '0';
+  const discMatch = ascii.match(/(?:^|\s)(?:giam|bot|chiet\s+khau|ck)\s*(\d+(?:[.,]\d+)?)\s*(%|phan\s+tram|k|nghin|ngan|tr|trieu|dong|d)?(?=\s|$|,|;)/i);
+  if (discMatch) {
+    const num = Number(discMatch[1].replace(',', '.'));
+    const unit = normalizeViText(discMatch[2] || '');
+    if (Number.isFinite(num) && num > 0) {
+      if (discMatch[2] === '%' || unit === 'phan tram') {
+        if (num <= 100) discountPct = Math.round(num * 100) / 100;
+      } else if (unit === 'k' || unit === 'nghin' || unit === 'ngan') {
+        discountVnd = String(Math.round(num * 1000));
+      } else if (unit === 'tr' || unit === 'trieu') {
+        discountVnd = String(Math.round(num * 1000000));
+      } else {
+        discountVnd = String(Math.round(num));
+      }
+    }
+    ascii = (ascii.slice(0, discMatch.index) + ' ' + ascii.slice(discMatch.index + discMatch[0].length)).trim();
+  }
+  let paymentMethod = '';
+  let isDebt = false;
+  const payPatterns = [
+    { re: /(?:^|\s)(?:ghi\s+no|ban\s+no|con\s+no|no\s+lai|thieu|cong\s+no)(?=\s|$|,|;)/i, method: 'debt', debt: true },
+    { re: /(?:^|\s)(?:chuyen\s+khoan|quet\s+ma|vietqr|banking|ck)(?=\s|$|,|;)/i, method: 'bank_transfer', debt: false },
+    { re: /(?:^|\s)(?:tien\s+mat|tm)(?=\s|$|,|;)/i, method: 'cash', debt: false },
+  ];
+  for (const pat of payPatterns) {
+    const m = ascii.match(pat.re);
+    if (m) {
+      paymentMethod = pat.method;
+      isDebt = pat.debt;
+      ascii = (ascii.slice(0, m.index) + ' ' + ascii.slice(m.index + m[0].length)).trim();
+      break;
+    }
+  }
+  let customerName = '';
+  const custPhraseMatch = ascii.match(/(?:^|\s)(?:cho|khach)\s+([^\d,;+]{2,40})$/i);
+  let matchedCustomer = customerPhone ? matchCustomerFromList(customers || [], '', '', customerPhone) : null;
+  if (!matchedCustomer && custPhraseMatch) {
+    const candidateName = custPhraseMatch[1].trim();
+    const byName = matchCustomerFromList(customers || [], '', candidateName, '');
+    if (byName || /^(?:chi|anh|co|chu|bac|em|khach)\s+/i.test(candidateName)) {
+      matchedCustomer = byName;
+      customerName = byName ? byName.name : candidateName;
+      ascii = ascii.slice(0, custPhraseMatch.index).trim();
+    }
+  }
+
+  const segments = ascii
+    .replace(/\b(?:va|voi|cong|them)\b/gi, ',')
+    .split(/[,;\n+]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (!segments.length) return null;
+
+  const parsedItems = [];
+  for (const seg of segments) {
+    let normSeg = normalizeViText(seg)
+      .replace(/^(?:ban|lay|cho khach|tinh tien|len don|mua|ban cho|lay giup|dat|them)\s+/, '')
+      .replace(/^(?:sdt|so dien thoai)\s*/, '')
+      .replace(/\s+(?:cho khach hang|cho khach|cho minh|giup minh|cho)$/, '')
+      .trim();
+    if (!normSeg) continue;
+    const words = normSeg.split(' ').filter(Boolean);
+    let qty = 1;
+    let idx = 0;
+    const numMatch = /^(\d+(?:[.,]\d+)?)$/.exec(words[0] || '');
+    if (numMatch) {
+      qty = Number(numMatch[1].replace(',', '.'));
+      idx = 1;
+      if (words[1] === 'ruoi') {
+        qty += 0.5;
+        idx = 2;
+      }
+    } else if (Object.hasOwn(VI_NUMBER_WORDS, words[0] || '')) {
+      qty = VI_NUMBER_WORDS[words[0]];
+      idx = 1;
+      if (words[0] === 'mot' && words[1] === 'chuc') { qty = 10; idx = 2; }
+      else if (words[1] === 'ruoi') { qty += 0.5; idx = 2; }
+    }
+    if (idx < words.length && VI_UNIT_WORDS.has(words[idx]) && words.length > idx + 1) {
+      idx += 1;
+    }
+    const productNeedle = words.slice(idx).join(' ').trim();
+    const hit = scoreProductMatch(products, productNeedle);
+    if (!hit) return null;
+    parsedItems.push({
+      product_id: hit.product.id,
+      matched_name: hit.product.name,
+      quantity: qty,
+    });
+  }
+  if (!parsedItems.length) return null;
+  return {
+    items: parsedItems,
+    customer_id: matchedCustomer ? matchedCustomer.id : null,
+    customer_name: matchedCustomer ? matchedCustomer.name : customerName,
+    customer_phone: customerPhone || matchedCustomer?.phone || '',
+    redeem_points: redeemPoints,
+    points_to_redeem: pointsToRedeem,
+    discount_vnd: discountVnd,
+    discount_pct: discountPct,
+    payment_method: paymentMethod || (isDebt ? 'debt' : ''),
+    is_debt: isDebt,
+    delivery_address: deliveryAddress,
+    note,
+  };
 }
 
 function groundParsedOrder(parsed, products, customers) {
@@ -161,17 +394,37 @@ function groundParsedOrder(parsed, products, customers) {
     }
   }
   const rawCustomerName = String(parsed?.customer_name || '').trim().slice(0, 120);
+  const rawPhoneDigits = String(parsed?.customer_phone || '').replace(/\D/g, '');
+  const cleanPhone = rawPhoneDigits.startsWith('84') && rawPhoneDigits.length === 11 ? '0' + rawPhoneDigits.slice(2) : rawPhoneDigits;
   const customer = matchCustomerFromList(
     customers,
     typeof parsed?.customer_id === 'string' ? parsed.customer_id.trim() : '',
-    rawCustomerName
+    rawCustomerName,
+    cleanPhone
   );
+  const paymentMethod = ['cash', 'bank_transfer', 'debt'].includes(String(parsed?.payment_method || ''))
+    ? String(parsed.payment_method)
+    : (parsed?.is_debt ? 'debt' : '');
+  const discountPct = Number.isFinite(Number(parsed?.discount_pct)) && Number(parsed?.discount_pct) > 0 && Number(parsed?.discount_pct) <= 100
+    ? Math.round(Number(parsed.discount_pct) * 100) / 100
+    : 0;
+  const discountVnd = safeNonNegativeVndText(parsed?.discount_vnd);
+  const pointsToRedeem = Number.isSafeInteger(Number(parsed?.points_to_redeem)) && Number(parsed?.points_to_redeem) > 0
+    ? Number(parsed.points_to_redeem)
+    : 0;
   return {
     items: Array.from(mergedByProductId.values()),
     unmatched,
     customerId: customer ? customer.id : null,
     customerName: customer ? customer.name : (rawCustomerName && normalizeViText(rawCustomerName) !== 'khach le' ? rawCustomerName : ''),
-    isDebt: Boolean(parsed?.is_debt),
+    customerPhone: customer?.phone || cleanPhone || '',
+    redeemPoints: Boolean(parsed?.redeem_points || pointsToRedeem > 0),
+    pointsToRedeem,
+    discountVnd,
+    discountPct,
+    paymentMethod,
+    isDebt: paymentMethod === 'debt' || Boolean(parsed?.is_debt),
+    deliveryAddress: String(parsed?.delivery_address || '').trim().slice(0, 240),
     note: String(parsed?.note || '').trim().slice(0, 240),
   };
 }
@@ -183,8 +436,18 @@ function groundParsedInvoice(parsed, products, suppliers) {
   for (const row of rawItems.slice(0, 50)) {
     if (!row || typeof row !== 'object') continue;
     const rawName = String(row.product_name || row.matched_name || row.name || '').trim().slice(0, 140);
-    const qty = safePositiveQuantity(row.quantity);
-    const unitCostVnd = safeNonNegativeVndText(row.import_price_vnd ?? row.import_price ?? row.unit_cost_vnd);
+    const packQty = Number(row.pack_qty || 0);
+    const unitsPerPack = Number(row.units_per_pack || 0);
+    let rawQty = row.quantity;
+    let rawCost = safeNonNegativeVndText(row.import_price_vnd ?? row.import_price ?? row.unit_cost_vnd);
+    if (packQty > 0 && unitsPerPack > 1 && (!rawQty || Number(rawQty) === packQty)) {
+      rawQty = packQty * unitsPerPack;
+      if (rawCost !== '0') {
+        rawCost = String(Math.round(Number(rawCost) / unitsPerPack));
+      }
+    }
+    const qty = safePositiveQuantity(rawQty);
+    const unitCostVnd = rawCost;
     const product = matchProductFromList(products, typeof row.product_id === 'string' ? row.product_id.trim() : '', rawName);
     if (!product) {
       if (rawName) unmatched.push({ name: rawName, quantity: qty, unitCostVnd });
@@ -200,6 +463,7 @@ function groundParsedInvoice(parsed, products, suppliers) {
     });
   }
   const rawSupplierName = String(parsed?.supplier_name || '').trim().slice(0, 140);
+  const rawSupplierPhone = String(parsed?.supplier_phone || '').replace(/[^\d+.-]/g, '').slice(0, 30);
   const supplierNeedle = normalizeViText(rawSupplierName);
   const supplier = supplierNeedle
     ? suppliers.find((s) => normalizeViText(s.name).includes(supplierNeedle) || supplierNeedle.includes(normalizeViText(s.name)))
@@ -207,6 +471,9 @@ function groundParsedInvoice(parsed, products, suppliers) {
   return {
     supplierId: supplier ? supplier.id : null,
     supplierName: supplier ? supplier.name : rawSupplierName,
+    supplierPhone: rawSupplierPhone,
+    discountVnd: safeNonNegativeVndText(parsed?.discount_vnd),
+    paidVnd: safeNonNegativeVndText(parsed?.paid_vnd),
     items,
     unmatched,
   };
@@ -259,14 +526,30 @@ function registerAiAssistantRoutes(app, { pool, env, aiClient = null }) {
       return { products: prodRes.rows, customers: custRes.rows };
     });
 
+    const startedAt = Date.now();
+    let localCandidate = null;
+    if (!(aiClient && typeof aiClient.parseOrder === 'function')) {
+      localCandidate = tryFastLocalOrderParse(transcript, products, customers);
+    }
+    if (localCandidate) {
+      return {
+        transcript,
+        source: 'local_fast',
+        latencyMs: Date.now() - startedAt,
+        ...groundParsedOrder(localCandidate, products, customers),
+      };
+    }
+
+    const compactProducts = products.slice(0, 280).map((p) => `${p.id}|${p.sku || ''}|${p.name}|${p.unit || ''}|${p.sale_price_vnd}`).join('\n');
+    const compactCustomers = customers.slice(0, 140).map((c) => `${c.id}|${c.name}|${c.phone || ''}`).join('\n');
     const prompt = [
-      'Bạn là trợ lý AI lên đơn cho phần mềm bán hàng Slink tại Việt Nam.',
-      'Phân tích câu lệnh của thu ngân và đối chiếu CHÍNH XÁC với danh sách sản phẩm và khách hàng dưới đây.',
-      `DANH SÁCH SẢN PHẨM JSON: ${JSON.stringify(products.map((p) => ({ id: p.id, sku: p.sku || '', name: p.name, unit: p.unit || '', price_vnd: p.sale_price_vnd })))}`,
-      `DANH SÁCH KHÁCH HÀNG JSON: ${JSON.stringify(customers.map((c) => ({ id: c.id, name: c.name, phone: c.phone || '' })))}`,
-      `CÂU LỆNH BÁN HÀNG: ${JSON.stringify(transcript)}`,
-      'Chỉ trả về JSON hợp lệ không markdown theo mẫu:',
-      '{"items":[{"product_id":"id khớp hoặc null","matched_name":"tên sản phẩm khách gọi","quantity":1}],"customer_id":"id khách khớp hoặc null","customer_name":"tên khách hoặc Khách lẻ","is_debt":false,"note":""}',
+      'AI lên đơn Slink VN. Khớp CHÍNH XÁC sản phẩm (id|sku|tên|đvt|giá) & khách (id|tên|sdt):',
+      compactProducts,
+      'KHÁCH:',
+      compactCustomers,
+      `LỆNH: ${JSON.stringify(transcript)}`,
+      'Chỉ trả JSON thuần:',
+      '{"items":[{"product_id":null,"matched_name":"","quantity":1}],"customer_id":null,"customer_name":"","customer_phone":"","redeem_points":false,"points_to_redeem":0,"discount_vnd":0,"discount_pct":0,"payment_method":"cash|bank_transfer|debt","is_debt":false,"delivery_address":"","note":""}',
     ].join('\n');
 
     const rawParsed = aiClient && typeof aiClient.parseOrder === 'function'
@@ -278,6 +561,8 @@ function registerAiAssistantRoutes(app, { pool, env, aiClient = null }) {
 
     return {
       transcript,
+      source: aiClient ? 'custom_ai' : 'gemini_turbo',
+      latencyMs: Date.now() - startedAt,
       ...groundParsedOrder(rawParsed, products, customers),
     };
   });
@@ -321,12 +606,15 @@ function registerAiAssistantRoutes(app, { pool, env, aiClient = null }) {
       return { products: prodRes.rows, suppliers: supRes.rows };
     });
 
+    const compactProducts = products.slice(0, 300).map((p) => `${p.id}|${p.sku || ''}|${p.name}|${p.unit || ''}`).join('\n');
+    const compactSuppliers = suppliers.slice(0, 150).map((s) => `${s.id}|${s.name}`).join('\n');
     const prompt = [
-      'Đọc ảnh chụp hóa đơn nhập hàng (tiếng Việt) và trích xuất tên nhà cung cấp cùng từng dòng hàng hóa.',
-      `DANH SÁCH SẢN PHẨM KHO JSON: ${JSON.stringify(products.map((p) => ({ id: p.id, sku: p.sku || '', name: p.name, unit: p.unit || '' })))}`,
-      `DANH SÁCH NHÀ CUNG CẤP JSON: ${JSON.stringify(suppliers.map((s) => ({ id: s.id, name: s.name })))}`,
-      'Chỉ trả về JSON hợp lệ theo mẫu (import_price_vnd là ĐƠN GIÁ NHẬP số nguyên VND):',
-      '{"supplier_name":"","items":[{"product_id":"id khớp hoặc null","product_name":"tên hàng trên hóa đơn","quantity":1,"import_price_vnd":0}]}',
+      'Đọc hóa đơn nhập hàng VN (kể cả viết tay/quy đổi thùng->lẻ). Khớp kho (id|sku|tên|đvt) & NCC (id|tên):',
+      compactProducts,
+      'NCC:',
+      compactSuppliers,
+      'Chỉ trả JSON hợp lệ (import_price_vnd=đơn giá VND, nếu ghi theo thùng thì điền pack_qty & units_per_pack):',
+      '{"supplier_name":"","supplier_phone":"","discount_vnd":0,"paid_vnd":0,"items":[{"product_id":null,"product_name":"","quantity":1,"pack_qty":0,"units_per_pack":0,"import_price_vnd":0}]}',
     ].join('\n');
 
     const rawParsed = aiClient && typeof aiClient.parseInvoice === 'function'
@@ -348,6 +636,7 @@ function registerAiAssistantRoutes(app, { pool, env, aiClient = null }) {
 module.exports = {
   normalizeViText,
   callGeminiJson,
+  tryFastLocalOrderParse,
   groundParsedOrder,
   groundParsedInvoice,
   registerAiAssistantRoutes,

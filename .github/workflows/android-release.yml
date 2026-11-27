@@ -4,6 +4,15 @@ on:
   push:
     tags: ['android-v*.*.*']
   workflow_dispatch:
+    inputs:
+      version:
+        description: Semantic version (e.g. 0.9.5.0)
+        required: true
+        type: string
+      version_code:
+        description: Optional monotonic Android versionCode (e.g. 3036)
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -31,29 +40,40 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          DISPATCH_VERSION: ${{ github.event.inputs.version }}
+          DISPATCH_CODE: ${{ github.event.inputs.version_code }}
         run: |
           export JAVA_HOME="$JAVA_HOME_21_X64"
           export ANDROID_KEYSTORE_PATH="$RUNNER_TEMP/slink-release.jks"
-          version="${GITHUB_REF_NAME#android-v}"
-          # One monotonically increasing code for numeric major.minor.patch tags.
-          IFS=. read -r major minor patch <<< "$version"
-          [[ "$major.$minor.$patch" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          (( major < 1000 && minor < 1000 && patch < 1000 ))
-          code=$(( 10#$major * 1000000 + 10#$minor * 1000 + 10#$patch ))
+          version="${DISPATCH_VERSION:-${GITHUB_REF_NAME#android-v}}"
+          tag_name="android-v${version}"
+          if ! [[ "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(\.([0-9]+))?$ ]]; then
+            echo "Invalid version: $version" >&2
+            exit 1
+          fi
+          major="${BASH_REMATCH[1]}"; minor="${BASH_REMATCH[2]}"; patch="${BASH_REMATCH[3]}"; hotfix="${BASH_REMATCH[5]:-0}"
+          if [ -n "$DISPATCH_CODE" ]; then
+            code="$DISPATCH_CODE"
+          else
+            code=$(( 10#$major * 1000000 + 10#$minor * 10000 + 10#$patch * 100 + 10#$hotfix ))
+          fi
           cd android
           bash gradlew --no-daemon ":app:assembleRelease" "-PslinkVersionCode=$code" "-PslinkVersionName=$version"
           cd ..
           mkdir -p dist
           cp android/app/build/outputs/apk/release/app-release.apk dist/Slink.apk
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose dist/Slink.apk
-          node scripts/android-release-manifest.js dist/Slink.apk "$code" "$version" "$GITHUB_REF_NAME" dist/android-update.json
+          node scripts/android-release-manifest.js dist/Slink.apk "$code" "$version" "$tag_name" dist/android-update.json
           node --test server/test/android-release.test.js
       - name: Publish both files together
         env:
           GH_TOKEN: ${{ github.token }}
+          DISPATCH_VERSION: ${{ github.event.inputs.version }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/Slink.apk dist/android-update.json --verify-tag --title "Slink ${GITHUB_REF_NAME#android-v}" --generate-notes --draft
-          gh release edit "$GITHUB_REF_NAME" --draft=false --latest
+          version="${DISPATCH_VERSION:-${GITHUB_REF_NAME#android-v}}"
+          tag_name="android-v${version}"
+          gh release create "$tag_name" dist/Slink.apk dist/android-update.json --title "Slink $version" --generate-notes --draft
+          gh release edit "$tag_name" --draft=false --latest
       - name: Remove temporary key
         if: always()
         run: rm -f "$RUNNER_TEMP/slink-release.jks"

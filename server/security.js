@@ -4,7 +4,9 @@ const { authenticate, ApiError, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withUser } = require('./db');
 const { recordSecurityEvent } = require('./security-events');
 
-function registerSecurityRoutes(app, { pool, env }) {
+function registerSecurityRoutes(app, { pool, env, firebaseVerifier = null }) {
+  const { createFirebaseVerifier } = require('./firebase-auth');
+  const verifier = createFirebaseVerifier(env, firebaseVerifier);
   app.get('/api/auth/security', async (request, reply) => {
     reply.header('cache-control', 'no-store');
     const auth = await authenticate(pool, request);
@@ -63,6 +65,11 @@ function registerSecurityRoutes(app, { pool, env }) {
 
       await client.query('UPDATE sessions SET revoked_at = now() WHERE id = $1 AND user_id = $2', [sessionId, auth.userId]);
       await recordSecurityEvent(client, auth.userId, 'session_revoked', sessionId);
+      const userFb = await client.query('SELECT firebase_uid FROM users WHERE id = $1', [auth.userId]);
+      const fbUid = userFb.rows[0]?.firebase_uid;
+      if (fbUid && verifier.configured && typeof verifier.revokeRefreshTokens === 'function') {
+        await verifier.revokeRefreshTokens(fbUid).catch(() => {});
+      }
       return { status: 'revoked' };
     });
   });

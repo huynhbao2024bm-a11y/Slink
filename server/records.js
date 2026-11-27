@@ -4,6 +4,7 @@ const { createHash, randomUUID } = require('node:crypto');
 const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
 const { hasPermission, requirePermission } = require('./rbac');
+const { getCustomerPointsState } = require('./hr-crm');
 
 const EDIT_CUSTOMER_ROLES = new Set(['owner', 'manager', 'cashier']);
 const CREATE_CUSTOMER_ROLES = new Set(['owner', 'manager', 'cashier', 'accountant']);
@@ -596,8 +597,34 @@ function registerRecordRoutes(app, { pool, env }) {
          LIMIT 20`,
         [storeId, customerId]
       );
+      const storeCfg = await client.query(
+        `SELECT COALESCE(loyalty_earn_unit_vnd, 100000)::text AS loyalty_earn_unit_vnd,
+                COALESCE(loyalty_redeem_value_vnd, 1000)::text AS loyalty_redeem_value_vnd
+         FROM stores WHERE id = $1`,
+        [storeId]
+      );
+      const earnUnitVnd = BigInt(storeCfg.rows[0]?.loyalty_earn_unit_vnd || '100000');
+      const redeemValueVnd = BigInt(storeCfg.rows[0]?.loyalty_redeem_value_vnd || '1000');
+      const pointHistory = await client.query(
+        `SELECT id, entry_type, points_delta, source_type, source_id, note, occurred_at, occurred_at AS created_at
+         FROM customer_point_ledger_entries
+         WHERE store_id = $1 AND customer_id = $2
+         ORDER BY occurred_at DESC, id DESC
+         LIMIT 50`,
+        [storeId, customerId]
+      );
+      const redeemablePoints = Math.max(0, Number(custRow.loyalty_points || 0));
       return {
         customer: { ...customerResult.rows[0], tags: tags.rows.map((tag) => ({ key: tag.tag_key, label: tag.tag })) },
+        loyalty: {
+          pointsBalance: Number(custRow.loyalty_points || 0),
+          tier: custRow.loyalty_tier,
+          earnUnitVnd: earnUnitVnd.toString(),
+          redeemValueVnd: redeemValueVnd.toString(),
+          redeemablePoints,
+          maxRedeemVnd: (BigInt(redeemablePoints) * redeemValueVnd).toString(),
+        },
+        pointHistory: pointHistory.rows,
         recentOrders: orders.rows,
         recentPayments: payments.rows,
       };
@@ -792,6 +819,16 @@ function registerRecordRoutes(app, { pool, env }) {
     const requestHash = idempotencyKey ? createHash('sha256').update(JSON.stringify(value)).digest() : null;
     const outcome = await withStore(pool, auth.userId, storeId, async (client, membership) => {
       if (!CREATE_CUSTOMER_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền tạo khách hàng.');
+      if (!['owner', 'manager'].includes(membership.role)) {
+        const hasRestrictedFields = Boolean(
+          (customer.bonusPoints && customer.bonusPoints !== 0)
+          || (customer.discountRateBps && customer.discountRateBps > 0)
+          || customer.creditLimitVnd !== null
+        );
+        if (hasRestrictedFields) {
+          throw new ApiError(403, 'forbidden', 'Chỉ chủ cửa hàng hoặc quản lý mới được thiết lập điểm thưởng, chiết khấu mặc định hoặc hạn mức nợ.');
+        }
+      }
       if (openingBalance > 0n && !hasPermission(membership, 'record_cashbook')) {
         throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền ghi công nợ ban đầu.');
       }
@@ -892,6 +929,16 @@ function registerRecordRoutes(app, { pool, env }) {
     const fields = validateCustomer(request.body, { partial: true });
     return withStore(pool, auth.userId, storeId, async (client, membership) => {
       if (!EDIT_CUSTOMER_ROLES.has(membership.role)) throw new ApiError(403, 'forbidden', 'Tài khoản này không có quyền quản lý khách hàng.');
+      if (!['owner', 'manager'].includes(membership.role)) {
+        const restrictedChange = Boolean(
+          fields.bonusPoints !== undefined
+          || fields.discountRateBps !== undefined
+          || fields.creditLimitVnd !== undefined
+        );
+        if (restrictedChange) {
+          throw new ApiError(403, 'forbidden', 'Chỉ chủ cửa hàng hoặc quản lý mới được sửa điểm thưởng, chiết khấu mặc định hoặc hạn mức nợ.');
+        }
+      }
       await client.query('SELECT id FROM stores WHERE id = $1 FOR UPDATE', [storeId]);
       const currentResult = await client.query('SELECT *, birthday::text AS birthday_text FROM customers WHERE store_id = $1 AND id = $2 FOR UPDATE', [storeId, customerId]);
       if (!currentResult.rowCount || currentResult.rows[0].status !== 'active') throw new ApiError(404, 'customer_not_found', 'Không tìm thấy khách hàng đang hoạt động.');
@@ -1030,7 +1077,11 @@ function registerRecordRoutes(app, { pool, env }) {
       const order = await client.query(
         `SELECT o.*, o.subtotal_vnd::text AS subtotal_vnd_text, o.discount_vnd::text AS discount_vnd_text,
                 o.total_vnd::text AS total_vnd_text, o.cash_received_vnd::text AS cash_received_vnd_text,
-                o.cash_change_vnd::text AS cash_change_vnd_text, c.name AS customer_name, c.phone AS customer_phone,
+                o.cash_change_vnd::text AS cash_change_vnd_text,
+                COALESCE(o.points_earned, 0)::int AS points_earned,
+                COALESCE(o.points_redeemed, 0)::int AS points_redeemed,
+                COALESCE(o.points_redeemed_vnd, 0)::text AS points_redeemed_vnd_text,
+                c.name AS customer_name, c.phone AS customer_phone,
                 u.display_name AS cashier_name, vw.name AS void_restock_warehouse_name
          FROM orders o LEFT JOIN customers c ON c.store_id = o.store_id AND c.id = o.customer_id
          LEFT JOIN warehouses vw ON vw.store_id = o.store_id AND vw.id = o.void_restock_warehouse_id
@@ -1095,6 +1146,11 @@ function registerRecordRoutes(app, { pool, env }) {
       );
       const item = order.rows[0];
       const internalNotesTotal = Number(notes.rows[0]?.total_count || 0);
+      let customerPointsBalance = null;
+      if (item.customer_id) {
+        const ptState = await getCustomerPointsState(client, storeId, item.customer_id);
+        customerPointsBalance = ptState ? ptState.pointsBalance : null;
+      }
       return {
         order: {
           id: item.id,
@@ -1106,6 +1162,10 @@ function registerRecordRoutes(app, { pool, env }) {
           status: item.status,
           subtotalVnd: item.subtotal_vnd_text,
           discountVnd: item.discount_vnd_text,
+          pointsEarned: Number(item.points_earned || 0),
+          pointsRedeemed: Number(item.points_redeemed || 0),
+          pointsRedeemedVnd: item.points_redeemed_vnd_text || '0',
+          customerPointsBalance,
           promotion: promotion.rowCount ? { code: promotion.rows[0].code_snapshot, discountVnd: promotion.rows[0].discount_vnd } : null,
           totalVnd: item.total_vnd_text,
           cashReceivedVnd: item.cash_received_vnd_text,

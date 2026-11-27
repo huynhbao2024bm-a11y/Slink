@@ -294,6 +294,10 @@
         refundedVndText: refundedVndText,
         subtotal: Number(row.subtotalVnd),
         discount: Number(row.discountVnd),
+        pointsEarned: Number(row.pointsEarned || 0),
+        pointsRedeemed: Number(row.pointsRedeemed || 0),
+        pointsRedeemedVnd: row.pointsRedeemedVnd || '0',
+        customerPointsBalance: row.customerPointsBalance != null ? Number(row.customerPointsBalance) : null,
         total: total,
         paid: paid,
         cashReceived: Number(row.cashReceivedVnd || 0),
@@ -973,10 +977,17 @@
     const showCashChange = BigInt(String(o.cashChangeVndText ?? o.cashChange ?? '0')) > 0n;
     const showDue = BigInt(String(o.dueVndText ?? o.due ?? '0')) > 0n;
     const showRefunded = BigInt(String(o.refundedVndText ?? o.refunded ?? '0')) > 0n;
+    const ptsEarned = Number(o.pointsEarned || 0);
+    const ptsRedeemed = Number(o.pointsRedeemed || 0);
+    const ptsRedeemedVnd = BigInt(String(o.pointsRedeemedVnd || '0'));
+    const ptsBalance = o.customerPointsBalance != null ? Number(o.customerPointsBalance) : null;
+    const loyaltyPrintHtml = (ptsEarned > 0 || ptsRedeemed > 0 || ptsBalance != null)
+      ? `${ptsRedeemed > 0 ? `<div class='summary-line'><span>Đổi điểm (${S.fn.number(ptsRedeemed)} đ)</span><strong>−${S.fn.moneyVndText(ptsRedeemedVnd)}</strong></div>` : ''}${ptsEarned > 0 ? `<div class='summary-line'><span>Tích điểm đơn này</span><strong>+${S.fn.number(ptsEarned)} điểm</strong></div>` : ''}${ptsBalance != null ? `<div class='summary-line'><span>Tổng điểm tích lũy</span><strong>${S.fn.number(ptsBalance)} điểm</strong></div>` : ''}`
+      : '';
     const paperMaxW = S.state.posPrefs.paperWidth === '58mm' ? '54mm' : S.state.posPrefs.paperWidth === 'a4' ? '190mm' : '76mm';
     const html = `<html lang='vi'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Biên nhận ${S.fn.esc(o.number)}</title><style>
       @page{size:auto;margin:6mm}*{box-sizing:border-box}body{font:13px Arial,sans-serif;width:100%;max-width:${paperMaxW};margin:0 auto;padding:5mm 3mm;color:#222}h1{font-size:18px;line-height:1.25;margin:0 0 4px;overflow-wrap:anywhere}p{font-size:11px;line-height:1.4;margin:4px 0;color:#555;overflow-wrap:anywhere}.center{text-align:center}.muted{color:#666}.rule{border:0;border-top:1px dashed #999;margin:10px 0}.receipt-title{font-size:13px;font-weight:700;letter-spacing:.04em}.cancelled{display:inline-block;margin:8px 0;padding:5px 8px;border:1px solid #a33;color:#a33;font-weight:700}.item-line,.summary-line{display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px dashed #ddd;font-size:12px;break-inside:avoid}.item-copy{display:grid;gap:3px;min-width:0}.item-copy strong{overflow-wrap:anywhere}.item-copy small{color:#555;font-size:10px}.item-line>strong,.summary-line>strong{white-space:nowrap}.summary{margin-top:4px}.grand-total{font-size:15px;font-weight:700;border-bottom:0;padding-top:9px}.payment-line{padding-top:2px;padding-bottom:2px;border-bottom:0;color:#555}.footer{margin-top:16px}@media screen{body{margin:16px auto;padding:12px;border:1px solid #ddd;box-shadow:0 2px 12px #0001}}@media print{body{padding:0;border:0;box-shadow:none}} /* taste-skill-ignore: printable receipt preview paper, not app chrome */
-    </style></head><body><header class='center'><h1>${S.fn.esc(S.state.store.settings.storeName || 'Slink')}</h1>${S.state.store.settings.address ? `<p>${S.fn.esc(S.state.store.settings.address)}</p>` : ''}${S.state.store.settings.phone ? `<p>${S.fn.esc(S.state.store.settings.phone)}</p>` : ''}<hr class='rule'><div class='receipt-title'>BIÊN NHẬN BÁN HÀNG</div><p>${S.fn.esc(o.number)}<br>${S.fn.humanDate(o.createdAt, true)}</p><p>Khách hàng: ${S.fn.esc(customerName)}${customerPhone ? `<br>${S.fn.esc(customerPhone)}` : ''}</p>${cancelled ? `<div class='cancelled'>ĐƠN HÀNG ĐÃ HỦY</div>` : ''}</header><hr class='rule'><main>${items || `<p class='muted'>Không có dòng sản phẩm.</p>`}<section class='summary'><div class='summary-line'><span>Tạm tính</span><strong>${S.fn.moneyVndText(o.subtotalVndText ?? o.subtotal)}</strong></div>${showDiscount ? `<div class='summary-line'><span>Giảm giá đơn hàng</span><strong>−${S.fn.moneyVndText(o.discountVndText ?? o.discount)}</strong></div>` : ''}${o.promotion ? `<div class='summary-line'><span>Mã ${S.fn.esc(o.promotion.code)}</span><strong>−${S.fn.moneyVndText(o.promotion.discountVnd)}</strong></div>` : ''}<div class='summary-line grand-total'><span>Tổng cộng</span><strong>${S.fn.moneyVndText(o.totalVndText ?? o.total)}</strong></div><div class='summary-line'><span>Đã thanh toán</span><strong>${S.fn.moneyVndText(o.paidVndText ?? o.paid)}</strong></div>${payments}${showCashReceived ? `<div class='summary-line'><span>Tiền mặt khách đưa</span><strong>${S.fn.moneyVndText(o.cashReceivedVndText ?? o.cashReceived)}</strong></div>` : ''}${showCashChange ? `<div class='summary-line'><span>Tiền thối</span><strong>${S.fn.moneyVndText(o.cashChangeVndText ?? o.cashChange)}</strong></div>` : ''}${showDue ? `<div class='summary-line'><span>Còn phải thu</span><strong>${S.fn.moneyVndText(o.dueVndText ?? o.due)}</strong></div>` : ''}${returnLines}${!returnLines && showRefunded ? `<div class='summary-line'><span>Đã hoàn</span><strong>−${S.fn.moneyVndText(o.refundedVndText ?? o.refunded)}</strong></div>` : ''}</section></main><footer class='center footer'><p>${S.fn.esc(S.state.store.settings.receiptFooter || 'Cảm ơn quý khách!')}</p></footer></body></html>`;
+    </style></head><body><header class='center'><h1>${S.fn.esc(S.state.store.settings.storeName || 'Slink')}</h1>${S.state.store.settings.address ? `<p>${S.fn.esc(S.state.store.settings.address)}</p>` : ''}${S.state.store.settings.phone ? `<p>${S.fn.esc(S.state.store.settings.phone)}</p>` : ''}<hr class='rule'><div class='receipt-title'>BIÊN NHẬN BÁN HÀNG</div><p>${S.fn.esc(o.number)}<br>${S.fn.humanDate(o.createdAt, true)}</p><p>Khách hàng: ${S.fn.esc(customerName)}${customerPhone ? `<br>${S.fn.esc(customerPhone)}` : ''}</p>${cancelled ? `<div class='cancelled'>ĐƠN HÀNG ĐÃ HỦY</div>` : ''}</header><hr class='rule'><main>${items || `<p class='muted'>Không có dòng sản phẩm.</p>`}<section class='summary'><div class='summary-line'><span>Tạm tính</span><strong>${S.fn.moneyVndText(o.subtotalVndText ?? o.subtotal)}</strong></div>${showDiscount ? `<div class='summary-line'><span>Giảm giá đơn hàng</span><strong>−${S.fn.moneyVndText(o.discountVndText ?? o.discount)}</strong></div>` : ''}${o.promotion ? `<div class='summary-line'><span>Mã ${S.fn.esc(o.promotion.code)}</span><strong>−${S.fn.moneyVndText(o.promotion.discountVnd)}</strong></div>` : ''}<div class='summary-line grand-total'><span>Tổng cộng</span><strong>${S.fn.moneyVndText(o.totalVndText ?? o.total)}</strong></div><div class='summary-line'><span>Đã thanh toán</span><strong>${S.fn.moneyVndText(o.paidVndText ?? o.paid)}</strong></div>${payments}${showCashReceived ? `<div class='summary-line'><span>Tiền mặt khách đưa</span><strong>${S.fn.moneyVndText(o.cashReceivedVndText ?? o.cashReceived)}</strong></div>` : ''}${showCashChange ? `<div class='summary-line'><span>Tiền thối</span><strong>${S.fn.moneyVndText(o.cashChangeVndText ?? o.cashChange)}</strong></div>` : ''}${showDue ? `<div class='summary-line'><span>Còn phải thu</span><strong>${S.fn.moneyVndText(o.dueVndText ?? o.due)}</strong></div>` : ''}${loyaltyPrintHtml}${returnLines}${!returnLines && showRefunded ? `<div class='summary-line'><span>Đã hoàn</span><strong>−${S.fn.moneyVndText(o.refundedVndText ?? o.refunded)}</strong></div>` : ''}</section></main><footer class='center footer'><p>${S.fn.esc(S.state.store.settings.receiptFooter || 'Cảm ơn quý khách!')}</p></footer></body></html>`;
     S.fn.printHtmlDocument(html, `Bien nhan ${o.number}`);
   }
 
@@ -1007,6 +1018,9 @@
       BigInt(String(order.cashReceivedVndText ?? order.cashReceived ?? '0')) > 0n ? `Tiền mặt khách đưa: ${S.fn.moneyVndText(order.cashReceivedVndText ?? order.cashReceived)}` : null,
       BigInt(String(order.cashChangeVndText ?? order.cashChange ?? '0')) > 0n ? `Tiền thối: ${S.fn.moneyVndText(order.cashChangeVndText ?? order.cashChange)}` : null,
       BigInt(String(order.dueVndText ?? order.due ?? '0')) > 0n ? `Còn phải thu: ${S.fn.moneyVndText(order.dueVndText ?? order.due)}` : null,
+      Number(order.pointsRedeemed || 0) > 0 ? `Đổi điểm (${S.fn.number(order.pointsRedeemed)} điểm): −${S.fn.moneyVndText(order.pointsRedeemedVnd || '0')}` : null,
+      Number(order.pointsEarned || 0) > 0 ? `Tích điểm đơn này: +${S.fn.number(order.pointsEarned)} điểm` : null,
+      order.customerPointsBalance != null ? `Tổng điểm tích lũy: ${S.fn.number(order.customerPointsBalance)} điểm` : null,
       BigInt(String(order.refundedVndText ?? order.refunded ?? '0')) > 0n ? `Đã hoàn tiền: ${S.fn.moneyVndText(order.refundedVndText ?? order.refunded)}` : null,
       '',
       shareLabel(S.state.store.settings.receiptFooter || 'Cảm ơn quý khách!', 300)
@@ -1043,6 +1057,10 @@
       totalVnd: order.totalVndText ?? order.total ?? 0,
       paidVnd: order.paidVndText ?? order.paid ?? 0,
       debtVnd: order.dueVndText ?? order.due ?? 0,
+      pointsEarned: Number(order.pointsEarned || 0),
+      pointsRedeemed: Number(order.pointsRedeemed || 0),
+      pointsRedeemedVnd: order.pointsRedeemedVnd || '0',
+      customerPointsBalance: order.customerPointsBalance != null ? Number(order.customerPointsBalance) : null,
       paymentLabel: order.method || 'Tiền mặt',
       vietQrText,
       footerText: S.state.store.settings.receiptFooter || 'Cảm ơn quý khách đã mua hàng!',

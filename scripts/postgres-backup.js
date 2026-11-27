@@ -8,6 +8,7 @@ const path = require('node:path');
 const { Transform, Writable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 const { Pool } = require('pg');
+const { databaseTransportOptions } = require('../server/database-transport');
 
 const MAGIC = Buffer.from('SLINKPGBAK1', 'ascii');
 const NONCE_BYTES = 12;
@@ -67,8 +68,8 @@ function parseDatabaseUrl(value, variableName) {
   }
   const localHost = ['localhost', '127.0.0.1', '::1'].includes(hostname);
   const sslMode = url.searchParams.get('sslmode');
-  if (!localHost && sslMode !== 'verify-full') {
-    fail(`${variableName} must use sslmode=verify-full for a non-local database.`);
+  if (!localHost && sslMode !== 'verify-full' && process.env.PG_SSL !== 'ca-file') {
+    fail(`${variableName} must use sslmode=verify-full (or PG_SSL=ca-file) for a non-local database.`);
   }
   return { url, hostname, localHost, databaseName, sslMode };
 }
@@ -87,7 +88,8 @@ function postgresEnvironment(connection, additions = {}) {
   const password = decodeURIComponent(connection.url.password);
   if (password) env.PGPASSWORD = password;
   if (connection.sslMode) env.PGSSLMODE = connection.sslMode;
-  const rootCert = connection.url.searchParams.get('sslrootcert');
+  else if (process.env.PG_SSL === 'ca-file') env.PGSSLMODE = 'verify-full';
+  const rootCert = connection.url.searchParams.get('sslrootcert') || (process.env.PG_SSL === 'ca-file' ? process.env.PG_SSL_CA_FILE : '');
   if (rootCert) env.PGSSLROOTCERT = rootCert;
   env.PGAPPNAME = 'slink-backup-tool';
   env.PGCONNECT_TIMEOUT = '10';
@@ -269,7 +271,13 @@ async function verifyManifest(manifestPath, keyInfo) {
 }
 
 async function backupMetadata(connection) {
-  const pool = new Pool({ connectionString: connection.url.toString(), max: 1, connectionTimeoutMillis: 10000, application_name: 'slink-backup-tool' });
+  const pool = new Pool({
+    connectionString: connection.url.toString(),
+    ...databaseTransportOptions(process.env, connection.url.toString(), 'BACKUP_DATABASE_URL'),
+    max: 1,
+    connectionTimeoutMillis: 10000,
+    application_name: 'slink-backup-tool',
+  });
   try {
     const role = await pool.query(
       `SELECT r.rolsuper, r.rolbypassrls, current_database() AS database_name,

@@ -47,7 +47,7 @@ async function setupApp(t, extraEnv = {}) {
   const app = await buildServer({
     pool,
     logger: false,
-    env: { NODE_ENV: 'test', PUBLIC_ORIGIN: origin, ...extraEnv },
+    env: { NODE_ENV: 'test', PUBLIC_ORIGIN: origin, ALLOW_SHARED_HOST_INTEGRATIONS: Object.keys(extraEnv).length ? 'true' : 'false', ...extraEnv },
   });
   app.testDb = db;
   t.after(() => app.close());

@@ -732,18 +732,44 @@ function registerSalesRoutes(app, { pool, env }) {
 
       let priorDebtSettlement = { settledVnd: 0n, allocations: [], openingAllocations: [] };
       if (priorDebtToSettleVnd > 0n && effectiveCustomerId) {
-        const debtSettleMethod = sale.tenders[0]?.method || sale.method || 'cash';
-        priorDebtSettlement = await settleCustomerPriorDebtFifo(client, {
-          storeId,
-          customerId: effectiveCustomerId,
-          customerName: customerNameSnapshot,
-          amountVnd: priorDebtToSettleVnd,
-          method: debtSettleMethod,
-          actorUserId: auth.userId,
-          cashSessionId,
-          orderNumber,
-          excludeOrderId: order.id,
-        });
+        let debtRemainingToAllocate = priorDebtToSettleVnd;
+        let remNonCashForOrder = nonCashForNewOrder;
+        const debtSlices = [];
+        for (const t of sale.tenders) {
+          if (t.method === 'cash' || debtRemainingToAllocate <= 0n) continue;
+          const usedForOrd = t.amountReceivedVnd < remNonCashForOrder ? t.amountReceivedVnd : remNonCashForOrder;
+          remNonCashForOrder -= usedForOrd;
+          const surplus = t.amountReceivedVnd - usedForOrd;
+          if (surplus > 0n) {
+            const take = surplus < debtRemainingToAllocate ? surplus : debtRemainingToAllocate;
+            debtSlices.push({ method: t.method, amountVnd: take });
+            debtRemainingToAllocate -= take;
+          }
+        }
+        if (debtRemainingToAllocate > 0n) {
+          debtSlices.push({ method: 'cash', amountVnd: debtRemainingToAllocate });
+        }
+        const mergedAllocations = [];
+        const mergedOpening = [];
+        let totalSettledVnd = 0n;
+        for (const slice of debtSlices) {
+          if (slice.amountVnd <= 0n) continue;
+          const part = await settleCustomerPriorDebtFifo(client, {
+            storeId,
+            customerId: effectiveCustomerId,
+            customerName: customerNameSnapshot,
+            amountVnd: slice.amountVnd,
+            method: slice.method,
+            actorUserId: auth.userId,
+            cashSessionId,
+            orderNumber,
+            excludeOrderId: order.id,
+          });
+          totalSettledVnd += part.settledVnd || 0n;
+          mergedAllocations.push(...(part.allocations || []));
+          mergedOpening.push(...(part.openingAllocations || []));
+        }
+        priorDebtSettlement = { settledVnd: totalSettledVnd, allocations: mergedAllocations, openingAllocations: mergedOpening };
       }
 
       if (sale.prebillEventId) {
@@ -776,12 +802,17 @@ function registerSalesRoutes(app, { pool, env }) {
           customerCreditUsedVnd: creditUsed.toString(),
         })]
       );
+      const postSaleLoyalty = effectiveCustomerId
+        ? await getCustomerPointsState(client, storeId, effectiveCustomerId)
+        : null;
       const body = {
         order: {
           id: order.id,
           number: order.order_number,
           status: order.status,
           customerId: effectiveCustomerId,
+          customerName: postSaleLoyalty?.name || null,
+          customerPhone: postSaleLoyalty?.phone || null,
           inlineCreatedCustomer,
           sellerId: effectiveSellerId,
           subtotalVnd: order.subtotal_vnd,
@@ -789,6 +820,16 @@ function registerSalesRoutes(app, { pool, env }) {
           pointsRedeemed,
           pointsRedeemedVnd: pointsRedeemedVnd.toString(),
           pointsEarned,
+          customerPointsBalance: postSaleLoyalty ? postSaleLoyalty.pointsBalance : null,
+          loyaltySummary: effectiveCustomerId ? {
+            customerId: effectiveCustomerId,
+            customerName: postSaleLoyalty?.name || '',
+            customerPhone: postSaleLoyalty?.phone || '',
+            pointsEarned,
+            pointsRedeemed,
+            pointsRedeemedVnd: pointsRedeemedVnd.toString(),
+            pointsBalance: postSaleLoyalty ? postSaleLoyalty.pointsBalance : pointsEarned,
+          } : null,
           priorDebtSettledVnd: priorDebtSettlement.settledVnd.toString(),
           priorDebtAllocations: priorDebtSettlement.allocations,
           promotion: appliedPromotion ? { code: appliedPromotion.code, name: appliedPromotion.name, discountVnd: promotionDiscountVnd.toString() } : null,
