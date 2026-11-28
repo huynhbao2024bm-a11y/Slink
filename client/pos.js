@@ -864,13 +864,12 @@
       : '';
     const voiceOn = S.state.posPrefs?.voiceAnnounce !== false;
     const voiceChip = `<button class='pos-topbar-chip ${voiceOn ? 'active' : ''}' type='button' data-action='pos-toggle-voice' title='Bật/tắt loa đọc tiền sau thanh toán'>Loa: ${voiceOn ? 'Bật' : 'Tắt'}</button>`;
-    const viewModeToggle = `<button class='pos-topbar-chip ${S.state.posViewMode === 'grid' ? 'active' : ''}' type='button' data-action='pos-view-mode' data-mode='grid' title='Hiển thị dạng thẻ lớn'>Lưới</button><button class='pos-topbar-chip ${S.state.posViewMode === 'list' ? 'active' : ''}' type='button' data-action='pos-view-mode' data-mode='list' title='Hiển thị dạng danh sách quét nhanh'>Danh sách</button>`;
     const addProductChip = canManageProducts
       ? `<button class='pos-topbar-chip' type='button' data-action='new-product'>＋ Hàng</button>`
       : '';
     const fontPct = Number(S.state.fontScalePct || 100);
     const fontControls = `<div class='topbar-font-controls pos-font-controls' role='group' aria-label='Cỡ chữ'><button class='icon-button font-step-btn' type='button' data-action='font-decrease' title='Giảm cỡ chữ (hiện tại ${fontPct}%)' aria-label='Giảm cỡ chữ' ${fontPct <= 90 ? 'disabled' : ''}>A−</button><button class='icon-button font-step-btn' type='button' data-action='font-increase' title='Tăng cỡ chữ (hiện tại ${fontPct}%)' aria-label='Tăng cỡ chữ' ${fontPct >= 125 ? 'disabled' : ''}>A+</button></div><button class='icon-button help-button pos-help-btn' type='button' aria-label='Trợ giúp' title='Trợ giúp' data-action='help'>?</button>`;
-    const moreMenuItems = [viewModeToggle, returnChip, voiceChip, addProductChip].filter(Boolean).join('');
+    const moreMenuItems = [returnChip, voiceChip, addProductChip].filter(Boolean).join('');
     const moreMenuHtml = moreMenuItems
       ? `<details class='pos-more-menu'><summary class='pos-topbar-chip' aria-label='Tùy chọn quầy'>⋯ Tùy chọn</summary><div class='pos-more-dropdown'>${moreMenuItems}</div></details>`
       : '';
