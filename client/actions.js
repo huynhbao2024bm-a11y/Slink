@@ -1330,7 +1330,7 @@
     }
     else if (action === 'dashboard-open-expiring-batches') {
       S.state.inventoryTab = 'batches';
-      S.fn.navigate('inventory');
+      S.fn.routeTo('inventory');
       S.fn.loadInventoryBatches('30');
     }
     else if (action === 'batch-expiry-filter') {
