@@ -1281,6 +1281,7 @@
     else if (action === 'pos-ai-voice') S.fn.startPosAiVoice(button);
     else if (action === 'pos-ai-submit') S.fn.submitPosAiCommand(document.getElementById('pos-ai-input')?.value || '', button);
     else if (action === 'receive-ai-invoice') document.getElementById('receive-ai-invoice-input')?.click();
+    else if (action === 'receive-ai-camera') document.getElementById('receive-ai-camera-input')?.click();
     else if (action === 'pos-bill-switch') S.fn.switchPosBill(button.dataset.billId);
     else if (action === 'pos-bill-add') S.fn.addPosBill();
     else if (action === 'pos-bill-close') S.fn.closePosBill(button.dataset.billId);
@@ -1350,6 +1351,58 @@
         if (box) box.checked = checked;
       });
       S.fn.updateBarcodePrintPreview();
+    }
+    else if (action === 'barcode-status-filter') {
+      S.state.barcodeStatusFilter = button.dataset.status || 'all';
+      S.dom.modal.querySelectorAll('[data-action="barcode-status-filter"]').forEach(function (b) {
+        b.classList.toggle('active', b === button);
+      });
+      S.fn.applyBarcodeManagerFilters?.();
+    }
+    else if (action === 'save-inline-barcode') {
+      const row = button.closest('[data-barcode-print-row]');
+      const input = row?.querySelector('[data-barcode-edit]');
+      const productId = row?.dataset.id;
+      const version = Number(row?.dataset.version || 1);
+      if (!row || !input || !productId) return;
+      const barcode = input.value.trim();
+      button.disabled = true;
+      S.fn.apiRequest(`/api/stores/${encodeURIComponent(S.state.store.id)}/products/${encodeURIComponent(productId)}`, {
+        method: 'PUT',
+        body: { barcode, version },
+      }).then(async function (res) {
+        const updated = res.product || {};
+        row.dataset.version = String(updated.version || (version + 1));
+        const finalCode = updated.barcode || '';
+        row.dataset.barcode = finalCode || row.dataset.sku || '';
+        row.dataset.hasBarcode = finalCode ? '1' : '0';
+        row.dataset.search = `${row.dataset.name} ${row.dataset.sku} ${finalCode}`.toLocaleLowerCase('vi');
+        input.value = finalCode;
+        S.fn.updateBarcodePrintPreview();
+        await S.fn.loadProductsPage(S.state.searchTerms.products || '', S.state.productsPageOffset || 0);
+        S.fn.toast('Đã lưu mã vạch', finalCode ? `${row.dataset.name} · ${finalCode}` : `${row.dataset.name} · đã xóa mã vạch`);
+      }).catch(function (err) {
+        S.fn.toast('Chưa lưu được mã vạch', err.message || 'Vui lòng thử lại.', 'error');
+      }).finally(function () { if (button.isConnected) button.disabled = false; });
+    }
+    else if (action === 'generate-one-barcode') {
+      const row = button.closest('[data-barcode-print-row]');
+      const productId = row?.dataset.id;
+      if (!row || !productId) return;
+      button.disabled = true;
+      S.fn.apiRequest(`/api/stores/${encodeURIComponent(S.state.store.id)}/products/generate-barcodes`, {
+        method: 'POST',
+        body: { productIds: [productId] },
+      }).then(async function (res) {
+        await S.fn.loadProductsPage(S.state.searchTerms.products || '', S.state.productsPageOffset || 0);
+        S.fn.closeModal();
+        S.fn.openBarcodePrintModal();
+        const code = res.products?.[0]?.barcode || '';
+        S.fn.toast('Đã sinh mã EAN-13', code ? `${row.dataset.name} · ${code}` : row.dataset.name);
+      }).catch(function (err) {
+        if (button.isConnected) button.disabled = false;
+        S.fn.toast('Chưa sinh được mã vạch', err.message || 'Vui lòng thử lại.', 'error');
+      });
     }
     else if (action === 'generate-missing-barcodes') {
       const ids = [];
@@ -1591,10 +1644,7 @@
 
   document.addEventListener('input', function (event) {
     if (event.target.matches('[data-barcode-filter]')) {
-      const q = event.target.value.trim().toLocaleLowerCase('vi');
-      S.dom.modal.querySelectorAll('[data-barcode-print-row]').forEach(function (row) {
-        row.hidden = Boolean(q && !(row.dataset.search || '').includes(q));
-      });
+      S.fn.applyBarcodeManagerFilters?.();
       return;
     }
     if (event.target.id === 'product-barcode') {
@@ -1853,7 +1903,7 @@
     if (event.target.closest('.product-editor-form')) S.fn.updateProductHints(event.target.form);
     if (event.target.id === 'register-workspace') { const field = event.target.form.querySelector('[data-shop-registration]'); const shop = event.target.value === 'shop'; field.hidden = !shop; field.querySelector('input').required = shop; field.querySelector('input').disabled = !shop; return; }
     if (event.target.matches('[data-product-photo-input]')) { S.fn.selectProductPhoto(event.target); return; }
-    if (event.target.id === 'receive-ai-invoice-input') {
+    if (event.target.id === 'receive-ai-invoice-input' || event.target.id === 'receive-ai-camera-input') {
       const file = event.target.files?.[0];
       const form = event.target.closest('[data-form="receive"]') || S.dom.modal?.querySelector('[data-form="receive"]');
       event.target.value = '';
@@ -2427,6 +2477,11 @@
   }, true);
   document.addEventListener('keydown', function (event) {
     S.fn.keepModalFocus(event);
+    if (event.key === 'Enter' && event.target.matches('[data-barcode-edit]')) {
+      event.preventDefault();
+      event.target.closest('[data-barcode-print-row]')?.querySelector('[data-action="save-inline-barcode"]')?.click();
+      return;
+    }
     if (event.key === 'Enter' && (event.target.id === 'product-barcode' || event.target.matches('[data-variant-barcode],[data-barcode-filter],[data-mb-barcode]'))) {
       event.preventDefault();
       return;

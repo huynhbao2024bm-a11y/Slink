@@ -1651,8 +1651,14 @@ select.input,
 .barcode-print-modal { display: grid; gap: 14px; }
 .barcode-print-checks { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; padding-bottom: 8px; }
 .barcode-print-checks label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
-.barcode-pick-table { max-height: 220px; border: 1px solid var(--border); border-radius: 10px; }
+.barcode-pick-table { max-height: 240px; border: 1px solid var(--border); border-radius: 10px; }
 .barcode-qty-input { width: 76px; min-height: 36px; text-align: center; }
+.barcode-status-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.barcode-status-tabs .pos-topbar-chip { color: var(--ink); background: var(--surface-soft); border-color: var(--border); }
+.barcode-status-tabs .pos-topbar-chip.active { background: var(--primary-soft); color: var(--primary); border-color: var(--primary); }
+.barcode-inline-cell { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.barcode-inline-input { min-height: 34px; padding: 4px 10px; font-size: 13px; flex: 1 1 140px; min-width: 0; }
+.barcode-inline-btn { min-height: 34px; padding: 4px 8px; font-size: 13px; flex-shrink: 0; }
 .barcode-preview-wrap { display: grid; gap: 8px; }
 .barcode-print-sheet { display: grid; gap: 6px; padding: 10px; background: var(--surface-soft); border: 1px dashed var(--border-strong); border-radius: 10px; }
 .barcode-print-sheet[data-paper='a4-65'] { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); }
