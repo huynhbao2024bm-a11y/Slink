@@ -57,7 +57,7 @@ self.addEventListener('fetch', function (event) {
         caches.open(CACHE_NAME).then(function (cache) { cache.put(event.request, copy); });
       }
       return response;
-    }).catch(function () { return cached; });
+    }).catch(function () { return cached || Response.error(); });
     return fresh;
   }));
 });

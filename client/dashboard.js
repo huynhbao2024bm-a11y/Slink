@@ -136,7 +136,12 @@
 
   S.fn.renderOnboardingChecklist = function renderOnboardingChecklist(d) {
     if (S.state.onboardingDismissed || !S.fn.hasPerm('manageSettings')) return '';
-    const hasStoreInfo = Boolean(S.state.store.settings.phone || S.state.store.settings.address || S.state.integrationState?.data?.bankQr?.enabled);
+    const hasStoreInfo = Boolean(
+      S.state.store.settings.phone
+      || S.state.store.settings.address
+      || S.state.integrationState?.data?.bankQr?.enabled
+      || S.state.integrationState?.data?.settings?.bankAccountNumber
+    );
     const hasProducts = S.state.productTotal > 0 || S.state.store.products.length > 0;
     const invTotal = Number(S.state.inventorySummary?.total || 0);
     const invOut = Number(S.state.inventorySummary?.out || 0);

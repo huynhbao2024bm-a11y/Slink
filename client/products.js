@@ -1947,7 +1947,7 @@
     const body = `<form id='entity-form' data-form='barcode-print' class='barcode-print-modal'>
       <div class='form-grid'>
         <div class='form-field'><label class='input-label' for='barcode-paper-size'>Khổ giấy in tem</label><select class='input' id='barcode-paper-size' name='paper'><option value='a4-65' ${S.state.barcodePrintState.paper === 'a4-65' ? 'selected' : ''}>Khổ A4 - 65 tem (38×21mm)</option><option value='a4-40' ${S.state.barcodePrintState.paper === 'a4-40' ? 'selected' : ''}>Khổ A4 - 40 tem (52×29mm)</option><option value='thermal-2up' ${S.state.barcodePrintState.paper === 'thermal-2up' ? 'selected' : ''}>Cuộn in nhiệt 2 cột (70×22mm)</option><option value='thermal-1up' ${S.state.barcodePrintState.paper === 'thermal-1up' ? 'selected' : ''}>Cuộn in nhiệt 1 tem (50×30mm)</option></select></div>
-        <div class='form-field barcode-print-checks'><label><input type='checkbox' name='showStore' ${S.state.barcodePrintState.showStore ? 'checked' : ''}/> Hiện tên shop</label><label><input type='checkbox' name='showPrice' ${S.state.barcodePrintState.showPrice ? 'checked' : ''}/> Hiện giá bán</label></div>
+        <div class='form-field barcode-print-checks'><label><input type='checkbox' name='showStore' ${S.state.barcodePrintState.showStore ? 'checked' : ''}/> Hiện tên cửa hàng</label><label><input type='checkbox' name='showPrice' ${S.state.barcodePrintState.showPrice ? 'checked' : ''}/> Hiện giá bán</label></div>
       </div>
       <div class='barcode-toolbar'>
         <input class='input' type='search' data-barcode-filter placeholder='Lọc nhanh theo tên, SKU hoặc mã vạch…' aria-label='Lọc sản phẩm in tem' autocomplete='off'/>

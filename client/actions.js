@@ -1420,7 +1420,13 @@
         if (res.internalNote) S.state.posDelivery.note = res.internalNote;
         if (res.paymentStatusSnapshot === 'paid') S.state.posDelivery.collection = 'prepaid';
         else if (res.paymentStatusSnapshot === 'cod') S.state.posDelivery.collection = 'cod';
-        if (Array.isArray(res.items) && res.items.length) S.fn.applyAiOrderResult?.(res);
+        if (Array.isArray(res.items) && res.items.length) {
+          S.fn.applyAiOrderResult?.({
+            ...res,
+            deliveryAddress: res.shippingAddress || res.deliveryAddress || '',
+            note: res.internalNote || res.note || '',
+          });
+        }
         else S.fn.refreshCartPanels?.();
         const box = document.getElementById('pos-delivery-ai-box');
         if (box) box.hidden = true;
@@ -1439,13 +1445,29 @@
       S.fn.apiRequest(`/api/stores/${encodeURIComponent(S.state.store.id)}/ai/parse-channel-order`, {
         method: 'POST', body: { text },
       }).then(res => {
+        if (!form.isConnected || S.dom.modal.hidden) return;
         if (res.externalOrderRef) form.elements.externalOrderRef.value = res.externalOrderRef;
         if (res.customerName) form.elements.customerName.value = res.customerName;
         if (res.customerPhone) form.elements.customerPhone.value = res.customerPhone;
         if (res.shippingAddress) form.elements.shippingAddress.value = res.shippingAddress;
         if (res.internalNote) form.elements.internalNote.value = res.internalNote;
         if (res.paymentStatusSnapshot) form.elements.paymentStatusSnapshot.value = res.paymentStatusSnapshot;
-        if (status) status.textContent = 'Đã điền thông tin đơn. Kiểm tra lại mã SKU & địa chỉ trước khi lưu.';
+        if (Array.isArray(res.items) && res.items.length) {
+          const lineRows = form.querySelectorAll('.channel-order-line');
+          res.items.forEach((it, idx) => {
+            const row = lineRows[idx];
+            if (!row) return;
+            const sel = row.querySelector('[name="productId"]');
+            const qty = row.querySelector('[name="quantity"]');
+            if (sel && it.productId) sel.value = it.productId;
+            if (qty && it.quantity) qty.value = String(it.quantity);
+          });
+          S.fn.updateChannelOrderTotal?.(form);
+        }
+        const unmatchedNote = Array.isArray(res.unmatched) && res.unmatched.length
+          ? ` (Chưa khớp ${res.unmatched.length} món: ${res.unmatched.map(u => u.name || u).join(', ')})`
+          : '';
+        if (status) status.textContent = `Đã điền thông tin đơn${unmatchedNote}. Kiểm tra lại mã SKU & địa chỉ trước khi lưu.`;
       }).catch(err => { if (status) status.textContent = err.message || 'Chưa trích xuất được đơn.'; })
         .finally(() => { button.disabled = false; });
     }
@@ -1837,13 +1859,29 @@
       S.fn.resizeInvoiceImageToBase64(file).then(img => S.fn.apiRequest(`/api/stores/${encodeURIComponent(S.state.store.id)}/ai/parse-channel-order`, {
         method: 'POST', body: img,
       })).then(res => {
+        if (!form.isConnected || S.dom.modal.hidden) return;
         if (res.externalOrderRef) form.elements.externalOrderRef.value = res.externalOrderRef;
         if (res.customerName) form.elements.customerName.value = res.customerName;
         if (res.customerPhone) form.elements.customerPhone.value = res.customerPhone;
         if (res.shippingAddress) form.elements.shippingAddress.value = res.shippingAddress;
         if (res.internalNote) form.elements.internalNote.value = res.internalNote;
         if (res.paymentStatusSnapshot) form.elements.paymentStatusSnapshot.value = res.paymentStatusSnapshot;
-        if (status) status.textContent = 'Đã trích xuất từ ảnh. Kiểm tra lại thông tin & SKU trước khi lưu.';
+        if (Array.isArray(res.items) && res.items.length) {
+          const lineRows = form.querySelectorAll('.channel-order-line');
+          res.items.forEach((it, idx) => {
+            const row = lineRows[idx];
+            if (!row) return;
+            const sel = row.querySelector('[name="productId"]');
+            const qty = row.querySelector('[name="quantity"]');
+            if (sel && it.productId) sel.value = it.productId;
+            if (qty && it.quantity) qty.value = String(it.quantity);
+          });
+          S.fn.updateChannelOrderTotal?.(form);
+        }
+        const unmatchedNote = Array.isArray(res.unmatched) && res.unmatched.length
+          ? ` (Chưa khớp ${res.unmatched.length} món)`
+          : '';
+        if (status) status.textContent = `Đã trích xuất từ ảnh${unmatchedNote}. Kiểm tra lại thông tin & SKU trước khi lưu.`;
       }).catch(err => { if (status) status.textContent = err.message || 'Chưa đọc được ảnh đơn.'; });
       return;
     }

@@ -846,7 +846,7 @@
     const activePosWarehouse = S.state.warehouses.find(function (warehouse) { return warehouse.id === S.state.selectedWarehouseId; }) || S.state.warehouses.find(function (warehouse) { return warehouse.is_default; }) || S.state.warehouses[0];
     const posWarehouseLocked = S.fn.hasAnyOpenPosBillItems() || Boolean(S.state.checkoutPendingPayload);
     const warehouseSelectHtml = S.state.warehouses.length > 1
-      ? `<select class='pos-warehouse-select' id='pos-warehouse' aria-label='Chọn kho bán hàng' ${posWarehouseLocked ? 'disabled' : ''}>${S.state.warehouses.map(function (warehouse) { return `<option value='${S.fn.esc(warehouse.id)}' ${warehouse.id === activePosWarehouse?.id ? 'selected' : ''}>${S.fn.esc(warehouse.name)}${warehouse.is_default ? ' · Kho chính' : ''}</option>`; }).join('')}</select>`
+      ? `<select class='input pos-warehouse-select' id='pos-warehouse' aria-label='Chọn kho bán hàng' ${posWarehouseLocked ? 'disabled' : ''}>${S.state.warehouses.map(function (warehouse) { return `<option value='${S.fn.esc(warehouse.id)}' ${warehouse.id === activePosWarehouse?.id ? 'selected' : ''}>${S.fn.esc(warehouse.name)}${warehouse.is_default ? ' · Kho chính' : ''}</option>`; }).join('')}</select>`
       : '';
     const shiftChip = S.fn.hasPerm('operateCashShift')
       ? (S.state.cashRegisterState.session
@@ -1608,7 +1608,7 @@
     const scope = S.fn.activeOfflineScope(); if (!scope) return;
     const snapshot = await S.state.offlineDisk.snapshot(scope), record = snapshot.operations.find(row => row.key === key && row.kind === 'sale');
     if (!record) return S.fn.toast('Không tìm thấy đơn trên máy', 'Mở danh sách chứng từ để kiểm tra.', 'error');
-    if (record.state === 'acknowledged') return S.fn.openOrder(record.result.order.id);
+    if (record.state === 'acknowledged' && record.result?.order?.id) return S.fn.openOrder(record.result.order.id);
     const result = S.fn.provisionalResult(record, snapshot), order = result.order;
     const lines = order.items.map(item => `<div class='offline-line'><span>${S.fn.esc(item.name)} × ${S.fn.number(item.quantity)}</span><strong>${S.fn.moneyVndText(String(window.SlinkOfflineLedger.lineTotal(item.unitPriceVnd, window.SlinkOfflineLedger.quantity(item.quantity))))}</strong></div>`).join('');
     S.fn.showModal('Đơn ' + order.number, 'Đã lưu trên thiết bị · Chờ hoàn tất đồng bộ', `<div class='modal-note'>${S.fn.esc(record.issue?.message || 'Đơn được giữ trên máy và tự gửi khi có mạng. Không tạo lại đơn này. Mã chính thức sẽ có sau đồng bộ.')}</div>${lines}<div class='offline-line'><span>Tổng tiền</span><strong>${S.fn.moneyVndText(order.totalVnd)}</strong></div><div class='offline-line'><span>Đã nhận (ghi thủ công)</span><strong>${S.fn.moneyVndText(order.receivedVnd)}</strong></div><div class='offline-line'><span>Trả lại khách</span><strong>${S.fn.moneyVndText(order.changeVnd)}</strong></div><p class='muted'>${S.fn.esc(S.fn.humanDate(record.queuedAt, true))}</p>`, `<button class='btn btn-secondary' data-action='offline-records'>Chứng từ trên máy</button><button class='btn btn-primary' data-action='close-modal'>Đóng</button>`);
@@ -2686,7 +2686,13 @@
     const added = [];
     const skipped = [];
     items.forEach(function (entry) {
-      const product = S.fn.productById(entry.productId);
+      const product = S.fn.productById(entry.productId) || (entry.productId ? {
+        id: entry.productId,
+        name: entry.name || 'Sản phẩm',
+        price: Number(entry.unitPriceVnd || 0),
+        inventoryTracked: false,
+        serialTracked: false,
+      } : null);
       const reqQty = Math.round(Number(entry.quantity || 1) * 1000) / 1000;
       if (!product || !(reqQty > 0)) {
         skipped.push(entry.name || 'Sản phẩm không rõ');
