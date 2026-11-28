@@ -68,5 +68,6 @@ jobs:
         with:
           name: slink-encrypted-backup-${{ github.run_number }}
           path: .backup-out/*
+          include-hidden-files: true
           retention-days: 30
           if-no-files-found: error
