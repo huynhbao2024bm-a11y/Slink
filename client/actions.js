@@ -849,6 +849,17 @@
     else if (action === 'import-customers') S.fn.openCustomerImport();
     else if (action === 'download-customer-import-template') S.fn.downloadCustomerImportTemplate();
     else if (action === 'help') S.fn.showHelp();
+    else if (action === 'refresh-data') {
+      button.disabled = true;
+      S.fn.startOfflineSync().catch(() => {}).finally(async function () {
+        S.state.freshReadsUntil = Date.now() + 8000;
+        S.state.offlineRefreshDue = true;
+        await S.fn.refreshAfterOfflineSync().catch(() => {});
+        button.disabled = false;
+        S.fn.toast('Đã làm mới dữ liệu', 'Số liệu hiện tại đã đồng bộ với máy chủ.');
+      });
+      return;
+    }
     else if (action === 'font-decrease') { S.fn.stepFontScale?.(-1); return; }
     else if (action === 'font-increase') { S.fn.stepFontScale?.(1); return; }
     else if (action === 'more-menu') S.fn.showMoreMenu();
@@ -2565,8 +2576,9 @@
       S.fn.offlineRowsChanged(false).catch(() => {});
       S.fn.startOfflineSync();
       const now = Date.now();
-      if (now - S.state.lastForegroundSyncAt > 20000) {
+      if (now - (S.state.lastForegroundSyncAt || 0) > 3000) {
         S.state.lastForegroundSyncAt = now;
+        S.state.freshReadsUntil = now + 8000;
         S.fn.syncAfterMutation(['me', S.state.page === 'pos' ? 'products' : S.state.page]);
       }
     }

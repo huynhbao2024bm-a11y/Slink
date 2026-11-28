@@ -1206,7 +1206,7 @@
     try { rows = await S.state.offlineDisk.operations(scope); }
     catch (_) { return; }
     if (scope !== S.fn.activeOfflineScope()) return;
-    S.state.offlineState.pending = rows.filter(row => row.state !== 'acknowledged').length;
+    S.state.offlineState.pending = rows.filter(row => row.state === 'ready' || row.state === 'sending' || row.state === 'confirmed').length;
     S.state.offlineState.conflicts = rows.filter(row => row.state === 'conflict').length;
     S.fn.updateOfflineStatus();
     if (notifyOthers) S.state.offlineChannel?.postMessage({ scope, reason: reason || 'updated' });
@@ -1540,7 +1540,7 @@
         try { hasQueued = (await S.state.offlineDisk.operations(activeScope)).some(row => row.state !== 'acknowledged'); }
         catch (err) { S.state.offlineState.storageIssue = err?.message || ''; }
       }
-      if (!navigator.onLine || hasQueued) {
+      if (!navigator.onLine) {
         return S.fn.queueOfflineOperation(url, options);
       }
       const onlineBody = JSON.parse(JSON.stringify(options.body));
@@ -1552,7 +1552,7 @@
         S.fn.updateOfflineStatus();
         return direct;
       } catch (err) {
-        if ((!err.status || err.status >= 502 || err.code === 'connection_timeout') && err.name !== 'AbortError') {
+        if (!navigator.onLine && (!err.status || err.status >= 502 || err.code === 'connection_timeout') && err.name !== 'AbortError') {
           return S.fn.queueOfflineOperation(url, options);
         }
         throw err;
@@ -1568,19 +1568,19 @@
         snapshot = null;
       }
     }
-    if (scope && scope === S.state.cachedBootScope && snapshot) {
+    if (!navigator.onLine && scope && scope === S.state.cachedBootScope && snapshot) {
       try {
         const saved = await S.fn.cachedOfflineRead(scope, url, snapshot);
         if (saved) return saved;
       } catch (_) {}
     }
-    if (snapshot?.operations.some(row => row.state !== 'acknowledged')) {
+    if (!navigator.onLine && snapshot?.operations.some(row => row.state !== 'acknowledged')) {
       if (method === 'GET') {
         try {
           const saved = await S.fn.cachedOfflineRead(scope, url, snapshot);
           if (saved) return saved;
         } catch (_) {}
-        if (/\/(products|inventory|cash-register|finance|customers|orders)(\/|\?|$)/.test(url)) { const error = new Error('Phần này chưa có trên máy. Đồng bộ các chứng từ đang chờ rồi tải lại.'); error.code = 'offline_data_missing'; throw error; }
+        if (/\/(products|inventory|cash-register|finance|customers|orders)(\/|\?|$)/.test(url)) { const error = new Error('Phần này chưa có trên máy. Kết nối mạng để đồng bộ và tải lại.'); error.code = 'offline_data_missing'; throw error; }
       }
     }
     if (!navigator.onLine && !options?.preferFresh && scope && snapshot && /^\/api\/stores\/[^/]+\/(products|inventory|customers|orders|finance|cash-register|settings|warehouses|analytics)(\/|\?|$)/.test(url)) {
@@ -1591,15 +1591,6 @@
     }
     try {
       if (!navigator.onLine) throw new TypeError('offline');
-      // Other business writes must not race ahead of this device's saved ledger.
-      const active = activeScope;
-      if (!['GET', 'HEAD'].includes(method) && url.startsWith('/api/stores/') && active && S.state.offlineDisk) {
-        let pendingOps = [];
-        try { pendingOps = await S.state.offlineDisk.operations(active); } catch (_) { pendingOps = []; }
-        if (pendingOps.some(row => row.state !== 'acknowledged')) {
-          const error = new Error('Đồng bộ các chứng từ đã lưu trên máy trước khi thay đổi dữ liệu chung.'); error.status = 409; error.code = 'offline_pending_operations'; throw error;
-        }
-      }
       const sendOptions = (method !== 'GET' && options?.body?._slinkOfflineVersion === 1)
         ? (() => { const cleaned = JSON.parse(JSON.stringify(options.body)); delete cleaned._slinkOfflineVersion; delete cleaned._slinkExpectedCashVnd; return { ...options, body: cleaned }; })()
         : options;
@@ -1608,8 +1599,7 @@
       try {
         if ((method === 'GET' && url === '/api/auth/me') || (method === 'POST' && ['/api/auth/login', '/api/auth/register'].includes(url))) await S.fn.rememberOfflineSession(result);
         if (scope && snapshot && scope === S.fn.cacheScope(url) && readGeneration===S.state.localWriteGeneration) {
-          const stored = await S.state.offlineDisk.cacheResponse(scope, url, result, undefined, snapshot.epoch);
-          if (!stored) { const current = await S.state.offlineDisk.snapshot(scope); const saved = await S.fn.cachedOfflineRead(scope, url, current); if (saved) return saved; }
+          await S.state.offlineDisk.cacheResponse(scope, url, result, undefined, snapshot.epoch);
         }
       } catch (error) { S.state.offlineState.storageIssue = error.message || 'Chưa lưu được dữ liệu trên máy.'; }
       S.fn.updateOfflineStatus(); return result;
@@ -1647,7 +1637,7 @@
     config.signal?.addEventListener('abort', cancel, { once: true });
     if (config.signal?.aborted) cancel();
     let expired = false;
-    const deadline = window.setTimeout(function () { expired = true; controller.abort(); }, 15000);
+    const deadline = window.setTimeout(function () { expired = true; controller.abort(); }, 25000);
     try {
     const response = await fetch(url, {
       method: method,
