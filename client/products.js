@@ -2,7 +2,11 @@
   'use strict';
 
   S.fn.productThumb = function productThumb(product, extra) {
-    return "<span class='product-thumb " + (product.tone || 'product-sage') + (product.imageUrl ? ' with-photo ' : ' ') + (extra || '') + "'>" + S.fn.esc(S.fn.initials(product.name || product.sku || 'Hàng')) + (product.imageUrl ? "<img data-product-photo src='" + S.fn.esc(product.imageUrl) + "' alt='' loading='lazy' decoding='async'/>" : '') + "</span>";
+    const hasPhoto = Boolean(product?.imageUrl);
+    const inner = hasPhoto
+      ? `<img data-product-photo src='${S.fn.esc(product.imageUrl)}' alt='' loading='lazy' decoding='async'/>`
+      : S.fn.icon('package', 18);
+    return `<span class='product-thumb ${hasPhoto ? 'with-photo ' : ''}${extra || ''}'>${inner}</span>`;
   }
 
 
@@ -144,9 +148,19 @@
     const showCost = S.fn.hasPerm('viewCostPrice');
     const attributes = Object.entries(product.variantAttributes || {}).map(function (entry) { return `${entry[0]}: ${entry[1]}`; }).join(' · ');
     const serialBadge = product.serialTracked ? ` <span class='badge badge-neutral'>Mã riêng</span>` : '';
+    const batchBadge = product.batchTracked ? ` <span class='badge badge-info'>Lô/HSD</span>` : '';
     const warrantyBadge = product.warrantyMonths > 0 ? ` <span class='badge badge-info serial-warranty-badge'>BH ${S.fn.number(product.warrantyMonths)}T</span>` : '';
     const checked = S.state.selectedProductIds && S.state.selectedProductIds.has(product.id) ? 'checked' : '';
-    return `<tr><td><input type='checkbox' data-action='product-select' data-id='${S.fn.esc(product.id)}' ${checked} aria-label='Chọn ${S.fn.esc(product.name)}'/></td><td><div class='product-cell'>${S.fn.productThumb(product)}<span class='product-name-stack'><button type='button' class='link-button' data-action='product-detail' data-id='${S.fn.esc(product.id)}' style='padding:0;text-align:left;color:var(--ink)'><strong>${S.fn.esc(product.name)}</strong></button>${serialBadge}${warrantyBadge}<small>${S.fn.esc(product.sku)}${product.barcode ? ` · ${S.fn.esc(product.barcode)}` : ''}${attributes ? ` · ${S.fn.esc(attributes)}` : ''}</small></span></div></td><td>${S.fn.esc(product.category)}</td><td class='text-right'>${S.fn.money(product.price)}</td>${showCost ? `<td class='text-right'>${product.cost == null ? '—' : S.fn.money(product.cost)}</td>` : ''}<td class='text-right'><span class='stock-number ${product.inventoryTracked && product.stock <= 0 ? 'out' : product.inventoryTracked && product.stock <= product.minStock ? 'low' : ''}'>${product.inventoryTracked ? `${S.fn.number(product.stock)} ${S.fn.esc(product.unit)}` : '—'}</span></td><td>${S.fn.stockBadge(product)}</td><td class='text-right'><button class='row-action' data-action='product-detail' data-id='${S.fn.esc(product.id)}' aria-label='Chi tiết &amp; Thẻ kho ${S.fn.esc(product.name)}' title='Chi tiết &amp; Thẻ kho'>${S.fn.icon('layers', 15)}</button>${canEdit ? `<button class='row-action' data-action='add-product-units' data-id='${product.id}' aria-label='Thêm tồn hoặc quét mã cho ${S.fn.esc(product.name)}' title='Thêm tồn / Quét mã'>＋</button>` : ''}${product.serialTracked ? `<button class='row-action' data-action='view-product-serials' data-id='${product.id}' aria-label='Xem danh sách mã riêng của ${S.fn.esc(product.name)}' title='Danh sách mã riêng'>#</button>` : ''}<button class='row-action' data-action='print-barcode-single' data-id='${product.id}' aria-label='In tem mã vạch ${S.fn.esc(product.name)}' title='In tem mã vạch'>${S.fn.icon('scan', 15)}</button>${canViewPriceHistory ? `<button class='row-action' data-action='product-price-history' data-id='${product.id}' aria-label='Xem lịch sử giá ${S.fn.esc(product.name)}' title='Lịch sử giá'>${S.fn.icon('clock', 15)}</button>` : ''}${canEdit ? `<button class='row-action' data-action='edit-product' data-id='${product.id}' aria-label='Sửa ${S.fn.esc(product.name)}'>•••</button>` : ''}</td></tr>`;
+    const barcodeSvg = product.barcode && window.SlinkBarcodeTools?.renderBarcodeSvg
+      ? window.SlinkBarcodeTools.renderBarcodeSvg(product.barcode, { barHeight: 22, showText: false })
+      : '';
+    const barcodeCell = product.barcode
+      ? `<button type='button' class='product-barcode-btn' data-action='print-barcode-single' data-id='${S.fn.esc(product.id)}' title='Bấm để in tem mã vạch'>${barcodeSvg}<small>${S.fn.esc(product.barcode)}</small></button>`
+      : `<button type='button' class='link-button' data-action='print-barcode-batch' style='font-size:12px'>＋ Gắn mã</button>`;
+    const priceCell = showCost
+      ? `<span class='product-name-stack'><strong>${S.fn.money(product.price)}</strong><small>Vốn ${product.cost == null ? '—' : S.fn.money(product.cost)}</small></span>`
+      : `<strong>${S.fn.money(product.price)}</strong>`;
+    return `<tr><td><input type='checkbox' data-action='product-select' data-id='${S.fn.esc(product.id)}' ${checked} aria-label='Chọn ${S.fn.esc(product.name)}'/></td><td><div class='product-cell'>${S.fn.productThumb(product)}<span class='product-name-stack'><button type='button' class='link-button' data-action='product-detail' data-id='${S.fn.esc(product.id)}' style='padding:0;text-align:left;color:var(--ink)'><strong>${S.fn.esc(product.name)}</strong></button>${serialBadge}${batchBadge}${warrantyBadge}${attributes ? `<small>${S.fn.esc(attributes)}</small>` : ''}</span></div></td><td><span class='muted' style='font-size:12.5px'>${S.fn.esc(product.sku)}</span></td><td>${barcodeCell}</td><td>${S.fn.esc(product.category)}</td><td>${S.fn.esc(product.unit)}</td><td class='text-right'>${priceCell}</td><td class='text-right'><span class='stock-number ${product.inventoryTracked && product.stock <= 0 ? 'out' : product.inventoryTracked && product.stock <= product.minStock ? 'low' : ''}'>${product.inventoryTracked ? S.fn.number(product.stock) : '—'}</span></td><td>${S.fn.stockBadge(product)}</td><td class='text-right'><button class='row-action' data-action='product-detail' data-id='${S.fn.esc(product.id)}' aria-label='Chi tiết &amp; Thẻ kho ${S.fn.esc(product.name)}' title='Chi tiết &amp; Thẻ kho'>${S.fn.icon('layers', 15)}</button>${canEdit ? `<button class='row-action' data-action='add-product-units' data-id='${product.id}' aria-label='Thêm tồn hoặc quét mã cho ${S.fn.esc(product.name)}' title='Thêm tồn / Quét mã'>＋</button>` : ''}${product.batchTracked && S.fn.hasPerm('manageInventory') ? `<button class='row-action' data-action='open-product-batches' data-id='${product.id}' aria-label='Quản lý lô &amp; HSD ${S.fn.esc(product.name)}' title='Lô hàng &amp; HSD'>Lô</button>` : ''}${product.serialTracked ? `<button class='row-action' data-action='view-product-serials' data-id='${product.id}' aria-label='Xem danh sách mã riêng của ${S.fn.esc(product.name)}' title='Danh sách mã riêng'>#</button>` : ''}<button class='row-action' data-action='print-barcode-single' data-id='${product.id}' aria-label='In tem mã vạch ${S.fn.esc(product.name)}' title='In tem mã vạch'>${S.fn.icon('scan', 15)}</button>${canViewPriceHistory ? `<button class='row-action' data-action='product-price-history' data-id='${product.id}' aria-label='Xem lịch sử giá ${S.fn.esc(product.name)}' title='Lịch sử giá'>${S.fn.icon('clock', 15)}</button>` : ''}${canEdit ? `<button class='row-action' data-action='edit-product' data-id='${product.id}' aria-label='Sửa ${S.fn.esc(product.name)}'>•••</button>` : ''}</td></tr>`;
   }
 
 
@@ -180,23 +194,34 @@
 
   S.fn.renderProducts = function renderProducts() {
     const canEdit = S.fn.hasPerm('editProducts');
+    const pf = S.state.productFilters || { category: 'Tất cả', stock: 'all' };
+    const categories = ['Tất cả'].concat(Array.from(new Set((S.state.store.products || []).map(p => p.category).filter(Boolean))));
     const moreActions = (canEdit ? `<button class='btn btn-secondary' data-action='import-products'>Nhập danh sách</button><button class='btn btn-secondary' data-action='new-product-variant-group'>Thêm nhiều màu, cỡ</button><button class='btn btn-secondary' data-action='bulk-update-products'>Cập nhật hàng loạt</button>` : '') + `<button class='btn btn-secondary' data-action='print-barcode-batch'>In tem mã vạch</button><button class='btn btn-secondary' data-action='open-warranty-lookup'>Tra cứu bảo hành</button>` + (S.fn.canExportData() ? `<button class='btn btn-secondary' data-action='open-export'>Xuất CSV</button>` : '');
     const actions = (canEdit ? `<button class='btn btn-primary' data-action='new-product'>＋ Thêm hàng</button><button class='btn btn-secondary desktop-only-btn' data-action='import-products'>Nhập danh sách</button>` : '') + `<button class='btn btn-secondary desktop-only-btn' data-action='print-barcode-batch'>Quản lý mã vạch &amp; In tem</button>` + (moreActions ? `<details class='catalog-more'><summary class='btn btn-secondary'>Khác</summary><div>${moreActions}</div></details>` : '');
+    const filterBar = `<div class='product-filter-bar'>
+      <div class='select-wrap' style='min-width:170px'><select class='input' id='product-category-filter' aria-label='Lọc nhóm hàng'>${categories.map(c => `<option value='${S.fn.esc(c)}' ${pf.category === c ? 'selected' : ''}>${c === 'Tất cả' ? 'Nhóm hàng: Tất cả' : S.fn.esc(c)}</option>`).join('')}</select></div>
+      <div class='pill-row' role='group' aria-label='Lọc trạng thái kho'>${[['all', 'Tất cả'], ['in_stock', 'Còn hàng'], ['low', 'Sắp hết'], ['out', 'Hết hàng']].map(([k, lbl]) => `<button type='button' class='pill ${pf.stock === k ? 'active' : ''}' data-action='product-stock-filter' data-stock='${k}'>${lbl}</button>`).join('')}</div>
+      ${(pf.category !== 'Tất cả' || pf.stock !== 'all' || S.state.searchTerms.products) ? `<button type='button' class='link-button' data-action='clear-product-filters'>Xóa bộ lọc</button>` : ''}
+    </div>`;
     return S.fn.pageHeading('Sản phẩm', '', actions) +
-      `<div class='toolbar'><div class='toolbar-left'><div class='search-wrap product-search-wrap'><span class='search-symbol'>⌕</span><input class='input' id='product-search' type='search' placeholder='Tìm tên, mã hàng hoặc mã vạch…' value='${S.fn.esc(S.state.searchTerms.products)}' aria-label='Tìm sản phẩm'><button class='icon-button inventory-scan' type='button' data-action='product-scan' aria-label='Quét mã vạch tìm sản phẩm' title='Quét mã vạch'>${S.fn.icon('scan', 19)}</button></div><span class='result-count' data-product-result-count>${S.state.productLoading ? 'Đang tải…' : `${S.fn.number(S.state.productTotal)} sản phẩm`}</span></div></div>` + S.fn.renderProductList();
+      `<div class='toolbar'><div class='toolbar-left'><div class='search-wrap product-search-wrap'><span class='search-symbol'>⌕</span><input class='input' id='product-search' type='search' placeholder='Tìm tên, SKU hoặc mã vạch…' value='${S.fn.esc(S.state.searchTerms.products)}' aria-label='Tìm sản phẩm'><button class='icon-button inventory-scan' type='button' data-action='product-scan' aria-label='Quét mã vạch tìm sản phẩm' title='Quét mã vạch'>${S.fn.icon('scan', 19)}</button></div><span class='result-count' data-product-result-count>${S.state.productLoading ? 'Đang tải…' : `${S.fn.number(S.state.productTotal)} sản phẩm`}</span></div></div>` + filterBar + S.fn.renderProductList();
   }
 
 
   S.fn.renderProductList = function renderProductList() {
-    const products = S.fn.filteredProducts(S.state.searchTerms.products, 'Tất cả');
-    const showCost = S.fn.hasPerm('viewCostPrice');
+    const pf = S.state.productFilters || { category: 'Tất cả', stock: 'all' };
+    let products = S.fn.filteredProducts(S.state.searchTerms.products, pf.category || 'Tất cả');
+    if (pf.stock === 'in_stock') products = products.filter(p => !p.inventoryTracked || p.stock > p.minStock);
+    else if (pf.stock === 'low') products = products.filter(p => p.inventoryTracked && p.stock > 0 && p.stock <= p.minStock);
+    else if (pf.stock === 'out') products = products.filter(p => p.inventoryTracked && p.stock <= 0);
+    const canEdit = S.fn.hasPerm('editProducts');
     const selectedSet = S.state.selectedProductIds || new Set();
     const allSelected = products.length > 0 && products.every(function (p) { return selectedSet.has(p.id); });
     const batchBar = selectedSet.size > 0
-      ? `<div class='batch-action-bar' role='region' aria-label='Thao tác hàng loạt'><span class='batch-action-info'>Đã chọn <strong>${S.fn.number(selectedSet.size)}</strong> sản phẩm</span><div class='batch-action-buttons'><button type='button' class='btn btn-secondary' data-action='batch-print-barcodes'>In tem mã vạch loạt</button>${S.fn.canExportData() ? `<button type='button' class='btn btn-secondary' data-action='batch-export-products'>Xuất CSV</button>` : ''}<button type='button' class='btn btn-secondary' data-action='batch-clear-products'>Bỏ chọn</button></div></div>`
+      ? `<div class='batch-action-bar' role='region' aria-label='Thao tác hàng loạt'><span class='batch-action-info'>Đã chọn <strong>${S.fn.number(selectedSet.size)}</strong> sản phẩm</span><div class='batch-action-buttons'><button type='button' class='btn btn-secondary' data-action='batch-print-barcodes'>In tem mã vạch loạt</button>${canEdit ? `<button type='button' class='btn btn-secondary' data-action='batch-archive-products'>Lưu trữ đã chọn</button>` : ''}${S.fn.canExportData() ? `<button type='button' class='btn btn-secondary' data-action='batch-export-products'>Xuất CSV</button>` : ''}<button type='button' class='btn btn-secondary' data-action='batch-clear-products'>Bỏ chọn</button></div></div>`
       : '';
-    const empty = S.state.productLoading ? 'Đang tải danh mục…' : S.state.productError ? S.fn.esc(S.state.productError) : S.state.searchTerms.products ? 'Không tìm thấy sản phẩm phù hợp.' : 'Thêm sản phẩm đầu tiên để bắt đầu quản lý danh mục.';
-    return `<section class='panel' data-product-result-list>${batchBar}<div class='table-wrap desktop-table'><table class='data-table'><thead><tr><th style='width:38px'><input type='checkbox' data-action='product-select-all' ${allSelected ? 'checked' : ''} aria-label='Chọn tất cả sản phẩm'/></th><th>Sản phẩm</th><th>Danh mục</th><th class='text-right'>Giá bán</th>${showCost ? `<th class='text-right'>Giá vốn</th>` : ''}<th class='text-right'>Tồn kho</th><th>Trạng thái</th><th></th></tr></thead><tbody>${products.map(S.fn.productRow).join('') || `<tr><td colspan='${showCost ? 8 : 7}'><div class='empty-state'><strong>${S.fn.esc(empty)}</strong></div></td></tr>`}</tbody></table></div><div class='product-list-mobile'>${products.map(S.fn.productMobileCard).join('') || `<div class='panel empty-state'><strong>${S.fn.esc(empty)}</strong></div>`}</div><div class='pagination'><span>Hiển thị ${products.length} trên ${S.fn.number(S.state.productTotal)} sản phẩm</span><span class='pagination-actions'>${S.state.productOffset > 0 ? `<button class='page-button' data-action='products-page' data-offset='${Math.max(0, S.state.productOffset - 100)}'>‹</button>` : ''}<span class='page-button current'>${Math.floor(S.state.productOffset / 100) + 1}</span>${S.state.productNextOffset !== null ? `<button class='page-button' data-action='products-page' data-offset='${S.state.productNextOffset}'>›</button>` : ''}</span></div></section>`;
+    const empty = S.state.productLoading ? 'Đang tải danh mục…' : S.state.productError ? S.fn.esc(S.state.productError) : (S.state.searchTerms.products || pf.category !== 'Tất cả' || pf.stock !== 'all') ? 'Không tìm thấy sản phẩm phù hợp bộ lọc.' : 'Thêm sản phẩm đầu tiên để bắt đầu quản lý danh mục.';
+    return `<section class='panel' data-product-result-list>${batchBar}<div class='table-wrap desktop-table'><table class='data-table'><thead><tr><th style='width:38px'><input type='checkbox' data-action='product-select-all' ${allSelected ? 'checked' : ''} aria-label='Chọn tất cả sản phẩm'/></th><th>Sản phẩm</th><th>SKU</th><th>Mã vạch</th><th>Danh mục</th><th>Đơn vị</th><th class='text-right'>Giá bán / vốn</th><th class='text-right'>Tồn kho</th><th>Trạng thái</th><th></th></tr></thead><tbody>${products.map(S.fn.productRow).join('') || `<tr><td colspan='10'><div class='empty-state'><strong>${S.fn.esc(empty)}</strong></div></td></tr>`}</tbody></table></div><div class='product-list-mobile'>${products.map(S.fn.productMobileCard).join('') || `<div class='panel empty-state'><strong>${S.fn.esc(empty)}</strong></div>`}</div><div class='pagination'><span>Hiển thị ${products.length} trên ${S.fn.number(S.state.productTotal)} sản phẩm</span><span class='pagination-actions'>${S.state.productOffset > 0 ? `<button class='page-button' data-action='products-page' data-offset='${Math.max(0, S.state.productOffset - 100)}'>‹</button>` : ''}<span class='page-button current'>${Math.floor(S.state.productOffset / 100) + 1}</span>${S.state.productNextOffset !== null ? `<button class='page-button' data-action='products-page' data-offset='${S.state.productNextOffset}'>›</button>` : ''}</span></div></section>`;
   }
 
 
@@ -942,6 +967,7 @@
     const stock = product ? `<div class='form-field'><span class='input-label'>Tồn kho hiện tại</span><strong class='editor-stock-value'>${tracked ? `${S.fn.number(product.stock)} ${S.fn.esc(product.unit)}` : 'Chưa theo dõi'}</strong>${warehouse && tracked ? `<small>${S.fn.esc(warehouse.name)}</small>` : ''}</div>` : '';
     const note = adding ? 'Khi tắt theo dõi, mặt hàng được tạo với tồn bằng 0.' : product?.inventoryTracked ? 'Để tắt theo dõi, tồn kho và lượng đang giữ ở các kho cần về 0.' : '';
     return `<label class='editor-stock-switch'><span>Theo dõi số lượng trong kho</span><input type='checkbox' role='switch' name='inventoryTracked' ${tracked ? 'checked' : ''}/></label>
+      <label class='editor-stock-switch' style='margin-top:6px'><span>Theo dõi Lô hàng &amp; Hạn sử dụng (FEFO)</span><input type='checkbox' role='switch' name='batchTracked' ${product?.batchTracked ? 'checked' : ''}/></label>
       ${note ? `<p class='editor-field-note' data-product-tracking-note hidden>${note}</p>` : ''}
       <div class='form-grid editor-stock-fields'>${stock}<div class='form-field'><label class='input-label' for='product-stock-threshold'>Nhắc khi tồn ít</label><input class='input' id='product-stock-threshold' name='minStock' type='number' min='0' step='0.001' value='${S.fn.esc(product?.minStock ?? 0)}'/></div></div>`;
   }
@@ -2162,6 +2188,7 @@
       lowStockThreshold: Number(data.get('minStock') ?? old?.minStock ?? 0),
       warrantyMonths,
       inventoryTracked: data.get('inventoryTracked') === 'on',
+      batchTracked: data.get('batchTracked') === 'on',
     };
     if (old?.variantGroupId) {
       try {
@@ -2554,6 +2581,23 @@
       state.loading = false;
       state.error = error.message || 'Chưa tải được thẻ kho sản phẩm.';
       S.fn.renderProductDetailModal();
+    }
+  }
+
+  S.fn.bulkArchiveSelectedProducts = async function bulkArchiveSelectedProducts() {
+    const ids = Array.from(S.state.selectedProductIds || []);
+    if (!ids.length) return;
+    try {
+      const res = await S.fn.apiRequest(`/api/stores/${encodeURIComponent(S.state.store.id)}/products/bulk-archive`, {
+        method: 'POST',
+        body: { productIds: ids },
+      });
+      S.state.selectedProductIds.clear();
+      S.fn.emitSyncDomains(['products'], { source: 'product-bulk-archive' });
+      S.fn.toast('Đã lưu trữ sản phẩm', `Đã chuyển ${S.fn.number(res.archivedCount || ids.length)} sản phẩm sang lưu trữ.`);
+      await S.fn.loadProductsPage(S.state.searchTerms.products, S.state.productOffset);
+    } catch (error) {
+      S.fn.toast('Chưa lưu trữ được hàng loạt', error.message, 'error');
     }
   }
 

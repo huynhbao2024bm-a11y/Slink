@@ -1036,16 +1036,14 @@ select.input,
 }
 
 .product-thumb {
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   border-radius: 10px;
   display: grid;
   place-items: center;
-  font-size: 13px;
-  font-weight: 800;
-  color: var(--primary-hover);
-  background: var(--primary-soft);
-  border: 1px solid #D1FAE5;
+  color: var(--ink-muted);
+  background: #F4F6F9;
+  border: 1px solid var(--border);
   overflow: hidden;
   flex: none;
 }
@@ -1053,7 +1051,9 @@ select.input,
 .product-thumb img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
+  background: #F8FAFC;
+  padding: 2px;
   display: block;
 }
 
