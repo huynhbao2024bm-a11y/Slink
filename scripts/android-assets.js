@@ -8,6 +8,18 @@ const root = path.resolve(__dirname, '..');
 const destination = path.join(root, 'android/app/src/main/assets/web');
 const files = [
   'index.html', 'styles.css', 'workspace.css', 'app.js', 'offline-store.js',
+  'assets/fonts/JetBrains-Mono-OFL.txt', 'assets/fonts/Plus-Jakarta-Sans-OFL.txt',
+  'assets/fonts/jetbrains-mono-cyrillic-e17cfd15fb96.woff2',
+  'assets/fonts/jetbrains-mono-cyrillic-ext-62213be8a78b.woff2',
+  'assets/fonts/jetbrains-mono-greek-0a557721b1f8.woff2',
+  'assets/fonts/jetbrains-mono-latin-83c005d49d8a.woff2',
+  'assets/fonts/jetbrains-mono-latin-ext-db5ff4db83e5.woff2',
+  'assets/fonts/jetbrains-mono-vietnamese-c89b9cc0bc62.woff2',
+  'assets/fonts/plus-jakarta-sans-cyrillic-ext-c46a510ab439.woff2',
+  'assets/fonts/plus-jakarta-sans-latin-153fc85b7029.woff2',
+  'assets/fonts/plus-jakarta-sans-latin-ext-38e3b8fd8045.woff2',
+  'assets/fonts/plus-jakarta-sans-vietnamese-b275d1258601.woff2',
+
   'offline-ledger.js', 'purchase-units.js', 'money-inputs.js', 'offline-sync.js',
   'offline-conflict-ui.js', 'supplier-returns-ui.js', 'barcode-tools.js',
   'banks-vn.js', 'vietqr-tools.js', 'escpos-printer.js', 'integrations-ui.js',

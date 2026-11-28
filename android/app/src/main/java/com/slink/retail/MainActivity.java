@@ -59,6 +59,17 @@ public class MainActivity extends Activity {
     private static final int SPEECH_RECOGNIZE = 6;
     private static final Set<String> WEB_FILES = new HashSet<>(Arrays.asList(
             "index.html", "styles.css", "workspace.css", "app.js", "offline-store.js",
+            "assets/fonts/jetbrains-mono-cyrillic-e17cfd15fb96.woff2",
+            "assets/fonts/jetbrains-mono-cyrillic-ext-62213be8a78b.woff2",
+            "assets/fonts/jetbrains-mono-greek-0a557721b1f8.woff2",
+            "assets/fonts/jetbrains-mono-latin-83c005d49d8a.woff2",
+            "assets/fonts/jetbrains-mono-latin-ext-db5ff4db83e5.woff2",
+            "assets/fonts/jetbrains-mono-vietnamese-c89b9cc0bc62.woff2",
+            "assets/fonts/plus-jakarta-sans-cyrillic-ext-c46a510ab439.woff2",
+            "assets/fonts/plus-jakarta-sans-latin-153fc85b7029.woff2",
+            "assets/fonts/plus-jakarta-sans-latin-ext-38e3b8fd8045.woff2",
+            "assets/fonts/plus-jakarta-sans-vietnamese-b275d1258601.woff2",
+
             "offline-ledger.js", "purchase-units.js", "money-inputs.js", "offline-sync.js",
             "offline-conflict-ui.js", "supplier-returns-ui.js", "barcode-tools.js",
             "banks-vn.js", "vietqr-tools.js", "escpos-printer.js", "integrations-ui.js",
@@ -275,7 +286,7 @@ public class MainActivity extends Activity {
         if (!WEB_FILES.contains(path)) return null;
         String mime = path.endsWith(".html") ? "text/html" : path.endsWith(".css") ? "text/css" :
                 path.endsWith(".js") ? "application/javascript" : path.endsWith(".png") ? "image/png" :
-                path.endsWith(".svg") ? "image/svg+xml" : "application/manifest+json";
+                path.endsWith(".svg") ? "image/svg+xml" : path.endsWith(".woff2") ? "font/woff2" : "application/manifest+json";
         try {
             HashMap<String, String> headers = new HashMap<>();
             headers.put("Cache-Control", "no-cache");
@@ -284,7 +295,7 @@ public class MainActivity extends Activity {
             headers.put("X-Frame-Options", "DENY");
             headers.put("Service-Worker-Allowed", "/");
             headers.put("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; script-src 'self' https://www.gstatic.com https://apis.google.com; connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com; frame-src 'self' https://slink-ad8be.firebaseapp.com https://accounts.google.com; img-src 'self' data: blob: https://lh3.googleusercontent.com https://www.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com");
-            return new WebResourceResponse(mime, mime.startsWith("image/") ? null : "UTF-8", 200, "OK", headers,
+            return new WebResourceResponse(mime, (mime.startsWith("image/") || mime.startsWith("font/")) ? null : "UTF-8", 200, "OK", headers,
                     getAssets().open("web/" + path));
         } catch (IOException error) { return null; }
     }

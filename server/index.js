@@ -60,6 +60,17 @@ const ASSETS = new Map([
   ['/assets/slink-showcase-mobile-pos.webp', 'assets/slink-showcase-mobile-pos.webp'],
   ['/assets/slink-og-cover.png', 'assets/slink-og-cover.png'],
   ['/favicon.ico', 'assets/slink-icon-192.png'],
+  ['/assets/fonts/jetbrains-mono-cyrillic-e17cfd15fb96.woff2', 'assets/fonts/jetbrains-mono-cyrillic-e17cfd15fb96.woff2'],
+  ['/assets/fonts/jetbrains-mono-cyrillic-ext-62213be8a78b.woff2', 'assets/fonts/jetbrains-mono-cyrillic-ext-62213be8a78b.woff2'],
+  ['/assets/fonts/jetbrains-mono-greek-0a557721b1f8.woff2', 'assets/fonts/jetbrains-mono-greek-0a557721b1f8.woff2'],
+  ['/assets/fonts/jetbrains-mono-latin-83c005d49d8a.woff2', 'assets/fonts/jetbrains-mono-latin-83c005d49d8a.woff2'],
+  ['/assets/fonts/jetbrains-mono-latin-ext-db5ff4db83e5.woff2', 'assets/fonts/jetbrains-mono-latin-ext-db5ff4db83e5.woff2'],
+  ['/assets/fonts/jetbrains-mono-vietnamese-c89b9cc0bc62.woff2', 'assets/fonts/jetbrains-mono-vietnamese-c89b9cc0bc62.woff2'],
+  ['/assets/fonts/plus-jakarta-sans-cyrillic-ext-c46a510ab439.woff2', 'assets/fonts/plus-jakarta-sans-cyrillic-ext-c46a510ab439.woff2'],
+  ['/assets/fonts/plus-jakarta-sans-latin-153fc85b7029.woff2', 'assets/fonts/plus-jakarta-sans-latin-153fc85b7029.woff2'],
+  ['/assets/fonts/plus-jakarta-sans-latin-ext-38e3b8fd8045.woff2', 'assets/fonts/plus-jakarta-sans-latin-ext-38e3b8fd8045.woff2'],
+  ['/assets/fonts/plus-jakarta-sans-vietnamese-b275d1258601.woff2', 'assets/fonts/plus-jakarta-sans-vietnamese-b275d1258601.woff2'],
+
   ['/styles.css', 'styles.css'],
   ['/workspace.css', 'workspace.css'],
   ['/assets/vendor/gsap.min.js', 'assets/vendor/gsap.min.js'],
@@ -111,6 +122,17 @@ const APP_ASSET_VERSION = createHash('sha256').update(Array.from(new Set(ASSETS.
 
 const LONG_LIVED_ASSETS = new Set([
   '/favicon.ico',
+  '/assets/fonts/jetbrains-mono-cyrillic-e17cfd15fb96.woff2',
+  '/assets/fonts/jetbrains-mono-cyrillic-ext-62213be8a78b.woff2',
+  '/assets/fonts/jetbrains-mono-greek-0a557721b1f8.woff2',
+  '/assets/fonts/jetbrains-mono-latin-83c005d49d8a.woff2',
+  '/assets/fonts/jetbrains-mono-latin-ext-db5ff4db83e5.woff2',
+  '/assets/fonts/jetbrains-mono-vietnamese-c89b9cc0bc62.woff2',
+  '/assets/fonts/plus-jakarta-sans-cyrillic-ext-c46a510ab439.woff2',
+  '/assets/fonts/plus-jakarta-sans-latin-153fc85b7029.woff2',
+  '/assets/fonts/plus-jakarta-sans-latin-ext-38e3b8fd8045.woff2',
+  '/assets/fonts/plus-jakarta-sans-vietnamese-b275d1258601.woff2',
+
   '/assets/slink-icon.svg',
   '/assets/slink-icon-180.png',
   '/assets/slink-icon-192.png',
@@ -451,7 +473,13 @@ async function buildServer({ pool = null, env = process.env, logger = true, fire
   app.get('/api/ready', async (_request, reply) => {
     if (!pool) return reply.code(503).send({ status: 'unavailable' });
     try {
-      await pool.query('SELECT 1');
+      // Parse the live schema without reading customer rows. A reachable database
+      // with missing release tables must not be reported ready for traffic.
+      await pool.query(`SELECT p.batch_tracked, b.id, s.id
+        FROM public.products p
+        LEFT JOIN public.product_batches b ON false
+        LEFT JOIN public.staff_shifts s ON false
+        WHERE false`);
       return { status: 'ready' };
     } catch {
       return reply.code(503).send({ status: 'unavailable' });
