@@ -1240,8 +1240,10 @@ select.input,
 /* Compact Dismissible Toasts (never block viewport) */
 .toast-stack {
   position: fixed;
-  top: calc(var(--topbar-h, 3.65rem) + 0.5rem);
-  right: 2%;
+  top: auto;
+  bottom: 1rem;
+  left: 1rem;
+  right: auto;
   z-index: 980;
   display: grid;
   gap: 8px;
@@ -1251,9 +1253,16 @@ select.input,
 }
 
 @media (max-width: 768px) {
+  .toast-stack {
+    top: calc(var(--topbar-h, 3.65rem) + 0.5rem);
+    bottom: auto;
+    left: 4%;
+    right: 4%;
+    width: auto;
+  }
   body.pos-fullscreen .toast-stack {
-    top: auto;
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 5.25rem);
+    top: 6.25rem;
+    bottom: auto;
   }
 }
 
@@ -1638,7 +1647,7 @@ select.input,
 
 /* Barcode, Serial & Warranty */
 .barcode-field-preview { margin-top: 8px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 10px; background: #FFFFFF; max-width: 220px; }
-.barcode-svg { display: block; width: 100%; height: auto; }
+.barcode-svg { display: block; width: 100%; max-width: 100%; max-height: 44px; height: auto; }
 .barcode-print-modal { display: grid; gap: 14px; }
 .barcode-print-checks { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; padding-bottom: 8px; }
 .barcode-print-checks label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
@@ -1655,12 +1664,13 @@ select.input,
 .barcode-toolbar-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .import-barcode-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin: 10px 0; padding: 10px 12px; border: 1px solid var(--primary-border); border-radius: 10px; background: var(--primary-soft); font-size: 13px; color: var(--primary-hover); }
 .barcode-sheet-cap-note { margin-bottom: 8px; padding: 8px 10px; border-radius: 8px; background: var(--warning-bg); border: 1px solid #FCD34D; color: var(--warning); font-size: 12px; }
-.barcode-sticker { padding: 6px 7px; background: #FFFFFF; border: 1px solid var(--border); border-radius: 6px; display: grid; gap: 3px; text-align: center; color: #111111; break-inside: avoid; }
+.barcode-sticker { padding: 6px 7px; background: #FFFFFF; border: 1px solid var(--border); border-radius: 6px; display: grid; gap: 3px; text-align: center; color: #111111; break-inside: avoid; overflow: hidden; min-width: 0; }
 .barcode-sticker-store { font-size: 9px; font-weight: 700; text-transform: uppercase; color: #333333; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.barcode-sticker-name { font-size: 10px; font-weight: 600; line-height: 1.25; }
-.barcode-sticker-svg { width: 100%; max-height: 46px; }
-.barcode-sticker-meta { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-size: 10px; }
-.barcode-sticker-price { font-weight: 700; white-space: nowrap; }
+.barcode-sticker-name { font-size: 10px; font-weight: 600; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.barcode-sticker-svg { width: 100%; max-height: 46px; overflow: hidden; }
+.barcode-sticker-meta { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-size: 10px; min-width: 0; }
+.barcode-sticker-meta > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.barcode-sticker-price { font-weight: 700; white-space: nowrap; flex-shrink: 0; }
 #barcode-print-root { display: none; }
 
 .serial-builder-panel { display: grid; gap: 10px; }

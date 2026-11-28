@@ -3,6 +3,7 @@
 const { ApiError, authenticate, requireCsrf } = require('./auth');
 const { UUID_PATTERN, withStore } = require('./db');
 const { hasPermission } = require('./rbac');
+const { allowedWarehouseIds } = require('./warehouse-access');
 
 const SELL_ROLES = new Set(['owner', 'manager', 'cashier']);
 const ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -101,7 +102,7 @@ async function callGeminiJson(env, payload) {
       if (response.ok) {
         const data = await response.json();
         const parts = data?.candidates?.[0]?.content?.parts || [];
-        const rawText = (parts.find((p) => !p?.thought && typeof p?.text === 'string') || {}).text || '{}';
+        const rawText = parts.filter((p) => !p?.thought && typeof p?.text === 'string').map((p) => p.text).join('') || '{}';
         try {
           return JSON.parse(stripJsonFences(rawText));
         } catch {
@@ -917,6 +918,7 @@ function registerAiAssistantRoutes(app, { pool, env, aiClient = null }) {
         throw new ApiError(403, 'forbidden', 'Không có quyền xem gợi ý điều phối kho.');
       }
       const canSeeCost = hasPermission(membership, 'view_cost_price');
+      const allowedWh = allowedWarehouseIds(membership);
       const stockRes = await client.query(
         `SELECT p.id, p.sku, p.name, p.unit, p.cost_vnd::text AS cost_vnd,
                 COALESCE(p.low_stock_threshold, 0)::text AS low_stock_threshold,
@@ -926,8 +928,9 @@ function registerAiAssistantRoutes(app, { pool, env, aiClient = null }) {
          CROSS JOIN warehouses w
          LEFT JOIN inventory_balances b ON b.store_id = p.store_id AND b.product_id = p.id AND b.warehouse_id = w.id
          WHERE p.store_id = $1 AND p.status = 'active' AND p.inventory_tracked = true
-           AND w.store_id = $1 AND w.status = 'active'`,
-        [storeId]
+           AND w.store_id = $1 AND w.status = 'active'
+           AND ($2::boolean = false OR w.id = ANY($3::uuid[]))`,
+        [storeId, allowedWh !== null, allowedWh || []]
       );
       const salesRes = await client.query(
         `SELECT ol.product_id, SUM(ol.quantity)::text AS sold_14d
@@ -959,6 +962,10 @@ function registerAiAssistantRoutes(app, { pool, env, aiClient = null }) {
           if (qty <= minQty || (dailyRate >= 0.3 && qty < targetStock)) {
             const needQty = Math.max(1, Math.ceil(targetStock - qty));
             const donor = surplusSources.find((s) => s.warehouse_id !== b.warehouse_id && s.qty - s.minQty >= 2);
+            if (donor) {
+              const transferable = Math.max(1, Math.min(needQty, Math.floor(donor.qty - donor.minQty)));
+              donor.qty -= transferable;
+            }
             suggestions.push({
               productId,
               sku: b.sku,

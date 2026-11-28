@@ -121,7 +121,6 @@
           <span class='brand-mark' aria-hidden='true'><svg viewBox='0 0 32 32'><path d='M8 8.5h16v5H13v2h11v8H8v-5h11v-2H8z' fill='currentColor'/><circle cx='24.5' cy='7.5' r='2.5' fill='#c8f36c'/></svg></span>
           <span class='brand-name'>slink<span class='brand-period'>.</span></span>
           <span class='android-auth-label'>Android</span>
-          ${S.fn.fontScaleControlsHtml ? S.fn.fontScaleControlsHtml('auth-font-controls') : ''}
         </div>
         ${modeTabs}
         <h1>${S.fn.esc(title)}</h1>
@@ -174,7 +173,6 @@
         <header class='auth-portal-topbar'>
           <button type='button' class='lp-brand' data-action='auth-mode' data-mode='landing' aria-label='Về trang giới thiệu Slink'>${brandHtml}</button>
           <div class='auth-portal-topbar-actions'>
-            ${S.fn.fontScaleControlsHtml ? S.fn.fontScaleControlsHtml('lp-font-controls') : ''}
             <button type='button' class='lp-btn lp-btn-glass' data-action='auth-mode' data-mode='landing'>← Trang giới thiệu</button>
           </div>
         </header>
@@ -472,7 +470,7 @@
       'finance-income': "[data-action='new-expense'][data-direction='in'], [data-tour-target='finance-register']",
       'finance-book': '[data-tour-target="finance-register"]',
       'settings-gear': ".topbar [aria-label='Cài đặt'], [data-action='account-settings'], #primary-nav [data-route='settings']",
-      'pos-cart': '[data-tour-target="pos-cart-desktop"], [data-tour-target="pos-cart-mobile"]',
+      'pos-cart': '.cart-mode-tabs, [data-tour-target="pos-cart-desktop"], [data-tour-target="pos-cart-mobile"]',
       'finance-register': '[data-tour-target="finance-register"]',
       'reports-summary': '[data-tour-target="reports-summary"]',
       'channels-profiles': '[data-tour-target="channels-profiles"]',
@@ -1348,6 +1346,14 @@
   S.fn.render = function render() {
     S.fn.saveCartDraft();
     if (!S.state.authSession) { S.fn.renderAuth(); return; }
+    const pageTitles = {
+      dashboard: 'Tổng quan', pos: 'Bán hàng POS', products: 'Sản phẩm',
+      inventory: 'Kho hàng', suppliers: 'Nhà cung cấp', orders: 'Đơn hàng',
+      customers: 'Khách hàng', promotions: 'Khuyến mãi', finance: 'Thu chi',
+      reports: 'Báo cáo', staff: 'Nhân viên', audit: 'Nhật ký hoạt động',
+      channels: 'Kênh bán', settings: 'Cài đặt', affiliate: 'Cộng tác viên',
+    };
+    document.title = `${pageTitles[S.state.page] || 'Slink'} — Slink`;
     const previousDrawer = S.dom.root.querySelector('#drawer-cart');
     const preservePos = S.state.page === 'pos' && S.dom.root.dataset.page === 'pos';
     const warehousePickerOpen = preservePos && S.dom.root.querySelector('.pos-warehouse-picker details')?.open;
@@ -1517,10 +1523,10 @@
     const body = `<div class='help-section'>
         <h3>Quy trình vận hành &amp; Tự động hóa AI</h3>
         <div class='notice-list'>
-          <div class='notice-item'><span>${S.fn.icon('cart', 18)}</span><span><strong>Bán hàng POS &amp; AI Giọng nói</strong><small>Nói hoặc gõ câu lệnh (VD: "2 trà sữa sđt 0912345678 chuyển khoản"), tự nhận diện &amp; tích điểm SĐT, hỗ trợ VietQR offline.</small></span></div>
-          <div class='notice-item'><span>${S.fn.icon('box', 18)}</span><span><strong>Nhập kho 1 chạm bằng Ảnh &amp; Điều phối AI</strong><small>Bấm "📸 Nhập bằng ảnh" để AI đọc hóa đơn NCC; dùng "✨ Gợi ý điều phối AI" trong Kiểm kê để đặt bù hoặc chuyển kho.</small></span></div>
-          <div class='notice-item'><span>${S.fn.icon('layers', 18)}</span><span><strong>Quản lý Mã vạch &amp; Nhà cung cấp 360°</strong><small>Sinh mã EAN-13 hàng loạt &amp; in tem nhiệt/A4 trong Sản phẩm; theo dõi MST, công nợ, lịch sử nhập-trả ở Nhà cung cấp.</small></span></div>
-          <div class='notice-item'><span>${S.fn.icon('receipt', 18)}</span><span><strong>Đơn Zalo / Facebook / Sàn</strong><small>Bấm "✨ Dán tin nhắn AI" hoặc "📸 Đọc ảnh đơn" để tự điền người nhận, SĐT, địa chỉ và sản phẩm.</small></span></div>
+          <div class='notice-item' style='justify-content:flex-start;text-align:left'><span>${S.fn.icon('cart', 18)}</span><span style='flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;text-align:left'><strong>Bán hàng POS &amp; AI Giọng nói</strong><small>Nói hoặc gõ câu lệnh (VD: "2 trà sữa sđt 0912345678 chuyển khoản"), tự nhận diện &amp; tích điểm SĐT, hỗ trợ VietQR offline.</small></span></div>
+          <div class='notice-item' style='justify-content:flex-start;text-align:left'><span>${S.fn.icon('box', 18)}</span><span style='flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;text-align:left'><strong>Nhập kho 1 chạm bằng Ảnh &amp; Điều phối AI</strong><small>Bấm "📸 Nhập bằng ảnh" để AI đọc hóa đơn NCC; dùng "✨ Gợi ý điều phối AI" trong Kiểm kê để đặt bù hoặc chuyển kho.</small></span></div>
+          <div class='notice-item' style='justify-content:flex-start;text-align:left'><span>${S.fn.icon('layers', 18)}</span><span style='flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;text-align:left'><strong>Quản lý Mã vạch &amp; Nhà cung cấp 360°</strong><small>Sinh mã EAN-13 hàng loạt &amp; in tem nhiệt/A4 trong Sản phẩm; theo dõi MST, công nợ, lịch sử nhập-trả ở Nhà cung cấp.</small></span></div>
+          <div class='notice-item' style='justify-content:flex-start;text-align:left'><span>${S.fn.icon('receipt', 18)}</span><span style='flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;text-align:left'><strong>Đơn Zalo / Facebook / Sàn</strong><small>Bấm "✨ Dán tin nhắn AI" hoặc "📸 Đọc ảnh đơn" để tự điền người nhận, SĐT, địa chỉ và sản phẩm.</small></span></div>
         </div>
       </div>
       <div class='help-section'>
@@ -1560,6 +1566,14 @@
       S.state.inventoryLoading = true;
     }
     S.fn.render();
+    const pageTitles = {
+      dashboard: 'Tổng quan', pos: 'Bán hàng POS', products: 'Sản phẩm',
+      inventory: 'Kho hàng', suppliers: 'Nhà cung cấp', orders: 'Đơn hàng',
+      customers: 'Khách hàng', promotions: 'Khuyến mãi', finance: 'Thu chi',
+      reports: 'Báo cáo', staff: 'Nhân viên', audit: 'Nhật ký hoạt động',
+      channels: 'Kênh bán', settings: 'Cài đặt', affiliate: 'Cộng tác viên',
+    };
+    document.title = `${pageTitles[S.state.page] || 'Slink'} — Slink`;
     window.scrollTo({ top: 0, behavior: 'instant' });
     if (S.state.page === 'products') S.fn.loadProductsPage(S.state.searchTerms.products, 0, { silentLoading: true });
     else if (S.state.page === 'dashboard') {

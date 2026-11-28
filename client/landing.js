@@ -173,7 +173,6 @@
             <button type='button' class='lp-nav-link' data-action='lp-scroll' data-target='lp-trust'>Bảo mật</button>
           </nav>
           <div class='lp-header-actions'>
-            ${S.fn.fontScaleControlsHtml ? S.fn.fontScaleControlsHtml('lp-font-controls') : ''}
             <button type='button' class='lp-btn lp-btn-glass' data-action='auth-mode' data-mode='login'>Đăng nhập</button>
             <button type='button' class='lp-btn lp-btn-primary' data-action='auth-mode' data-mode='register'>Dùng thử miễn phí</button>
           </div>

@@ -1061,6 +1061,16 @@ function registerAuthRoutes(app, { pool, env, firebaseVerifier = null }) {
       [email]
     );
     const candidate = found.rows[0];
+    if (candidate) {
+      const recentFails = await withUser(pool, candidate.id, (client) => client.query(
+        `SELECT COUNT(*)::int AS cnt FROM user_security_events
+         WHERE user_id = $1 AND event_type = 'login_failed' AND occurred_at >= now() - interval '5 minutes'`,
+        [candidate.id]
+      ));
+      if ((recentFails.rows[0]?.cnt || 0) >= 5) {
+        throw new ApiError(429, 'too_many_attempts', 'Nhập sai mật khẩu quá 5 lần. Vui lòng thử lại sau 5 phút.');
+      }
+    }
     const encoded = found.rowCount ? candidate.password_hash : DUMMY_PASSWORD_HASH;
     const passwordMatches = await verifyPassword(password, encoded);
     if (!found.rowCount || !passwordMatches) {

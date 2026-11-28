@@ -653,6 +653,7 @@
     if (existing) existing.remove();
     const frame = document.createElement('iframe');
     frame.id = 'slink-hidden-print-frame';
+    frame.setAttribute('sandbox', 'allow-modals');
     frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
     document.body.appendChild(frame);
     const cleanHtml = String(html).replace(/<script[\s\S]*?<\/script>/gi, '');
@@ -1352,7 +1353,7 @@
     const scope = S.fn.activeOfflineScope();
     const result = await S.fn.startOfflineSync();
     if (!scope || scope !== S.fn.activeOfflineScope()) return;
-    if (result?.synced && await S.state.offlineDisk.getMeta('prepared|' + scope)) return;
+    if (!result?.synced && await S.state.offlineDisk.getMeta('prepared|' + scope)) return;
     await S.fn.prepareOfflineData();
   }
 
