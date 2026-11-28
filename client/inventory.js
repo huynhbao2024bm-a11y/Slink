@@ -178,6 +178,7 @@
     const advanced = `${canCount ? `<button class='btn btn-secondary' data-action='rapid-stock-count'>Quét camera kiểm kho</button><button class='btn btn-secondary' data-action='adjust-stock-picker'>Đếm lại hàng</button>` : ''}${canManageWarehouse ? `<button class='btn btn-secondary' data-action='new-warehouse'>Thêm kho</button>` : ''}${canCount ? `<button class='btn btn-secondary' data-action='bulk-stock-count'>Kiểm kê CSV</button>` : ''}${S.fn.canExportData() ? `<button class='btn btn-secondary' data-action='open-export'>Xuất CSV</button>` : ''}${canManageWarehouse && S.state.selectedWarehouseId && !defaultWarehouseSelected ? `<button class='btn btn-secondary' data-action='archive-warehouse' data-id='${S.fn.esc(S.state.selectedWarehouseId)}'>Lưu trữ kho</button>` : ''}${canCount && S.state.warehouses.length > 1 ? `<button class='btn btn-secondary' data-action='new-warehouse-transfer'>Điều chuyển kho</button>` : ''}`;
     const tabs = [
       ['stock', 'Tồn kho'],
+      ['batches', 'Lô & Hạn dùng'],
       ['purchases', 'Nhập hàng'],
       canReceive ? ['supplier-returns', 'Trả hàng NCC'] : null,
       canCount ? ['stock-count', 'Kiểm kê'] : null,
@@ -189,6 +190,7 @@
     }).join('')}</div>`;
     let tabBody = '';
     if (activeTab === 'purchases') tabBody = S.fn.renderInventoryPurchases();
+    else if (activeTab === 'batches') tabBody = S.fn.renderInventoryBatches();
     else if (activeTab === 'supplier-returns') tabBody = S.fn.renderInventorySupplierReturns();
     else if (activeTab === 'stock-count') tabBody = S.fn.renderInventoryStockCount();
     else if (activeTab === 'transfers') tabBody = `${canCount && S.state.warehouses.length > 1 ? `<div style='margin-bottom:12px;display:flex;justify-content:flex-end'><button class='btn btn-primary' data-action='new-warehouse-transfer'>＋ Tạo phiếu điều chuyển</button></div>` : ''}${S.fn.renderWarehouseTransfers()}`;
@@ -2309,5 +2311,98 @@
       panel.innerHTML = `<p class='receive-ai-status is-error'>${S.fn.esc(error.message || 'Chưa tải được gợi ý điều phối.')}</p>`;
     }
   };
+
+  S.fn.loadInventoryBatches = async function loadInventoryBatches(daysOverride) {
+    if (!S.state.authSession || !S.state.store.id) return;
+    const st = S.state.batchState;
+    if (daysOverride !== undefined) st.expiringDays = daysOverride;
+    const reqNum = ++st.requestNumber;
+    st.loading = true;
+    st.error = '';
+    if (S.state.page === 'inventory' && S.state.inventoryTab === 'batches') S.fn.render();
+    try {
+      const wh = S.state.selectedWarehouseId ? `&warehouseId=${encodeURIComponent(S.state.selectedWarehouseId)}` : '';
+      const exp = st.expiringDays && st.expiringDays !== 'all' ? `&expiringDays=${encodeURIComponent(st.expiringDays)}` : '';
+      const res = await S.fn.apiRequest(`/api/stores/${encodeURIComponent(S.state.store.id)}/batches?${wh}${exp}`);
+      if (reqNum !== st.requestNumber) return;
+      st.batches = Array.isArray(res.batches) ? res.batches : [];
+      st.summary = res.summary || { expired_count: 0, expiring_7_count: 0, expiring_30_count: 0 };
+      st.loading = false;
+    } catch (error) {
+      if (reqNum !== st.requestNumber) return;
+      st.loading = false;
+      st.error = error.message;
+    }
+    if (S.state.page === 'inventory' && S.state.inventoryTab === 'batches') S.fn.render();
+  }
+
+
+  S.fn.renderInventoryBatches = function renderInventoryBatches() {
+    const st = S.state.batchState;
+    const sum = st.summary || { expired_count: 0, expiring_7_count: 0, expiring_30_count: 0 };
+    const filterPills = `<div class='pill-row' role='group' aria-label='Lọc hạn sử dụng'>${[['all', 'Tất cả lô còn tồn'], ['7', '≤ 7 ngày / Hết hạn'], ['30', '≤ 30 ngày'], ['60', '≤ 60 ngày']].map(([val, lbl]) => `<button type='button' class='pill ${String(st.expiringDays) === val ? 'active' : ''}' data-action='batch-expiry-filter' data-days='${val}'>${lbl}</button>`).join('')}</div>`;
+    const rows = (st.batches || []).map(b => {
+      const d = b.days_until_expiry == null ? null : Number(b.days_until_expiry);
+      const badge = d == null
+        ? `<span class='badge badge-neutral'>Không có HSD</span>`
+        : d < 0
+          ? `<span class='badge badge-danger'>Hết hạn ${Math.abs(d)} ngày</span>`
+          : d <= 7
+            ? `<span class='badge badge-danger'>Còn ${d} ngày</span>`
+            : d <= 30
+              ? `<span class='badge badge-warning'>Còn ${d} ngày</span>`
+              : `<span class='badge badge-success'>Còn ${d} ngày</span>`;
+      const thumbProduct = { name: b.product_name, imageUrl: b.image_content_type ? `/api/stores/${encodeURIComponent(S.state.store.id)}/products/${encodeURIComponent(b.product_id)}/image?v=${Number(b.image_version)}` : '' };
+      return `<tr><td><div class='product-cell'>${S.fn.productThumb(thumbProduct)}<span class='product-name-stack'><strong>${S.fn.esc(b.product_name)}</strong><small>${S.fn.esc(b.sku)}</small></span></div></td><td><strong>${S.fn.esc(b.batch_code)}</strong>${b.note ? `<div class='muted' style='font-size:11.5px'>${S.fn.esc(b.note)}</div>` : ''}</td><td>${S.fn.esc(b.warehouse_name)}</td><td>${b.expiry_date ? S.fn.esc(b.expiry_date) : '—'}</td><td>${badge}</td><td class='text-right'><strong>${S.fn.number(Number(b.quantity))} ${S.fn.esc(b.unit)}</strong></td><td class='text-right'>${S.fn.hasPerm('manageInventory') ? `<button type='button' class='btn btn-secondary' style='padding:4px 10px;font-size:12px' data-action='open-product-batches' data-id='${S.fn.esc(b.product_id)}'>＋ Nhập lô</button>` : ''}</td></tr>`;
+    }).join('');
+    return `<div class='stat-grid inventory-stats' style='margin-bottom:12px'>
+      <article class='stat-card'><div class='stat-top'><span class='stat-label'>Đã hết hạn</span></div><div class='stat-value' style='color:var(--danger)'>${S.fn.number(sum.expired_count || 0)}</div></article>
+      <article class='stat-card'><div class='stat-top'><span class='stat-label'>Sắp hết hạn (≤ 7 ngày)</span></div><div class='stat-value' style='color:var(--warning)'>${S.fn.number(sum.expiring_7_count || 0)}</div></article>
+      <article class='stat-card'><div class='stat-top'><span class='stat-label'>Sắp hết hạn (≤ 30 ngày)</span></div><div class='stat-value'>${S.fn.number(sum.expiring_30_count || 0)}</div></article>
+    </div>
+    <section class='panel'><div class='panel-header' style='flex-wrap:wrap;gap:10px'><div><h2>Lô hàng &amp; Hạn sử dụng (FEFO)</h2></div>${filterPills}</div>
+    ${st.error ? `<div class='auth-message error'>${S.fn.esc(st.error)}</div>` : ''}
+    <div class='table-wrap'><table class='data-table'><thead><tr><th>Sản phẩm</th><th>Mã lô</th><th>Kho</th><th>Hạn sử dụng</th><th>Tình trạng</th><th class='text-right'>Tồn lô</th><th></th></tr></thead><tbody>${rows || `<tr><td colspan='7'><div class='empty-state'><strong>${st.loading ? 'Đang tải danh sách lô…' : 'Chưa có lô hàng nào'}</strong><span>Bật “Theo dõi Lô hàng & Hạn sử dụng” trong sản phẩm hoặc bấm “Lô” trên từng sản phẩm để nhập lô.</span></div></td></tr>`}</tbody></table></div></section>`;
+  }
+
+
+  S.fn.openProductBatchModal = function openProductBatchModal(productId) {
+    const product = S.fn.productById(productId);
+    if (!product) return;
+    const whOptions = (S.state.warehouses || []).map(w => `<option value='${S.fn.esc(w.id)}' ${w.id === S.state.selectedWarehouseId ? 'selected' : ''}>${S.fn.esc(w.name)}</option>`).join('');
+    const form = `<form id='entity-form' data-form='product-batch-add' data-id='${S.fn.esc(productId)}'><div class='form-grid'>
+      <div class='form-field'><label class='input-label' for='batch-code'>Mã lô (để trống tự tạo)</label><input class='input' id='batch-code' name='batchCode' maxlength='80' placeholder='VD: LO-261128'/></div>
+      <div class='form-field'><label class='input-label' for='batch-expiry'>Hạn sử dụng</label><input class='input' id='batch-expiry' name='expiryDate' type='date'/></div>
+      <div class='form-field'><label class='input-label' for='batch-qty'>Số lượng nhập (${S.fn.esc(product.unit)}) *</label><input class='input' id='batch-qty' name='quantity' type='number' min='0.001' step='0.001' value='10' required/></div>
+      <div class='form-field'><label class='input-label' for='batch-wh'>Kho nhập</label><div class='select-wrap'><select class='input' id='batch-wh' name='warehouseId'>${whOptions}</select></div></div>
+      <div class='form-field full'><label class='input-label' for='batch-note'>Ghi chú lô</label><input class='input' id='batch-note' name='note' maxlength='300' placeholder='VD: Nhập lô mới từ NCC…'/></div>
+    </div></form>`;
+    S.fn.showModal(`Nhập lô · ${product.name}`, 'Nhập lô hàng mới và tự động cộng vào tồn kho.', form, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Hủy</button><button class='btn btn-primary' type='submit' form='entity-form'>Lưu lô hàng</button>`);
+  }
+
+
+  S.fn.submitProductBatchForm = async function submitProductBatchForm(form) {
+    const productId = form.dataset.id;
+    const fd = new FormData(form);
+    try {
+      await S.fn.apiRequest(`/api/stores/${encodeURIComponent(S.state.store.id)}/products/${encodeURIComponent(productId)}/batches`, {
+        method: 'POST',
+        body: {
+          batchCode: String(fd.get('batchCode') || '').trim(),
+          expiryDate: String(fd.get('expiryDate') || '').trim() || null,
+          quantity: String(fd.get('quantity') || '0').trim(),
+          warehouseId: String(fd.get('warehouseId') || '').trim() || null,
+          note: String(fd.get('note') || '').trim(),
+        },
+      });
+      S.fn.closeModal();
+      S.fn.emitSyncDomains(['products', 'stock', 'dashboard'], { source: 'batch-add' });
+      S.fn.toast('Đã nhập lô hàng mới');
+      if (S.state.page === 'inventory' && S.state.inventoryTab === 'batches') await S.fn.loadInventoryBatches();
+      else if (S.state.page === 'products') await S.fn.loadProductsPage(S.state.searchTerms.products, S.state.productOffset);
+    } catch (error) {
+      S.fn.toast('Chưa nhập được lô hàng', error.message, 'error');
+    }
+  }
 
 })(window.Slink = window.Slink || { dom: {}, c: {}, state: {}, fn: {}, charts: {} });

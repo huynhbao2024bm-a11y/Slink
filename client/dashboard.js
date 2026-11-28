@@ -206,8 +206,10 @@
     const lowStockTotal = Number(act.lowStockCount || 0) + Number(act.outOfStockCount || 0);
     const pendingOrdersCount = act.pendingOrdersCount != null ? Number(act.pendingOrdersCount) : S.state.store.orders.filter(o => Number(o.due || 0) > 0).length;
     const openShiftsCount = act.openShift ? 1 : Number(act.openCashShiftCount || 0);
+    const expiringBatchesCount = Number(act.expiringBatchesCount || 0);
     const actionItems = [
       { action: 'dashboard-open-low-stock', label: 'Hàng sắp hết / hết hàng', count: lowStockTotal, tone: lowStockTotal > 0 ? 'is-warn' : '' },
+      ...(expiringBatchesCount > 0 ? [{ action: 'dashboard-open-expiring-batches', label: 'Hàng sắp hết hạn sử dụng', count: expiringBatchesCount, tone: 'is-danger' }] : []),
       { action: 'dashboard-open-debts', label: 'Khách còn công nợ', count: Number(act.overdueDebtCount || 0), sub: BigInt(String(act.overdueDebtVnd || '0')) > 0n ? S.fn.moneyVndText(act.overdueDebtVnd) : '', tone: Number(act.overdueDebtCount || 0) > 0 ? 'is-danger' : '' },
       { action: 'dashboard-open-orders', label: 'Đơn chờ thu / giữ hàng', count: pendingOrdersCount, tone: pendingOrdersCount > 0 ? 'is-warn' : '' },
       { action: 'dashboard-open-shifts', label: 'Ca tiền mặt đang mở', count: openShiftsCount, tone: '' },

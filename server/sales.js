@@ -8,6 +8,7 @@ const { insertCashMovement } = require('./cashbook-ledger');
 const { normalizeOffline, beginOffline, recordOffline, expectedPrices } = require('./offline-operations');
 const { calculatePromotion, consumePromotion, promotionCode } = require('./promotions');
 const { normalizeSerialCodeList } = require('./serials');
+const { deductBatchesFefo } = require('./batches');
 const { getPosMaxDiscountPct } = require('./rbac');
 const {
   parseInlineCustomerInput,
@@ -85,9 +86,13 @@ function normalizeSale(body) {
       items[index].lineDiscountVnd += lineDiscountVnd;
       if (items[index].lineDiscountVnd > MAX_BIGINT) throw new ApiError(400, 'validation_error', 'Giảm giá dòng hàng vượt giới hạn lưu trữ.');
       items[index].serialCodes.push(...lineSerials);
+      if (!items[index].batchId && typeof line.batchId === 'string' && UUID_PATTERN.test(line.batchId)) {
+        items[index].batchId = line.batchId;
+      }
     } else {
       indices.set(line.productId, items.length);
-      items.push({ productId: line.productId, quantityMilli: milli, lineDiscountVnd, serialCodes: lineSerials });
+      const batchId = typeof line.batchId === 'string' && UUID_PATTERN.test(line.batchId) ? line.batchId : null;
+      items.push({ productId: line.productId, quantityMilli: milli, lineDiscountVnd, serialCodes: lineSerials, batchId });
     }
   }
   const discountVnd = amount(body.discountVnd ?? 0, 'Khoản giảm giá');
@@ -189,6 +194,7 @@ function registerSalesRoutes(app, { pool, env }) {
         const entry = { productId: line.productId, quantityMilli: line.quantityMilli };
         if (line.lineDiscountVnd > 0n) entry.discountVnd = line.lineDiscountVnd;
         if (line.serialCodes.length) entry.serialCodes = line.serialCodes;
+        if (line.batchId) entry.batchId = line.batchId;
         return entry;
       }),
       discountVnd: sale.discountVnd,
@@ -313,7 +319,7 @@ function registerSalesRoutes(app, { pool, env }) {
       const productIds = sale.items.map((line) => line.productId).sort();
       const productResult = await client.query(
         `SELECT id, sku, name, unit, sale_price_vnd::text AS sale_price_vnd,
-                cost_vnd::text AS cost_vnd, inventory_tracked, serial_tracked, warranty_months, status
+                cost_vnd::text AS cost_vnd, inventory_tracked, serial_tracked, batch_tracked, warranty_months, status
          FROM products WHERE store_id = $1 AND id = ANY($2::uuid[]) ORDER BY id FOR UPDATE`,
         [storeId, productIds]
       );
@@ -623,6 +629,15 @@ function registerSalesRoutes(app, { pool, env }) {
             [storeId, warehouseId, line.product.id, quantityText(line.quantityMilli), after.rows[0].on_hand,
               `Bán hàng ${orderNumber}`, order.id, auth.userId]
           );
+          if (line.product.batch_tracked) {
+            await deductBatchesFefo(client, {
+              storeId,
+              productId: line.product.id,
+              warehouseId,
+              quantityMilli: line.quantityMilli,
+              preferredBatchId: line.batchId || null,
+            });
+          }
           const serialLock = reservedSerialMap.get(line.product.id);
           if (serialLock && serialLock.ids.length) {
             const warrantyMonths = Number(line.product.warranty_months || 0);

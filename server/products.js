@@ -102,6 +102,11 @@ function validateProduct(input, { partial = false } = {}) {
     if (typeof serialTracked !== 'boolean') throw new ApiError(400, 'validation_error', 'Cấu hình quản lý theo mã riêng không hợp lệ.');
     values.serialTracked = serialTracked;
   }
+  if (!partial || source.batchTracked !== undefined) {
+    const batchTracked = source.batchTracked ?? false;
+    if (typeof batchTracked !== 'boolean') throw new ApiError(400, 'validation_error', 'Cấu hình theo dõi lô và hạn sử dụng không hợp lệ.');
+    values.batchTracked = batchTracked;
+  }
   if (!partial || source.warrantyMonths !== undefined) {
     const rawWarranty = source.warrantyMonths === undefined || source.warrantyMonths === null || source.warrantyMonths === ''
       ? 0
@@ -421,7 +426,7 @@ function registerProductRoutes(app, { pool, env }) {
         `SELECT p.id, p.sku, p.barcode, COALESCE(p.extra_barcodes, '{}'::text[]) AS extra_barcodes, p.name, p.category, p.unit,
                 p.sale_price_vnd::text AS sale_price_vnd,
                 CASE WHEN $5::boolean THEN p.cost_vnd::text ELSE NULL END AS cost_vnd,
-                p.low_stock_threshold::text AS low_stock_threshold, p.inventory_tracked, p.serial_tracked, p.warranty_months,
+                p.low_stock_threshold::text AS low_stock_threshold, p.inventory_tracked, p.serial_tracked, p.batch_tracked, p.warranty_months,
                 p.variant_group_id, p.variant_group_name, p.variant_attributes, p.image_version, p.image_content_type,
                 CASE WHEN $5::boolean THEN p.purchase_pack ELSE NULL END AS purchase_pack,
                 p.status, p.version, COALESCE(i.on_hand, 0)::text AS on_hand,
@@ -1054,19 +1059,20 @@ async function assertBarcodeAllowed(client, storeId, barcode, excludeProductId =
         }
         await assertBarcodeAllowed(client, storeId, finalBarcode, null, barcodePolicy);
         const serialTracked = Boolean(product.serialTracked);
-        const inventoryTracked = serialTracked ? true : product.inventoryTracked;
+        const batchTracked = Boolean(product.batchTracked);
+        const inventoryTracked = (serialTracked || batchTracked) ? true : product.inventoryTracked;
         const inserted = await client.query(
           `INSERT INTO products (
              store_id, sku, sku_normalized, barcode, extra_barcodes, name, category, unit,
-             sale_price_vnd, cost_vnd, low_stock_threshold, inventory_tracked, serial_tracked, warranty_months, created_by, purchase_pack
-           ) VALUES ($1, $2, $3, $4, $14::text[], $5, $6, $7, $8, $9, $10, $11, $15, $16, $12, $13::jsonb)
+             sale_price_vnd, cost_vnd, low_stock_threshold, inventory_tracked, serial_tracked, batch_tracked, warranty_months, created_by, purchase_pack
+           ) VALUES ($1, $2, $3, $4, $14::text[], $5, $6, $7, $8, $9, $10, $11, $15, $17, $16, $12, $13::jsonb)
            RETURNING id, sku, barcode, COALESCE(extra_barcodes, '{}'::text[]) AS extra_barcodes, name, category, unit, sale_price_vnd::text AS sale_price_vnd,
                      cost_vnd::text AS cost_vnd, low_stock_threshold::text AS low_stock_threshold,
-                     inventory_tracked, serial_tracked, warranty_months, status, version, purchase_pack, created_at`,
+                     inventory_tracked, serial_tracked, batch_tracked, warranty_months, status, version, purchase_pack, created_at`,
           [storeId, product.sku, product.sku.toLocaleLowerCase('vi'), finalBarcode, product.name,
             product.category, product.unit, product.salePriceVnd, product.costVnd,
             product.lowStockThreshold, inventoryTracked, auth.userId, product.purchasePack ? JSON.stringify(product.purchasePack) : null,
-            product.extraBarcodes || [], serialTracked, product.warrantyMonths ?? 0]
+            product.extraBarcodes || [], serialTracked, product.warrantyMonths ?? 0, batchTracked]
         );
         const created = inserted.rows[0];
         Object.assign(created, await writeProductImage(client, storeId, created.id, image, auth.userId));
@@ -1448,6 +1454,7 @@ async function assertBarcodeAllowed(client, storeId, barcode, excludeProductId =
           costVnd: product.costVnd ?? Number(old.cost_vnd),
           lowStockThreshold: product.lowStockThreshold ?? Number(old.low_stock_threshold),
           inventoryTracked: product.inventoryTracked ?? old.inventory_tracked,
+          batchTracked: product.batchTracked ?? old.batch_tracked,
           warrantyMonths: product.warrantyMonths !== undefined ? product.warrantyMonths : Number(old.warranty_months || 0),
           variantAttributes: nextVariantAttributes,
           purchasePack: requestedPack !== undefined ? requestedPack : (product.unit !== undefined && product.unit !== old.unit ? null : old.purchase_pack),
@@ -1484,16 +1491,16 @@ async function assertBarcodeAllowed(client, storeId, barcode, excludeProductId =
         await assertBarcodeAllowed(client, storeId, next.barcode, productId);
         const updated = await client.query(
           `UPDATE products SET sku = $3, sku_normalized = $4, barcode = $5, extra_barcodes = $16::text[], name = $6, category = $7, unit = $8,
-               sale_price_vnd = $9, cost_vnd = $10, low_stock_threshold = $11, inventory_tracked = $12, warranty_months = $17,
+               sale_price_vnd = $9, cost_vnd = $10, low_stock_threshold = $11, inventory_tracked = $12, batch_tracked = $18, warranty_months = $17,
                variant_attributes = $14::jsonb, purchase_pack = $15::jsonb, version = version + 1, updated_at = now()
            WHERE store_id = $1 AND id = $2 AND version = $13
            RETURNING id, sku, barcode, COALESCE(extra_barcodes, '{}'::text[]) AS extra_barcodes, name, category, unit, sale_price_vnd::text AS sale_price_vnd,
                      cost_vnd::text AS cost_vnd, low_stock_threshold::text AS low_stock_threshold,
-                     inventory_tracked, serial_tracked, warranty_months, status, version, purchase_pack, variant_group_id, variant_group_name, variant_attributes, updated_at`,
+                     inventory_tracked, serial_tracked, batch_tracked, warranty_months, status, version, purchase_pack, variant_group_id, variant_group_name, variant_attributes, updated_at`,
           [storeId, productId, next.sku, next.sku.toLocaleLowerCase('vi'), next.barcode, next.name, next.category,
             next.unit, next.salePriceVnd, next.costVnd, next.lowStockThreshold, next.inventoryTracked, expectedVersion,
             JSON.stringify(next.variantAttributes), next.purchasePack ? JSON.stringify(next.purchasePack) : null,
-            (next.extraBarcodes || []).filter((code) => code !== next.barcode), next.warrantyMonths]
+            (next.extraBarcodes || []).filter((code) => code !== next.barcode), next.warrantyMonths, Boolean(next.batchTracked)]
         );
         if (next.inventoryTracked && !old.inventory_tracked) {
           await client.query(
@@ -1532,6 +1539,37 @@ async function assertBarcodeAllowed(client, storeId, barcode, excludeProductId =
     } catch (error) {
       return conflict(error);
     }
+  });
+
+  app.post('/api/stores/:storeId/products/bulk-archive', async (request, reply) => {
+    const auth = await authenticate(pool, request);
+    requireCsrf(request, env);
+    const { storeId } = request.params;
+    if (!UUID_PATTERN.test(storeId)) throw new ApiError(400, 'validation_error', 'Cửa hàng không hợp lệ.');
+    const rawIds = Array.isArray(request.body?.productIds) ? request.body.productIds : [];
+    const productIds = [...new Set(rawIds.filter((id) => typeof id === 'string' && UUID_PATTERN.test(id)))];
+    if (!productIds.length || productIds.length > 100) {
+      throw new ApiError(400, 'validation_error', 'Chọn từ 1 đến 100 sản phẩm để lưu trữ.');
+    }
+    const result = await withStore(pool, auth.userId, storeId, async (client, membership) => {
+      requireEditor(membership);
+      const updated = await client.query(
+        `UPDATE products SET status = 'archived', version = version + 1, updated_at = now()
+         WHERE store_id = $1 AND id = ANY($2::uuid[]) AND status = 'active'
+         RETURNING id, sku, name`,
+        [storeId, productIds]
+      );
+      for (const row of updated.rows) {
+        await client.query(
+          `INSERT INTO audit_events (store_id, actor_user_id, action, entity_type, entity_id)
+           VALUES ($1, $2, 'product.archived', 'product', $3)`,
+          [storeId, auth.userId, row.id]
+        );
+      }
+      return { archivedCount: updated.rowCount, products: updated.rows };
+    });
+    reply.code(200);
+    return result;
   });
 
   app.post('/api/stores/:storeId/products/:productId/archive', async (request, reply) => {

@@ -11,6 +11,10 @@
       await S.fn.loadLossPreventionRadar();
       return;
     }
+    if (S.state.staffSubTab === 'shifts') {
+      await S.fn.loadStaffShifts();
+      return;
+    }
     const storeId = S.state.store.id, session = S.state.authSession, request = ++S.state.staffRequestNumber;
     const current = () => S.state.store.id === storeId && S.state.authSession === session && request === S.state.staffRequestNumber;
     S.state.staffState.loading = true;
@@ -434,9 +438,13 @@
     </div>`;
     const subTabs = `<nav class='workspace-tabs' aria-label='Phân hệ quản trị nhân sự' style='margin-bottom:12px'>
       <button type='button' data-action='staff-subtab' data-subtab='members' ${S.state.staffSubTab === 'members' ? "aria-current='page'" : ''}>Nhân viên (${S.fn.number(S.state.staffState.members.length)})</button>
+      <button type='button' data-action='staff-subtab' data-subtab='shifts' ${S.state.staffSubTab === 'shifts' ? "aria-current='page'" : ''}>Lịch làm việc &amp; Ca</button>
       <button type='button' data-action='staff-subtab' data-subtab='payroll' ${S.state.staffSubTab === 'payroll' ? "aria-current='page'" : ''}>Bảng lương</button>
       <button type='button' data-action='staff-subtab' data-subtab='radar' ${S.state.staffSubTab === 'radar' ? "aria-current='page'" : ''}>Cảnh báo thất thoát</button>
     </nav>`;
+    if (S.state.staffSubTab === 'shifts') {
+      return S.fn.pageHeading('Nhân viên', '', `<button class='btn btn-secondary' data-action='reload-staff-shifts'>Làm mới</button><button class='btn btn-primary' data-action='open-assign-shift'>＋ Phân ca</button>`) + kpiHtml + subTabs + S.fn.renderStaffShiftsSection();
+    }
     if (S.state.staffSubTab === 'payroll') {
       return S.fn.pageHeading('Nhân viên', '', `<button class='btn btn-secondary' data-action='new-staff-invite'>${S.fn.icon('mail', 15)} Mời Email</button><button class='btn btn-primary' data-action='new-staff-direct'>${S.fn.icon('plus', 15)} Thêm NV</button>`) + kpiHtml + subTabs + S.fn.renderStaffPayrollSection();
     }
@@ -670,5 +678,137 @@
       else S.fn.toast('Chưa thu hồi được lời mời', error.message, 'error');
     }
   }
+
+  S.fn.loadStaffShifts = async function loadStaffShifts(monthOverride) {
+    if (!S.state.authSession || !S.state.store.id) return;
+    const st = S.state.shiftScheduleState;
+    if (monthOverride) st.month = monthOverride;
+    const reqNum = ++st.requestNumber;
+    st.loading = true;
+    st.error = '';
+    if (S.state.page === 'staff') S.fn.render();
+    try {
+      const res = await S.fn.apiRequest(`/api/stores/${encodeURIComponent(S.state.store.id)}/shifts?month=${encodeURIComponent(st.month)}`);
+      if (reqNum !== st.requestNumber) return;
+      st.month = res.month || st.month;
+      st.shifts = Array.isArray(res.shifts) ? res.shifts : [];
+      st.staff = Array.isArray(res.staff) ? res.staff : [];
+      st.summary = res.summary || null;
+      st.loading = false;
+    } catch (error) {
+      if (reqNum !== st.requestNumber) return;
+      st.loading = false;
+      st.error = error.message;
+    }
+    if (S.state.page === 'staff') S.fn.render();
+  }
+
+
+  S.fn.renderStaffShiftsSection = function renderStaffShiftsSection() {
+    const st = S.state.shiftScheduleState;
+    if (st.error) return `<div class='auth-message error'>${S.fn.esc(st.error)} <button class='link-button' data-action='reload-staff-shifts'>Thử lại</button></div>`;
+    const [yrStr, moStr] = String(st.month || new Date().toISOString().slice(0, 7)).split('-');
+    const year = Number(yrStr), month = Number(moStr);
+    const firstDay = new Date(Date.UTC(year, month - 1, 1));
+    const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    const startOffset = (firstDay.getUTCDay() + 6) % 7;
+    const byDate = new Map();
+    (st.shifts || []).forEach(s => {
+      if (!byDate.has(s.work_date)) byDate.set(s.work_date, []);
+      byDate.get(s.work_date).push(s);
+    });
+    const cells = [];
+    for (let i = 0; i < startOffset; i++) cells.push(`<div class='shift-day-cell is-empty'></div>`);
+    for (let d = 1; d <= daysInMonth; d++) {
+      const iso = `${yrStr}-${moStr}-${String(d).padStart(2, '0')}`;
+      const list = byDate.get(iso) || [];
+      const pills = list.slice(0, 3).map(s => `<span class='shift-mini-pill status-${S.fn.esc(s.status)}'>${S.fn.esc(s.shift_label || s.shift_type)} · ${S.fn.esc(s.display_name.split(' ').slice(-1)[0])}</span>`).join('');
+      const more = list.length > 3 ? `<span class='muted' style='font-size:10px'>+${list.length - 3} ca</span>` : '';
+      cells.push(`<button type='button' class='shift-day-cell ${st.selectedDate === iso ? 'selected' : ''}' data-action='shift-select-day' data-date='${iso}'><span class='shift-day-num'>${d}</span>${pills}${more}</button>`);
+    }
+    const dayShifts = byDate.get(st.selectedDate) || [];
+    const statusMap = { scheduled: 'Chưa check-in', checked_in: 'Đang làm', late: 'Đi trễ', completed: 'Đã chốt ca', absent: 'Vắng' };
+    const detailRows = dayShifts.map(s => `<article class='staff-row' style='padding:10px 12px'>
+      <div style='display:flex;justify-content:space-between;align-items:flex-start;gap:8px;width:100%'>
+        <div><strong>${S.fn.esc(s.display_name)}</strong> <span class='badge badge-neutral'>${S.fn.esc(s.shift_label)} (${S.fn.esc(s.start_time)}–${S.fn.esc(s.end_time)})</span><div class='muted' style='font-size:12px;margin-top:3px'>${S.fn.esc(statusMap[s.status] || s.status)}${s.note ? ` · ${S.fn.esc(s.note)}` : ''}</div></div>
+        <div style='display:flex;gap:6px;flex-wrap:wrap'>
+          ${s.status === 'scheduled' ? `<button type='button' class='btn btn-secondary' style='padding:4px 10px;font-size:12px' data-action='shift-check-in' data-id='${S.fn.esc(s.id)}'>Check-in</button>` : ''}
+          ${(s.status === 'checked_in' || s.status === 'late') ? `<button type='button' class='btn btn-primary' style='padding:4px 10px;font-size:12px' data-action='shift-check-out' data-id='${S.fn.esc(s.id)}'>Chốt ca</button>` : ''}
+          <button type='button' class='link-button danger-text' style='font-size:12px' data-action='shift-delete' data-id='${S.fn.esc(s.id)}'>Xóa</button>
+        </div>
+      </div>
+    </article>`).join('');
+    const pendingCount = Number(st.summary?.pendingCloseCount || 0);
+    return `<section class='panel staff-panel'>
+      <div class='panel-header' style='flex-wrap:wrap;gap:10px'>
+        <div style='display:flex;align-items:center;gap:10px'><h2>Lịch làm việc tháng ${moStr}/${yrStr}</h2>${pendingCount > 0 ? `<span class='badge badge-warning'>Còn ${pendingCount} ca chưa chốt</span>` : ''}</div>
+        <div style='display:flex;align-items:center;gap:8px'><input class='input' id='staff-shift-month' type='month' value='${S.fn.esc(st.month)}' aria-label='Chọn tháng' style='width:auto'/><button type='button' class='btn btn-secondary' data-action='shift-today'>Hôm nay</button></div>
+      </div>
+      ${st.loading && !st.shifts.length ? `<div class='empty-state'><strong>Đang tải lịch làm việc…</strong></div>` : `<div class='shift-layout'>
+        <div><div class='shift-calendar-grid'>${['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'].map(w => `<div class='shift-weekday-head'>${w}</div>`).join('')}${cells.join('')}</div></div>
+        <div class='panel' style='padding:14px'>
+          <div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:10px'><strong>Chi tiết ngày ${S.fn.esc(st.selectedDate)}</strong><button type='button' class='btn btn-secondary' style='padding:4px 10px;font-size:12px' data-action='open-assign-shift'>＋ Phân ca</button></div>
+          ${detailRows ? `<div class='staff-list'>${detailRows}</div>` : `<div class='empty-state'><strong>Chưa có ca làm việc</strong><span>Bấm “＋ Phân ca” để xếp lịch cho nhân viên.</span></div>`}
+        </div>
+      </div>`}
+    </section>`;
+  }
+
+
+  S.fn.openAssignShiftModal = function openAssignShiftModal() {
+    const st = S.state.shiftScheduleState;
+    const members = (st.staff && st.staff.length ? st.staff : S.state.staffState.members) || [];
+    const options = members.map(m => `<option value='${S.fn.esc(m.user_id)}'>${S.fn.esc(m.display_name)}${m.staff_code ? ` (${S.fn.esc(m.staff_code)})` : ''}</option>`).join('');
+    const form = `<form id='entity-form' data-form='staff-shift-assign'><div class='form-grid'>
+      <div class='form-field full'><label class='input-label' for='shift-user'>Nhân viên *</label><div class='select-wrap'><select class='input' id='shift-user' name='userId' required>${options}</select></div></div>
+      <div class='form-field'><label class='input-label' for='shift-date'>Ngày làm việc *</label><input class='input' id='shift-date' name='workDate' type='date' value='${S.fn.esc(st.selectedDate)}' required/></div>
+      <div class='form-field'><label class='input-label' for='shift-type'>Ca làm việc *</label><div class='select-wrap'><select class='input' id='shift-type' name='shiftType'><option value='morning'>Ca sáng (08:00–12:00)</option><option value='afternoon'>Ca chiều (13:00–17:30)</option><option value='evening'>Ca tối (17:30–21:30)</option><option value='full'>Cả ngày (08:00–17:30)</option></select></div></div>
+      <div class='form-field full'><label class='input-label' for='shift-note'>Ghi chú</label><input class='input' id='shift-note' name='note' maxlength='300' placeholder='VD: Trực quầy POS hoặc kiểm kho…'/></div>
+    </div></form>`;
+    S.fn.showModal('Phân ca làm việc', 'Xếp lịch trực ca và chấm công cho nhân viên.', form, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Hủy</button><button class='btn btn-primary' type='submit' form='entity-form'>Lưu phân ca</button>`);
+  }
+
+
+  S.fn.submitAssignShiftForm = async function submitAssignShiftForm(form) {
+    const fd = new FormData(form);
+    const workDate = String(fd.get('workDate') || '');
+    const shiftType = String(fd.get('shiftType') || 'morning');
+    try {
+      await S.fn.apiRequest(`/api/stores/${encodeURIComponent(S.state.store.id)}/shifts`, {
+        method: 'POST',
+        body: { userId: String(fd.get('userId') || ''), workDate, shiftType, note: String(fd.get('note') || '').trim() },
+      });
+      S.fn.closeModal();
+      S.state.shiftScheduleState.selectedDate = workDate;
+      S.state.shiftScheduleState.month = workDate.slice(0, 7);
+      S.fn.toast('Đã phân ca làm việc');
+      await S.fn.loadStaffShifts();
+    } catch (error) {
+      S.fn.toast('Chưa phân được ca', error.message, 'error');
+    }
+  }
+
+
+  S.fn.handleShiftAttendance = async function handleShiftAttendance(shiftId, mode) {
+    try {
+      await S.fn.apiRequest(`/api/stores/${encodeURIComponent(S.state.store.id)}/shifts/${encodeURIComponent(shiftId)}/${mode}`, { method: 'POST', body: {} });
+      S.fn.toast(mode === 'check-in' ? 'Đã check-in ca làm việc' : 'Đã chốt ca hoàn tất');
+      await S.fn.loadStaffShifts();
+    } catch (error) {
+      S.fn.toast('Thao tác ca thất bại', error.message, 'error');
+    }
+  }
+
+
+  S.fn.deleteStaffShift = async function deleteStaffShift(shiftId) {
+    try {
+      await S.fn.apiRequest(`/api/stores/${encodeURIComponent(S.state.store.id)}/shifts/${encodeURIComponent(shiftId)}`, { method: 'DELETE' });
+      S.fn.toast('Đã xóa ca làm việc');
+      await S.fn.loadStaffShifts();
+    } catch (error) {
+      S.fn.toast('Chưa xóa được ca', error.message, 'error');
+    }
+  }
+
 
 })(window.Slink = window.Slink || { dom: {}, c: {}, state: {}, fn: {}, charts: {} });

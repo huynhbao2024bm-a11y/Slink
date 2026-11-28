@@ -44,6 +44,8 @@ const { registerChannelMappingRoutes } = require('./channel-mappings');
 const { registerChannelOrderRoutes } = require('./channel-orders');
 const { registerIntegrationRoutes } = require('./integrations');
 const { registerHrCrmRoutes } = require('./hr-crm');
+const { registerBatchRoutes } = require('./batches');
+const { registerShiftRoutes } = require('./shifts');
 const legalContent = require('../legal-content');
 
 const APP_ROOT = path.resolve(__dirname, '..');
@@ -489,6 +491,8 @@ async function buildServer({ pool = null, env = process.env, logger = true, fire
     registerChannelOrderRoutes(app, { pool, env });
     registerIntegrationRoutes(app, { pool, env });
     registerHrCrmRoutes(app, { pool, env });
+    registerBatchRoutes(app, { pool, env });
+    registerShiftRoutes(app, { pool, env });
   }
 
   for (const [route, fileName] of ASSETS) {

@@ -322,6 +322,9 @@
   S.state.pendingCompatibilitySaveBlocked = false;
   S.state.categoryFilter = 'Tất cả';
   S.state.searchTerms = { products: '', orders: '', customers: '', inventory: '' };
+  S.state.productFilters = { category: 'Tất cả', stock: 'all' };
+  S.state.shiftScheduleState = { loading: false, error: '', month: new Date().toISOString().slice(0, 7), selectedDate: new Date().toISOString().slice(0, 10), shifts: [], staff: [], summary: null, requestNumber: 0 };
+  S.state.batchState = { loading: false, error: '', expiringDays: '30', batches: [], summary: { expired_count: 0, expiring_7_count: 0, expiring_30_count: 0 }, requestNumber: 0 };
   S.state.orderFilter = 'Tất cả';
   S.state.chartRange = '7 ngày';
   S.state.guidedTourState = { active: false, steps: [], index: 0, returnPage: 'dashboard', layer: null, lastFocused: null };
@@ -1684,6 +1687,7 @@
       minStock: Number(row.low_stock_threshold),
       inventoryTracked: row.inventory_tracked,
       serialTracked: Boolean(row.serial_tracked),
+      batchTracked: Boolean(row.batch_tracked),
       warrantyMonths: Number(row.warranty_months || 0),
       inventoryVersion: Number(row.inventory_version) || 1,
       status: row.status,

@@ -238,10 +238,13 @@
     const discountBtn = canDiscount
       ? `<button type='button' class='cart-line-discount-btn ${lineDisc > 0 ? 'has-discount' : ''}' data-action='pos-line-discount' data-id='${S.fn.esc(product.id)}' ${disabledAttr} title='Giảm giá từng món'>${lineDisc > 0 ? `Giảm −${S.fn.money(lineDisc)}` : 'Giảm %/₫'}</button>`
       : '';
+    const batchBtn = product.batchTracked
+      ? `<button type='button' class='cart-line-discount-btn ${item.batchId ? 'has-discount' : ''}' data-action='pos-pick-batch' data-id='${S.fn.esc(product.id)}' ${disabledAttr} title='Chọn lô xuất kho (FEFO)'>${item.batchCode ? `Lô: ${S.fn.esc(item.batchCode)}` : 'Chọn lô (FEFO)'}</button>`
+      : '';
     const priceLine = lineDisc > 0
       ? `<div class='cart-item-price'>${S.fn.money(lineNet)} <small class='muted' style='text-decoration:line-through;font-weight:500'>${S.fn.money(lineGross)}</small></div>`
       : `<div class='cart-item-price'>${S.fn.moneyVndText(S.fn.cartUnitPrice(item))} / ${S.fn.esc(product.unit)}</div>`;
-    return `<div class='cart-row' data-cart-product='${S.fn.esc(product.id)}'><div><div class='cart-item-name'>${S.fn.esc(product.name)}</div>${priceLine}<div style='display:flex;align-items:center;gap:6px;margin-top:4px;flex-wrap:wrap'>${discountBtn}</div>${serialChips}</div><div class='qty-control'><button data-action='cart-qty' data-id='${S.fn.esc(product.id)}' data-delta='-1' ${disabledAttr} aria-label='Giảm'>−</button><button data-action='cart-qty-edit' data-id='${S.fn.esc(product.id)}' ${S.state.checkoutPendingPayload || hasSerials ? 'disabled' : ''} aria-label='Sửa số lượng'>${S.fn.number(item.qty)}</button><button data-action='cart-qty' data-id='${S.fn.esc(product.id)}' data-delta='1' ${S.state.checkoutPendingPayload || hasSerials || (product.inventoryTracked && item.qty >= S.fn.availableForSale(product)) ? 'disabled' : ''} aria-label='Tăng'>＋</button></div></div>`;
+    return `<div class='cart-row' data-cart-product='${S.fn.esc(product.id)}'><div><div class='cart-item-name'>${S.fn.esc(product.name)}</div>${priceLine}<div style='display:flex;align-items:center;gap:6px;margin-top:4px;flex-wrap:wrap'>${discountBtn}${batchBtn}</div>${serialChips}</div><div class='qty-control'><button data-action='cart-qty' data-id='${S.fn.esc(product.id)}' data-delta='-1' ${disabledAttr} aria-label='Giảm'>−</button><button data-action='cart-qty-edit' data-id='${S.fn.esc(product.id)}' ${S.state.checkoutPendingPayload || hasSerials ? 'disabled' : ''} aria-label='Sửa số lượng'>${S.fn.number(item.qty)}</button><button data-action='cart-qty' data-id='${S.fn.esc(product.id)}' data-delta='1' ${S.state.checkoutPendingPayload || hasSerials || (product.inventoryTracked && item.qty >= S.fn.availableForSale(product)) ? 'disabled' : ''} aria-label='Tăng'>＋</button></div></div>`;
   }
 
 
@@ -301,6 +304,7 @@
       unitPriceVnd: item.unitPriceVnd,
       ...(Number(item.discountVnd) > 0 ? { discountVnd: Math.round(Number(item.discountVnd)) } : {}),
       ...(Array.isArray(item.serialCodes) && item.serialCodes.length ? { serialCodes: item.serialCodes.slice() } : {}),
+      ...(item.batchId ? { batchId: item.batchId, batchCode: item.batchCode || '' } : {}),
     }));
     active.discount = Number(S.state.cart.discount || 0);
     active.customerId = S.state.cartCustomerId || '';
@@ -321,6 +325,7 @@
       unitPriceVnd: item.unitPriceVnd,
       ...(Number(item.discountVnd) > 0 ? { discountVnd: Math.round(Number(item.discountVnd)) } : {}),
       ...(Array.isArray(item.serialCodes) && item.serialCodes.length ? { serialCodes: item.serialCodes.slice() } : {}),
+      ...(item.batchId ? { batchId: item.batchId, batchCode: item.batchCode || '' } : {}),
     }));
     nextCart.discount = Number(bill.discount || 0);
     S.state.cart = nextCart;
@@ -713,7 +718,8 @@
 
 
   S.fn.posProductButton = function posProductButton(product) {
-    return `<button class='pos-product' data-has-photo='${Boolean(product.imageUrl)}' data-action='add-cart' data-id='${product.id}'>${S.fn.productThumb(product)}<span class='pos-stock'>${product.inventoryTracked ? `Còn ${S.fn.number(S.fn.availableForSale(product))}` : 'Không theo dõi tồn'}</span><strong>${S.fn.esc(product.name)}</strong><small>${S.fn.esc(product.sku)}</small><div class='pos-price-row'><span class='pos-price'>${S.fn.money(product.price)}</span></div></button>`;
+    const stockText = product.inventoryTracked ? `Còn ${S.fn.number(S.fn.availableForSale(product))}` : 'Không tồn';
+    return `<button class='pos-product' data-has-photo='${Boolean(product.imageUrl)}' data-action='add-cart' data-id='${product.id}'>${S.fn.productThumb(product)}<strong class='pos-product-title'>${S.fn.esc(product.name)}</strong><div class='pos-price-row'><span class='pos-price'>${S.fn.money(product.price)}</span><span class='pos-stock'>${stockText}</span></div></button>`;
   }
 
 
@@ -757,7 +763,7 @@
 
 
   S.fn.posProductListRow = function posProductListRow(product) {
-    return `<tr class='pos-fast-scan-row' data-action='add-cart' data-id='${product.id}' role='button' tabindex='0'><td><strong>${S.fn.esc(product.name)}</strong><div class='muted' style='font-size:11.5px'>${S.fn.esc(product.sku)} · ${S.fn.esc(product.unit)}</div></td><td class='text-right'><strong>${S.fn.money(product.price)}</strong></td><td class='text-right'>${product.inventoryTracked ? S.fn.number(S.fn.availableForSale(product)) : '∞'}</td><td class='text-right' data-pos-list-qty><span class='muted'>＋</span></td></tr>`;
+    return `<tr class='pos-fast-scan-row' data-action='add-cart' data-id='${product.id}' role='button' tabindex='0'><td><div class='product-cell'>${S.fn.productThumb(product)}<span class='product-name-stack'><strong>${S.fn.esc(product.name)}</strong><small>${S.fn.esc(product.sku)} · ${S.fn.esc(product.unit)}</small></span></div></td><td class='text-right'><strong>${S.fn.money(product.price)}</strong></td><td class='text-right'>${product.inventoryTracked ? S.fn.number(S.fn.availableForSale(product)) : '∞'}</td><td class='text-right' data-pos-list-qty><span class='muted'>＋</span></td></tr>`;
   }
 
 
@@ -858,13 +864,12 @@
       : '';
     const voiceOn = S.state.posPrefs?.voiceAnnounce !== false;
     const voiceChip = `<button class='pos-topbar-chip ${voiceOn ? 'active' : ''}' type='button' data-action='pos-toggle-voice' title='Bật/tắt loa đọc tiền sau thanh toán'>Loa: ${voiceOn ? 'Bật' : 'Tắt'}</button>`;
-    const viewModeToggle = `<button class='pos-topbar-chip ${S.state.posViewMode === 'grid' ? 'active' : ''}' type='button' data-action='pos-view-mode' data-mode='grid' title='Hiển thị dạng thẻ lớn'>Lưới</button><button class='pos-topbar-chip ${S.state.posViewMode === 'list' ? 'active' : ''}' type='button' data-action='pos-view-mode' data-mode='list' title='Hiển thị dạng danh sách quét nhanh'>Danh sách</button>`;
     const addProductChip = canManageProducts
       ? `<button class='pos-topbar-chip' type='button' data-action='new-product'>＋ Hàng</button>`
       : '';
     const fontPct = Number(S.state.fontScalePct || 100);
     const fontControls = `<div class='topbar-font-controls pos-font-controls' role='group' aria-label='Cỡ chữ'><button class='icon-button font-step-btn' type='button' data-action='font-decrease' title='Giảm cỡ chữ (hiện tại ${fontPct}%)' aria-label='Giảm cỡ chữ' ${fontPct <= 90 ? 'disabled' : ''}>A−</button><button class='icon-button font-step-btn' type='button' data-action='font-increase' title='Tăng cỡ chữ (hiện tại ${fontPct}%)' aria-label='Tăng cỡ chữ' ${fontPct >= 125 ? 'disabled' : ''}>A+</button></div><button class='icon-button help-button pos-help-btn' type='button' aria-label='Trợ giúp' title='Trợ giúp' data-action='help'>?</button>`;
-    const moreMenuItems = [viewModeToggle, returnChip, voiceChip, addProductChip].filter(Boolean).join('');
+    const moreMenuItems = [returnChip, voiceChip, addProductChip].filter(Boolean).join('');
     const moreMenuHtml = moreMenuItems
       ? `<details class='pos-more-menu'><summary class='pos-topbar-chip' aria-label='Tùy chọn quầy'>⋯ Tùy chọn</summary><div class='pos-more-dropdown'>${moreMenuItems}</div></details>`
       : '';
@@ -895,7 +900,8 @@
     const catalogContainer = S.state.posViewMode === 'list'
       ? `<div class='pos-fast-scan-table-wrap' id='pos-products'>${S.fn.renderPosCatalogMarkup(products, emptyProductState)}</div>`
       : `<div class='pos-product-grid' id='pos-products'>${S.fn.renderPosCatalogMarkup(products, emptyProductState)}</div>`;
-    return `<div class='pos-shell'>${topbar}<div class='pos-workspace-body'>${S.fn.renderLastSale()}${posModesBar}${S.fn.renderAiQuickOrderBar()}<div class='pos-layout'><div><div class='category-scroll'>${categories.map(function (category) { return `<button class='pos-category ${S.state.categoryFilter === category ? 'active' : ''}' data-action='category' data-category='${S.fn.esc(category)}'>${S.fn.esc(category)}</button>`; }).join('')}</div>${catalogContainer}</div>${S.fn.cartPanel(totals, true)}</div></div><div class='pos-mobile-cart'><button class='btn pos-mobile-cart-edit' data-action='open-cart' aria-controls='drawer-cart' aria-expanded='false'><span class='mobile-cart-count'>${S.fn.number(totals.count)}</span><span>Giỏ</span></button><button class='btn btn-primary pos-mobile-checkout' data-action='${mobileCheckoutAction}' ${S.state.posMode === 'fast' && !S.state.checkoutPendingPayload ? "data-method='cash'" : ''} data-tour-target='pos-cart-mobile' ${S.state.cart.length || S.state.checkoutPendingPayload ? '' : 'disabled'}><span>${mobileCheckoutLabel}</span><strong>${S.fn.money(S.state.checkoutPendingPayload ? S.state.checkoutPendingPayload.totalVnd : totals.total)} →</strong></button></div><div class='drawer-cart' id='drawer-cart' role='dialog' aria-modal='true' aria-label='Giỏ hàng' aria-hidden='true' inert>${S.fn.cartPanel(totals, false)}</div></div>`;
+    const viewSwitchBar = `<div class='pos-view-switch' role='group' aria-label='Kiểu hiển thị sản phẩm'><button type='button' class='pos-view-btn ${S.state.posViewMode === 'grid' ? 'active' : ''}' data-action='pos-view-mode' data-mode='grid'>Lưới ảnh</button><button type='button' class='pos-view-btn ${S.state.posViewMode === 'list' ? 'active' : ''}' data-action='pos-view-mode' data-mode='list'>Danh sách</button></div>`;
+    return `<div class='pos-shell'>${topbar}<div class='pos-workspace-body'>${S.fn.renderLastSale()}${posModesBar}${S.fn.renderAiQuickOrderBar()}<div class='pos-layout'><div><div class='pos-catalog-header'><div class='category-scroll'>${categories.map(function (category) { return `<button class='pos-category ${S.state.categoryFilter === category ? 'active' : ''}' data-action='category' data-category='${S.fn.esc(category)}'>${S.fn.esc(category)}</button>`; }).join('')}</div>${viewSwitchBar}</div>${catalogContainer}</div>${S.fn.cartPanel(totals, true)}</div></div><div class='pos-mobile-cart'><button class='btn pos-mobile-cart-edit' data-action='open-cart' aria-controls='drawer-cart' aria-expanded='false'><span class='mobile-cart-count'>${S.fn.number(totals.count)}</span><span>Giỏ</span></button><button class='btn btn-primary pos-mobile-checkout' data-action='${mobileCheckoutAction}' ${S.state.posMode === 'fast' && !S.state.checkoutPendingPayload ? "data-method='cash'" : ''} data-tour-target='pos-cart-mobile' ${S.state.cart.length || S.state.checkoutPendingPayload ? '' : 'disabled'}><span>${mobileCheckoutLabel}</span><strong>${S.fn.money(S.state.checkoutPendingPayload ? S.state.checkoutPendingPayload.totalVnd : totals.total)} →</strong></button></div><div class='drawer-cart' id='drawer-cart' role='dialog' aria-modal='true' aria-label='Giỏ hàng' aria-hidden='true' inert>${S.fn.cartPanel(totals, false)}</div></div>`;
   }
 
 
@@ -1788,6 +1794,7 @@
         quantity: item.qty,
         expectedUnitPriceVnd: String(S.fn.cartUnitPrice(item)),
         ...(disc > 0 ? { discountVnd: disc } : {}),
+        ...(item.batchId ? { batchId: item.batchId } : {}),
         ...(Array.isArray(item.serialCodes) && item.serialCodes.length ? { serialCodes: item.serialCodes.slice() } : {}),
       };
     });
@@ -2814,6 +2821,24 @@
       S.state.posAiBusy = false;
       const btn = triggerBtn || document.querySelector('[data-action="pos-ai-submit"]');
       if (btn && btn.isConnected) btn.disabled = false;
+    }
+  }
+
+  S.fn.openPosBatchPicker = async function openPosBatchPicker(productId) {
+    const product = S.fn.productById(productId);
+    const cartItem = S.state.cart.find(i => i.id === productId);
+    if (!product || !cartItem) return;
+    S.fn.showModal(`Chọn lô hàng · ${product.name}`, 'Chọn lô xuất kho hoặc để hệ thống tự động chọn theo hạn sử dụng sớm nhất (FEFO).', `<div class='empty-state'><strong>Đang tải danh sách lô…</strong></div>`, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button>`);
+    try {
+      const wh = S.state.selectedWarehouseId ? `&warehouseId=${encodeURIComponent(S.state.selectedWarehouseId)}` : '';
+      const res = await S.fn.apiRequest(`/api/stores/${encodeURIComponent(S.state.store.id)}/batches?productId=${encodeURIComponent(productId)}${wh}`);
+      const batches = Array.isArray(res.batches) ? res.batches : [];
+      const rows = batches.map(b => `<tr><td><strong>${S.fn.esc(b.batch_code)}</strong></td><td>${b.expiry_date ? S.fn.esc(b.expiry_date) : '—'}</td><td class='text-right'>${S.fn.number(Number(b.quantity))}</td><td class='text-right'><button type='button' class='btn ${cartItem.batchId === b.id ? 'btn-primary' : 'btn-secondary'}' style='padding:4px 10px;font-size:12px' data-action='pos-select-batch' data-id='${S.fn.esc(productId)}' data-batch-id='${S.fn.esc(b.id)}' data-batch-code='${S.fn.esc(b.batch_code)}'>${cartItem.batchId === b.id ? 'Đang chọn' : 'Chọn lô'}</button></td></tr>`).join('');
+      const body = `<div class='table-wrap'><table class='data-table'><thead><tr><th>Mã lô</th><th>Hạn sử dụng</th><th class='text-right'>Tồn</th><th></th></tr></thead><tbody>${rows || `<tr><td colspan='4'><div class='empty-state'><strong>Chưa có lô còn tồn</strong></div></td></tr>`}</tbody></table></div>`;
+      const footer = `<button class='btn btn-secondary' type='button' data-action='pos-select-batch' data-id='${S.fn.esc(productId)}' data-batch-id='' data-batch-code=''>Để hệ thống tự chọn (FEFO)</button><button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button>`;
+      S.fn.showModal(`Chọn lô hàng · ${product.name}`, 'Chọn lô xuất kho hoặc để hệ thống tự động chọn theo hạn sử dụng sớm nhất (FEFO).', body, footer);
+    } catch (error) {
+      S.fn.toast('Chưa tải được lô hàng', error.message, 'error');
     }
   }
 

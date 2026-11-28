@@ -214,6 +214,16 @@ function registerDashboardRoutes(app, { pool }) {
         recentOrders = ordersRes.rows;
       }
 
+      const expiryRes = await client.query(
+        `SELECT
+           COUNT(*) FILTER (WHERE b.quantity > 0 AND b.expiry_date IS NOT NULL AND b.expiry_date <= (now() AT TIME ZONE s.timezone)::date + 30)::int AS expiring_count
+         FROM product_batches b
+         JOIN stores s ON s.id = b.store_id
+         WHERE b.store_id = $1`,
+        [storeId]
+      );
+      const expiringBatchesCount = Number(expiryRes.rows[0]?.expiring_count || 0);
+
       return {
         todayRevenueVnd,
         todayOrderCount,
@@ -227,6 +237,7 @@ function registerDashboardRoutes(app, { pool }) {
           openShift,
           lowStockCount,
           outOfStockCount,
+          expiringBatchesCount,
           overdueDebtCount,
           overdueDebtVnd,
           debtorCount,

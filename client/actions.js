@@ -1303,8 +1303,39 @@
     else if (action === 'product-detail') S.fn.openProductDetail(id);
     else if (action === 'product-detail-tab') S.fn.switchProductDetailTab(button.dataset.tab || 'info');
     else if (action === 'batch-print-barcodes') S.fn.batchPrintSelectedBarcodes();
+    else if (action === 'batch-archive-products') S.fn.bulkArchiveSelectedProducts();
     else if (action === 'batch-export-products') S.fn.batchExportSelectedProducts();
     else if (action === 'batch-clear-products') S.fn.clearSelectedProducts();
+    else if (action === 'product-stock-filter') {
+      S.state.productFilters.stock = button.dataset.stock || 'all';
+      S.fn.refreshSearchList('product');
+      S.fn.render();
+    }
+    else if (action === 'clear-product-filters') {
+      S.state.productFilters = { category: 'Tất cả', stock: 'all' };
+      S.state.searchTerms.products = '';
+      S.fn.loadProductsPage('', 0);
+    }
+    else if (action === 'open-product-batches') S.fn.openProductBatchModal(id);
+    else if (action === 'pos-pick-batch') S.fn.openPosBatchPicker(id);
+    else if (action === 'pos-select-batch') {
+      const item = S.state.cart.find(i => i.id === id);
+      if (item) {
+        item.batchId = button.dataset.batchId || '';
+        item.batchCode = button.dataset.batchCode || '';
+        S.fn.syncActivePosBillFromCart();
+        S.fn.refreshCartPanels();
+      }
+      S.fn.closeModal();
+    }
+    else if (action === 'dashboard-open-expiring-batches') {
+      S.state.inventoryTab = 'batches';
+      S.fn.routeTo('inventory');
+      S.fn.loadInventoryBatches('30');
+    }
+    else if (action === 'batch-expiry-filter') {
+      S.fn.loadInventoryBatches(button.dataset.days || 'all');
+    }
     else if (action === 'dismiss-onboarding') { S.state.onboardingDismissed = true; S.fn.render(); }
     else if (action === 'report-tab') { S.state.reportTab = button.dataset.tab || 'eod'; S.fn.render(); }
     else if (action === 'report-preset') { S.fn.loadAnalytics({ preset: button.dataset.preset || '7d' }); }
@@ -1435,6 +1466,7 @@
       S.state.inventoryTab = button.dataset.tab || 'stock';
       if (S.state.inventoryTab === 'purchases' && !S.state.financeDataReady) S.fn.loadFinancePage().then(() => { if (S.state.page === 'inventory' && S.state.inventoryTab === 'purchases') S.fn.render(); });
       if (S.state.inventoryTab === 'supplier-returns') S.fn.loadSupplierReturns();
+      if (S.state.inventoryTab === 'batches') S.fn.loadInventoryBatches();
       S.fn.render();
     }
     else if (action === 'reload-inventory-purchases') S.fn.loadFinancePage().then(() => { if (S.state.page === 'inventory') S.fn.render(); });
@@ -1606,6 +1638,20 @@
     else if (action === 'reload-payroll') S.fn.loadStaffPayroll();
     else if (action === 'reload-radar') S.fn.loadLossPreventionRadar();
     else if (action === 'open-staff-advance') S.fn.openStaffAdvanceModal(id);
+    else if (action === 'reload-staff-shifts') S.fn.loadStaffShifts();
+    else if (action === 'open-assign-shift') S.fn.openAssignShiftModal();
+    else if (action === 'shift-select-day') {
+      S.state.shiftScheduleState.selectedDate = button.dataset.date || S.state.shiftScheduleState.selectedDate;
+      S.fn.render();
+    }
+    else if (action === 'shift-today') {
+      const today = new Date().toISOString().slice(0, 10);
+      S.state.shiftScheduleState.selectedDate = today;
+      S.fn.loadStaffShifts(today.slice(0, 7));
+    }
+    else if (action === 'shift-check-in') S.fn.handleShiftAttendance(id, 'check-in');
+    else if (action === 'shift-check-out') S.fn.handleShiftAttendance(id, 'check-out');
+    else if (action === 'shift-delete') S.fn.deleteStaffShift(id);
     else if (action === 'settle-staff-payroll') S.fn.settleStaffPayroll(id, button);
     else if (action === 'share-staff-payslip-png') S.fn.shareStaffPayslipPng(id);
     else if (action === 'toggle-waive-shortage') S.fn.toggleWaiveShortage(id, button.dataset.waived === 'true');
@@ -1878,6 +1924,15 @@
   });
 
   document.addEventListener('change', function (event) {
+    if (event.target.id === 'product-category-filter') {
+      S.state.productFilters.category = event.target.value || 'Tất cả';
+      S.fn.render();
+      return;
+    }
+    if (event.target.id === 'staff-shift-month') {
+      if (event.target.value) S.fn.loadStaffShifts(event.target.value);
+      return;
+    }
     if (event.target.matches('[data-cashbook-filter]')) {
       S.state.financeCashbook.filters[event.target.dataset.cashbookFilter] = event.target.value;
       S.fn.loadFinanceCashbook(0);
@@ -2427,6 +2482,8 @@
     else if (type === 'staff-invite') S.fn.saveStaffInvitation(form);
     else if (type === 'staff-direct-create') S.fn.saveStaffDirectCreate(form);
     else if (type === 'staff-advance') S.fn.submitStaffAdvanceForm(form);
+    else if (type === 'staff-shift-assign') S.fn.submitAssignShiftForm(form);
+    else if (type === 'product-batch-add') S.fn.submitProductBatchForm(form);
     else if (type === 'scan') S.fn.addByCode(form);
     else if (type === 'rapid-stock-count') S.fn.submitRapidStockCount(form);
     else if (type === 'warranty-lookup') S.fn.lookupWarrantyBySerial(new FormData(form).get('code'));
