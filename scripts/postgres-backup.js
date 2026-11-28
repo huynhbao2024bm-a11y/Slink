@@ -21,6 +21,15 @@ function fail(message) {
   throw new Error(message);
 }
 
+function validateIncludedSchemas(schemas) {
+  if (!Array.isArray(schemas) || !schemas.length || schemas.length > 16
+      || schemas.some(schema => typeof schema !== 'string' || !/^[a-z_][a-z0-9_]{0,62}$/.test(schema))
+      || new Set(schemas).size !== schemas.length) {
+    fail('Backup schema scope must list distinct lowercase PostgreSQL schema names without patterns.');
+  }
+  return schemas;
+}
+
 function backupKey(env = process.env) {
   const encoded = env.SLINK_BACKUP_ENCRYPTION_KEY;
   if (!encoded || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) {
@@ -249,6 +258,7 @@ async function verifyManifest(manifestPath, keyInfo) {
       || new Set(manifest.extensions.map((extension) => extension.name)).size !== manifest.extensions.length)) {
     fail('Backup manifest PostgreSQL extension inventory is invalid.');
   }
+  if (manifest.includedSchemas !== undefined) validateIncludedSchemas(manifest.includedSchemas);
   if (!/^[a-f0-9]{64}$/.test(manifest.archiveSha256 || '') || !Number.isSafeInteger(manifest.archiveBytes)) {
     fail('Backup manifest checksum or size is invalid.');
   }
@@ -304,6 +314,9 @@ async function backupMetadata(connection) {
 }
 
 async function createBackup() {
+  const includedSchemas = process.env.SLINK_BACKUP_SCHEMAS === undefined
+    ? undefined
+    : validateIncludedSchemas(process.env.SLINK_BACKUP_SCHEMAS.split(',').map(schema => schema.trim()));
   const keyInfo = backupKey();
   const connection = parseDatabaseUrl(process.env.BACKUP_DATABASE_URL, 'BACKUP_DATABASE_URL');
   const metadata = await backupMetadata(connection);
@@ -324,7 +337,9 @@ async function createBackup() {
     const env = postgresEnvironment(connection, {
       PGOPTIONS: '-crow_security=off -cdefault_transaction_read_only=on',
     });
-    const child = spawn(pgDump, ['--format=custom', '--compress=6'], {
+    const args = ['--format=custom', '--compress=6'];
+    if (includedSchemas) args.push('--strict-names', ...includedSchemas.map(schema => `--schema=${schema}`));
+    const child = spawn(pgDump, args, {
       env,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -356,12 +371,14 @@ async function createBackup() {
       serverVersionNum: metadata.server_version_num,
       extensions: metadata.extensions,
       pgDumpVersion: version.stdout,
+      ...(includedSchemas ? { includedSchemas } : {}),
     };
     manifest.manifestHmac = manifestSignature(manifest, keyInfo.key);
     const manifestTemp = `${manifestPath}.partial`;
     await fs.writeFile(manifestTemp, `${JSON.stringify(manifest, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
     await fs.rename(manifestTemp, manifestPath);
     process.stdout.write(`Encrypted backup created: ${manifestPath}\n`);
+    process.stdout.write(`Backup scope: ${includedSchemas ? `schemas ${includedSchemas.join(', ')}` : 'all dumpable database schemas'}\n`);
     process.stdout.write(`Archive size: ${archiveInfo.bytes} bytes\n`);
   } catch (error) {
     await fs.rm(partialPath, { force: true });
@@ -543,6 +560,7 @@ async function main() {
     if (!manifestPath) fail('Provide the path to a .manifest.json backup manifest.');
     const verified = await verifyManifest(manifestPath, backupKey());
     process.stdout.write(`Backup verified: ${verified.manifest.fileName}\n`);
+    if (verified.manifest.includedSchemas) process.stdout.write(`Verified schema scope: ${verified.manifest.includedSchemas.join(', ')}\n`);
     return;
   }
   if (action === 'restore') return restoreBackup(manifestPath);
@@ -556,7 +574,9 @@ async function main() {
   if (action) fail(`Unknown action '${action}'.`);
 }
 
-main().catch((error) => {
+module.exports = { validateIncludedSchemas };
+
+if (require.main === module) main().catch((error) => {
   process.stderr.write(`Backup operation failed: ${error.message}\n`);
   process.exitCode = 1;
 });

@@ -36,6 +36,7 @@ jobs:
           SLINK_BACKUP_ENCRYPTION_KEY: ${{ secrets.SLINK_BACKUP_ENCRYPTION_KEY }}
           SLINK_BACKUP_KEY_ID: ${{ vars.SLINK_BACKUP_KEY_ID || 'prod-v1' }}
           SLINK_BACKUP_DIR: /backups
+          SLINK_BACKUP_SCHEMAS: public
           BACKUP_REASON: ${{ github.event.inputs.reason || 'scheduled-daily' }}
           PG_SSL: ca-file
           PG_SSL_CA_FILE: /app/supabase-ca.crt
@@ -51,13 +52,14 @@ jobs:
               --mount "type=bind,source=$PWD/.backup-out,target=/backups" \
               --mount "type=bind,source=$PWD/supabase-ca.crt,target=/app/supabase-ca.crt,readonly" \
               -e NODE_ENV=production -e BACKUP_DATABASE_URL -e SLINK_BACKUP_ENCRYPTION_KEY \
-              -e SLINK_BACKUP_KEY_ID -e SLINK_BACKUP_DIR -e PG_SSL -e PG_SSL_CA_FILE \
+              -e SLINK_BACKUP_KEY_ID -e SLINK_BACKUP_DIR -e SLINK_BACKUP_SCHEMAS -e PG_SSL -e PG_SSL_CA_FILE \
               slink-backup:job scripts/postgres-backup.js "$@"
           }
           run_backup create
           MANIFEST=$(ls -1 .backup-out/*.manifest.json | head -n 1)
           run_backup verify "/backups/$(basename "$MANIFEST")"
           echo "### Encrypted Backup Verified" >> "$GITHUB_STEP_SUMMARY"
+          echo '- Scope: public application schema (includes all stores); Supabase-managed schemas are outside this archive.' >> "$GITHUB_STEP_SUMMARY"
           printf -- '- Manifest: `%s`\n' "$(basename "$MANIFEST")" >> "$GITHUB_STEP_SUMMARY"
           printf -- '- Reason: `%s`\n' "${BACKUP_REASON//\`/}" >> "$GITHUB_STEP_SUMMARY"
 
