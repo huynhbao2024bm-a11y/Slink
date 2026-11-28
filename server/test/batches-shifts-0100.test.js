@@ -120,6 +120,34 @@ test('0.10.0: product batches FEFO deduction, expiring dashboard alert, bulk arc
   assert.equal(Number(soonAfter.quantity), 0);
   assert.equal(Number(lateAfter.quantity), 4);
 
+  // A selected later batch overrides FEFO, and changing that selection is a new payload.
+  const b3 = await app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/products/${p1.id}/batches`, headers,
+    payload: { batchCode: 'LO-PRIOR', expiryDate: soonDate, quantity: '2' },
+  });
+  assert.equal(b3.statusCode, 200, b3.body);
+  const selectedKey = randomUUID();
+  const selectedPayload = {
+    items: [{ productId: p1.id, quantity: 1, batchId: lateAfter.id, expectedUnitPriceVnd: '25000' }],
+    tenders: [{ method: 'bank_transfer', amountReceivedVnd: '25000' }],
+  };
+  const selectedSale = () => app.inject({
+    method: 'POST', url: `/api/stores/${storeId}/sales`,
+    headers: { ...headers, 'idempotency-key': selectedKey }, payload: selectedPayload,
+  });
+  const selected = await selectedSale();
+  assert.ok([200, 201].includes(selected.statusCode), selected.body);
+  const replayed = await selectedSale();
+  assert.ok([200, 201].includes(replayed.statusCode), replayed.body);
+  const selectedStock = await app.inject({ method: 'GET', url: `/api/stores/${storeId}/batches?productId=${p1.id}`, headers });
+  const remaining = selectedStock.json().batches;
+  assert.equal(Number(remaining.find(b => b.batch_code === 'LO-LATE').quantity), 3);
+  const prior = remaining.find(b => b.batch_code === 'LO-PRIOR');
+  assert.equal(Number(prior.quantity), 2);
+  selectedPayload.items[0].batchId = prior.id;
+  const changedSelection = await selectedSale();
+  assert.equal(changedSelection.statusCode, 409, changedSelection.body);
+
   // 4. Staff shifts: assign -> list -> check-in -> check-out -> delete
   const workDate = new Date().toISOString().slice(0, 10);
   const assign = await app.inject({

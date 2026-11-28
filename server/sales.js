@@ -194,6 +194,7 @@ function registerSalesRoutes(app, { pool, env }) {
         const entry = { productId: line.productId, quantityMilli: line.quantityMilli };
         if (line.lineDiscountVnd > 0n) entry.discountVnd = line.lineDiscountVnd;
         if (line.serialCodes.length) entry.serialCodes = line.serialCodes;
+        if (line.batchId) entry.batchId = line.batchId;
         return entry;
       }),
       discountVnd: sale.discountVnd,

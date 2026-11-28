@@ -6,6 +6,7 @@
 - Phạm vi gồm giao diện, API, kiểm thử `server/test/batches-shifts-0100.test.js` và migration `20261128180000_batches_staff_shifts_0100.sql`.
 - Phụ thuộc triển khai: chạy migration bằng quy trình cơ sở dữ liệu hiện hành trước khi chạy máy chủ mới. Mã trên nhánh chưa đồng nghĩa với Render hay APK đã cập nhật.
 - Kiểm tra trước khi đẩy mã ngày 2026-11-28: `npm test` đạt 128/128, 0 lỗi; kiểm tra cú pháp JavaScript thay đổi và `git diff --check` đạt. Log cục bộ tại `D:/Slink/.local-data/publish-0100-tests.txt`. Phiên này chưa kiểm thử trực tiếp giao diện hay thiết bị.
+- Rà soát trước khi gộp: thêm mã lô chỉ định vào dấu kiểm tra nội dung gửi trùng của đơn bán. Kiểm thử xác nhận lô chỉ định được ưu tiên, gửi lại không trừ lần hai và đổi lô với cùng mã gửi trả 409. Bài thử FEFO/lô/ca mở rộng đạt trên máy; CI cần chạy lại trên commit mới.
 - Bằng chứng trước khi phát hành: bộ kiểm thử máy chủ, kiểm tra tương tác trên web/Android, đối chiếu lô khi nhập/bán/hoàn/chuyển kho và kiểm chứng quyền trên PostgreSQL production. Bộ kiểm thử tích hợp hiện có kiểm tra nhập hai lô, FEFO, cảnh báo hạn dùng, lưu trữ sản phẩm và phân ca/check-in/chốt ca. Các luồng ngoài phạm vi bài thử này vẫn cần nghiệm thu.
 
 **Purpose:** Keep work ordered, specific, and verifiable. Each milestone exists to close a real customer risk. Update this file after each milestone; do not mark a status complete without its evidence.
