@@ -1917,34 +1917,77 @@
   }
 
 
+  S.fn.applyBarcodeManagerFilters = function applyBarcodeManagerFilters() {
+    if (!S.dom.modal) return;
+    const q = String(S.dom.modal.querySelector('[data-barcode-filter]')?.value || '').trim().toLocaleLowerCase('vi');
+    const status = S.state.barcodeStatusFilter || 'all';
+    S.dom.modal.querySelectorAll('[data-barcode-print-row]').forEach(function (row) {
+      const matchText = !q || (row.dataset.search || '').includes(q);
+      const hasOwn = row.dataset.hasBarcode === '1';
+      const isDup = row.dataset.duplicate === '1';
+      const matchStatus = status === 'all'
+        || (status === 'missing' && !hasOwn)
+        || (status === 'has' && hasOwn)
+        || (status === 'duplicate' && isDup);
+      row.hidden = !(matchText && matchStatus);
+    });
+  }
+
   S.fn.openBarcodePrintModal = async function openBarcodePrintModal(seedItems) {
     const requestStoreId = S.state.store.id;
     const requestSession = S.state.authSession;
-    const sourceList = (Array.isArray(seedItems) && seedItems.length) ? seedItems : (await S.fn.ensureCatalogProducts()).slice(0, 60);
+    const sourceList = (Array.isArray(seedItems) && seedItems.length) ? seedItems : (await S.fn.ensureCatalogProducts()).slice(0, 120);
     if (S.state.store.id !== requestStoreId || S.state.authSession !== requestSession) return;
+    const barcodeCounts = new Map();
+    sourceList.forEach(function (p) {
+      const c = String(p.barcode || '').trim();
+      if (c) barcodeCounts.set(c, (barcodeCounts.get(c) || 0) + 1);
+    });
     const list = sourceList.map(function (p) {
-      const code = p.barcode || '';
+      const code = String(p.barcode || '').trim();
       return {
         id: p.id,
+        version: Number(p.version || 1),
         name: p.name,
         sku: p.sku || '',
+        ownBarcode: code,
         barcode: code || p.sku || '',
         hasOwnBarcode: Boolean(code),
+        isDuplicate: Boolean(code && (barcodeCounts.get(code) || 0) > 1),
         priceVnd: String(p.price ?? p.salePriceVnd ?? '0'),
         copies: Math.max(1, Math.min(200, Math.round(Number(p.copies) || 1))),
         selected: p.selected !== false,
       };
     });
     if (!list.length) return S.fn.toast('Chưa có sản phẩm để in tem', 'Thêm sản phẩm trước khi tạo bảng in mã vạch.', 'error');
+    const canEdit = S.fn.hasPerm('editProducts');
+    const missingCount = list.filter(i => !i.hasOwnBarcode).length;
+    const hasCount = list.length - missingCount;
+    const dupCount = list.filter(i => i.isDuplicate).length;
+    const curFilter = S.state.barcodeStatusFilter || 'all';
     const rowHtml = list.map(function (item) {
-      return `<tr data-barcode-print-row data-id='${S.fn.esc(item.id)}' data-has-barcode='${item.hasOwnBarcode ? '1' : '0'}' data-name='${S.fn.esc(item.name)}' data-sku='${S.fn.esc(item.sku)}' data-barcode='${S.fn.esc(item.barcode)}' data-price='${S.fn.esc(item.priceVnd)}' data-search='${S.fn.esc(`${item.name} ${item.sku} ${item.barcode}`.toLocaleLowerCase('vi'))}'>
+      const statusBadge = item.isDuplicate
+        ? `<span class='badge badge-warn' style='font-size:11px'>Trùng mã</span>`
+        : !item.hasOwnBarcode
+          ? `<small class='muted'>dùng tạm SKU: ${S.fn.esc(item.sku)}</small>`
+          : `<small class='muted'>SKU: ${S.fn.esc(item.sku)}</small>`;
+      const editorCell = canEdit
+        ? `<div class='barcode-inline-cell'><input class='input barcode-inline-input' type='text' data-barcode-edit value='${S.fn.esc(item.ownBarcode)}' maxlength='64' placeholder='Chưa gắn mã…' aria-label='Mã vạch ${S.fn.esc(item.name)}'/><button class='btn btn-secondary barcode-inline-btn' type='button' data-action='save-inline-barcode' title='Lưu mã vạch'>💾</button>${!item.hasOwnBarcode ? `<button class='btn btn-secondary barcode-inline-btn' type='button' data-action='generate-one-barcode' title='Sinh mã EAN-13'>✨</button>` : ''}</div>`
+        : `<div>${S.fn.esc(item.barcode || item.sku)}</div>`;
+      return `<tr data-barcode-print-row data-id='${S.fn.esc(item.id)}' data-version='${item.version}' data-has-barcode='${item.hasOwnBarcode ? '1' : '0'}' data-duplicate='${item.isDuplicate ? '1' : '0'}' data-name='${S.fn.esc(item.name)}' data-sku='${S.fn.esc(item.sku)}' data-barcode='${S.fn.esc(item.barcode)}' data-price='${S.fn.esc(item.priceVnd)}' data-search='${S.fn.esc(`${item.name} ${item.sku} ${item.barcode}`.toLocaleLowerCase('vi'))}'>
         <td><input type='checkbox' name='selected' ${item.selected ? 'checked' : ''} aria-label='Chọn ${S.fn.esc(item.name)}'/></td>
-        <td><strong>${S.fn.esc(item.name)}</strong><br><small>${S.fn.esc(item.barcode || item.sku)}${item.hasOwnBarcode ? '' : ' · dùng tạm SKU'}</small></td>
+        <td><strong>${S.fn.esc(item.name)}</strong> ${statusBadge}${editorCell}</td>
         <td class='text-right'>${S.fn.moneyVndText(item.priceVnd)}</td>
         <td><input class='input barcode-qty-input' type='number' name='copies' min='1' max='200' step='1' value='${item.copies}' aria-label='Số tem ${S.fn.esc(item.name)}'/></td>
       </tr>`;
     }).join('');
     const body = `<form id='entity-form' data-form='barcode-print' class='barcode-print-modal'>
+      <div class='barcode-status-tabs' role='tablist' aria-label='Lọc trạng thái mã vạch'>
+        <button type='button' class='pos-topbar-chip ${curFilter === 'all' ? 'active' : ''}' data-action='barcode-status-filter' data-status='all'>Tất cả (${list.length})</button>
+        <button type='button' class='pos-topbar-chip ${curFilter === 'missing' ? 'active' : ''}' data-action='barcode-status-filter' data-status='missing'>Thiếu mã (${missingCount})</button>
+        <button type='button' class='pos-topbar-chip ${curFilter === 'has' ? 'active' : ''}' data-action='barcode-status-filter' data-status='has'>Đã có mã (${hasCount})</button>
+        ${dupCount > 0 ? `<button type='button' class='pos-topbar-chip ${curFilter === 'duplicate' ? 'active' : ''}' data-action='barcode-status-filter' data-status='duplicate'>Trùng mã (${dupCount})</button>` : ''}
+      </div>
       <div class='form-grid'>
         <div class='form-field'><label class='input-label' for='barcode-paper-size'>Khổ giấy in tem</label><select class='input' id='barcode-paper-size' name='paper'><option value='a4-65' ${S.state.barcodePrintState.paper === 'a4-65' ? 'selected' : ''}>Khổ A4 - 65 tem (38×21mm)</option><option value='a4-40' ${S.state.barcodePrintState.paper === 'a4-40' ? 'selected' : ''}>Khổ A4 - 40 tem (52×29mm)</option><option value='thermal-2up' ${S.state.barcodePrintState.paper === 'thermal-2up' ? 'selected' : ''}>Cuộn in nhiệt 2 cột (70×22mm)</option><option value='thermal-1up' ${S.state.barcodePrintState.paper === 'thermal-1up' ? 'selected' : ''}>Cuộn in nhiệt 1 tem (50×30mm)</option></select></div>
         <div class='form-field barcode-print-checks'><label><input type='checkbox' name='showStore' ${S.state.barcodePrintState.showStore ? 'checked' : ''}/> Hiện tên cửa hàng</label><label><input type='checkbox' name='showPrice' ${S.state.barcodePrintState.showPrice ? 'checked' : ''}/> Hiện giá bán</label></div>
@@ -1952,18 +1995,19 @@
       <div class='barcode-toolbar'>
         <input class='input' type='search' data-barcode-filter placeholder='Lọc nhanh theo tên, SKU hoặc mã vạch…' aria-label='Lọc sản phẩm in tem' autocomplete='off'/>
         <div class='barcode-toolbar-actions'>
-          ${S.fn.hasPerm('editProducts') && list.some(i => !i.hasOwnBarcode) ? `<button class='btn btn-secondary' type='button' data-action='generate-missing-barcodes'>✨ Sinh mã EAN-13 hàng loạt</button>` : ''}
+          ${canEdit && missingCount > 0 ? `<button class='btn btn-secondary' type='button' data-action='generate-missing-barcodes'>✨ Sinh mã EAN-13 hàng loạt (${missingCount})</button>` : ''}
           <button class='btn btn-secondary' type='button' data-action='barcode-select-all'>Chọn tất cả</button>
           <button class='btn btn-secondary' type='button' data-action='barcode-select-none'>Bỏ chọn</button>
         </div>
       </div>
-      <div class='table-wrap barcode-pick-table'><table class='data-table'><thead><tr><th>In</th><th>Sản phẩm &amp; mã vạch</th><th class='text-right'>Giá</th><th>Số tem</th></tr></thead><tbody>${rowHtml}</tbody></table></div>
+      <div class='table-wrap barcode-pick-table'><table class='data-table'><thead><tr><th>In</th><th>Sản phẩm &amp; quản lý mã vạch</th><th class='text-right'>Giá</th><th>Số tem</th></tr></thead><tbody>${rowHtml}</tbody></table></div>
       <div class='barcode-preview-wrap'><strong>Xem trước tem in</strong><div data-barcode-sheet-preview></div></div>
     </form>`;
-    S.fn.showModal('In tem mã vạch', 'Hỗ trợ máy in mã vạch nhiệt (cuộn 1 tem, 2 tem) hoặc giấy Tomy/Decal A4 (40, 65 tem).', body, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button><button class='btn btn-primary' type='button' data-action='confirm-print-barcodes'>In tem ngay</button>`, true);
+    S.fn.showModal('Quản lý mã vạch & In tem', 'Gắn hoặc sinh mã EAN-13 trực tiếp từng món, lọc mã thiếu/trùng và in tem nhiệt hoặc decal A4.', body, `<button class='btn btn-secondary' type='button' data-action='close-modal'>Đóng</button><button class='btn btn-primary' type='button' data-action='confirm-print-barcodes'>In tem ngay</button>`, true);
     const form = S.dom.modal.querySelector('[data-form="barcode-print"]');
     form.addEventListener('input', S.fn.updateBarcodePrintPreview);
     form.addEventListener('change', S.fn.updateBarcodePrintPreview);
+    S.fn.applyBarcodeManagerFilters();
     S.fn.updateBarcodePrintPreview();
   }
 
