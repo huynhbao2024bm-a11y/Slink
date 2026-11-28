@@ -653,15 +653,18 @@
     if (existing) existing.remove();
     const frame = document.createElement('iframe');
     frame.id = 'slink-hidden-print-frame';
-    frame.setAttribute('sandbox', 'allow-modals');
+    frame.setAttribute('sandbox', 'allow-same-origin allow-modals');
     frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
     document.body.appendChild(frame);
-    const cleanHtml = String(html).replace(/<script[\s\S]*?<\/script>/gi, '');
+    const cleanHtml = String(html)
+      .replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '');
     const doc = frame.contentDocument || frame.contentWindow?.document;
     if (!doc) {
       const win = window.open('', '_blank', 'width=460,height=680');
       if (!win) { S.fn.toast('Trình duyệt đã chặn cửa sổ in', 'Hãy cho phép bật cửa sổ in rồi thử lại.', 'error'); return false; }
       win.document.open(); win.document.write(cleanHtml); win.document.close();
+      try { win.focus(); win.print(); } catch (_) {}
       return true;
     }
     doc.open(); doc.write(cleanHtml); doc.close();
