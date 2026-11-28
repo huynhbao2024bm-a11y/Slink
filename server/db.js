@@ -24,12 +24,16 @@ function createPool(env = process.env) {
   });
 }
 
-async function withUser(pool, userId, operation) {
+async function withContext(pool, userId, storeId, operation) {
   if (!UUID_PATTERN.test(String(userId || ''))) throw new DatabaseError('Phiên đăng nhập không hợp lệ.', 401);
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query("SELECT set_config('app.user_id', $1, true)", [userId]);
+    if (storeId) {
+      await client.query("SELECT set_config('app.user_id', $1, true), set_config('app.store_id', $2, true)", [userId, storeId]);
+    } else {
+      await client.query("SELECT set_config('app.user_id', $1, true)", [userId]);
+    }
     const result = await operation(client);
     await client.query('COMMIT');
     return result;
@@ -41,12 +45,15 @@ async function withUser(pool, userId, operation) {
   }
 }
 
+async function withUser(pool, userId, operation) {
+  return withContext(pool, userId, null, operation);
+}
+
 async function withStore(pool, userId, storeId, operation) {
   if (!UUID_PATTERN.test(String(userId || '')) || !UUID_PATTERN.test(String(storeId || ''))) {
     throw new DatabaseError('Cửa hàng hoặc phiên đăng nhập không hợp lệ.', 401);
   }
-  return withUser(pool, userId, async (client) => {
-    await client.query("SELECT set_config('app.store_id', $1, true)", [storeId]);
+  return withContext(pool, userId, storeId, async (client) => {
     const membership = await client.query(
       `SELECT m.role, COALESCE(m.permissions, '{}'::jsonb) AS permissions, m.warehouse_scope_mode,
               COALESCE((SELECT array_agg(mws.warehouse_id ORDER BY mws.warehouse_id)

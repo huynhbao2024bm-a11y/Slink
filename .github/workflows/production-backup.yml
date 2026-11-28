@@ -27,35 +27,39 @@ jobs:
       - name: Check out backup tooling
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Set up Node.js
-        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
-        with:
-          node-version: 24.22.0
-
-      - name: Install PostgreSQL client tools
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-client
+      - name: Build backup image with dependencies and PostgreSQL 18 tools
+        run: docker build --target backup --tag slink-backup:job .
 
       - name: Run AES-256-GCM encrypted backup and verify checksum
         env:
           BACKUP_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
           SLINK_BACKUP_ENCRYPTION_KEY: ${{ secrets.SLINK_BACKUP_ENCRYPTION_KEY }}
           SLINK_BACKUP_KEY_ID: ${{ vars.SLINK_BACKUP_KEY_ID || 'prod-v1' }}
-          SLINK_BACKUP_DIR: .backup-out
+          SLINK_BACKUP_DIR: /backups
+          SLINK_BACKUP_SCHEMAS: public
           BACKUP_REASON: ${{ github.event.inputs.reason || 'scheduled-daily' }}
           PG_SSL: ca-file
-          PG_SSL_CA_FILE: ${{ github.workspace }}/supabase-ca.crt
+          PG_SSL_CA_FILE: /app/supabase-ca.crt
         run: |
-          mkdir -p "$SLINK_BACKUP_DIR"
+          mkdir -p .backup-out
+          chmod 700 .backup-out
           if [ -z "$BACKUP_DATABASE_URL" ] || [ -z "$SLINK_BACKUP_ENCRYPTION_KEY" ]; then
             echo "Missing MIGRATION_DATABASE_URL or SLINK_BACKUP_ENCRYPTION_KEY secret." >&2
             exit 1
           fi
-          node scripts/postgres-backup.js create
-          MANIFEST=$(ls -1 "$SLINK_BACKUP_DIR"/*.manifest.json | head -n 1)
-          node scripts/postgres-backup.js verify "$MANIFEST"
+          run_backup() {
+            docker run --rm --user "$(id -u):$(id -g)" \
+              --mount "type=bind,source=$PWD/.backup-out,target=/backups" \
+              --mount "type=bind,source=$PWD/supabase-ca.crt,target=/app/supabase-ca.crt,readonly" \
+              -e NODE_ENV=production -e BACKUP_DATABASE_URL -e SLINK_BACKUP_ENCRYPTION_KEY \
+              -e SLINK_BACKUP_KEY_ID -e SLINK_BACKUP_DIR -e SLINK_BACKUP_SCHEMAS -e PG_SSL -e PG_SSL_CA_FILE \
+              slink-backup:job scripts/postgres-backup.js "$@"
+          }
+          run_backup create
+          MANIFEST=$(ls -1 .backup-out/*.manifest.json | head -n 1)
+          run_backup verify "/backups/$(basename "$MANIFEST")"
           echo "### Encrypted Backup Verified" >> "$GITHUB_STEP_SUMMARY"
+          echo '- Scope: public application schema (includes all stores); Supabase-managed schemas are outside this archive.' >> "$GITHUB_STEP_SUMMARY"
           printf -- '- Manifest: `%s`\n' "$(basename "$MANIFEST")" >> "$GITHUB_STEP_SUMMARY"
           printf -- '- Reason: `%s`\n' "${BACKUP_REASON//\`/}" >> "$GITHUB_STEP_SUMMARY"
 
@@ -64,5 +68,6 @@ jobs:
         with:
           name: slink-encrypted-backup-${{ github.run_number }}
           path: .backup-out/*
+          include-hidden-files: true
           retention-days: 30
           if-no-files-found: error

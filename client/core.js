@@ -541,20 +541,14 @@
       if (set.has('me')) {
         jobs.push(S.fn.syncAfterMutation(['me']));
       }
-      if (set.has('products') && (S.state.page === 'products' || S.state.page === 'pos' || S.state.page === 'inventory')) {
-        if (S.state.page === 'pos' && typeof loadPosCatalog === 'function') {
-          jobs.push(loadPosCatalog().catch(function () {}));
-        }
-        if (S.state.page === 'products') {
-          jobs.push(S.fn.loadProductsPage(S.state.searchTerms.products, S.state.productOffset).catch(function () {}));
-        }
+      if (set.has('products') && S.state.page === 'products') {
+        jobs.push(S.fn.loadProductsPage(S.state.searchTerms.products, S.state.productOffset).catch(function () {}));
       }
-      if (set.has('stock') && (S.state.page === 'inventory' || S.state.page === 'pos')) {
-        if (S.state.page === 'inventory') {
-          jobs.push(S.fn.loadInventoryPage(S.state.searchTerms.inventory, S.state.inventoryOffset).catch(function () {}));
-        } else if (S.state.page === 'pos' && typeof loadPosCatalog === 'function') {
-          jobs.push(loadPosCatalog().catch(function () {}));
-        }
+      if ((set.has('products') || set.has('stock')) && S.state.page === 'pos') {
+        jobs.push(S.fn.loadProductsPage(S.state.posSearchTerm, 0, { silentLoading: true, preferFresh: true }).catch(function () {}));
+      }
+      if (set.has('stock') && S.state.page === 'inventory') {
+        jobs.push(S.fn.loadInventoryPage(S.state.searchTerms.inventory, S.state.inventoryOffset).catch(function () {}));
       }
       if (set.has('orders') && S.state.page === 'orders' && S.fn.canAccessRoute('orders')) {
         jobs.push(S.fn.loadOrdersPage(S.state.searchTerms.orders, S.state.orderOffset).catch(function () {}));
@@ -1288,7 +1282,16 @@
     const scope = S.fn.activeOfflineScope();
     if (!scope || !navigator.onLine) return;
     if ((await S.state.offlineDisk.operations(scope)).some(row => row.state !== 'acknowledged')) { S.fn.startOfflineSync(); return; }
-      const generation = ++S.state.offlinePreparation, storeId = S.state.store.id, role = S.state.store.role, perms = S.state.store.effectivePermissions || S.state.store.permissions;
+    const [prepared, stale, cacheEpoch] = await Promise.all([
+      S.state.offlineDisk.getMeta('prepared|' + scope),
+      S.state.offlineDisk.getMeta('cache-stale|' + scope),
+      S.state.offlineDisk.getMeta('epoch|' + scope),
+    ]);
+    if (scope !== S.fn.activeOfflineScope() || !navigator.onLine) return;
+    const preparedAt = Date.parse(prepared), staleAt = Date.parse(stale);
+    const preparedAge = Date.now() - preparedAt;
+    if (cacheEpoch?.startsWith('warm:') && preparedAge >= 0 && preparedAge < 300000 && (!stale || staleAt < preparedAt)) return;
+    const generation = ++S.state.offlinePreparation, storeId = S.state.store.id, role = S.state.store.role, perms = S.state.store.effectivePermissions || S.state.store.permissions;
     S.state.offlineState.preparing = true; S.fn.updateOfflineStatus();
     try {
       await S.state.offlineDisk.requestPersistence();
@@ -1566,9 +1569,15 @@
     }
     const scope = method === 'GET' ? S.fn.cacheScope(url) : '';
     let snapshot = null;
+    let cacheEpoch;
     if (scope && S.state.offlineDisk) {
       try {
-        snapshot = scope === S.state.cachedBootScope && S.state.cachedBootSnapshot ? S.state.cachedBootSnapshot : await S.state.offlineDisk.snapshot(scope);
+        if (navigator.onLine) {
+          cacheEpoch = await S.state.offlineDisk.getMeta('epoch|' + scope) || '';
+        } else {
+          snapshot = scope === S.state.cachedBootScope && S.state.cachedBootSnapshot ? S.state.cachedBootSnapshot : await S.state.offlineDisk.snapshot(scope);
+          cacheEpoch = snapshot.epoch;
+        }
       } catch (err) {
         S.state.offlineState.storageIssue = err?.message || '';
         snapshot = null;
@@ -1604,8 +1613,8 @@
       S.state.offlineState.mode = 'online';
       try {
         if ((method === 'GET' && url === '/api/auth/me') || (method === 'POST' && ['/api/auth/login', '/api/auth/register'].includes(url))) await S.fn.rememberOfflineSession(result);
-        if (scope && snapshot && scope === S.fn.cacheScope(url) && readGeneration===S.state.localWriteGeneration) {
-          await S.state.offlineDisk.cacheResponse(scope, url, result, undefined, snapshot.epoch);
+        if (scope && cacheEpoch !== undefined && scope === S.fn.cacheScope(url) && readGeneration===S.state.localWriteGeneration) {
+          await S.state.offlineDisk.cacheResponse(scope, url, result, undefined, cacheEpoch);
         }
       } catch (error) { S.state.offlineState.storageIssue = error.message || 'Chưa lưu được dữ liệu trên máy.'; }
       S.fn.updateOfflineStatus(); return result;

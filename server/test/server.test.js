@@ -20,6 +20,17 @@ test('server exposes the app shell and health routes without exposing source fil
   assert.match(html.headers['content-type'], /text\/html/);
   assert.equal(html.headers['cache-control'], 'no-cache');
   assert.match(html.body, /Slink/);
+  assert.doesNotMatch(html.body, /https:\/\/fonts\.(?:googleapis|gstatic)\.com/);
+  const localStyles = await app.inject({ method: 'GET', url: '/styles.css' });
+  const fontUrls = [...localStyles.body.matchAll(/url\(\.([^)]*\.woff2)\)/g)].map(match => match[1]);
+  assert.ok(fontUrls.length > 0, 'Interface fonts must be available on the app origin');
+  for (const url of fontUrls) {
+    const font = await app.inject({ method: 'GET', url });
+    assert.equal(font.statusCode, 200, url);
+    assert.match(font.headers['content-type'], /font\/woff2/);
+    assert.equal(font.rawPayload.subarray(0, 4).toString('ascii'), 'wOF2');
+  }
+
   assert.match(html.headers['content-security-policy'], /default-src 'self'/);
 
   for (const asset of ['/workspace.css', '/assets/vendor/gsap.min.js', '/assets/slink-og-cover.png', '/favicon.ico', '/offline-store.js', '/offline-ledger.js', '/offline-sync.js']) {
@@ -96,6 +107,22 @@ test('readiness fails closed if the database is not reachable', async (t) => {
   const app = await buildServer({ pool, logger: false, env: {} });
   t.after(() => app.close());
 
+  const response = await app.inject({ method: 'GET', url: '/api/ready' });
+  assert.equal(response.statusCode, 503);
+  assert.deepEqual(response.json(), { status: 'unavailable' });
+});
+
+test('readiness rejects a reachable database whose release schema is missing', async (t) => {
+  const pool = { query: async (sql) => {
+    if (sql === 'SELECT 1') return { rows: [{ '?column?': 1 }] };
+    assert.match(sql, /p\.batch_tracked/);
+    assert.match(sql, /public\.product_batches/);
+    assert.match(sql, /public\.staff_shifts/);
+    assert.match(sql, /WHERE false/);
+    throw Object.assign(new Error('column p.batch_tracked does not exist'), { code: '42703' });
+  }, end: async () => {} };
+  const app = await buildServer({ pool, logger: false, env: {} });
+  t.after(() => app.close());
   const response = await app.inject({ method: 'GET', url: '/api/ready' });
   assert.equal(response.statusCode, 503);
   assert.deepEqual(response.json(), { status: 'unavailable' });
